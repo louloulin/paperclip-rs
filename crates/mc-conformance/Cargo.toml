@@ -1,0 +1,25 @@
+[package]
+name = "mc-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "上游 golden fixture 的本地回放器：把 contracts/golden/** 打到本仓 axum router 上"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+uuid = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-db = { path = "../mc-db" }
+mc-http = { path = "../mc-http" }
+mc-realtime = { path = "../mc-realtime" }
+mc-repos = { path = "../mc-repos" }

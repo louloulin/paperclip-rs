@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "inbox/TestProtectedRoutesRequireAuth@server/cmd/server/integration_test.go:433#2",
+  "method": "GET",
+  "path": "/api/inbox",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 401,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/cmd/server/integration_test.go",
+    "line": 433,
+    "test": "TestProtectedRoutesRequireAuth",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [],
+    "bindings": {}
+  }
+}

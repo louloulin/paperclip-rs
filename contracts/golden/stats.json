@@ -1,0 +1,76 @@
+{
+  "candidate_sites": {
+    "by_kind": {
+      "authRequest": 71,
+      "http.Get": 5,
+      "http.NewRequest": 16,
+      "testutil.Call": 463
+    },
+    "total": 555
+  },
+  "extraction_rate": {
+    "candidate_sites": 555,
+    "extracted_sites": 54,
+    "rate": 0.0973
+  },
+  "fixtures": {
+    "by_actor_kind": {
+      "anonymous": 11,
+      "member": 47
+    },
+    "by_domain": {
+      "agents": 3,
+      "auth": 1,
+      "autopilots": 1,
+      "config": 2,
+      "daemon": 1,
+      "health": 1,
+      "inbox": 7,
+      "integrations": 1,
+      "issues": 30,
+      "me": 1,
+      "pins": 1,
+      "projects": 3,
+      "users": 1,
+      "workspaces": 5
+    },
+    "by_status": {
+      "200": 15,
+      "201": 26,
+      "400": 10,
+      "401": 6,
+      "404": 1
+    },
+    "by_via": {
+      "handler": 38,
+      "router": 20
+    },
+    "offline_decidable": 11,
+    "total": 58,
+    "with_json_subset": 0
+  },
+  "schema_version": 1,
+  "scope": {
+    "in_scope": [
+      "testutil.Call(t, handler, request)",
+      "authRequest(t, method, path, body)",
+      "http.Get(url)",
+      "http.NewRequest(method, url, body)"
+    ],
+    "not_extracted": {
+      "description": "handler-direct calls that pass an httptest.ResponseRecorder and read w.Code, e.g. testHandler.CreateIssue(w, req); upstream bypasses its own router there, so a replayed status would differ for test-level reasons",
+      "recorder_constructions": 1484
+    }
+  },
+  "skipped": {
+    "by_reason": {
+      "ambiguous_status": 12,
+      "body_unresolved": 74,
+      "no_status_assertion": 89,
+      "path_not_literal": 1,
+      "request_var_unresolved": 295,
+      "value_unresolved": 30
+    },
+    "total": 501
+  }
+}

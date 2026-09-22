@@ -1,0 +1,596 @@
+file	line	test	site	outcome	reason	detail
+server/cmd/server/autopilot_actor_forgery_test.go	71	TestAutopilotWritesIgnoreForgedAgentIdentity	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/autopilot_webhook_broadcast_test.go	49	TestAutopilotWebhookTokenIsNotBroadcastToTheWorkspace	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/autopilot_webhook_broadcast_test.go	92	TestAutopilotWebhookTokenIsNotBroadcastToTheWorkspace	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $autopilotID, $triggerID
+server/cmd/server/comment_at_least_once_test.go	65	TestConsecutiveCommentsMergeNotDropped	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_at_least_once_test.go	113	TestGetLatestMemberCommentForIssueSince	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_at_least_once_test.go	214	TestMergeCommentIntoPendingTask_RecomputesOriginatorAndSkipsDispatched	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_at_least_once_test.go	342	TestMergeCommentIntoPendingTask_TargetsQueuedNotDeferred	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_attachment_integration_test.go	51	TestUpdateCommentAttachments	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_attachment_integration_test.go	61	TestUpdateCommentAttachments	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_attachment_integration_test.go	82	TestUpdateCommentAttachments	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_attachment_integration_test.go	105	TestUpdateCommentAttachments	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_attachment_integration_test.go	124	TestUpdateCommentAttachments	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $commentID
+server/cmd/server/comment_attachment_integration_test.go	142	TestUpdateCommentAttachments	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_attachment_integration_test.go	161	TestUpdateCommentAttachments	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $commentID
+server/cmd/server/comment_edit_mention_integration_test.go	14	TestEditCommentTriggers	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_edit_mention_integration_test.go	24	TestEditCommentTriggers	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_edit_mention_integration_test.go	48	TestEditCommentTriggers	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $commentID
+server/cmd/server/comment_edit_mention_integration_test.go	75	TestEditCommentTriggers	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_edit_mention_integration_test.go	94	TestEditCommentTriggers	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_edit_mention_integration_test.go	106	TestEditCommentTriggers	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $commentID
+server/cmd/server/comment_trigger_integration_test.go	34	?	http.NewRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	160	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	174	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	182	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	196	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	204	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	216	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	240	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/comment_trigger_integration_test.go	286	TestCommentTriggerOnComment	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	426	TestCommentTriggerAtAllSuppression	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	466	TestCommentTriggerOnAssignNoStatusGate	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	473	TestCommentTriggerOnAssignNoStatusGate	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	478	TestCommentTriggerOnAssignNoStatusGate	authRequest	skipped	body_unresolved	body_unresolved
+server/cmd/server/comment_trigger_integration_test.go	501	TestCommentTriggerOnMentionNoStatusGate	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	508	TestCommentTriggerOnMentionNoStatusGate	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	531	TestCommentTriggerThreadExplicitMentions	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	651	TestDeleteCommentCancelsTriggeredTasks	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	662	TestDeleteCommentCancelsTriggeredTasks	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $commentID
+server/cmd/server/comment_trigger_integration_test.go	681	TestCommentThreadsQueueSeparatelyFromAssignment	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	713	TestCommentTriggerMentionAssigneeDoneIssue	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/comment_trigger_integration_test.go	720	TestCommentTriggerMentionAssigneeDoneIssue	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/composio_callback_public_test.go	25	TestComposioCallbackIsPublic_NoCookieNot401	http.Get	extracted	-	1 fixture(s)
+server/cmd/server/composio_callback_public_test.go	52	TestComposioNonCallbackEndpointsStayGated	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/inbox_archive_test.go	12	TestArchivedInboxPageAndFacetsThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/inbox_archive_test.go	25	TestArchivedInboxPageAndFacetsThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	168	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/integration_test.go	175	?	http.NewRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/integration_test.go	212	TestHealth	http.Get	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	232	TestReadinessEndpoints	http.Get	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	263	TestConfigRouteIsPublic	http.Get	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	352	TestSendCodeAndVerify	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	406	TestVerifyCodeNewUserHasNoWorkspace	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	433	TestProtectedRoutesRequireAuth	http.Get	extracted	-	5 fixture(s)
+server/cmd/server/integration_test.go	465	TestInvalidJWT	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	485	TestIssuesCRUDThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	504	TestIssuesCRUDThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	515	TestIssuesCRUDThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	531	TestIssuesCRUDThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	547	TestIssuesCRUDThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	559	TestIssuesCRUDThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	566	TestIssuesCRUDThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	577	TestCommentsThroughRouter	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	585	TestCommentsThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	601	TestCommentsThroughRouter	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	608	TestCommentsThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	619	TestCommentsThroughRouter	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	627	TestAgentsThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	639	TestAgentsThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	650	TestAgentsThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	671	TestWorkspacesThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	683	TestWorkspacesThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	694	TestWorkspacesThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	711	TestWorkspacesThroughRouter	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	760	TestDeleteWorkspaceRequiresOwner	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	786	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	792	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	811	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	840	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	873	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	927	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	961	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/integration_test.go	977	TestDingTalkGroupsThroughRouterSupportsFilteredWorkspaceAndAgentScopes	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $path
+server/cmd/server/integration_test.go	987	TestInboxThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	1015	TestInboxUnreadSummaryThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	1042	TestInboxUnreadSummaryThroughRouter	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	1094	?	authRequest	helper_site	-	request built inside a test helper, asserted by its callers
+server/cmd/server/integration_test.go	1196	TestUnarchiveInboxPreservesUnread	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $unreadItemID
+server/cmd/server/integration_test.go	1236	TestUnarchiveInboxPreservesUnread	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	1276	TestMarkInboxUnreadIsItemScoped	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $newestID
+server/cmd/server/integration_test.go	1329	TestMarkInboxUnreadRejectsForeignItem	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $foreignItemID
+server/cmd/server/integration_test.go	1358	TestUnarchiveInboxRejectsForeignItem	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $foreignItemID
+server/cmd/server/integration_test.go	1404	TestInboxUnreadSummaryDedupesByIssue	authRequest	extracted	-	1 fixture(s)
+server/cmd/server/integration_test.go	1426	TestInboxUnreadSummaryDedupesByIssue	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	1455	TestNonExistentResources	authRequest	skipped	value_unresolved	fixture needs values the runner cannot bind: $tc.path
+server/cmd/server/integration_test.go	1467	TestInvalidRequestBodies	authRequest	skipped	ambiguous_status	status comparisons on resp: [400, 500]
+server/cmd/server/integration_test.go	1513	TestWebSocketIntegration	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	1538	TestWebSocketIntegration	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/integration_test.go	1555	TestWebSocketIntegration	authRequest	skipped	no_status_assertion	no status comparison on resp
+server/cmd/server/maintenance_test.go	12	TestMaintenanceRoutesAreAbsentFromPublicServer	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/plugin_action_routes_test.go	86	TestPluginActionRouteTrustBoundaries	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/plugin_schedule_pulse_example_test.go	169	TestSchedulePulseExampleManifestDrivesDurableRetry	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/cmd/server/plugin_schedule_pulse_example_test.go	213	TestSchedulePulseExampleManifestDrivesDurableRetry	http.NewRequest	skipped	no_status_assertion	no status comparison on put
+server/cmd/server/source_context_actor_integration_test.go	56	TestSourceContextRoutesRejectAuthoritativeTaskToken	http.NewRequest	skipped	no_status_assertion	no status comparison on req
+server/internal/handler/agent_access_test.go	295	TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_access_test.go	336	TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/agent_access_test.go	359	TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_activity_outcomes_test.go	23	TestAgentActivityOutcomes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_activity_outcomes_test.go	39	TestAgentActivityOutcomes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_conversation_starters_test.go	54	TestAgentConversationStartersRoundTrip	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_conversation_starters_test.go	70	TestAgentConversationStartersRoundTrip	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_conversation_starters_test.go	82	TestAgentConversationStartersRoundTrip	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_task_usage_response_test.go	90	TestListAgentTasksHydratesUsage	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_task_usage_response_test.go	156	TestListAgentTasksHydratesUsage	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_task_usage_response_test.go	186	TestListAgentTasksReturnsErrorWhenUsageLoadFails	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/agent_task_usage_response_test.go	219	TestListAgentTasksReturnsErrorWhenUsageLoadFails	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/assign_invoke_denial_test.go	64	TestAssignAgent_DenialReasonNamesPermissionNotMode	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/assign_invoke_denial_test.go	71	TestAssignAgent_DenialReasonNamesPermissionNotMode	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/assign_invoke_denial_test.go	84	TestAssignAgent_DenialReasonNamesPermissionNotMode	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/assign_invoke_denial_test.go	111	TestAssignAgent_DenialReasonNamesPermissionNotMode	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/assign_invoke_denial_test.go	121	TestAssignAgent_DenialReasonNamesPermissionNotMode	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/auth_google_error_code_test.go	89	TestGoogleLoginTokenFailures	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/auth_google_error_code_test.go	151	TestGoogleLoginUserInfoFailures	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/auth_google_error_code_test.go	215	TestGoogleLoginActionableErrorCodes	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/auth_google_error_code_test.go	245	TestGoogleLoginActionableErrorMapping	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/auth_google_error_code_test.go	289	TestGoogleLoginSuccessfulExistingUser	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/auth_google_error_code_test.go	311	TestGoogleLoginSuccessfulExistingUser	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/auth_session_test.go	30	TestGetMeSessionFailures	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/auth_signup_test.go	71	TestEmailCodeAllowlistErrors	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	260	TestAutopilotWrites_JudgeTheActingHuman	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/autopilot_acting_member_test.go	274	TestAutopilotWrites_JudgeTheActingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	288	TestAutopilotWrites_JudgeTheActingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	301	TestAutopilotWrites_JudgeTheActingHuman	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/autopilot_acting_member_test.go	332	TestCreateAutopilot_StampsTheOrderingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	360	TestCreateAutopilot_StampsTheOrderingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	383	TestCreateAutopilot_NoOrderingHumanRefused	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	420	TestCreateAutopilot_OrderingHumanMustBeAWorkspaceMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	452	TestCreateAutopilotTrigger_StampsTheOrderingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	483	TestAddAutopilotCollaborator_GrantedByIsTheOrderingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_acting_member_test.go	513	TestGetAutopilot_WebhookTokenFollowsTheActingHuman	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_broadcast_redaction_test.go	115	TestAutopilotTriggerBroadcastsCarryNoWebhookCredential	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/autopilot_manual_trigger_invoker_test.go	38	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/autopilot_manual_trigger_invoker_test.go	89	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/autopilot_manual_trigger_invoker_test.go	238	TestTriggerAutopilot_MemberPathUnchanged	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_subscriber_test.go	201	TestAutopilotSubscriberSave_LosesToConcurrentRevoke	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/autopilot_subscriber_test.go	557	TestAutopilotDepartedSubscriberReadRepair	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/autopilot_subscriber_test.go	573	TestAutopilotDepartedSubscriberReadRepair	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/autopilot_subscriber_test.go	584	TestAutopilotDepartedSubscriberReadRepair	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/autopilot_trigger_error_test.go	72	TestTriggerAutopilot_InternalFailureDoesNotEchoError	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/claim_project_context_test.go	131	TestClaimTask_IssueProjectInForeignWorkspace_DegradesToWorkspaceRepos	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/claim_project_context_test.go	184	TestClaimTask_QuickCreateProjectInForeignWorkspace_DegradesToWorkspaceRepos	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/claim_project_context_test.go	263	TestClaimTask_ProjectResourceFromForeignWorkspace_IsFilteredOut	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/claim_project_context_test.go	328	TestClaimTask_AutopilotRunOnlyForeignWorkspace_CancelsTask	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/comment_create_attachment_test.go	57	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/comment_create_attachment_test.go	329	TestDeleteAttachmentTakesTheIssueBeforeTheRow	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/comment_delete_test.go	83	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/comment_delete_test.go	163	TestDeleteCommentWithRepliesLeavesTombstone	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/comment_delete_test.go	166	TestDeleteCommentWithRepliesLeavesTombstone	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/comment_delete_test.go	169	TestDeleteCommentWithRepliesLeavesTombstone	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/comment_delete_test.go	472	TestRemoveReactionOnTombstoneIsNotFound	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/comment_worker_handoff_test.go	27	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/comment_worker_handoff_test.go	35	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/comment_worker_handoff_test.go	77	TestWorkerReplyDelivery	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/comment_worker_handoff_test.go	238	TestWorkerReplyReconcileBoundaries	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/config_test.go	116	TestGetConfigUsesDaemonServerURLOverride	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/cross_issue_originator_test.go	126	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/cross_issue_originator_test.go	135	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/cross_issue_originator_test.go	150	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_chat_resume_fallback_test.go	91	TestClaimTaskChatCompletePointerSkipsSessionFallbackQuery	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_chat_resume_fallback_test.go	171	TestClaimTaskChatInputLoadFailureSkipsResumeQueries	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_claim_attachment_batch_test.go	77	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_claim_issue_status_test.go	49	TestClaimTaskByRuntime_PopulatesIssueStatusCatalog	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_claim_issue_status_test.go	113	TestClaimTaskByRuntime_IssueStatusCatalogAbsentWithoutCustoms	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_claim_issue_status_test.go	154	TestClaimTaskByRuntime_IssueStatusCatalogCap	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_deregister_batch_test.go	93	TestDaemonDeregisterMixedRuntimeIDs	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_deregister_batch_test.go	118	TestDaemonDeregisterBatchReadErrorFailsClosed	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_issue_snapshot_test.go	203	TestClaimTaskByRuntime_RecordsItsOwnIssueSnapshot	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_legacy_skill_redirect_test.go	88	TestClaimTaskByRuntime_LegacySkillRedirectFollowsTheCapability	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_runtime_access_test.go	34	TestClaimTaskByRuntime_OwnerlessAgentOnPrivateRuntimeFailsExplicitly	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_runtime_access_test.go	71	TestClaimTaskByRuntime_SettlesPrivateOwnerMismatch	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_runtime_access_test.go	103	TestClaimTaskByRuntime_SettlesPrivateOwnerMismatchChatFailure	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_runtime_access_test.go	412	TestClaimTaskByRuntime_RuntimeOwnerChangedAfterClaimNeverDelivered	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_runtime_access_test.go	624	TestFinalizeClaimDelivery_SettlementFailureIsUnsettled	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_skill_load_failure_test.go	125	TestClaimTaskByRuntime_SkillReadFailurePreservesTask	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_skill_load_failure_test.go	166	TestResolveTaskSkillBundles_SkillReadFailureReturns500	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_skill_load_failure_test.go	171	TestResolveTaskSkillBundles_SkillReadFailureReturns500	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_skill_resolve_scope_test.go	150	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_task_lookup_test.go	68	TestGetTaskStatus_DoesNotResolveSourceWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_task_lookup_test.go	89	TestGetTaskStatus_TaskRowPresenceContract	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_task_lookup_test.go	111	TestGetTaskStatus_TaskRowPresenceContract	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_task_lookup_test.go	133	TestGetTaskStatus_ForeignWorkspace_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	125	TestListDaemonWorkspaces_UserScopedAndConditional	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	142	TestListDaemonWorkspaces_UserScopedAndConditional	testutil.Call	skipped	value_unresolved	fixture needs values the runner cannot bind: $etag
+server/internal/handler/daemon_test.go	149	TestListDaemonWorkspaces_DaemonTokenIsWorkspaceScoped	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	221	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_test.go	241	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_test.go	444	TestExtendTaskPrepareLease	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	449	TestExtendTaskPrepareLease	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	548	TestClaimTaskByRuntime_SkillBundleRefsAndResolve	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	574	TestClaimTaskByRuntime_SkillBundleRefsAndResolve	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	586	TestClaimTaskByRuntime_SkillBundleRefsAndResolve	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	591	TestClaimTaskByRuntime_SkillBundleRefsAndResolve	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	603	TestClaimTaskByRuntime_SkillBundleRefsAndResolve	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	640	TestClaimTaskByRuntime_PopulatesWorkspaceContext	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	697	TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	739	TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	764	TestDaemonRegister_WithDaemonToken	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	802	TestDaemonRegister_RecordsRuntimeProfileRegistrationFailure	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	879	TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	890	TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	977	TestDaemonHeartbeat_HTTPRuntimeGoneReturns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1051	TestDaemonHeartbeat_EmptyQueueSkipsPopPending	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1135	TestGetTaskStatus_TransientDBError_Returns500	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1151	TestGetTaskStatus_ErrNoRows_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1180	TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1186	TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1222	TestBatchIssueGCCheck_WithDaemonToken	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1247	TestBatchIssueGCCheck_WithDaemonToken	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1344	TestGetActiveTaskForIssue_CrossWorkspace_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1359	TestCancelTask_CrossWorkspace_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1410	TestCancelTask_TaskBelongsToDifferentIssue_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1452	TestCancelTask_SameIssue_Succeeds	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1469	TestListTasksByIssue_CrossWorkspace_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1483	TestGetIssueUsage_CrossWorkspace_Returns404	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1533	TestGetIssueUsageReportsUsageCoverage	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1556	TestGetDaemonWorkspaceRepos_WithDaemonToken	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1586	TestGetDaemonWorkspaceRepos_WithDaemonToken_WorkspaceMismatch	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1603	TestGetDaemonWorkspaceRepos_VersionIgnoresOrderAndDescription	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	1699	TestDaemonRegister_MergesLegacyDaemonIDRuntime	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	1773	TestDaemonRegister_MergesLegacyDaemonIDRuntime_ReverseDotLocal	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	1819	TestDaemonRegister_MergesLegacyDaemonIDRuntime_CaseDrift	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	1898	TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	1945	TestDaemonRegister_LegacyIDNoMatchIsNoop	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/daemon_test.go	2079	TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	2145	TestClaimTask_ProjectDescriptionInjected	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	2234	TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	2784	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_test.go	3564	TestClaimTask_ChatPopulatesInitiator	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3698	TestClaimTask_SourceContextQuickCreateChecksWorkspaceBeforeSnapshot	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3815	TestGetChatSessionGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3821	TestGetChatSessionGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3840	TestGetChatSessionGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3876	TestGetAutopilotRunGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3882	TestGetAutopilotRunGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3931	TestGetTaskGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	3937	TestGetTaskGCCheck	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4080	TestMembershipCache_InvalidatedOnDeleteMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4105	TestMembershipCache_InvalidatedOnUpdateMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4129	TestMembershipCache_InvalidatedOnLeaveWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4169	TestMembershipCache_InvalidatedOnDeleteWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4217	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/daemon_test.go	4350	TestClaimTaskByRuntime_CommentTaskPopulatesInitiator	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4482	TestAckTaskCancelled	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4495	TestAckTaskCancelled	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4514	TestAckTaskCancelled	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4581	TestIssueGCChecksReportWireStatusNotRawCustomStatus	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4618	TestIssueGCChecksReportWireStatusNotRawCustomStatus	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4669	TestBatchIssueGCCheckReadsCatalogOnceForManyCustomStatuses	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4712	TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/daemon_test.go	4733	TestDaemonRegister_ProfileUsesStoredRuntimeIdentity	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	416	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	434	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	457	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	459	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	475	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	477	TestListDingTalkGroupsInactivePaginationAuthorizesInstallationBeforeCursor	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/dingtalk_test.go	1033	TestListDingTalkGroupsReturnsInternalErrorOnDatabaseFailure	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/github_test.go	405	TestWebhook_MergedPR_AdvancesLinkedIssueToDone	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	460	TestWebhook_MergedPR_AdvancesLinkedIssueToDone	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/github_test.go	508	TestWebhook_MergedPR_PreservesCancelled	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	548	TestWebhook_MergedPR_PreservesCancelled	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/github_test.go	617	TestWebhook_MergedPR_WaitsForOpenSibling	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	677	TestWebhook_MergedPR_WaitsForOpenSibling	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/github_test.go	761	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/github_test.go	784	TestWebhook_ClosedSiblingAfterMerge	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	848	TestWebhook_AllClosedWithoutMerge	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	920	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/github_test.go	945	TestWebhook_MergedPR_OnlyClosesIdentifiersWithClosingKeyword	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/github_test.go	1049	TestWebhook_MergedPR_TitlePrefixDoesNotClose	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1106	TestWebhook_MergedPR_BranchNameDoesNotClose	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1204	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/github_test.go	1222	TestWebhook_CloseKeywordRemovedBeforeMergeDoesNotClose	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1267	TestWebhook_CloseKeywordRemovedBeforeMergeDoesNotClose	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1323	TestWebhook_LinkOnlySiblingMergeAfterCloseKeywordPR	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1399	TestWebhook_BareBodyMentionIsNotLinked	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1479	TestWebhook_PostMergeClosingKeywordLinksThePR	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1553	TestWebhook_UnlinkedBodyMentionDoesNotBlockAutoAdvance	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/github_test.go	1683	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/github_test.go	1697	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/github_test.go	2121	TestWebhook_MergedPR_ChildWithParent_NotifiesParent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/github_test.go	2130	TestWebhook_MergedPR_ChildWithParent_NotifiesParent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/github_test.go	2184	TestWebhook_MergedPR_ChildWithParent_NotifiesParent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/github_test.go	2648	TestWebhook_InstallationCreatedRefreshesUnknownLogin	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/github_test.go	3370	TestWebhook_UninstallDeletesAllBindings	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	446	TestDeleteIssueByIdentifier	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	467	TestDeleteIssueByIdentifier	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	503	TestGetIssueByIdentifierEnforcesPrefix	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	518	TestGetIssueByIdentifierEnforcesPrefix	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	533	TestGetIssueByIdentifierEnforcesPrefix	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	545	TestDeleteIssueRejectsInvalidUUID	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	561	TestCreateIssueDefaultStatusIsTodo	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	582	TestCreateIssueExplicitBacklogPreserved	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	621	TestCreateIssueRejectsCrossWorkspaceParent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	657	TestCreateIssueRejectsCrossWorkspaceProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	693	TestCreateSubIssueInheritsParentProject	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	702	TestCreateSubIssueInheritsParentProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	714	TestCreateSubIssueInheritsParentProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	751	TestCreateSubIssueUsesExplicitProjectOverParentProject	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	759	TestCreateSubIssueUsesExplicitProjectOverParentProject	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	768	TestCreateSubIssueUsesExplicitProjectOverParentProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	781	TestCreateSubIssueUsesExplicitProjectOverParentProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	818	TestCreateIssueRejectsActiveDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	830	TestCreateIssueRejectsActiveDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	840	TestCreateIssueRejectsActiveDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	863	TestCreateIssueRejectsActiveDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	876	TestCreateIssueRejectsActiveDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	899	TestCreateIssueAllowsDuplicateAfterCancelled	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	907	TestCreateIssueAllowsDuplicateAfterCancelled	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	932	TestCreateIssueAllowsDuplicateAfterDone	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	940	TestCreateIssueAllowsDuplicateAfterDone	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	967	TestTriggerAutopilotAllowsActiveDuplicateIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	977	TestTriggerAutopilotAllowsActiveDuplicateIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	984	TestTriggerAutopilotAllowsActiveDuplicateIssue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1025	TestScheduledAutopilotAllowsActiveDuplicateIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1035	TestScheduledAutopilotAllowsActiveDuplicateIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1107	TestAutopilotCreatedIssueCreatorIsAssigneeAgent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1196	TestAutopilotCreateIssueAssociatesConfiguredProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1269	TestAutopilotDispatchUsesCurrentProjectBinding	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1284	TestAutopilotDispatchUsesCurrentProjectBinding	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1332	TestUpdateAutopilotCanSetAndClearProject	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1344	TestUpdateAutopilotCanSetAndClearProject	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1355	TestUpdateAutopilotCanSetAndClearProject	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1372	TestCreateIssueRejectsNonexistentMemberAssignee	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1384	TestCreateIssueRejectsNonexistentAgentAssignee	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1395	TestCreateIssueRejectsAssigneeTypeWithoutID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1404	TestCreateIssueRejectsAssigneeIDWithoutType	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1415	TestCreateIssueRejectsUnknownAssigneeType	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1426	TestCreateIssueAcceptsValidMemberAssignee	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1443	TestCreateIssueRejectsMalformedAssigneeID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1454	TestCreateIssueRejectsMalformedAttachmentIDBeforeWrite	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1470	TestUpdateIssueRejectsMalformedAssigneeID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1483	TestUpdateIssueRejectsMalformedAssigneeID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1492	TestUpdateIssueRejectsNonexistentMemberAssignee	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1506	TestUpdateIssueRejectsNonexistentMemberAssignee	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1518	TestUpdateIssueAllowsExplicitUnassign	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	1532	TestUpdateIssueAllowsExplicitUnassign	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1545	TestCommentCRUD	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	1555	TestCommentCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1560	TestCommentCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1574	TestCommentCRUD	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	1606	TestCommentWritePathsPreserveIssueIdentifiers	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	1626	TestCommentWritePathsPreserveIssueIdentifiers	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1639	TestCreateCommentRejectsMalformedParentID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1648	TestCreateCommentRejectsMalformedParentID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1652	TestCreateCommentRejectsMalformedParentID	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	1658	TestGetChatSessionRejectsMalformedSessionID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1667	TestCreateAutopilotRejectsMalformedAssigneeID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1675	TestUpdateAutopilotRejectsMalformedID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1683	TestUpdateAgentRejectsMalformedAgentID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1691	TestCreateAgentRejectsMalformedRuntimeID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1701	TestUpdateAgentRejectsMalformedRuntimeID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1709	TestCreatePinRejectsMalformedItemID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1717	TestUpdateWorkspaceRejectsMalformedID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1725	TestUpdateMemberRejectsMalformedMemberID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1731	TestRevokeInvitationRejectsMalformedInvitationID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1737	TestGetMyInvitationRejectsMalformedID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1745	TestAddReactionRejectsMalformedCommentID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1753	TestUpdateCommentRejectsMalformedCommentID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1759	TestMarkInboxReadRejectsMalformedItemID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1765	TestRevokePersonalAccessTokenRejectsMalformedID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1802	TestDaemonDeregisterRejectsMalformedRuntimeID	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	1808	TestGetIssueGCCheckRejectsMalformedIssueID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1834	TestBatchIssueGCCheckRejectsInvalidRequests	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1846	TestSetAgentSkillsRejectsMalformedSkillID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1863	TestAddAgentSkillsPreservesExistingAssignments	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1881	TestAddAgentSkillsAddsMultipleAndIsIdempotent	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/handler_test.go	1897	TestAddAgentSkillsRejectsMalformedSkillID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1908	TestAddAgentSkillsRejectsCrossWorkspaceSkillID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1962	TestAgentCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1976	TestAgentCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	1995	TestUpdateAgentMcpConfigAbsentPreservesValue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2010	TestUpdateAgentMcpConfigNullClearsValue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2027	TestUpdateAgentMcpConfigObjectUpdatesValue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2050	TestUpdateAgentMcpConfigPreservesBoundaryEmptyArguments	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2066	TestCreateAgentMcpConfigNullStoresSQLNull	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2082	TestWorkspaceCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2094	TestWorkspaceCRUD	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2109	TestCreateWorkspaceUsesRequestedSlug	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2130	TestCreateWorkspaceSlugConflictReturnsConflict	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2144	TestCreateWorkspaceInvalidSlugReturnsBadRequest	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	2640	TestBacklogNoTriggerOnCreate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2685	TestBacklogToTodoTriggersAgent	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2695	TestBacklogToTodoTriggersAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2742	TestBacklogToTodoByAgentTriggersDifferentAssignee	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2756	TestBacklogToTodoByAgentTriggersDifferentAssignee	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2793	TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2808	TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2841	TestBacklogToTodoByAgentSameAgentDifferentIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2856	TestBacklogToTodoByAgentSameAgentDifferentIssue	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2871	TestBacklogToTodoByAgentSameAgentDifferentIssue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	2903	TestAssignIssueToSelfWithActiveTargetRunDoesNotDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2916	TestAssignIssueToSelfWithActiveTargetRunDoesNotDuplicate	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2963	TestAssignDifferentIssueToSelfStillEnqueues	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	2991	TestBatchAssignFreshIssuesToSelfEnqueuesEach	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3017	TestAssignActiveIssueToDifferentAgentStillEnqueues	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3047	TestBatchBacklogToTodoByAgentTriggersAssignee	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3062	TestBatchBacklogToTodoByAgentTriggersAssignee	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3098	TestBacklogToTodoByAgentTriggersSquadLeader	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3112	TestBacklogToTodoByAgentTriggersSquadLeader	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	3133	TestDaemonRegisterMissingWorkspaceReturns404	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/handler_test.go	3277	TestMemberReplyToAgentRootDoesNotInheritParentMentions	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	3311	TestMemberReplyToAgentRootDoesNotInheritParentMentions	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	3334	TestMemberReplyToAgentRootDoesNotInheritParentMentions	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	3388	TestNestedMemberReplyUsesDirectParentForMentionInheritance	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	3469	TestNestedMemberReplyUnderMemberSkipsAssigneeFallback	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/handler_test.go	3514	TestAgentExplicitMentionStillTriggers	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/handler_test.go	3550	TestAgentExplicitMentionStillTriggers	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	35	TestArchivedInboxPageBeyond200	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	61	TestArchivedInboxPageBeyond200	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	66	TestArchivedInboxPageBeyond200	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	93	TestArchivedInboxFiltersAndLookupUseLatestGroup	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	113	TestArchivedInboxFiltersAndLookupUseLatestGroup	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	125	TestArchivedInboxFiltersAndLookupUseLatestGroup	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	133	TestArchivedInboxFiltersAndLookupUseLatestGroup	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_archive_test.go	144	TestArchivedInboxFiltersAndLookupUseLatestGroup	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/inbox_test.go	47	TestListInboxProjectsCurrentIssueStatusAndPriority	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/inbox_test.go	94	TestListArchivedInboxLimitsIssueGroupsNotRows	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/inbox_test.go	146	TestArchiveAllReadInboxUsesNewestIssueRow	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/inbox_test.go	193	TestArchiveCompletedInboxExpandsCustomTerminalStatuses	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/inbox_test.go	315	TestInboxListsShipCommentPreviewNotFullComment	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/inbox_test.go	334	TestInboxListsShipCommentPreviewNotFullComment	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/invitation_test.go	795	TestAcceptInvitation_AlreadyAcceptedIsIdempotentForExistingMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/invitation_test.go	822	TestAcceptInvitation_AlreadyAcceptedWithoutMembershipStillFails	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/invitation_test.go	848	TestDeclineInvitation_AlreadyAcceptedIsNoOp	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	166	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_autopilot_assignment_authority_test.go	229	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_autopilot_assignment_authority_test.go	242	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	265	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	277	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	296	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	311	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	320	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	340	TestCreateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_autopilot_assignment_authority_test.go	436	TestUpdateIssue_AutopilotRunAssignsPrivateAgent	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_child_done_batch_stage_test.go	232	TestBatchChildDonePreservesRepresentativeAndParentOrder	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_count_failure_test.go	47	TestListIssuesCountFailureDoesNotReturnPartialSuccess	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_count_failure_test.go	55	TestListIssuesCountFailureDoesNotReturnPartialSuccess	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	19	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_create_properties_test.go	123	TestCreateIssuePropertiesInvalidSecondValueRollsBack	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	142	TestCreateIssuePropertiesRejectDefinitionAndActorBoundaries	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	174	TestCreateIssuePropertiesRejectDefinitionAndActorBoundaries	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	199	TestCreateIssuePropertiesRejectsDuplicateJSONKey	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/issue_create_properties_test.go	218	TestCreateIssuePropertiesRejectsDuplicateCanonicalPropertyID	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/issue_create_properties_test.go	238	TestCreateIssuePropertiesRejectsEmptyMultiValue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	258	TestCreateIssuePropertiesAllowsPlainWorkspaceMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	280	TestCreateIssuePropertiesPreservesAssignmentPermissionBoundary	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_create_properties_test.go	300	TestCreateIssuePropertiesEnforcesSharedBagSizeLimit	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_metadata_noop_test.go	86	TestIssueMetadataNoopPreservesRowAndSuppressesEvents	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_metadata_noop_test.go	122	TestIssueMetadataWaitingNoopReturnsCommittedSnapshot	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_revision_test.go	341	TestDescriptionEditAcceptsATrimmedBaseOfUntrimmedStoredMarkdown	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	58	TestStatusCompatibilityContractedStorageGroupsAndPagination	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	81	TestStatusCompatibilityContractedStorageGroupsAndPagination	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	124	TestStatusCompatibilityContractedStorageGroupsAndPagination	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	159	TestStatusCompatibilityCatalogWritesAndTenantIsolation	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	197	TestStatusCompatibilityGCAfterContract	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	203	TestStatusCompatibilityGCAfterContract	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	218	TestStatusCompatibilityCursorRejectsDifferentCategoryFormat	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	224	TestStatusCompatibilityCursorRejectsDifferentCategoryFormat	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	235	TestStatusCompatibilityParentLaneUsesExpandedVisibleKeys	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_compatibility_test.go	241	TestStatusCompatibilityParentLaneUsesExpandedVisibleKeys	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_icon_test.go	20	TestIssueStatusIconPresentation	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/issue_status_icon_test.go	64	TestCreateIssueStatusIcon	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_icon_test.go	68	TestCreateIssueStatusIcon	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_icon_test.go	76	TestCreateIssueStatusIcon	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_icon_test.go	80	TestCreateIssueStatusIcon	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_position_test.go	54	TestUpdateIssueStatusRanksAboveDestinationColumn	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_position_test.go	81	TestUpdateIssueStatusKeepsExplicitPosition	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_position_test.go	103	TestUpdateIssueWithoutStatusChangeKeepsPosition	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_reorder_test.go	282	TestReorderIssueStatusesIncludesBuiltInsAndPreservesLegacySlots	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/issue_status_reorder_test.go	318	TestReorderIssueStatusesIncludesBuiltInsAndPreservesLegacySlots	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_reorder_test.go	321	TestReorderIssueStatusesIncludesBuiltInsAndPreservesLegacySlots	testutil.Call	skipped	value_unresolved	fixture needs values the runner cannot bind: $review, $ws
+server/internal/handler/issue_status_reorder_test.go	348	TestReorderIssueStatusesIncludesBuiltInsAndPreservesLegacySlots	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/issue_status_test.go	352	TestArchiveRequiresMovingExistingIssues	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	363	TestArchiveRequiresMovingExistingIssues	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	364	TestArchiveRequiresMovingExistingIssues	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	365	TestArchiveRequiresMovingExistingIssues	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	441	TestCreateIssueStatusIsNotGatedOnRollout	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1457	TestCatalogWritesAnnounceThemselves	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1464	TestCatalogWritesAnnounceThemselves	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1519	TestCreateIssueStatusAcceptsANonLatinName	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1562	TestCreateIssueStatusDisambiguatesCollidingSlugs	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1594	TestDerivedKeyAvoidsAnArchivedKey	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1671	TestIssueResponseCarriesCustomStatusName	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1688	TestIssueResponseCarriesCustomStatusName	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_status_test.go	1921	TestCustomStatusPayloadsAgreeAcrossRenderings	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_concrete_status_test.go	24	TestIssueTableConcreteStatusCatalogOrder	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_concrete_status_test.go	65	TestIssueTableCompoundConcreteCustomStatuses	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_concrete_status_test.go	86	TestIssueTableCompoundConcreteCustomStatuses	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_table_concrete_status_test.go	97	TestIssueTableCompoundConcreteCustomStatuses	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_table_concrete_status_test.go	107	TestIssueTableCompoundConcreteCustomStatuses	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_project_status_test.go	43	TestIssueTableRowsFilterByProjectStatus	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_project_status_test.go	123	TestIssueTableRowsProjectStatusStaysInsideTheWorkspace	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_project_status_test.go	143	TestIssueTableRowsRejectsUnknownProjectStatus	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_table_query_test.go	1456	TestIssueTableSelectPropertySortKeysetPagination	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_guard_test.go	58	TestTriageIsAnOrdinaryCustomStatusKey	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_guard_test.go	68	TestTriageIsAnOrdinaryCustomStatusKey	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_guard_test.go	93	TestIssueInTriageAcceptsOrdinaryFieldWrites	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_guard_test.go	116	TestIssueInTriageRefusesAParent	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_triage_guard_test.go	150	TestBatchUpdateRefusesAParentForIssuesInTriage	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_triage_guard_test.go	181	TestTriageIssueIsNotAnActiveDuplicate	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_no_run_test.go	119	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_triage_no_run_test.go	135	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_triage_no_run_test.go	146	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_triage_no_run_test.go	153	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_triage_no_run_test.go	160	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/issue_triage_no_run_test.go	206	TestTriageRefusesRerunAndQuickActionWithAReason	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_triage_no_run_test.go	217	TestTriageRefusesRerunAndQuickActionWithAReason	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_triage_no_run_test.go	244	TestTriageCommentMentionDispatchesNormally	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_no_run_test.go	453	TestRerunRefusesAHistoricalTriageTaskAfterAccept	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/issue_triage_no_run_test.go	491	TestRerunInTriageFollowsItsSource	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_triage_no_run_test.go	508	TestRerunInTriageFollowsItsSource	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_trigger_backlog_category_test.go	39	TestBacklogToCustomUnstartedStatusTriggers	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/issue_trigger_backlog_category_test.go	50	TestBacklogToCustomUnstartedStatusTriggers	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_trigger_backlog_category_test.go	64	TestBacklogToCustomUnstartedStatusTriggers	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_wakeup_close_test.go	28	TestIssueCloseStopsWakeupsInApplication	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_wakeup_close_test.go	32	TestIssueCloseStopsWakeupsInApplication	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/issue_wakeup_test.go	364	TestIssueWakeupInstructionAPI	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
+server/internal/handler/property_test.go	682	TestListIssuesSelectPropertySortOptionOrder	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/property_test.go	1779	TestPropertyContainsPrefilterKeepsResultsExact	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/runtime_access_denied_test.go	35	TestCreateIssue_RuntimeAccessDeniedLeavesNoticeWithoutTask	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_access_denied_test.go	73	TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_access_denied_test.go	101	TestCommentMention_RuntimeAccessDeniedReportsTargetAndNotice	testutil.Call	skipped	ambiguous_status	WantOneOf accepts several statuses
+server/internal/handler/runtime_lookup_metrics_test.go	52	TestAgentRuntimeLookupWSHotPathIsZeroRead	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_lookup_metrics_test.go	59	TestAgentRuntimeLookupWSHotPathIsZeroRead	testutil.Call	skipped	path_not_literal	path_not_literal
+server/internal/handler/runtime_lookup_metrics_test.go	121	TestAgentRuntimeLookupBatchClaimIsAttributed	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_model_catalog_test.go	314	TestInitiateListModels_ForceSkipsCatalogCache	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_model_catalog_test.go	326	TestInitiateListModels_ForceSkipsCatalogCache	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_visibility_test.go	251	TestListAgentRuntimes_HidesOtherMembersPrivateRuntimes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/runtime_visibility_test.go	275	TestListAgentRuntimes_AllowsAdminsToGovernPrivateRuntimes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/seat_capacity_test.go	287	TestAcceptInvitationRejectsUnavailableReservedCapacity	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	55	TestRefreshSession_RenewsBearerSessionInsideWindow	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	85	TestRefreshSession_OutsideWindowIsANoOp	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	105	TestRefreshSession_CookieModeDoesNotLeakTheToken	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	144	TestRefreshSession_RejectsNonSessionCredentials	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	150	TestRefreshSession_RejectsNonSessionCredentials	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	161	TestRefreshSession_DoesNotReviveExpiredSession	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	178	TestRefreshSession_RejectsSubjectMismatch	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/session_test.go	188	TestRefreshSession_MigratesLegacySession	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/skill_metadata_test.go	53	TestListSkillFilesMetadataOmitsBodies	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/skill_metadata_test.go	147	TestGetSkillIncludeMetadataDropsBodies	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/skill_metadata_test.go	187	TestSkillMetadataSizeDoesNotTrackContentSize	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/skill_metadata_test.go	277	TestSkillIncludeRejectsUnknownValue	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/skill_metadata_test.go	281	TestSkillIncludeRejectsUnknownValue	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/squad_comment_trigger_test.go	728	TestCreateComment_ReplyToAgentCommentContinuesAuthoringRole	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	115	TestRecordSquadLeaderEvaluation_AcceptedOnNonSquadAssignedIssue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	146	TestRecordSquadLeaderEvaluation_AcceptedOnChildIssueBoundTask	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	160	TestRecordSquadLeaderEvaluation_RejectsNonLeaderTask	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	173	TestRecordSquadLeaderEvaluation_RejectsLeaderTaskWithoutSquadID	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	193	TestRecordSquadLeaderEvaluation_RejectsCrossIssueTaskAndNamesTaskIssue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	214	TestRecordSquadLeaderEvaluation_RejectsForeignAgentWithoutLeakingTaskIssue	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_evaluation_provenance_test.go	262	TestRecordSquadLeaderEvaluation_RejectsForeignWorkspaceTaskWithoutLeakingItsIssue	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/squad_evaluation_provenance_test.go	285	TestRecordSquadLeaderEvaluation_RejectsAfterLeaderChange	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/squad_worker_comment_wakes_leader_test.go	145	TestCreateComment_GuestSquadWorkerRouting_GH8301	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_message_batch_test.go	66	TestReportTaskMessagesPersistsWholeBatch	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_message_batch_test.go	150	TestReportTaskMessagesFallsBackWholeBatchForClockSkew	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_message_batch_test.go	217	TestReportTaskMessagesPublishesInSeqOrder	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_message_call_id_test.go	44	TestTaskMessageCallIDLiveAndHistory	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_message_call_id_test.go	82	TestTaskMessageCallIDLiveAndHistory	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_runs_scope_test.go	60	?	testutil.Call	helper_site	-	request built inside a test helper, asserted by its callers
+server/internal/handler/task_runs_scope_test.go	184	TestTaskHistoryOmitsUnusedAssigneeFallbacks	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/task_runs_scope_test.go	415	TestListTasksByIssueRejectsUnknownScope	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/user_language_test.go	20	TestUpdateMeFrenchLanguageRoundTrip	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/user_language_test.go	29	TestUpdateMeFrenchLanguageRoundTrip	testutil.Call	skipped	value_unresolved	fixture needs values the runner cannot bind: $userID
+server/internal/handler/workspace_test.go	34	TestCreateWorkspace_RejectsReservedSlug	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/workspace_test.go	73	TestCreateWorkspace_DoesNotMarkOnboarded	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/workspace_test.go	107	TestCreateWorkspace_DisabledByConfig	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/workspace_test.go	141	TestDeleteWorkspace_RequiresOwner	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	321	TestDeleteWorkspace_OwnerSucceeds	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	598	TestDeleteWorkspace_PreservesOtherWorkspaceData	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	658	TestUpdateWorkspace_AvatarURL	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	680	TestUpdateWorkspace_AvatarURL	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	729	TestUpdateWorkspace_NotifiesDaemonsOnSettingsChange	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	742	TestUpdateWorkspace_NotifiesDaemonsOnSettingsChange	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	773	TestUpdateWorkspace_ReposValidation	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	798	TestUpdateWorkspace_ReposValidation	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	959	TestDeleteMember_RevokesTargetRuntimes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1011	TestDeleteMember_PrunesChannelUserBindings	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1094	TestDeleteMember_PrunesAutopilotSubscribers	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1136	TestLeaveWorkspace_RevokesOwnRuntimes	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1172	TestDeleteMember_CancelsTasksFromAgentReassignment	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1210	TestDeleteMember_CancelsDeferredTasks	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1263	TestDeleteMember_NoRuntimes_DeletesMember	testutil.Call	skipped	request_var_unresolved	request expression is not traceable
+server/internal/handler/workspace_test.go	1414	TestCreateWorkspace_ChineseNameDerivesPrefixFromSlug	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/workspace_test.go	1443	TestCreateWorkspace_HonorsExplicitIssuePrefix	testutil.Call	skipped	body_unresolved	body_unresolved
+server/internal/handler/workspace_test.go	1480	TestCreateWorkspace_RejectsInvalidIssuePrefix	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
+server/internal/handler/workspace_test.go	1508	TestUpdateWorkspace_RejectsInvalidIssuePrefix	testutil.Call	skipped	request_var_unresolved	request expression is not traceable

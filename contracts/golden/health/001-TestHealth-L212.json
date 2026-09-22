@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "health/TestHealth@server/cmd/server/integration_test.go:212#1",
+  "method": "GET",
+  "path": "/health",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/cmd/server/integration_test.go",
+    "line": 212,
+    "test": "TestHealth",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [],
+    "bindings": {}
+  }
+}

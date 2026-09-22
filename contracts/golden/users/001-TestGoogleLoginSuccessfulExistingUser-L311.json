@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "users/TestGoogleLoginSuccessfulExistingUser@server/internal/handler/auth_google_error_code_test.go:311#1",
+  "method": "GET",
+  "path": "/users/me",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/auth_google_error_code_test.go",
+    "line": 311,
+    "test": "TestGoogleLoginSuccessfulExistingUser",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {}
+  }
+}
