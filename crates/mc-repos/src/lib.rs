@@ -10,6 +10,9 @@
 //!
 //! M2 anchor scaffold（M1-D / LUM-1347）：`comment` / `inbox` / `issue` / `subscriber`
 //! 四个模块一次性声明（空 stub），让三个 M2 分支不再同时编辑本文件。
+//!
+//! M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.2）：`agent` / `runtime` / `task`
+//! 三个模块一次性声明（空 stub，与 M2 同手法），让 W3a/W3b 的 repo 切片不再编辑本文件。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -17,6 +20,7 @@ use serde::Serialize;
 
 use mc_db::Db;
 
+pub mod agent;
 pub mod comment;
 pub mod inbox;
 pub mod invitation;
@@ -25,8 +29,10 @@ pub mod issue_status;
 pub mod issue_table;
 pub mod member;
 pub mod pat;
+pub mod runtime;
 pub mod share_link;
 pub mod subscriber;
+pub mod task;
 pub mod user;
 pub mod verification_code;
 pub mod workspace;

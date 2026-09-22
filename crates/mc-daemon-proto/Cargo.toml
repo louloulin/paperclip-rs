@@ -1,0 +1,24 @@
+[package]
+name = "mc-daemon-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M3 anchor scaffold 占位 — daemon 协议（上游 server/pkg/protocol）冻结面，由 M3-1 填充"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.5）：依赖一次声明到位，
+# 让 W3a 三片（M3-1/M3-2/M3-3）与 W3b/W3c 不再改本文件、也不再改 `Cargo.lock`。
+# 全部版本来自根 manifest 的 `[workspace.dependencies]`，无新增三方包
+# （`serde_json` 只给协议 golden JSON 用例用）。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

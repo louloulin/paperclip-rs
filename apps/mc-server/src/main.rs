@@ -110,25 +110,34 @@ async fn main() -> anyhow::Result<()> {
     let realtime = RealtimeHandle::start(1024);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs"));
 
+    // M3 anchor scaffold（LUM-1406 / docs/15 §7.2 第 6 项）：此处生产装配**显式给出全部**
+    // 字段，末尾的 `..ConfigSnapshot::default()` 因此是「空更新」，clippy 的
+    // `needless_update` 会响 —— 这是刻意的：M3 切片给 `ConfigSnapshot` 追加字段时，
+    // 本处（以及 mc-conformance / tests/*.rs 的 10 处）不再需要改动，
+    // 只需在 `state.rs` 决定新字段的默认值。
+    #[allow(clippy::needless_update)]
+    let config = ConfigSnapshot {
+        host: cfg.server.host.clone(),
+        port: cfg.server.port,
+        session_cookie: cfg.auth.session_cookie_name.clone(),
+        api_key_header: cfg.auth.api_key_header.clone(),
+        csrf_header: cfg.auth.csrf_header.clone(),
+        dev_mode: cfg.server.mode == mc_config::RunMode::Development
+            || cfg.server.mode == mc_config::RunMode::Test,
+        session_ttl_secs: cfg.auth.session_ttl_secs,
+        verification_code_ttl_secs: cfg.auth.verification_code_ttl_secs,
+        send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
+        invitation_per_workspace_per_hour: Some(cfg.auth.invitation_per_workspace_per_hour),
+        ..ConfigSnapshot::default()
+    };
+
     let state = Arc::new(AppState::new(
         db.clone(),
         RuntimeHandles {
             actors: actors.clone(),
             adapters,
         },
-        ConfigSnapshot {
-            host: cfg.server.host.clone(),
-            port: cfg.server.port,
-            session_cookie: cfg.auth.session_cookie_name.clone(),
-            api_key_header: cfg.auth.api_key_header.clone(),
-            csrf_header: cfg.auth.csrf_header.clone(),
-            dev_mode: cfg.server.mode == mc_config::RunMode::Development
-                || cfg.server.mode == mc_config::RunMode::Test,
-            session_ttl_secs: cfg.auth.session_ttl_secs,
-            verification_code_ttl_secs: cfg.auth.verification_code_ttl_secs,
-            send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
-            invitation_per_workspace_per_hour: Some(cfg.auth.invitation_per_workspace_per_hour),
-        },
+        config,
         realtime,
         ws,
     ));

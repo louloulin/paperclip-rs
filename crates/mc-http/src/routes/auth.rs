@@ -1022,17 +1022,15 @@ mod tests {
         let state = AppState {
             db,
             runtime: RuntimeHandles { actors, adapters },
+            // M3 anchor scaffold（LUM-1406）：本处只显式给两个「随测试参数变化」的字段
+            // （`port: 0` = 系统分配；`dev_mode` / `session_ttl_secs` 由调用方传入），
+            // 其余与 `ConfigSnapshot::default()` 逐字相同 —— 改成 `..Default::default()`
+            // 是纯语法收敛，行为不变（host/cookie 头/两个 TTL/限速均等于默认值）。
             config: ConfigSnapshot {
-                host: "127.0.0.1".into(),
                 port: 0,
-                session_cookie: "multica_session".into(),
-                api_key_header: "X-Multica-Api-Key".into(),
-                csrf_header: "X-Multica-Csrf".into(),
                 dev_mode,
                 session_ttl_secs,
-                verification_code_ttl_secs: 600,
-                send_code_per_email_per_min: 5,
-                invitation_per_workspace_per_hour: None,
+                ..ConfigSnapshot::default()
             },
             storage: mc_storage::Storage::new(),
             secrets: mc_secrets::Secrets::new(mc_auth::DefaultSecretsBackend::in_memory()),

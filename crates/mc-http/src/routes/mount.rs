@@ -89,6 +89,11 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_comment())
         .merge(mount_slice_inbox())
         .merge(mount_slice_subscriber())
+        // ----- M3 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        .merge(mount_slice_agent())
+        .merge(mount_slice_runtime())
+        .merge(mount_slice_task())
+        .merge(mount_slice_daemon())
 }
 
 /// workspace + member + me 切片。
@@ -162,4 +167,41 @@ fn mount_slice_inbox() -> Router<Arc<AppState>> {
 /// `/api/issues/:id` 下，若放进 M2-A 的 `issues.rs` 会制造同文件冲突（docs/10 §2 M2-C）。
 fn mount_slice_subscriber() -> Router<Arc<AppState>> {
     super::subscribers::router()
+}
+
+// ---------------------------------------------------------------------------
+// M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.4）
+// ---------------------------------------------------------------------------
+//
+// 四个空切片先接好，M3 的四个面各自只实作自己的 `routes/*.rs`，不再分别改本文件
+// （与 M0 的 `056d2ae`、M1-D 的 `4aa275a` 同一手法）。stub router 目前是空
+// `Router::new()`，因此合并本片后**路由表逐字不变**（route_parity 基线不受影响）。
+//
+// ⚠️ 下图两条 M0 占位（`/api/agents` L48-51、`/api/runtimes` L52-55）**本片刻意保留**：
+// 删它们属 M3-5 / M3-4 的活（删一条会掉 2 条 parity，由 M3 集成 cycle 统一刷基线，
+// docs/15 §7.3）；但切片合并前必须先删整块，否则 axum 0.7 同 path+method 重复注册
+// 会在启动时 panic（docs/15 §9.6.6）。
+
+/// agent 切片：`/api/agents*`（M3-5）。切片填 handler 时**同时删除**上面
+/// `/api/agents` 的 M0 占位（`get().post()` 整块）。
+fn mount_slice_agent() -> Router<Arc<AppState>> {
+    super::agents::router()
+}
+
+/// runtime 切片：`/api/runtimes*` + runtime-profile 台账（M3-4）。切片填 handler 时
+/// **同时删除**上面 `/api/runtimes` 的 M0 占位（`get().post()` 整块）。
+fn mount_slice_runtime() -> Router<Arc<AppState>> {
+    super::runtimes::router()
+}
+
+/// task 切片：agent-builder + task / lifecycle / usage / retry 用户面（M3-6 / LUM-1352）。
+/// ⚠️ 其中 6 条已以 stub 形式注册在 `routes/issues.rs`，切片须**原地替换**而非新增
+/// （axum 0.7 同 path+method 重复注册会 panic，docs/15 §9.6.2）。
+fn mount_slice_task() -> Router<Arc<AppState>> {
+    super::tasks::router()
+}
+
+/// daemon 切片：`/api/daemon*` + ws 服务端（M3-7）。
+fn mount_slice_daemon() -> Router<Arc<AppState>> {
+    super::daemon::router()
 }

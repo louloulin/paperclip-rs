@@ -456,6 +456,17 @@ plan1 §3.3 给 W3 列的 crate 与本计划的对应关系（四个职责一个
 4. `mount.rs` 四个 `mount_slice_*()` + 四行 `.merge(...)`（**保留** M0 占位，占位由对应切片合入时删）。
 5. 各空 crate 的依赖**预声明并锁定**（`serde`/`serde_json`/`uuid`/`chrono`/`tokio`/`thiserror`/`tracing` 等；`mc-daemon` 加 `axum` 的 `ws` feature 与 `tokio-tungstenite` 时**必须先确认版本已在 lock 中或由集成方加**）⇒ 提交 `Cargo.lock` delta。
 6. `state.rs`：给 `ConfigSnapshot` 加 `#[derive(Default)]` 并把 11 处构造点收尾改成 `..Default::default()`（现状 `ConfigSnapshot {` 出现在 11 个文件里）—— 这样后续切片追加字段只改 `state.rs` 一处。**若不采纳**，则退回「追加字段 + 逐点补构造」，并在 PR 里列出全部 11 处。
+
+   > **实测偏差（M3-0 / LUM-1406 已按「不采纳」分支执行，PR 里列出全部构造点）**：
+   > `ConfigSnapshot` **已经**有一个**手写的 `impl Default`**（同文件 `state.rs`，带语义默认值 `dev_mode: true` / `port: 3500` / `host: 127.0.0.1` / `session_ttl_secs: 30d`，
+   > 由 W1-Google / LUM-1399 在本计划写就之后加入）⇒ 再加 `#[derive(Default)]` 是 E0119
+   > 重复 impl；改成 derive 则会把这些语义默认值一次清零，静默改变 `/api/auth/send-code`
+   > 与 ⑨ 契约门的回放结论。因此 **不 derive**，改为：保留手写 impl，把剩余**两个字面量**
+   > 调用点（`apps/mc-server/src/main.rs`、`crates/mc-http/src/routes/auth.rs` 的测试装配）也收敛到
+   > `..ConfigSnapshot::default()`。效果与第 6 项的目标等价：**追加字段 = 只改 `state.rs` 两处**
+   > （struct + impl），已用探针实测（临时加字段后 `cargo check --workspace --all-targets` 全绿）。
+   > 另：实测 `crates/` 内是 **12 个文件**含该字面量（比计划的 11 多 `mc-http/tests/issue_table.rs`，
+   > 见 `docs/35-M3-W3A-PREFLIGHT.md` §3.2），调用点共 **12 处**（crates 内 11 + `apps/mc-server` 1）。
 7. 不建表、不写迁移、不刷新 parity baseline。
 
 ### 7.3 占位删除与 baseline 刷新
