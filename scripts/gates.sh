@@ -5,7 +5,7 @@
 # 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
 # （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 七道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应）：
+# 八道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -14,28 +14,34 @@
 #   ⑤ test             cargo test --workspace                      （**不带** MULTICA_TEST_DATABASE_URL）
 #   ⑥ db               mc-migrate run --dir migrations + cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored
 #   ⑦ route-parity     python3 scripts/route_parity.py --quiet
+#   ⑧ schema-drift     python3 scripts/schema_drift.py --quiet      （**需要** MULTICA_TEST_DATABASE_URL）
 #
-# 默认跑 ①–⑤ + ⑦（不需要数据库）；`--with-db` 追加 ⑥（需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
 # 用法：
 #   bash scripts/gates.sh                          # ①–⑤ + ⑦
-#   bash scripts/gates.sh --with-db                # ①–⑦（库 URL 见下）
+#   bash scripts/gates.sh --with-db                # ①–⑧（库 URL 见下）
 #   bash scripts/gates.sh --with-db --db-url 'postgres://user:pw@127.0.0.1:5432/multica_test'
 #   MULTICA_TEST_DATABASE_URL='postgres://…' bash scripts/gates.sh --with-db
 #   bash scripts/gates.sh --only fmt,build         # 只跑选中的门（CI 用这个）
 #   bash scripts/gates.sh --list                   # 列出闸门名
 #
 # 退出码：0 = 所有被选中的门全绿；1 = 至少一道门非 0；2 = 用法/前置条件错误
-# （例如选了 ⑥ 却没给库 URL）。注意 2 不是「门失败」，而是「根本没法开跑」。
+# （例如选了 ⑥/⑧ 却没给库 URL）。注意 2 不是「门失败」，而是「根本没法开跑」。
 #
-# 已知坑（本仓实测，详见 docs/24-W0-CI.md §例外）：
+# 已知坑（本仓实测，详见 docs/24-W0-CI.md §例外 与 docs/30-W0-DRIFT-GATE.md）：
 #   * ⑤ 绝不能带 `MULTICA_TEST_DATABASE_URL`：`crates/mc-http` 的 `smoke` 集成测试
 #     （target 指向根 `tests/smoke.rs`）拿到库就会对**同一个库重跑迁移** →
 #     `relation "user" already exists`。本脚本在 ⑤ 上用 `env -u` 显式剥掉该变量，
 #     所以即使调用者已经 export 过它，⑤ 也是安全的。
 #   * ③ 与 ④ 不可合并：只有 ④ 会检查 `crates/mc-http/tests/*` 的 DB e2e 代码。
 #   * ⑥ 必须先建表：`mc-repos` / `mc-http` 的 DB 测试直接 INSERT，**自己不做迁移**。
+#   * ⑧ 与 ⑥ 的语义分工：⑥ 回答「迁移能跑 + e2e 能过」，⑧ 回答「跑出来的 schema 还是不是上游那份」。
+#     ⑧ 用 `--quiet`（判据是退出码），红了才补打完整报告 —— 绿的时候它有 767 行差异明细，
+#     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库
+#     `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
+#     否则脚本 exit 2 → 本脚本记 FAIL（绝不静默跳过）。
 
 set -u
 set -o pipefail
@@ -49,8 +55,9 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.." || exit 2
 
-# 门的规范顺序与显示编号（编号 == plan1 §6.4 的清单序号）。
-ALL_GATES="fmt build clippy clippy-test-util test db route-parity"
+# 门的规范顺序与显示编号（编号 == plan1 §6.4 的清单序号；⑦ 之后的编号由追加切片顺延，不重编）。
+# 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity"
 
 gate_label() {
     case "$1" in
@@ -60,6 +67,7 @@ gate_label() {
         clippy-test-util) echo "④" ;;
         test) echo "⑤" ;;
         db) echo "⑥" ;;
+        schema-drift) echo "⑧" ;;
         route-parity) echo "⑦" ;;
         *) echo "?" ;;
     esac
@@ -73,13 +81,16 @@ gate_env_name() {
         clippy-test-util) echo "CLIPPY_TEST_UTIL" ;;
         test) echo "TEST" ;;
         db) echo "DB" ;;
+        schema-drift) echo "SCHEMA_DRIFT" ;;
         route-parity) echo "ROUTE_PARITY" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
 
 usage() {
-    sed -n '3,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # 打印本文件顶部的注释块（第 3 行起，遇第一行非注释即停）。不要写死行号范围：
+    # 每加一道门都要改行号的话，`--help` 迟早会截掉最后几行。
+    awk 'NR > 2 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
 }
 
 WITH_DB=0
@@ -126,7 +137,7 @@ if [ -n "$ONLY" ]; then
     done
 else
     SELECTED=" fmt build clippy clippy-test-util test"
-    [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db"
+    [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
     SELECTED="$SELECTED route-parity"
 fi
 
@@ -137,12 +148,14 @@ selected_gate() {
     esac
 }
 
-# ⑥ 的前置条件：必须有库 URL。缺了就直接报用法错误，而不是让测试静默跳过。
-if selected_gate db && [ -z "$DB_URL" ]; then
-    echo "error: the 'db' gate needs a database URL" >&2
-    echo "  pass --db-url 'postgres://user:pw@127.0.0.1:5432/<db>' or set MULTICA_TEST_DATABASE_URL" >&2
-    echo "  (the DB must exist; this gate creates the schema itself via mc-migrate)" >&2
-    exit 2
+# ⑥ / ⑧ 的前置条件：必须有库 URL。缺了就直接报用法错误，而不是让测试静默跳过。
+if selected_gate db || selected_gate schema-drift; then
+    if [ -z "$DB_URL" ]; then
+        echo "error: the 'db' / 'schema-drift' gates need a database URL" >&2
+        echo "  pass --db-url 'postgres://user:pw@127.0.0.1:5432/<db>' or set MULTICA_TEST_DATABASE_URL" >&2
+        echo "  (both gates create what they need: ⑥ migrates that DB, ⑧ creates and drops its own scratch DB)" >&2
+        exit 2
+    fi
 fi
 
 # ---- 执行 -----------------------------------------------------------------
@@ -215,6 +228,29 @@ run_db_gate() {
     return 0
 }
 
+# ⑧ 自带 scratch 库（默认 `schema_probe_w0b_drift`），不下 ⑥ 迁移出来的那个库，所以两个门用同一个库 URL 是安全的。
+# 平时 `--quiet`（判据是退出码）；红了才再跑一遍把完整报告打出来 —— 绿的时候那份报告有 700+ 行差异明细。
+run_schema_drift_gate() {
+    local start end rc
+    printf '\n=== [%s] gate schema-drift ===\n' "$(gate_label schema-drift)"
+    printf '$ MULTICA_TEST_DATABASE_URL=<db-url> python3 scripts/schema_drift.py --quiet\n'
+
+    start="$(date +%s)"
+    MULTICA_TEST_DATABASE_URL="$DB_URL" python3 scripts/schema_drift.py --quiet
+    rc=$?
+
+    if [ "$rc" -ne 0 ]; then
+        printf '-- schema-drift is red (exit %s); full report follows --\n' "$rc"
+        MULTICA_TEST_DATABASE_URL="$DB_URL" python3 scripts/schema_drift.py || true
+        printf -- '-- end of schema-drift report --\n'
+    fi
+
+    end="$(date +%s)"
+    printf 'GATE_SCHEMA_DRIFT_EXIT=%s\n' "$rc"
+    record schema-drift "$rc" "$((end - start))" ""
+    return 0
+}
+
 for gate in $SELECTED; do
     case "$gate" in
         fmt)            run_gate fmt            cargo fmt --all --check ;;
@@ -226,6 +262,7 @@ for gate in $SELECTED; do
         test)           run_gate test env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL \
                             cargo test --workspace ;;
         db)             run_db_gate ;;
+        schema-drift)   run_schema_drift_gate ;;
         route-parity)   run_gate route-parity python3 scripts/route_parity.py --quiet ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac

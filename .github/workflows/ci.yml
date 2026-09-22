@@ -101,6 +101,22 @@ jobs:
       - name: "⑥ db — mc-migrate run + cargo test --features mc-http/test-util -- --ignored"
         run: bash scripts/gates.sh --only db
 
+      # ⑧ 与 ⑥ 的语义分工：⑥ 回答「迁移能跑 + e2e 能过」，⑧ 回答「跑出来的 schema 还是不是上游那份」。
+      # ⑧ 需要 `psql` 客户端（它对着上面的库 URL 建/删自己的 scratch 库 `schema_probe_w0b_drift`），
+      # 而 ⑥ 只用 Rust 侧的 sqlx；ubuntu-latest 镜像自带 psql，这里只是把「镜像是精简版」的情形补上，
+      # 不足则装 —— 让 ⑧ 因为「没 psql」而红，会把环境问题错报成 schema 问题。
+      - name: "⑧ deps — psql client + python3 for schema-drift"
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+          python3 --version
+
+      - name: "⑧ schema drift — python3 scripts/schema_drift.py --quiet"
+        run: bash scripts/gates.sh --only schema-drift
+
   # ⑦：纯离线契约门禁（读 docs/fixtures/{upstream-routes.tsv,route-parity-baseline.json}，
   # 不 clone 上游、不需要 Rust 工具链、不需要数据库）。
   contract:
