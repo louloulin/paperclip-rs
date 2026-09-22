@@ -27,6 +27,13 @@ pub mod pats;
 // M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick 的 share-link 增量。
 pub mod share_links;
 
+// M2 anchor scaffold（M1-D / LUM-1347）：四个空切片一次性声明，让三个 M2 分支
+// （issue / comment / inbox+subscriber）不再同时编辑本文件。真实实现在各切片内。
+pub mod comments;
+pub mod inbox;
+pub mod issues;
+pub mod subscribers;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

@@ -38,14 +38,11 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 注：`/api/workspaces` 与其 `{id}` 占位路由已由 sub-issue A 的
         // mount_slice_workspace_member 真实路由替换（axum 0.7 同 path+method
         // 重复注册会 panic，不能共存）。
-        .route(
-            "/api/issues",
-            get(health::placeholder).post(health::placeholder),
-        )
-        // axum 0.7（matchit 0.7）：路径参数必须写 `:id`；`{id}` 会被当字面量段，
-        // 编译通过但恒 404（docs/09 §7.4）。M0 占位原本是 `{id}`，M1-D 修正以免
-        // M2 切片照抄。
-        .route("/api/issues/:id", get(health::placeholder))
+        // 同理，M0 的 `/api/issues`、`/api/issues/:id`、`/api/comments`、`/api/inbox`
+        // 占位已由 M1-D（LUM-1347）删除：它们分别属于 M2-A（mount_slice_issue）与
+        // M2-C（mount_slice_inbox），占位留着会在 M2 切片合并时撞成重复注册 panic。
+        // 另外，M2 切片的真实 router 里路径参数必须写 `:id`（axum 0.7 / matchit 0.7
+        // 会把 `{id}` 当字面量段——编译通过但恒 404，docs/09 §7.4）。
         .route(
             "/api/agents",
             get(health::placeholder).post(health::placeholder),
@@ -58,7 +55,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/chat/sessions",
             get(health::placeholder).post(health::placeholder),
         )
-        .route("/api/inbox", get(health::placeholder))
         .route(
             "/api/skills",
             get(health::placeholder).post(health::placeholder),
@@ -79,10 +75,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/projects",
             get(health::placeholder).post(health::placeholder),
         )
-        .route(
-            "/api/comments",
-            get(health::placeholder).post(health::placeholder),
-        )
         .route("/api/feature-flags", get(health::placeholder))
         // ----- M1 切片占位（sub-issue A/B/C 在 mount_slice_* 里追加真实 router） -----
         .merge(mount_slice_workspace_member(state.clone()))
@@ -90,6 +82,11 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_invitation())
         .merge(mount_slice_pat())
         .merge(mount_slice_share_link())
+        // ----- M2 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        .merge(mount_slice_issue())
+        .merge(mount_slice_comment())
+        .merge(mount_slice_inbox())
+        .merge(mount_slice_subscriber())
 }
 
 /// workspace + member + me 切片。
@@ -135,4 +132,32 @@ fn mount_slice_pat() -> Router<Arc<AppState>> {
 /// crates/mc-http/src/routes/share_links.rs（独立文件，避开 A/C 的既有路由文件）。
 fn mount_slice_share_link() -> Router<Arc<AppState>> {
     super::share_links::router()
+}
+
+// ---------------------------------------------------------------------------
+// M2 anchor scaffold（M1-D / LUM-1347）
+// ---------------------------------------------------------------------------
+//
+// 四个空切片先接好，三个 M2 分支各自只实作自己的 `routes/*.rs`，不再分别改本文件
+// （与 M0 的 `056d2ae` 预扩展同一手法）。stub router 目前是空 `Router::new()`。
+
+/// issue 切片：`/api/issues*` + `/api/issue-statuses*`（M2-A / LUM-1348）。
+fn mount_slice_issue() -> Router<Arc<AppState>> {
+    super::issues::router()
+}
+
+/// comment 切片：`/api/issues/:id/comments` + `/api/comments/:commentId*`（M2-B / LUM-1349）。
+fn mount_slice_comment() -> Router<Arc<AppState>> {
+    super::comments::router()
+}
+
+/// inbox 切片：`/api/inbox*`（M2-C / LUM-1350）。
+fn mount_slice_inbox() -> Router<Arc<AppState>> {
+    super::inbox::router()
+}
+
+/// subscriber 切片：issue 订阅/退订（M2-C / LUM-1350）。独立文件——这 4 条路径挂在
+/// `/api/issues/:id` 下，若放进 M2-A 的 `issues.rs` 会制造同文件冲突（docs/10 §2 M2-C）。
+fn mount_slice_subscriber() -> Router<Arc<AppState>> {
+    super::subscribers::router()
 }

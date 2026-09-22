@@ -5,8 +5,11 @@
 //! - 所有 Repo 通过 `RepoWithDb::db(&Db)` 共享 sqlx 连接池
 //! - DB 错误统一翻译为 `RepoError`
 //!
-//! M1 增量（workspace / member / invitation / `verification_code` / pat）已声明 pub，
-//! 各 sub-issue 在不修改本 lib 的前提下独立新增文件实现 Repo。
+//! M1 增量（`workspace` / `member` / `invitation` / `verification_code` / `pat` / `share_link`）已声明
+//! pub，各 sub-issue 在不修改本 lib 的前提下独立新增文件实现 Repo。
+//!
+//! M2 anchor scaffold（M1-D / LUM-1347）：`comment` / `inbox` / `issue` / `subscriber`
+//! 四个模块一次性声明（空 stub），让三个 M2 分支不再同时编辑本文件。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -14,10 +17,14 @@ use serde::Serialize;
 
 use mc_db::Db;
 
+pub mod comment;
+pub mod inbox;
 pub mod invitation;
+pub mod issue;
 pub mod member;
 pub mod pat;
 pub mod share_link;
+pub mod subscriber;
 pub mod user;
 pub mod verification_code;
 pub mod workspace;
