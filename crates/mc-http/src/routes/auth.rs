@@ -985,7 +985,7 @@ async fn google_login(State(state): State<Arc<AppState>>, body: Bytes) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AdapterRegistryStub, ConfigSnapshot, RuntimeHandles};
+    use crate::state::{AdapterRegistry, ConfigSnapshot, RuntimeHandles};
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use mc_auth::{SessionStoreContainer, VerificationStoreContainer};
@@ -1018,7 +1018,7 @@ mod tests {
         let realtime = RealtimeHandle::start(8);
         let ws = Arc::new(WsState::new(realtime.clone(), "test"));
         let actors = mc_core::actor::ActorRegistry::new();
-        let adapters = Arc::new(AdapterRegistryStub::default());
+        let adapters = Arc::new(AdapterRegistry::default());
         let state = AppState {
             db,
             runtime: RuntimeHandles { actors, adapters },

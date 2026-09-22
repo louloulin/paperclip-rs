@@ -2452,6 +2452,7 @@ dependencies = [
  "mc-openapi",
  "mc-realtime",
  "mc-repos",
+ "mc-runtime",
  "mc-secrets",
  "mc-storage",
  "mc-ws",

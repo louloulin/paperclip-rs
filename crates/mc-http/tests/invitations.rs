@@ -25,7 +25,7 @@ use mc_core::actor::ActorRegistry;
 use mc_core::workspace::WorkspaceRole;
 use mc_core::Id;
 use mc_db::Db;
-use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
+use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_repos::invitation::{InvitationRepo, NewInvitation};
 use tower::ServiceExt;
@@ -37,7 +37,7 @@ fn build_state_with_db(db: Db) -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
-    let adapters = Arc::new(AdapterRegistryStub::default());
+    let adapters = Arc::new(AdapterRegistry::default());
     let state = AppState::new(
         db,
         RuntimeHandles { actors, adapters },

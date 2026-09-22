@@ -46,29 +46,36 @@ pub struct ConfigSnapshot {
     /// `None` 表示未设置（调用方应使用默认值 50）。
     /// 由 M1 sub-issue C 追加。
     pub invitation_per_workspace_per_hour: Option<u32>,
+    /// runtime host 段（M3-2 按 `docs/15-M3-PLAN.md` §7.6 **接线**而来）。
+    ///
+    /// 值来自 `mc_config::RuntimeConfig`（它此前只存在于 `Config` 里、没有出口）。
+    /// 这是 §7.6 说的「接线而非新增 env 变量」：字段名与默认值都由 `mc-config`
+    /// 决定，本文件不复制一份字面量。M3-3（`mc-task`）用这里的
+    /// `max_concurrent_tasks_per_agent` / `lease_secs` / `retry_max` 做并发与重试，
+    /// `default_runtime` 决定新 task 的默认 adapter。
+    pub runtime: mc_config::RuntimeConfig,
 }
 
 #[derive(Clone)]
 pub struct RuntimeHandles {
     pub actors: ActorRegistry,
-    pub adapters: Arc<AdapterRegistryStub>,
+    pub adapters: Arc<AdapterRegistry>,
 }
 
-#[derive(Default)]
-pub struct AdapterRegistryStub {
-    // Stub for runtime adapter registration; full version in M3.
-    pub names: parking_lot::RwLock<Vec<String>>,
-}
-
-impl AdapterRegistryStub {
-    pub fn register(&self, name: impl Into<String>) {
-        self.names.write().push(name.into());
-    }
-
-    pub fn names(&self) -> Vec<String> {
-        self.names.read().clone()
-    }
-}
+/// 运行时 adapter 注册表。
+///
+/// M0 脚手架里的 `AdapterRegistry`（空壳 + `names: Vec<String>`）**已在 M3-2
+/// 删除**，实现搬到 `mc-runtime`：它要覆盖 launch / 流式事件 / 取消 / 版本探测 /
+/// 能力声明，还要能被一致性套件和 `mc-scheduler` 复用，放在 `mc-http` 里没有道理。
+///
+/// 这里保留 `pub use` 而不是让调用方直接依赖 `mc_runtime`：`mc-http` 的
+/// 12 个调用点（`apps/mc-server`、8 个 `tests/*.rs`、`mc-conformance`、本 crate
+/// 的 `routes/{auth,inbox}.rs`）只用改标识符，不必各自新增依赖。
+///
+/// 默认构造是**空注册表**（不探测、不 spawn 任何进程）—— 测试与 conformance
+/// 回放不依赖机器上装了哪个 CLI；生产装配用
+/// [`AdapterRegistry::with_builtin_adapters`]。
+pub use mc_runtime::AdapterRegistry;
 
 /// Google OAuth 出站配置（上游 `handler.GoogleLogin` 读的 `os.Getenv` 面）。
 ///
@@ -240,6 +247,8 @@ impl Default for ConfigSnapshot {
             send_code_per_email_per_min: 5,
             // None → 调用方按 50/h 兜底（routes/invitations.rs `unwrap_or(50)`）。
             invitation_per_workspace_per_hour: None,
+            // 与 `mc_config::Config::default().runtime` 同源（§7.6 接线）。
+            runtime: mc_config::RuntimeConfig::default(),
         }
     }
 }
@@ -280,6 +289,18 @@ mod tests {
             cfg.invitation_per_workspace_per_hour, None,
             "None ⇒ 调用方按 50/h 兜底（routes/invitations.rs）"
         );
+        // M3-2（§7.6 接线）：runtime 段与 `mc_config` 的默认值逐字一致，
+        // 不在这里复制字面量，避免两处默认值漂移。
+        let runtime = mc_config::RuntimeConfig::default();
+        assert_eq!(cfg.runtime.default_runtime, runtime.default_runtime);
+        assert_eq!(
+            cfg.runtime.max_concurrent_tasks_per_agent,
+            runtime.max_concurrent_tasks_per_agent
+        );
+        assert_eq!(cfg.runtime.lease_secs, runtime.lease_secs);
+        assert_eq!(cfg.runtime.retry_max, runtime.retry_max);
+        assert_eq!(cfg.runtime.allow_local_daemon, runtime.allow_local_daemon);
+        assert_eq!(cfg.runtime.allow_cloud_runtime, runtime.allow_cloud_runtime);
     }
 
     #[test]

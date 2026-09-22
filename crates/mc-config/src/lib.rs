@@ -158,6 +158,23 @@ pub struct RuntimeConfig {
     pub allow_cloud_runtime: bool,
 }
 
+impl Default for RuntimeConfig {
+    /// 与 `Config::default().runtime` 同源（M3-2 / `docs/15-M3-PLAN.md` §7.6 接线）。
+    ///
+    /// `default_runtime` 用 profile 名（`RuntimeProfile::as_str()`），不是 adapter
+    /// 白名单的 provider key：前者 26 个目录、后者 25 个（docs/15 §9.3）。
+    fn default() -> Self {
+        Self {
+            default_runtime: "claude-code".into(),
+            max_concurrent_tasks_per_agent: 4,
+            lease_secs: 5 * 60,
+            retry_max: 3,
+            allow_local_daemon: true,
+            allow_cloud_runtime: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelConfig {
     pub default_reply_strategy: String,
@@ -221,14 +238,7 @@ impl Default for Config {
             feature_flags: FeatureFlagsConfig {
                 default_enabled: Vec::new(),
             },
-            runtime: RuntimeConfig {
-                default_runtime: "claude-code".into(),
-                max_concurrent_tasks_per_agent: 4,
-                lease_secs: 5 * 60,
-                retry_max: 3,
-                allow_local_daemon: true,
-                allow_cloud_runtime: false,
-            },
+            runtime: RuntimeConfig::default(),
             channel: ChannelConfig {
                 default_reply_strategy: "thread".into(),
                 rate_limit_per_minute: 60,

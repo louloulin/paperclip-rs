@@ -25,7 +25,7 @@ fn assemble(db: mc_db::pool::Db) -> Router {
         db,
         mc_http::RuntimeHandles {
             actors: mc_core::actor::ActorRegistry::new(),
-            adapters: Arc::new(mc_http::state::AdapterRegistryStub::default()),
+            adapters: Arc::new(mc_http::state::AdapterRegistry::default()),
         },
         mc_http::ConfigSnapshot {
             host: "127.0.0.1".into(),

@@ -745,7 +745,7 @@ mod tests {
             db,
             crate::state::RuntimeHandles {
                 actors: mc_core::actor::ActorRegistry::new(),
-                adapters: Arc::new(crate::state::AdapterRegistryStub::default()),
+                adapters: Arc::new(crate::state::AdapterRegistry::default()),
             },
             crate::state::ConfigSnapshot {
                 host: "127.0.0.1".into(),

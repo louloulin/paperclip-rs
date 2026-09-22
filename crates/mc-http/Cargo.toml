@@ -37,6 +37,9 @@ reqwest = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }
+mc-config = { path = "../mc-config" }
+# M3-2：运行时 adapter 注册表（`state.rs` 只 `pub use` 它；12 个调用点不用各自加依赖）。
+mc-runtime = { path = "../mc-runtime" }
 mc-auth = { path = "../mc-auth" }
 mc-authz = { path = "../mc-authz" }
 mc-realtime = { path = "../mc-realtime" }
@@ -50,7 +53,6 @@ mc-openapi = { path = "../mc-openapi" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-mc-config = { path = "../mc-config" }
 # M1 sub-issue C 的 e2e 测试（tests/{invitations,pats}.rs）依赖以下三件套。
 http-body-util = { workspace = true }
 tower = { workspace = true, features = ["util"] }

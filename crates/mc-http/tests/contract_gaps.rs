@@ -36,7 +36,7 @@ use mc_core::actor::ActorRegistry;
 use mc_core::workspace::{NewWorkspace, WorkspaceRole};
 use mc_core::{Id, Slug};
 use mc_db::Db;
-use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
+use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_repos::member::{MemberRepo, NewMember};
 use mc_repos::user::{NewUser, UserRepo};
@@ -55,7 +55,7 @@ fn build_state(db: Db) -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
-    let adapters = Arc::new(AdapterRegistryStub::default());
+    let adapters = Arc::new(AdapterRegistry::default());
     Arc::new(AppState::new(
         db,
         RuntimeHandles { actors, adapters },
