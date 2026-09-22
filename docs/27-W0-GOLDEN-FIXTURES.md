@@ -200,35 +200,56 @@ plan1 §8 写「上游用例数」：本轮把分母解释为**抽出的 fixture
 "分母 = W0-C 抽出的 golden fixture 用例数"），因为上游可判定的用例总数无法穷举 —— 555 个候选点里
 501 个当前不可静态解析，1484 个 recorder 点根本不在范围。**所以契约等价率永远必须和抽取率一起读**：
 
-### 5.1 本轮实测（base `8ad10e5`，2026-09-22）
+### 5.1 本轮实测（base `8ad10e5`，2026-09-22；database 层为 **LUM-1410 修复后**的数）
 
 | 层 | pass | mismatch | unmounted | placeholder | unevaluable | 契约等价率 | 已接入路由等价率 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | stateless（确定性，CI 口径） | 4 | 1 | 5 | 1 | 47 | **4/58 = 6.9%** | 4/5 = 80.0% |
-| database（本机真库口径 = 两者取强者 = 报告合并列） | 40 | 4 | 8 | 6 | 0 | **40/58 = 69.0%** | **40/44 = 90.9%** |
+| database（本机真库口径 = 两者取强者 = 报告合并列） | 43 | 1 | 8 | 6 | 0 | **43/58 = 74.1%** | **43/44 = 97.7%** |
 
 另：`offline_decidable = 4/11` pass。
+
+> database 行的历史值：W0-C 交付时是 `pass 40 / mismatch 4`（69.0% / 90.9%）。差出的 3 条是
+> `POST /api/issues` 的 assignee 存在性 + `attachment_ids` 形态校验，**已由 LUM-1410 修好**（§6.1）。
+> stateless 行**一个字节都没变**：这 3 条在 stateless 层本就是 `unevaluable`（需要 `member` 身份的
+> 真库层），所以 CI 的 ⑨ 契约快照 `report.json` **无需刷新**（`--check` 仍绿，§9 第 1 条）。
 
 **怎么读这三个数**：
 
 - stateless 的 6.9% **不是**「代码差」：47/58 条 fixture 需要真库（`member` 身份），stateless 层把它们判 `unevaluable`。
   确定性是它存在的理由（CI 与 `--check`），要的是"没漂移"，不是"比率高"。
-- **M3 集成门该报 database 层的 69.0%**（40/58）。plan1 §8 给 W3 的目标是 40% ⇒ 24 条；本轮 base 已达 40 条，
+- **M3 集成门该报 database 层的 74.1%**（43/58）。plan1 §8 给 W3 的目标是 40% ⇒ 24 条；本轮 base 已过线，
   但这个余量会在抽取器扩面（§3.4 的两大缺口）后重新摊薄 —— 目标是**基线上涨**，不是数字好看。
-- 90.9% 的「已接入路由等价率」说明分子分母口径干净：唯一不等的 4 条全部在上表 §6 逐条登记过。
+- 97.7% 的「已接入路由等价率」说明分子分母口径干净：唯一不等的 1 条在上表 §6.1 登记过
+  （`/auth/google` 的回放器限制，不是路由缺陷）。
 
 ---
 
 ## 6. 本轮非等价清单（只登记，不在本切片修）
 
-### 6.1 `mismatch` 4 条
+### 6.1 `mismatch` 1 条（原 4 条，其中 3 条已由 LUM-1410 修复）
 
 | fixture | 路由 | 期望 → 实测 | 根因 | 去向 |
 | --- | --- | --- | --- | --- |
-| `issues/TestCreateIssueRejectsMalformedAttachmentIDBeforeWrite@…handler_test.go:1454#25` | `POST /api/issues` | 400 → **201** | 创建 issue 时不校验 `attachment_ids` 的 UUID 合法性 | **LUM-1410**（已建，backlog，未指派） |
-| `issues/TestCreateIssueRejectsNonexistentMemberAssignee@…:1372#21` | `POST /api/issues` | 400 → **201** | 不校验 `assignee_id` 指向的成员是否存在 | **LUM-1410** |
-| `issues/TestCreateIssueRejectsNonexistentAgentAssignee@…:1384#22` | `POST /api/issues` | 400 → **201** | 不校验 `assignee_id` 指向的 agent 是否存在 | **LUM-1410** |
 | `auth/TestGoogleLoginSuccessfulExistingUser@…auth_google_error_code_test.go:289#1` | `POST /auth/google` | 200 → **403** | 上游用例用**假 verifier**（stub）签发 id_token；本仓走真 Google verifier，测试用的字面量 token 必然 403 | 不是路由缺陷，是**回放器限制**：要判定这类用例需在 harness 注入 verifier stub（改 `mc-http` 可测性接口，超出 W0-C 范围）。登记为已知边界：该 fixture 在报告里固定是 `mismatch`，读报告时按本条解释。 |
+
+> **已修复（LUM-1410，base `9d494c7`）**：下面 3 条 `POST /api/issues` 的 `mismatch` 全部转 `pass`。
+> 修法：`create_issue` 在**写库之前**做 `(assignee_type, assignee_id)` 存在性校验
+> （`validate_assignee_target`，即上游 `validateAssigneePair` 的移植：member 查 `member` 表、
+> agent/squad 查表 + 归档位）与 `attachment_ids` 的逐元素 UUID 校验
+> （`parse_attachment_ids`，对应上游 `parseUUIDSliceOrBadRequest`）；`PUT /api/issues/:id`、
+> `POST /api/issues/:id/move`、`/batch-update` 走同一个 `apply_update_request`，同步生效。
+>
+> | fixture（原登记） | 路由 | 修复前 | 修复后 |
+> | --- | --- | --- | --- |
+> | `issues/TestCreateIssueRejectsMalformedAttachmentIDBeforeWrite@…handler_test.go:1454#25` | `POST /api/issues` | 400 → **201** | pass（且"写库前"由 e2e 断言的 issue 计数证明） |
+> | `issues/TestCreateIssueRejectsNonexistentMemberAssignee@…:1372#21` | `POST /api/issues` | 400 → **201** | pass |
+> | `issues/TestCreateIssueRejectsNonexistentAgentAssignee@…:1384#22` | `POST /api/issues` | 400 → **201** | pass |
+>
+> 残留（未等价、当前 fixture 未覆盖，登记为缺口）：合法 `attachment_ids` 的**绑定**语义
+> （上游挂到新 issue 并做归属校验）、agent/squad 指派的 `canInvokeAgent` 权限门（上游 403）、
+> 以及 `assignee_type` 取值面（上游只收 `member`/`agent`/`squad`，本仓另收 `user`/`autopilot`）
+> —— 逐条见 `docs/11-M2-ISSUE.md` §5 与 §7 第 7 条。
 
 ### 6.2 `unmounted` 8 条（路由未实现，owner 取自 `scripts/route-owners.tsv`）
 
@@ -277,6 +298,10 @@ plan1 §8 写「上游用例数」：本轮把分母解释为**抽出的 fixture
    （本切片只新增 `mc-conformance` 一个 package 条目）。若将来做"整段响应快照"再评估。
 6. **一条 fixture 只有一条主断言**：上游一个用例里多条断言 → 多条 fixture（id 里的 `#N`），
    所以"fixture 数"与"上游用例数"不是 1:1，读比率时不要混。
+7. **`attachment_ids` 只校验形态、不绑定**（LUM-1410 登记）：上游在 `CreateIssue` 里把附件挂到新 issue、
+   在 `updateIssueAtomically` 里做归属校验；本仓 M2 没有 `attachment` 表（storage 面归 M5，`docs/11` §6），
+   所以"非法 uuid → 400"这半段已等价（fixture 025 已 pass），**"合法 uuid 的绑定/归属语义"仍未等价**
+   —— 本轮 fixture 里没有用合法 `attachment_ids` 的用例，故不影响当前比率，但扩面时会暴露。
 
 ---
 
@@ -303,9 +328,9 @@ report matches crates/mc-conformance/report.json
 $ PGPASSWORD=multica psql -h 127.0.0.1 -U multica -d multica_conformance -c '\dt' | tail -1
 (29 rows)                                            # 迁移已就位
 $ cargo run -q -p mc-conformance -- --db-url postgres://multica:multica@127.0.0.1:5432/multica_conformance
-  pass 40  mismatch 4  unmounted 8  placeholder 6  unevaluable 0
-  契约等价率 = 40/58 = 69.0%
-  已接入路由等价率 = 40/44 = 90.9%
+  pass 43  mismatch 1  unmounted 8  placeholder 6  unevaluable 0      # LUM-1410 前：pass 40 / mismatch 4
+  契约等价率 = 43/58 = 74.1%                                          # 前：40/58 = 69.0%
+  已接入路由等价率 = 43/44 = 97.7%                                     # 前：40/44 = 90.9%
 
 # 5) 测试 + 门禁
 $ cargo test -p mc-conformance                       # 2 passed
