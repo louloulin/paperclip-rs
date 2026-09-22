@@ -204,7 +204,7 @@ workspace 是否存在，与 M1 切片一致），缺用户头 401，坏 workspa
   （DTO 字段名、`deny_unknown_fields`、字符前缀 `status:` 的解析、指纹、cursor 编解码、
   400/409/422 的分类）全在 `mc-http`。上游把两者写在同一个 handler 文件里，本仓拆开的理由是
   **R7（单文件 800 行）**：直接把上游三个 handler 合起来会得到一个 3000+ 行文件，且 M2-A
-  （`routes/issues.rs`）的文件已经超标，不能再往里面堆。
+  （`routes/issues.rs`，现已由 LUM-1423 拆分）的文件当时已经超标，不能再往里面堆。
 - **`issue_table` 四文件**（`mod.rs` / `sql.rs` / `repo.rs` / `tests.rs`）同样受 R7 约束：规格与结果类型、
   SQL 文本、执行、测试各占一份，四份分别 547 / 618 / 396 / 415 行。`sql.rs` 里的运行时参数绑定用
   `Param` enum + `QueryBuilder` 手工维护 `$n` 序号，**不引入** `sqlx::QueryBuilder` 的
@@ -234,15 +234,39 @@ workspace 是否存在，与 M1 切片一致），缺用户头 401，坏 workspa
 上限现在**有机器执行**：`scripts/file_size_check.py`（存量违规钉在
 `scripts/file_size_baseline.tsv`，只减不增）+ `scripts/gates.sh` 的门 ⑩ `file-size`
 （进默认集合、CI 在 `fast` job，见 `docs/24-W0-CI.md` §12）。本文件拆分后已从该基线里消失；
-全仓剩下 14 个存量违规（`routes/issues.rs` 2227、`mc-repos/src/issue.rs` 1950、`routes/auth.rs` 1704、…）
+全仓剩下 12 个存量违规（`mc-repos/src/issue.rs` 1950、`routes/auth.rs` 1704、…）
 已逐行登记，它们只允许变短。
+
+**M2-A 的两个超标文件也已由 LUM-1423 拆分消除**（同样纯移动、零行为变化；该片同时是
+PR #19 / LUM-1410 的前置，因为 #19 的改动让两份文件从 2227/1104 涨到 2394/1274）：
+
+| 文件 | 行数 | 内容 |
+| --- | ---: | --- |
+| `routes/issues/mod.rs` | 205 | 模块 doc + 常量 + `pub fn router()` + `not_implemented`（501 占位）+ 供 `issue_table` 复用的重导出 |
+| `routes/issues/helpers.rs` | 233 | `validation` / `repo_err` / `header_str` / 日期补丁 / `double_option` / assignee 与附件参数小工具 |
+| `routes/issues/context.rs` | 169 | `WorkspaceQuery` + `resolve_workspace` + `StatusCatalog` |
+| `routes/issues/query.rs` | 274 | `ListIssuesQuery` 与分页/排序/分组的规格转换 |
+| `routes/issues/dto.rs` | 357 | `IssueDto` + 全部请求体（`deny_unknown_fields`） |
+| `routes/issues/list.rs` | 319 | 集合端点（list / search / grouped 等） |
+| `routes/issues/crud.rs` | 553 | 单体端点（create / get / update / delete / children / move 等） |
+| `routes/issues/extras.rs` | 279 | reactions / metadata / properties |
+| `routes/issues/statuses.rs` | 191 | `/api/issue-statuses*` 目录端点 |
+| `tests/issues/main.rs` | 31 | e2e 入口（模块 doc + `#![cfg(feature = "test-util")]` + `mod` 声明） |
+| `tests/issues/support.rs` | 133 | 连接 / 种子 / `AppState` / 请求小工具（7 条 e2e 共用） |
+| `tests/issues/{crud,filters,children,reactions,statuses,auth,validation}.rs` | 175 / 118 / 184 / 196 / 202 / 147 / 179 | 7 条 e2e 各占一份 |
+
+两处入口对调用方透明：`routes/mount.rs` 的 `super::issues::router()`、`tests/` 的
+`--test issues` 目标名与 `issue_table` 复用的 `crate::routes::issues::{validation, …}` 路径均未变；
+两份文件随即从基线移除（**14 → 12** 条）。`docs/15` / `docs/35` / `docs/36` 里的 `routes/issues.rs`
+行号与路径索引（M3 规划/预检文档，含「6 个 501 stub 的行号」）**本片未改**，它们描述的仍是拆分前的
+单文件位置：M3-6 落刀时按 `grep -n not_implemented crates/mc-http/src/routes/issues/` 重新定位即可。
 - **挂载点**：`issues::router()` 末尾 `.merge(super::issue_table::router())`。选择 merge 而不是
   新开 `mount_slice_*` 的理由：这四个路由的逻辑归属就是 issue 资源（上游也在同一份 handler 里
   注册），而且 `mount.rs` / `routes/mod.rs` 是 M2-A / M2-B / M2-C / W0-1 多分支的共享锚点文件，
   不碰它们能让本切片与其它在飞分支零冲突。
 - **测试布局**：仓储层的 DB 测试放在 `issue_table/tests.rs`（`mod.rs` 里 `#[cfg(test)] mod tests;`，
   与 `crate::issue` 的 `db_tests` 一致：`#[ignore]` + `MULTICA_TEST_DATABASE_URL`）；HTTP e2e 放在
-  `crates/mc-http/tests/issue_table.rs`（与 `tests/issues.rs` / `tests/inbox.rs` 一致）。两者都
+  `crates/mc-http/tests/issue_table.rs`（与 `tests/issues/main.rs` / `tests/inbox.rs` 一致）。两者都
   **不**接进 `scripts/gates.sh` 的默认集合（默认集合离线可跑），由 `--with-db` 的 `db` 门覆盖。
 
 ## 7. 验证证据

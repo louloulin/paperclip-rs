@@ -12,9 +12,9 @@ ListIssues L1164 / GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Gro
 | --- | --- |
 | `crates/mc-repos/src/issue.rs` | `IssueRepo`（DB-backed，`query_as`/`query` 运行期 builder + 全参数绑定） |
 | `crates/mc-repos/src/issue_status.rs` | `IssueStatusRepo`（状态目录 CRUD / reorder / 默认目录） |
-| `crates/mc-http/src/routes/issues.rs` | `/api/issues*` + `/api/issue-statuses*` handlers + `router()` |
+| `crates/mc-http/src/routes/issues/` | `/api/issues*` + `/api/issue-statuses*` handlers + `router()`（R7 拆分：`mod.rs` 入口 + 8 个分片，单文件均 ≤ 800 行） |
 | `crates/mc-repos/src/lib.rs` | 仅追加一行 `pub mod issue_status;` |
-| `crates/mc-http/tests/issues.rs` | 6 个 e2e（`test-util` feature 门控，需真库） |
+| `crates/mc-http/tests/issues/main.rs` | 7 个 e2e（`test-util` feature 门控，需真库；R7 拆分后的入口，分片在 `tests/issues/`） |
 
 `mount_slice_issue()` / `mount.rs::router()` / `routes/mod.rs` **未改动** —— scaffold
 （`feat/multica-rs-initial` @ `fd6dfd6` 的 `4aa275a`）已把切片合并进主 router。
@@ -186,7 +186,7 @@ MULTICA_TEST_DATABASE_URL=postgres://multica:multica@127.0.0.1:5432/multica_test
 #   update/reorder/delete 守卫（内置不可删、被引用不可删）
 ```
 
-HTTP e2e（`crates/mc-http/tests/issues.rs`，`test-util` feature）：
+HTTP e2e（`crates/mc-http/tests/issues/main.rs`，`test-util` feature）：
 
 ```
 MULTICA_TEST_DATABASE_URL=postgres://multica:multica@127.0.0.1:5432/multica_test \
