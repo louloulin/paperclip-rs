@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "autopilots/TestCreateAutopilotRejectsMalformedAssigneeID@server/internal/handler/handler_test.go:1667#1",
+  "method": "POST",
+  "path": "/api/autopilots",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "title": "Malformed assignee autopilot",
+    "assignee_id": "not-a-uuid",
+    "execution_mode": "run_only"
+  },
+  "expect": {
+    "status": 400,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/handler_test.go",
+    "line": 1667,
+    "test": "TestCreateAutopilotRejectsMalformedAssigneeID",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

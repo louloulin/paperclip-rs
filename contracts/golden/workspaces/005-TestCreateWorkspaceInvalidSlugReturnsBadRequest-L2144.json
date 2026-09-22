@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "workspaces/TestCreateWorkspaceInvalidSlugReturnsBadRequest@server/internal/handler/handler_test.go:2144#5",
+  "method": "POST",
+  "path": "/api/workspaces",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "name": "Invalid Slug Workspace",
+    "slug": "invalid slug"
+  },
+  "expect": {
+    "status": 400,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/handler_test.go",
+    "line": 2144,
+    "test": "TestCreateWorkspaceInvalidSlugReturnsBadRequest",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

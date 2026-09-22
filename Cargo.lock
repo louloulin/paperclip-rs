@@ -2270,6 +2270,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-conformance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "mc-core",
+ "mc-db",
+ "mc-http",
+ "mc-realtime",
+ "mc-repos",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+ "uuid",
+]
+
+[[package]]
 name = "mc-core"
 version = "0.1.0"
 dependencies = [
