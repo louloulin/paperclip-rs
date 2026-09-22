@@ -50,6 +50,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/auth/verify-code", post(verify_code))
         .route("/auth/logout", post(logout))
         .route("/api/auth/refresh", post(refresh_session))
+        // M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick 的增量：
+        // CLI 登录用的一次性 PAT（浏览器会话 → token）。
+        .route("/api/auth/cli-token", post(cli_token))
     // 注：`/api/me` 由 M1-A 的 routes/workspaces.rs 真实实现（仲裁 #4）。
     // 此处不得再注册同 path+method —— axum 0.7 `.merge` 重复注册会 panic。
 }
@@ -388,6 +391,121 @@ fn parse_session_cookie(header: &str, name: &str) -> Option<String> {
 }
 
 // ============================================================
+// POST /api/auth/cli-token —— CLI 登录换取 PAT
+// ============================================================
+
+/// 当前用户解析：优先 session cookie，其次 M1 dev-mode 的 `X-Multica-User-Id`。
+async fn current_user_id(state: &AppState, headers: &HeaderMap) -> Result<Id, ApiError> {
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if let Some(sid) = parse_session_cookie(cookie_header, &state.config.session_cookie) {
+        match state.auth.store().get(&sid).await {
+            Ok(session) => return Ok(session.user_id),
+            Err(mc_auth::session::SessionError::Expired) => {
+                return Err(ApiError(Error::SessionExpired))
+            }
+            // 未知 session 不直接 401：可能是 dev 模式的 header 路径，继续往下看。
+            Err(mc_auth::session::SessionError::NotFound) => {}
+        }
+    }
+    let raw = headers
+        .get(&crate::routes::auth_user::USER_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            ApiError(Error::Unauthorized {
+                message: "cli-token requires a session or X-Multica-User-Id header".into(),
+            })
+        })?;
+    Id::parse(raw.trim()).map_err(|_| {
+        ApiError(Error::Unauthorized {
+            message: "invalid X-Multica-User-Id header (not a uuid)".into(),
+        })
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct CliTokenResponse {
+    /// 明文 token（仅此一次返回）。
+    pub token: String,
+    pub id: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: String,
+    pub user_id: String,
+}
+
+/// `POST /api/auth/cli-token` —— 用已登录会话换取一个 CLI 用的 token。
+///
+/// 上游（`handler/auth.go::IssueCliToken`）签发一个无状态 JWT；本仓 M1 还没有 JWT
+/// 签发链，因此本实现返回一个 **30 天 TTL 的 PAT**（与 `/api/me/pats` 同一个
+/// `PatStore`，`scopes = ["cli"]`）。这是有意的等价替换（可撤销 vs 不可撤销），
+/// 见 LUM-1347 集成报告；M9 接入 JWT 后可平滑切换。
+///
+/// 与 LUM-1335（`feat/multica-rs-m1`）原实现的区别：原实现只拼一个
+/// `mc_cli_<uuid>` 字符串且**不落库**，拿到的 token 无法被任何校验路径认可。
+///
+/// 签名与上游对齐：**无请求体**，200 + `{token}`。
+async fn cli_token(State(state): State<Arc<AppState>>, headers: HeaderMap) -> ApiResult<Response> {
+    let user_id = current_user_id(&state, &headers).await?;
+    let raw = generate_cli_pat_secret();
+    let token = format!("{}{raw}", crate::routes::pats::PAT_PREFIX);
+    let token_hash = sha256_hex(&raw);
+    let token_last4 = raw
+        .chars()
+        .skip(raw.len().saturating_sub(4))
+        .collect::<String>();
+    let now = Utc::now();
+    let expires_at = now + Duration::days(CLI_TOKEN_TTL_DAYS);
+    let pat = mc_auth::pat::Pat {
+        id: Id::new(),
+        user_id,
+        name: "cli".to_string(),
+        token_hash,
+        token_last4,
+        expires_at,
+        last_used_at: None,
+        scopes: vec!["cli".to_string()],
+        created_at: now,
+    };
+    state
+        .pat
+        .store()
+        .put(pat.clone())
+        .await
+        .map_err(|e| ApiError(Error::Internal(format!("cli-token put: {e}"))))?;
+    Ok((
+        StatusCode::OK,
+        Json(CliTokenResponse {
+            token,
+            id: pat.id.to_string(),
+            name: pat.name.clone(),
+            scopes: pat.scopes.clone(),
+            expires_at: pat.expires_at.to_rfc3339(),
+            user_id: user_id.to_string(),
+        }),
+    )
+        .into_response())
+}
+
+/// CLI token 有效期（天）。
+const CLI_TOKEN_TTL_DAYS: i64 = 30;
+
+fn generate_cli_pat_secret() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(input.as_bytes());
+    hex::encode(h.finalize())
+}
+
+// ============================================================
 // POST /api/auth/refresh
 // ============================================================
 
@@ -712,6 +830,87 @@ mod tests {
             body.get("session_id").and_then(|v| v.as_str()),
             Some(sid.as_str())
         );
+    }
+
+    /// `/api/auth/cli-token`：dev header 路径 → 200 + 可用的 PAT（真正落 store）。
+    #[tokio::test]
+    async fn cli_token_issues_usable_pat() {
+        let state = build_state(60, true);
+        let app = router().with_state(state.clone());
+        let user_id = Id::new();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/cli-token")
+            .header("x-multica-user-id", user_id.as_string())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let (_, body) = body_json(resp).await;
+        let token = body
+            .get("token")
+            .and_then(|v| v.as_str())
+            .expect("token")
+            .to_string();
+        assert!(token.starts_with("mk_pat_"), "token prefix: {token}");
+        assert_eq!(
+            body.get("user_id").and_then(|v| v.as_str()),
+            Some(user_id.as_string().as_str())
+        );
+        assert_eq!(
+            body.get("scopes")
+                .and_then(|v| v.get(0))
+                .and_then(|v| v.as_str()),
+            Some("cli")
+        );
+
+        // token 必须真的能被 PatStore 反查到（sha256(raw) 为 key）——这正是
+        // LUM-1335 原实现缺的一步（它只拼字符串、不落库）。
+        let raw = token.trim_start_matches(crate::routes::pats::PAT_PREFIX);
+        let stored = state
+            .pat
+            .store()
+            .get_by_hash(&sha256_hex(raw))
+            .await
+            .expect("pat is persisted");
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.name, "cli");
+        assert!(stored.expires_at > Utc::now());
+    }
+
+    /// cookie 会话路径：有效 session → 200；无 session 且无 header → 401。
+    #[tokio::test]
+    async fn cli_token_uses_session_cookie_and_requires_auth() {
+        let state = build_state(60, true);
+        let app = router().with_state(state.clone());
+        let user_id = Id::new();
+        let session = Session::new(user_id, 60);
+        let sid = session.id.clone();
+        state.auth.store().put(session).await.unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/cli-token")
+            .header("cookie", format!("multica_session={sid}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let (_, body) = body_json(resp).await;
+        assert_eq!(
+            body.get("user_id").and_then(|v| v.as_str()),
+            Some(user_id.as_string().as_str())
+        );
+
+        // 既无 cookie 也无 header → 401
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/cli-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

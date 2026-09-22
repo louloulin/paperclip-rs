@@ -29,8 +29,11 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/health/db", get(health::db_health))
         .route("/api/openapi.json", get(openapi::openapi_json))
         // ----- M0 占位（M1+ 各 sub-issue 用真实 handler 替换） -----
+        // `/api/auth/logout` 占位已删（M1-D / LUM-1347）：B 切片的真实 logout 是
+        // 上游路径 `POST /auth/logout`（无 `/api` 前缀，见 docs/09 §8.4），两者并存会
+        // 出现"看似可用其实是 empty 200 占位"的假路由。`/api/auth/login` 与
+        // `/api/auth/session` 上游没有同路径路由（M0 自造），保留给 M2+ 实现。
         .route("/api/auth/login", post(health::placeholder))
-        .route("/api/auth/logout", post(health::placeholder))
         .route("/api/auth/session", get(health::placeholder))
         // 注：`/api/workspaces` 与其 `{id}` 占位路由已由 sub-issue A 的
         // mount_slice_workspace_member 真实路由替换（axum 0.7 同 path+method
@@ -39,7 +42,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/issues",
             get(health::placeholder).post(health::placeholder),
         )
-        .route("/api/issues/{id}", get(health::placeholder))
+        // axum 0.7（matchit 0.7）：路径参数必须写 `:id`；`{id}` 会被当字面量段，
+        // 编译通过但恒 404（docs/09 §7.4）。M0 占位原本是 `{id}`，M1-D 修正以免
+        // M2 切片照抄。
+        .route("/api/issues/:id", get(health::placeholder))
         .route(
             "/api/agents",
             get(health::placeholder).post(health::placeholder),
@@ -83,6 +89,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_auth())
         .merge(mount_slice_invitation())
         .merge(mount_slice_pat())
+        .merge(mount_slice_share_link())
 }
 
 /// workspace + member + me 切片。
@@ -120,4 +127,12 @@ fn mount_slice_invitation() -> Router<Arc<AppState>> {
 /// 在本函数里 `.merge(pats::router())`。
 fn mount_slice_pat() -> Router<Arc<AppState>> {
     super::pats::router()
+}
+
+/// share-link 切片：workspace share link 的创建/列出/撤销 + 公开查看/加入。
+///
+/// M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick：真实 handler 在
+/// crates/mc-http/src/routes/share_links.rs（独立文件，避开 A/C 的既有路由文件）。
+fn mount_slice_share_link() -> Router<Arc<AppState>> {
+    super::share_links::router()
 }

@@ -113,6 +113,24 @@ fn parse_role(s: &str) -> Result<WorkspaceRole> {
     WorkspaceRole::from_str(s).ok_or_else(|| RepoError::Db(format!("invalid workspace role: {s}")))
 }
 
+/// 该 workspace 里除 `except_member_id` 之外是否还有 owner（owner-safeguard 用）。
+async fn has_other_owner(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace_id: Uuid,
+    except_member_id: Uuid,
+) -> Result<bool> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM member \
+         WHERE workspace_id = $1 AND role = 'owner' AND id <> $2",
+    )
+    .bind(workspace_id)
+    .bind(except_member_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(map_sqlx_err)?;
+    Ok(row.0 > 0)
+}
+
 #[async_trait::async_trait]
 impl Repository<WorkspaceMember, NewMember, MemberUpdate, MemberFilter> for MemberRepo
 where
@@ -148,7 +166,28 @@ where
     }
 
     async fn update(&self, id: &Id, patch: MemberUpdate) -> Result<WorkspaceMember> {
-        let role_str = patch.role.map(|r| r.as_str().to_string());
+        // owner-safeguard（LUM-1335 增量，见 docs/09 §2.2）：把 workspace 的最后一个
+        // owner 降级会让工作空间变成无主状态 → 拒绝。`FOR UPDATE` + 事务保证并发下不会
+        // 两个请求同时看到"还有另一个 owner"。
+        let mut tx = self.db.pool().begin().await.map_err(map_sqlx_err)?;
+        let current: Option<MemberRow> = sqlx::query_as::<_, MemberRow>(
+            "SELECT id, workspace_id, user_id, role, created_at, updated_at \
+             FROM member WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_err)?;
+        let current = current.ok_or(RepoError::NotFound)?;
+        let current_role = parse_role(&current.role)?;
+        let new_role = patch.role.unwrap_or(current_role);
+        let role_str = new_role.as_str().to_string();
+        if current_role == WorkspaceRole::Owner
+            && new_role != WorkspaceRole::Owner
+            && !has_other_owner(&mut tx, current.workspace_id, current.id).await?
+        {
+            return Err(RepoError::Conflict);
+        }
         let row = sqlx::query_as::<_, MemberRow>(
             "UPDATE member SET \
                 role = COALESCE($2, role), \
@@ -158,19 +197,36 @@ where
         )
         .bind(id.as_uuid())
         .bind(role_str)
-        .fetch_optional(self.db.pool())
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(map_sqlx_err)?
-        .ok_or(RepoError::NotFound)?;
-        row.try_into()
+        .map_err(map_sqlx_err)?;
+        tx.commit().await.map_err(map_sqlx_err)?;
+        row.ok_or(RepoError::NotFound)?.try_into()
     }
 
     async fn delete(&self, id: &Id) -> Result<()> {
+        // owner-safeguard：最后一个 owner 不可被移除（同 `update` 的降级保护）。
+        let mut tx = self.db.pool().begin().await.map_err(map_sqlx_err)?;
+        let current: Option<MemberRow> = sqlx::query_as::<_, MemberRow>(
+            "SELECT id, workspace_id, user_id, role, created_at, updated_at \
+             FROM member WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_err)?;
+        let current = current.ok_or(RepoError::NotFound)?;
+        if parse_role(&current.role)? == WorkspaceRole::Owner
+            && !has_other_owner(&mut tx, current.workspace_id, current.id).await?
+        {
+            return Err(RepoError::Conflict);
+        }
         let res = sqlx::query("DELETE FROM member WHERE id = $1")
             .bind(id.as_uuid())
-            .execute(self.db.pool())
+            .execute(&mut *tx)
             .await
             .map_err(map_sqlx_err)?;
+        tx.commit().await.map_err(map_sqlx_err)?;
         if res.rows_affected() == 0 {
             Err(RepoError::NotFound)
         } else {
@@ -458,6 +514,73 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(promoted.role, WorkspaceRole::Admin);
+        ws_repo.delete(&ws.id).await.ok();
+    }
+
+    /// owner-safeguard（LUM-1335 增量移植）：最后一个 owner 不可降级、不可移除；
+    /// 存在第二个 owner 后即解禁。
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
+    #[tokio::test]
+    async fn db_last_owner_cannot_be_demoted_or_removed() {
+        let url =
+            std::env::var("MULTICA_TEST_DATABASE_URL").expect("set MULTICA_TEST_DATABASE_URL");
+        let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
+        let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
+        let m_repo = MemberRepo::new(pool.clone());
+        let ws = ws_repo
+            .create(NewWorkspace {
+                name: "WS".into(),
+                slug: unique_slug("owner-guard"),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let owner = fresh_user(&pool, "guard-owner").await;
+        let owner2 = fresh_user(&pool, "guard-owner2").await;
+        let m1 = m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: owner,
+                role: WorkspaceRole::Owner,
+            })
+            .await
+            .unwrap();
+
+        let err = m_repo
+            .update(
+                &m1.id,
+                MemberUpdate {
+                    role: Some(WorkspaceRole::Member),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RepoError::Conflict), "got: {err:?}");
+        let err = m_repo.delete(&m1.id).await.unwrap_err();
+        assert!(matches!(err, RepoError::Conflict), "got: {err:?}");
+
+        m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: owner2,
+                role: WorkspaceRole::Owner,
+            })
+            .await
+            .unwrap();
+        let demoted = m_repo
+            .update(
+                &m1.id,
+                MemberUpdate {
+                    role: Some(WorkspaceRole::Admin),
+                },
+            )
+            .await
+            .expect("second owner exists → demote allowed");
+        assert_eq!(demoted.role, WorkspaceRole::Admin);
+        m_repo
+            .delete(&m1.id)
+            .await
+            .expect("non-last owner removable");
         ws_repo.delete(&ws.id).await.ok();
     }
 }

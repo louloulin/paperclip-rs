@@ -17,6 +17,7 @@ use mc_db::Db;
 pub mod invitation;
 pub mod member;
 pub mod pat;
+pub mod share_link;
 pub mod user;
 pub mod verification_code;
 pub mod workspace;

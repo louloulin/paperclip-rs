@@ -267,7 +267,7 @@ async fn decline_invitation(
 // 内部 helper
 // ---------------------------------------------------------------------------
 
-fn not_found(resource: &'static str) -> Error {
+pub(crate) fn not_found(resource: &'static str) -> Error {
     Error::NotFound {
         resource: resource.into(),
     }
@@ -301,7 +301,7 @@ fn parse_role_or_default(s: Option<&str>) -> Result<WorkspaceRole, Error> {
     }
 }
 
-async fn require_workspace_member(
+pub(crate) async fn require_workspace_member(
     state: &AppState,
     workspace_id: Id,
     user_id: Id,
@@ -319,7 +319,7 @@ async fn require_workspace_member(
     Ok(())
 }
 
-async fn require_workspace_admin(
+pub(crate) async fn require_workspace_admin(
     state: &AppState,
     workspace_id: Id,
     user_id: Id,

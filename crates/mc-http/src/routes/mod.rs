@@ -24,6 +24,9 @@ pub mod auth_user;
 pub mod invitations;
 pub mod pats;
 
+// M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick 的 share-link 增量。
+pub mod share_links;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }
