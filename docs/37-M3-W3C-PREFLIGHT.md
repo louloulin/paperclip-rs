@@ -978,3 +978,191 @@ multica issue runs LUM-1427 ; multica issue runs LUM-1429
    ⇒ **新 cycle 不要 `git checkout feat/multica-rs-initial`**（git 会拒绝：`branch already used by worktree`）。
    在 base 上复验的正确做法：`git reset --hard origin/feat/multica-rs-initial`（自己的空分支，不是 base 分支）
    或 `git checkout --detach <merge-sha>` —— 本 cycle 两次 base 复验都是这么做的。
+
+---
+
+## 15. 06:30 cycle 落地记录（LUM-1456）—— 3/3 并发位已满 ⇒ 不派发，改做「尾斜杠形态」全仓对账：**29 键缺口**（修 10，余 19 进 gate ⑦ 名单）
+
+### 15.0 本 cycle 为什么一个 run 都没派（并发位算术 + 队列前置）
+
+- 平台并发上限是 3，**并且要把本 autopilot run 自己算进去**：实测 `ps -eo pid,etimes,cmd | grep '[p]i '`
+  正好 3 个 pi 进程 —— `LUM-1427` 的 rerun（22:10:17Z 起，热 `target/` 3.1G）、`LUM-1429` 的 rerun
+  （同刻，2.3G）、以及本 run。⇒ **这一个 cycle 没有空位**。
+- 即便有空位，§14.6 队列里也没有可派的片：`M3-7`(`LUM-1438`) 等 M3-4（同一 `routes/runtimes.rs`）、
+  `M2-E`(`LUM-1370`) 等 M3-6（同一 `routes/issues/mod.rs` 里相隔 3–5 行的链式 `.route()`）、
+  `M3-8` 四片等 M3-7（同 crate 的 `Cargo.toml`/`lib.rs`）。**这是 §12.2 那条纪律的又一次命中。**
+- 所以本 cycle 的交付物与 §13 同构：**把「两片在飞 + 合入前」的状态变成下一 cycle 的逐条可执行清单**，
+  顺带修掉本轮查出来的、不冲突的那部分真缺口。磁盘 24G 可用（47%）⇒ 本 cycle 只允许自己一次冷构建。
+
+### 15.1 规则（本轮唯一的新知识）：chi 的 `Mount` 同时服务两种形态 ⇒ axum 必须**两个键都注册**
+
+`docs/17` L113 与 `docs/15` L483 早就记过「axum 0.7 不做末尾斜杠归一化」，`docs/22` §69 也记过
+「chi 的 `/x` 与 `/x/` 是同一 handler」。本轮把它推到底，得到一条**可机械判定**的规则：
+
+> `router.go` 里的 `r.Route("<P>", func(r chi.Router){ ... r.Get("/") ... })` 走的是 chi 的 `Mount`，
+> 而 `Mount` 对不以 `/` 结尾的 pattern 会**注册两个路由**（`<P>` 精确 + `<P>*` 通配）⇒
+> 上游对 `<P>` 与 `<P>/` **都返回 200**。`axum` 侧必须 `.route("<P>", …)` 与 `.route("<P>/", …)`
+> 各注册一次，否则其中一个形态是 **404**（matchit 0.7.3 给 `Err(MissingTrailingSlash)`，
+> `axum-0.7.9` 把它并进 `Err` ⇒ 404，不是 307 —— §14.2 ② 的 10 秒微证）。
+> 反之，`r.Route` 内部**不以 `/` 开头结尾**的普通子路由（`r.Get("/usage")`）只服务**一个**形态。
+
+判据落在已入库的快照上：`docs/fixtures/upstream-routes.tsv` **保留字面尾斜杠**（472 条里 82 条带 `/`），
+带 `/` = mounted root = 需双注册，不带 = plain = 只注册单形态。这条规则与仓库既有结论一致
+（`gen_upstream_routes.py` docstring「chi serves both `/api/inbox` and `/api/inbox/`」、`docs/40` L84
+「尾斜杠是上游行为，不是笔误」、PR #29 对 `/api/agents` 的修法）。
+
+**为什么⑦⑨都看不见这一类：**
+
+| 门 | 结构性盲区 | 实测 |
+| --- | --- | --- |
+| ⑦ `route_parity.py` | 比较时**折叠**尾斜杠（`docs/22` §69：折叠才是上游语义） | 本 cycle 修完，`local 156 → 168`、`implemented` 纹丝不动 `138`、`regression 0` |
+| ⑨ `mc-conformance` | `report.json` 是**上游 Go 集成测试**抽出来的 fixture，**58 条里 0 条带尾斜杠**（`path.endswith('/')` 计数 0） | 本 cycle 修完 `report.json` 一行都不用改，`--check` 照绿 |
+
+⇒ ⑨ 只能抓「**恰好有 fixture** 且请求路径是另一种形态」的那 1 类（§13.2① 的 `/api/agents` 就是），
+无 fixture 的路由（runtimes / agent-builder / tasks 全部无 fixture，见 §15.4）**永远抓不到**。
+所以本轮把规则做成脚本，而不是靠人肉重推。
+
+### 15.2 全仓实测：29 键缺口（19 条真缺口 + 10 条属旁片占位）
+
+新增 `scripts/slash_alias_audit.py`（静态、亚秒、不编译）：
+
+    python3 scripts/slash_alias_audit.py                      # 扫本仓 crates/mc-http/src
+    python3 scripts/slash_alias_audit.py --tree <worktree> [--base-ref <sha>]   # 扫别的切片，可只看新增键
+    python3 scripts/slash_alias_audit.py --declared <file>    # 从「计划里的路由表」预判形态（见 §15.4）
+    # 判据：MISSING_ALIAS / MISSING_EXACT ⇒ exit 1（名单内的键除外）；EXTRA_ALIAS（我们多服务一个上游 404 的形态）⇒ 仅告警
+    # 已知欠账名单：docs/fixtures/slash-alias-allowlist.tsv（19 行，格式 `METHOD\t路径\towner\t理由`）
+    # 自 2026-09-22 起它已经是 **gate ⑦ 的第二条命令**（`gates.sh --only route-parity`），见 §15.6
+
+在 **base `e4ee275`** 上实测 29 条，全部是 `MISSING_ALIAS`（0 条 `EXTRA_ALIAS`、0 条 `MISSING_EXACT`
+—— 即全仓从来没有「多注册」，只有「少注册」）：
+
+| 组 | 缺的键 | 性质 |
+| --- | --- | --- |
+| `/api/workspaces` | `GET`/`POST` 集合 + `:id` 的 `GET`/`PATCH`/`PUT`/`DELETE` + `:id/members/:memberId` 的 `PATCH`/`DELETE`（共 8） | **真缺口**（M1-A/D 已实现的路由） |
+| `/api/issues` | `POST /api/issues/` + `:id` 的 `GET`/`PUT`/`DELETE`（共 4） | **真缺口**（M2-A：`GET /api/issues/` 当初补了别名，POST 与 item 漏了） |
+| `/api/issue-statuses` | `POST` 集合 + `:id` 的 `PATCH`/`DELETE`（共 3） | **真缺口**（同上：`GET` 有别名，其余方法没有） |
+| `/api/tokens` | `GET`/`POST`（共 2） | **真缺口，但当初是刻意取舍**：`docs/17` R3 明确记过「上游字面是 `/api/tokens/`，本仓只注册无尾斜杠」并挂成已知风险（当时依据：上游两个客户端都只打无斜杠） |
+| `/api/comments/{commentId}` | `PUT`/`DELETE`（共 2） | **真缺口**（`/api/comments/:commentId/keep-replies` 等子路径都有了，主路径漏了） |
+| `/api/skills`、`/api/projects`、`/api/squads`、`/api/autopilots`、`/api/chat/sessions` | 各 `GET`/`POST`（共 10） | **不是本仓缺口**：`mount.rs` 的 M0 占位（M4/M5/M6 各自的切片会删掉占位并按本节规则注册）；写在这里是为了让那些切片**别再漏** |
+
+### 15.3 本 PR 修掉 10 键；剩 19 键**全部**进名单（各自有主）
+
+**修掉（不冲突的 10 键）**：`routes/workspaces.rs`（8）、`routes/pats.rs`（2）。
+`pats.rs` 顺带把 `docs/17` 的 **R3 从「已知风险」改成闭环** —— 当初「只注册无尾斜杠」是因为 axum 不归一化
+而真实客户端都打无斜杠，但**双注册的代价只有两个路由键**，没有任何理由继续留一个 404 面。
+
+**没修（19 键，全部写进 `docs/fixtures/slash-alias-allowlist.tsv` 并带 owner）**：
+
+- `routes/issues/mod.rs` 的 **7 键**（`POST /api/issues/`、`GET|PUT|DELETE /api/issues/:id/`、
+  `POST /api/issue-statuses/`、`PATCH|DELETE /api/issue-statuses/:id/`）：**该文件此刻正被 M3-6 的 run
+  拿着写**（替换 6 条 501 stub），紧接着 `M2-E` 还要在同一个链式 `.route()` 表达式的 3–5 行内插路由
+  ⇒ 本 cycle 刻意不碰，避免把一个 19 行的机械改动拆成三处冲突。交给 M3-6 合入后的那个 cycle（见 §15.5）。
+- `routes/comments.rs` 的 **2 键**（`PUT|DELETE /api/comments/:commentId/`）：**不是冲突问题，是 ⑩ 的存量上限**。
+  该文件基线是 `scripts/file_size_baseline.tsv` 里的 **831 行**（800 硬上限 +1 行宽限），我已经顶到
+  **831/831**；而 ⑩ 的规则是「基线内的文件只允许变短」，所以加条目必须先拆文件。顺带实测到一个**抽取器陷阱**（§15.6）。
+- `mount.rs` 的 10 键：M4（chat/projects/squads）/M5（autopilots）/M6（skills）各自的占位替换切片。
+  这些行的 `why` 写明了「替换占位时必须两形态一起注册，并删掉本行」。
+
+> 名单的语义是「只报不红」；**修好一个键就必须删掉对应行**，否则残留行会掩盖同一键的下一次回归，
+> 审计把 stale 行按缺陷处理（exit 1）—— 与 ⑩ 的 `file_size_baseline.tsv`「只减不增」同一规矩。
+> 想看在「没有任何豁免」下的真实缺口，用 `--no-allowlist`（本 PR 后实测 **19 条**）。
+
+### 15.4 两片在飞状态的对账（`w3b_premerge_audit.py` + 本节脚本，22:5x 实测）
+
+**M3-4（`LUM-1427`）：注册面已正确，且是「15 上游键 + 3 条有意别名」**
+
+    [M3-4] head 617036e base e4ee275 files 18 added_routes 18 keys = 15 upstream keys (folded)
+    cross-slice: union 18 keys; duplicates none          audit: 0 finding(s)
+    # §12.1 的 ⑦ 预演（把 18 键注入 base 副本）：
+    upstream 456 | local 174 registered | baseline 156
+      implemented 143 real + 10 placeholder = 153 / 456   known_gap 303   regression 0   local_only 11
+
+- 3 条别名 = `GET /api/runtimes`、`PATCH|DELETE /api/runtimes/:runtimeId` —— 逐条对着 §15.1 的规则查
+  `router.go`：`/api/runtimes` 与 `/{runtimeId}` 都是 `Route` + 子 `"/"` ⇒ **双注册正确**
+  （而 `/api/workspaces/{id}/runtime-profiles` 与 `/:profileId` 是 plain route ⇒ 只该单注册，M3-4 也没多注册）。
+- **⑨ 的预判：合入 M3-4 时 `report.json` 必须一行不变** —— 58 条 fixture 里没有任何一条 path
+  落在 runtimes/profiles/tasks/agent-builder 前缀上（`path` 含 `runtime|profile|task|builder|working-agents`
+  的条数 = 0）。合入后若 `--check` 变红，说明变的是**别的东西**，别顺手刷快照。
+
+**M3-6（`LUM-1429`）：路由还没写，先按「计划路由表」预判形态**
+
+把 issue 描述里那张表逐字抄成 `docs/fixtures/m3-6-declared-routes.tsv`（15 条），再预判：
+
+    python3 scripts/slash_alias_audit.py --declared docs/fixtures/m3-6-declared-routes.tsv
+    # → declared 15 upstream key(s); dual-form required: 2 | single-form: 13
+    #   DUAL GET  /api/agent-builder/sessions/   （上游 /api/agent-builder/sessions/）
+    #   DUAL POST /api/agent-builder/sessions/   （上游同）
+    #   => 2 defect(s), 0 warning(s)   exit 1
+
+⇒ **`/api/agent-builder/sessions` 的 `GET`/`POST` 必须注册两个键**（上游 `router.go:2224-2225` 是
+`Route("/api/agent-builder/sessions")` + `Get("/")`/`Post("/")`），而 issue 表里只写了带尾斜杠的那一形态。
+其余 13 条（`issues/*` 的 stub、`tasks/*`、`working-agents`、`client-usage`）都是 plain 子路由 ⇒ 单形态。
+这条与 §13.2① 是**同一缺陷类**，区别只在于：这次没有 fixture 兜底，⑨ 永远不会替我们发现。
+
+### 15.5 下一 cycle 的验收命令（复制即用）
+
+    # ① 两片是否真交付（不只看 run 终态：§14.3 实测 LUM-1427 的 run「completed 却零交付」）
+    multica issue get LUM-1427 --output json | jq -r '.status'   # 或看有没有 PR / commit
+    multica issue runs LUM-1429
+
+    # ② 合入前：对最终树用合并模式复核（任何中间快照都不作数，§13.1 的教训）
+    python3 scripts/w3b_premerge_audit.py --merged <base-or-merge-worktree> --expect scratch/w3b_expect.json
+
+    # ③ 合入后：主仓对账三连（本条是本 cycle 新增的形态门）
+    python3 scripts/route_parity.py                    # 预期 local = 168 + M3-4 的 18 + M3-6 的 17
+    python3 scripts/slash_alias_audit.py; echo "exit=$?"   # M3-6 若只注册尾斜杠形态，这里会指名报 2 条
+    git diff --stat crates/mc-conformance/report.json     # 预期 M3-4/M3-6 都不动它
+
+    # ④ 合入后必须显式做的事（顺序固定）：补 §15.3 的 7 键（+ comments.rs 的 2 键）→ 删 mount.rs 占位 → 刷 ⑦ 基线
+    python3 scripts/route_parity.py --write-baseline   # 基线是「锁」，不刷就等于没上锁（只对丢路由判红）
+    #   注意：补完键后要同时删掉 docs/fixtures/slash-alias-allowlist.tsv 里对应的行，否则 ⑦ 报 stale 行
+
+### 15.6 本 PR 的第二个交付：这类缺口现在由 **gate ⑦** 兜底（不再靠人记得跑）
+
+本 cycle 新增的门禁接线（`scripts/gates.sh` ⑦ 现在跑**两条**命令）：
+
+    route-parity)   run_gate route-parity bash -c \
+                        'python3 scripts/route_parity.py --quiet && python3 scripts/slash_alias_audit.py --quiet' ;;
+
+为什么必须挂在 ⑦ 上：⑦ 自己（`route_parity.py`）把 `/x` 与 `/x/` **折叠成同一个键**，⑨ 的 58 条 fixture 里
+**0 条**用尾斜杠 ⇒ 这个缺陷类对整个门禁是隐形的（§15.1 的盲区表）。挂上去之后，今天这类「少注册一个形态」
+在任何含新增路由的 PR 上都会直接把 ⑦ 打红，而且不需要库、亚秒。
+
+同 PR 还加了一条**运行期**断言（`crates/mc-http/tests/contract_gaps.rs` 的
+`trailing_slash_alias_forms_are_mounted`），补静态审计看不见的那个盲区：**注册了但没挂进 app**
+（抽取器只看源码字面量，不看这棵 router 有没有被 merge 进来）。断言是「两形态同状态码 **且** 主形态 ≠ 404」，
+本 PR 前后实测：
+
+    修前： GET /api/workspaces → 401 ，但 /api/workspaces/ → 404  ⇒ FAIL（正是 matchit 的 404，不是 307）
+    修后： 1 passed
+
+它带 `#[ignore]` 是有原因的（值得记一笔）：本仓的 `crates/mc-http/tests/*` 全部 `#![cfg(feature = "test-util")]`，
+而门禁里 **⑤ 不带 test-util、⑥ 只跑 `--ignored`** —— 也就是说这些文件里**不加 `#[ignore]` 的用例在门禁里根本不会执行**
+（`tests/pats.rs:112` 那条 401 守卫就是这样一直在外面漂着）。用例本身不需要库（`Db::placeholder()`），
+挂 `#[ignore]` 纯粹是为了让 ⑥ 真的跑到它。
+
+**抽取器陷阱（差点把 10 个键弄丢）**：我先把 `comments.rs` 的别名写成「共用一个 handler 变量」，
+好把 831 行的文件压回基线以内：
+
+    let comment_mut = put(update_comment).delete(delete_comment);
+    ...
+    .route("/api/comments/:commentId", comment_mut.clone())
+    .route("/api/comments/:commentId/", comment_mut)
+
+`cargo fmt` 与 ⑩ 都绿，但 ⑦ 立刻报：
+
+    !! unresolved registrations (fix or extend the extractor):
+       crates/mc-http/src/routes/comments.rs:71: no method-router call in `.route("/api/comments/:commentId", comment_mut.clone())`
+
+⇒ `route_parity.py` / `w3b_premerge_audit.py` / 本脚本共用同一个抽取器，它要求 `.route()` 的**第二个参数里**
+出现 `get/post/put/...` 这类方法路由调用；**handler 一旦换成变量，这个键就从路由清单里静默消失**
+（当时 `local` 从 168 掉到 164，正好是那两条路由的 2 形态 × 2）。所以：`comments.rs` 里**不能**为了压行数
+而共用 handler 变量；要顺便拆文件（⑩ 的原意），要先把这 2 键留给 `LUM-1458`。
+
+**结论（写给下一个要动 `comments.rs` 的人）**：`GET /api/comments/:id/reactions` 之类的相邻改动都会撞上
+831 行的天花板；正解是立即拆文件（把 DTO/序列化那块搬出去），拆完在同一 PR 里补
+`PUT|DELETE /api/comments/:commentId/` 两个键并删掉名单里的那一行。
+
+**给 M3-7（`LUM-1438`，等 M3-4）与 M3-8 四片（等 M3-7）的提醒**：daemon 那 44 条路由里凡是
+`Route`+子 `"/"` 的，落地时按 §15.1 双注册；`routes/daemon.rs` 是**新文件**，不要顺手把
+`routes/runtimes.rs` 的 8 条表 B 路由一起改（那是 M3-4 的领地，§12.2 已实测重叠）。

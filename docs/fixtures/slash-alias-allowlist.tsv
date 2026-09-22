@@ -1,0 +1,29 @@
+# 【尾斜杠别名已知欠账】scripts/slash_alias_audit.py 的允许名单（gate ⑦ 的第二条命令）。
+#
+# 语义：本文件里的一行 = 「这个键的双形态注册我们还没做，但知道欠着」——审计照常打印它，但不判红。
+#   · 一行对应的键修好之后（findings 里不再出现该键），这一行必须删除：残留的行会掩盖同一键的下一次回归，
+#     审计把 stale 行按缺陷处理（exit 1），与 gate ⑩ 的 file_size_baseline.tsv「只减不增」同一条规矩。
+#   · 格式：METHOD<TAB>路径（参数统一写 :param；尾斜杠由脚本自己规范化）<TAB>owner<TAB>说明。
+#   · 依据与逐键清单：docs/37-M3-W3C-PREFLIGHT.md §15.2/§15.3。
+#
+# owner 取值：M4/M5/M6 = 将来替换 mount.rs 占位的那一片；LUM-1458 = 已立案的补键跟进。
+METHOD	PATH	OWNER	WHY
+GET	/api/chat/sessions	M4	M0 占位（routes/mount.rs）；M4 chat-session 切片替换占位时必须两个形态一起注册，并删掉本行
+POST	/api/chat/sessions	M4	M0 占位（routes/mount.rs）；M4 chat-session 切片替换占位时必须两个形态一起注册，并删掉本行
+GET	/api/projects	M4	M0 占位（routes/mount.rs）；M4 project 切片替换占位时必须两个形态一起注册，并删掉本行
+POST	/api/projects	M4	M0 占位（routes/mount.rs）；M4 project 切片替换占位时必须两个形态一起注册，并删掉本行
+GET	/api/squads	M4	M0 占位（routes/mount.rs）；M4 squad 切片替换占位时必须两个形态一起注册，并删掉本行
+POST	/api/squads	M4	M0 占位（routes/mount.rs）；M4 squad 切片替换占位时必须两个形态一起注册，并删掉本行
+GET	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
+POST	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
+GET	/api/skills	M6	M0 占位（routes/mount.rs）；M6 skill 切片替换占位时必须两个形态一起注册，并删掉本行
+POST	/api/skills	M6	M0 占位（routes/mount.rs）；M6 skill 切片替换占位时必须两个形态一起注册，并删掉本行
+DELETE	/api/comments/:param	LUM-1458	comments.rs 已顶到 ⑩ 基线（831/831）：先在同一个 PR 里按 ⑩ 拆文件，再补这两个键并删掉本行
+PUT	/api/comments/:param	LUM-1458	comments.rs 已顶到 ⑩ 基线（831/831）：先在同一个 PR 里按 ⑩ 拆文件，再补这两个键并删掉本行
+POST	/api/issue-statuses	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+DELETE	/api/issue-statuses/:param	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+PATCH	/api/issue-statuses/:param	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+POST	/api/issues	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+DELETE	/api/issues/:param	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+GET	/api/issues/:param	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3
+PUT	/api/issues/:param	LUM-1458	补键要先与 M3-6 合入解耦（同一文件 routes/issues/mod.rs）；见 docs/37 §15.3

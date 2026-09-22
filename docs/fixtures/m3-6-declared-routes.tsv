@@ -1,0 +1,23 @@
+# Declared route table of slice M3-6 (`LUM-1429`), transcribed verbatim from the issue
+# description (`multica issue get LUM-1429`) on 2026-09-23, *before* the slice's code existed.
+#
+# Purpose: `scripts/slash_alias_audit.py --declared <this file>` answers, before a single line
+# of the slice is written, which of these paths upstream serves in **two** forms (chi Mount +
+# child "/") and therefore must be registered twice in axum.  Measured outcome (docs/37 §15.4):
+# only the agent-builder collection is dual; the other 13 are plain single-form registrations.
+METHOD	PATH
+GET	/api/agent-builder/sessions/
+POST	/api/agent-builder/sessions/
+PATCH	/api/agent-builder/sessions/{sessionId}/runtime
+PUT	/api/agent-builder/sessions/{sessionId}/draft
+POST	/api/client-usage
+POST	/api/issues/preview-trigger
+GET	/api/issues/{id}/active-task
+POST	/api/issues/{id}/tasks/{taskId}/cancel
+POST	/api/issues/{id}/rerun
+GET	/api/issues/{id}/task-runs
+GET	/api/issues/{id}/usage
+GET	/api/tasks/{taskId}/messages
+POST	/api/tasks/{taskId}/retry-source-context
+POST	/api/tasks/{taskId}/cancel
+GET	/api/working-agents

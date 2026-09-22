@@ -583,6 +583,14 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
                     "/api/workspaces",
                     get(list_my_workspaces).post(create_workspace),
                 )
+                // 尾斜杠别名：上游是 `r.Route("/api/workspaces", …)` +
+                // `r.Get|Post("/")`，chi 的 Mount 同时服务 `/api/workspaces` 与
+                // `/api/workspaces/`；axum 不做归一化（docs/17 L113），少注册一个键就是
+                // 对上游合法路径的 404。全仓口径与工具见 docs/37 §15。
+                .route(
+                    "/api/workspaces/",
+                    get(list_my_workspaces).post(create_workspace),
+                )
                 .route("/api/me", get(get_me).patch(update_me))
                 .route_layer(user_guard),
         )
@@ -590,6 +598,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(
             Router::new()
                 .route("/api/workspaces/:id", get(get_workspace))
+                .route("/api/workspaces/:id/", get(get_workspace))
                 .route(
                     "/api/workspaces/:id/leave",
                     axum::routing::post(leave_workspace),
@@ -610,7 +619,15 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
                     patch(update_workspace).put(update_workspace),
                 )
                 .route(
+                    "/api/workspaces/:id/",
+                    patch(update_workspace).put(update_workspace),
+                )
+                .route(
                     "/api/workspaces/:id/members/:memberId",
+                    patch(update_member).delete(delete_member),
+                )
+                .route(
+                    "/api/workspaces/:id/members/:memberId/",
                     patch(update_member).delete(delete_member),
                 )
                 .route_layer(require_role(
@@ -623,6 +640,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             Router::new()
                 .route(
                     "/api/workspaces/:id",
+                    axum::routing::delete(delete_workspace),
+                )
+                .route(
+                    "/api/workspaces/:id/",
                     axum::routing::delete(delete_workspace),
                 )
                 .route_layer(require_role(state.clone(), &[WorkspaceRole::Owner])),

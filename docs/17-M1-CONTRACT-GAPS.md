@@ -178,7 +178,7 @@ M1-B 的语义替换（无 JWT 链 → 返回 30 天 TTL 的 PAT，落 `PatStore
 | --- | --- | --- | --- |
 | R1 | 非 UUID 的 `memberId` 返回 400，上游 404 | 仅错误码差异 | 低优先级；若前端依赖 404 再改 |
 | R2 | 上游 `expires_in_days` 的 `nil`/`<=0` = **永不过期**；本仓 `Pat.expires_at` 非 `Option`，退化为默认 30 天 | 「永不过期」无法表达 | PAT DB repo 切片（`personal_access_token` 表已有 `expires_at` 列） |
-| R3 | 只注册无尾斜杠 `/api/tokens`，上游字面是 `/api/tokens/` | 若某客户端打尾斜杠会 404 | 需同时确认上游实际客户端行为（已确认两个都是无斜杠） |
+| R3 | ~~只注册无尾斜杠 `/api/tokens`，上游字面是 `/api/tokens/`~~ | 若某客户端打尾斜杠会 404 | ✅ **已闭环**：LUM-1456（`docs/37` §15）—— 上游 chi 的 Mount 本就两种形态都服务，已补齐 `/api/tokens/` 别名；同源缺口（19 键）一并盘清 |
 | R4 | 创建响应字段：上游 `token_prefix`（前 12 字符）；本仓 `token_last4` + `display_token` | daemon 若读 `token_prefix` 会拿到空 | PAT DTO 对齐切片；需 `Pat` 增列存前缀 |
 | R5 | 创建响应/请求的其他差异：本仓多 `scopes`，且 `expires_at` 始终存在 | 上游多发字段，本仓忽略；反之缺失字段为 `null` | 同上 |
 | R6 | `PATCH` member 响应字段名（`name`/`email` 扁平 vs 上游 `user.name`） | 前端渲染差异 | member DTO 对齐切片 |

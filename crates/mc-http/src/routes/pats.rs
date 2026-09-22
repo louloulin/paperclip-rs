@@ -69,13 +69,17 @@ pub fn router() -> Router<Arc<AppState>> {
 /// 上游契约路径。
 ///
 /// 注意：axum 0.7（matchit 0.7）路径参数语法是 `:id`，不是 `{id}`（那是 axum 0.8）。
-/// 上游 chi 在 `r.Route("/api/tokens", ...)` 里注册 `r.Get("/")`，即 `/api/tokens/`；
-/// 但上游自己的客户端（`server/cmd/multica/cmd_auth.go:329`）与 daemon
-/// （`server/internal/daemon/client.go:704`）都请求**不带尾斜杠**的 `/api/tokens`
-/// 与 `/api/tokens/current/renew`，故本仓以无尾斜杠形式为唯一主路径。
+/// 上游 chi 在 `r.Route("/api/tokens", ...)` 里注册 `r.Get("/")` 与 `r.Post("/")`；
+/// Mount 语义下 `/api/tokens` 与 `/api/tokens/` **两种形态都合法**。上游自己的客户端
+/// （`server/cmd/multica/cmd_auth.go:329`）与 daemon
+/// （`server/internal/daemon/client.go:704`）都只请求**不带**尾斜杠的 `/api/tokens`
+/// 与 `/api/tokens/current/renew`，本仓当初因此只注册无尾斜杠形式，并把「打尾斜杠者会
+/// 404」记为已知风险（`docs/17` R3）。现按全仓统一口径补齐带尾斜杠的别名：风险归零，
+/// 代价是两个路由键（`docs/37` §15）。
 fn tokens_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/tokens", get(list_my_pats).post(create_my_pat))
+        .route("/api/tokens/", get(list_my_pats).post(create_my_pat))
         .route(
             "/api/tokens/current/renew",
             axum::routing::post(renew_current_pat),
