@@ -46,14 +46,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 另外，M2 切片的真实 router 里路径参数必须写 `:id`（axum 0.7 / matchit 0.7
         // 会把 `{id}` 当字面量段——编译通过但恒 404，docs/09 §7.4）。
         .route(
-            "/api/agents",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
-            "/api/runtimes",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
             "/api/chat/sessions",
             get(health::placeholder).post(health::placeholder),
         )
@@ -177,19 +169,22 @@ fn mount_slice_subscriber() -> Router<Arc<AppState>> {
 // （与 M0 的 `056d2ae`、M1-D 的 `4aa275a` 同一手法）。stub router 目前是空
 // `Router::new()`，因此合并本片后**路由表逐字不变**（route_parity 基线不受影响）。
 //
-// ⚠️ 下图两条 M0 占位（`/api/agents` L48-51、`/api/runtimes` L52-55）**本片刻意保留**：
-// 删它们属 M3-5 / M3-4 的活（删一条会掉 2 条 parity，由 M3 集成 cycle 统一刷基线，
-// docs/15 §7.3）；但切片合并前必须先删整块，否则 axum 0.7 同 path+method 重复注册
+// ✅ 两条 M0 占位（`/api/agents`、`/api/runtimes`）已由 **W3b anchor 预删**删除
+// （LUM-1435 的 03:30 cycle，配方与实测见 docs/36-M3-W3B-PREFLIGHT.md §3）：
+// 它们分别属于 M3-5 / M3-4，两块只隔 4 行 ⇒ 留给切片删就会有两片同改本文件 +
+// ⑦ 基线 + ⑨ 快照（三个共享文件、两个写者）。预删落地后 ⑦ 基线 140→136、⑨ 快照
+// 同步重生成，M3-4 / M3-5 的写集里不再出现 `mount.rs` / ⑦ 基线 / ⑨ 快照。
+// 注：切片接线时必须删整块 M0 占位，否则 axum 0.7 同 path+method 重复注册
 // 会在启动时 panic（docs/15 §9.6.6）。
 
-/// agent 切片：`/api/agents*`（M3-5）。切片填 handler 时**同时删除**上面
-/// `/api/agents` 的 M0 占位（`get().post()` 整块）。
+/// agent 切片：`/api/agents*`（M3-5）。M0 占位已由 W3b anchor 预删（docs/36 §3），
+/// 切片只需在此实现 `router()`，不必再动本文件。
 fn mount_slice_agent() -> Router<Arc<AppState>> {
     super::agents::router()
 }
 
-/// runtime 切片：`/api/runtimes*` + runtime-profile 台账（M3-4）。切片填 handler 时
-/// **同时删除**上面 `/api/runtimes` 的 M0 占位（`get().post()` 整块）。
+/// runtime 切片：`/api/runtimes*` + runtime-profile 台账（M3-4）。M0 占位已由 W3b
+/// anchor 预删（docs/36 §3），切片只需在此实现 `router()`，不必再动本文件。
 fn mount_slice_runtime() -> Router<Arc<AppState>> {
     super::runtimes::router()
 }
