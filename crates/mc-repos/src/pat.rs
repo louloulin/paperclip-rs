@@ -12,6 +12,11 @@
 //!
 //! 注意：**不要**触碰 `mc_auth::InMemoryPatStore` —— 它是 fallback，本仓库
 //! 直接走 DB。
+//!
+//! M1-F（LUM-1375）已把 `/api/tokens*`（`crates/mc-http/src/routes/pats.rs`）
+//! 接到本仓储上（`create` / `list_for_user` / `revoke` / `get_by_token` /
+//! `update_expires_at`）；
+//! `touch` 留给 M3 的 daemon 鉴权中间件，当前只保证函数可达 + DB 测试覆盖。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -212,8 +217,39 @@ impl PatRepo {
         Ok(())
     }
 
+    /// 就地延长 `expires_at`（`POST /api/tokens/current/renew` 的写入口）。
+    ///
+    /// 上游 `RenewCurrentPersonalAccessToken` 刻意**不轮换明文 token**（CLI/daemon
+    /// 多进程共享同一 PAT），所以续期必须是「只改过期时间」的一次 UPDATE。
+    /// M1-F（LUM-1375）把该路由从内存 store 切到 DB 时新增：没有它，`renewed: true`
+    /// 只是响应上的假象，重启后 token 仍会按旧时间过期。
+    ///
+    /// 已撤销的行拒绝更新（与 `revoke` 对称：`rows_affected == 0` → `NotFound`）。
+    pub async fn update_expires_at(&self, id: Id, expires_at: DateTime<Utc>) -> Result<()> {
+        let res = sqlx::query(
+            r"
+            UPDATE personal_access_token
+            SET expires_at = $2
+            WHERE id = $1 AND revoked_at IS NULL
+            ",
+        )
+        .bind(id.as_uuid())
+        .bind(expires_at)
+        .execute(self.pool())
+        .await
+        .map_err(map_sqlx)?;
+
+        if res.rows_affected() == 0 {
+            // 不存在或已撤销 —— 两者对调用方都是 "not found"。
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
+    }
+
     /// 更新 `last_used_at`（每次命中 token 时调用）。
-    #[allow(dead_code)]
+    ///
+    /// 供 M3 的 daemon 鉴权中间件调用；当前由 `mc-http/tests/pats.rs` 的 DB 用例
+    /// 覆盖可达性。
     pub async fn touch(&self, id: Id) -> Result<()> {
         sqlx::query(
             r"

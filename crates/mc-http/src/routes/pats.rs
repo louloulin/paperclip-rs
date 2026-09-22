@@ -14,9 +14,17 @@
 //! `/api/me/pats` 保留一个发布周期作为 **deprecated alias**（响应带 `Deprecation` 头）。
 //! 决策与残留偏离见 `docs/17-M1-CONTRACT-GAPS.md`。
 //!
-//! 存储后端：`mc_auth::PatStoreContainer`（默认 `InMemoryPatStore`）。
-//! DB-backed store（`personal_access_token` 表，迁移 0003）属后续切片；
-//! 上游 daemon 中间件对 PAT 的消费属 M3。
+//! 存储后端（**M1-F / LUM-1375 更正**）：`personal_access_token` 表，经
+//! `mc_repos::pat::PatRepo` —— 每次请求 `PatRepo::new(state.db.clone())`，
+//! 与 `routes/auth.rs` 里 `VerificationCodeRepo` 的用法一致。
+//!
+//! **生产路径不再经过 `mc_auth::PatStoreContainer`**：内存实现只作无库场景的
+//! fallback（见 `state.rs` 字段注释；`docs/17` R7 已闭环）。本切片之前 PAT 全部
+//! 落在 `InMemoryPatStore`，进程重启即失效、`GET /api/tokens` 看不到历史 token。
+//!
+//! 上游 daemon 对 PAT 的消费中间件（`Authorization: Bearer` → session）仍属 M3；
+//! 本切片只要求 `PatRepo::touch`（`last_used_at`）**函数可达 + DB 测试覆盖**，
+//! 不在路由层实现该中间件。
 //!
 //! Token 形态：
 //! - 创建时返回明文 token（仅此一次）
@@ -33,9 +41,10 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use mc_auth::pat::Pat;
 use mc_core::Id;
 use mc_errors::Error;
+use mc_repos::pat::{NewPat, PatRepo, PatRow};
+use mc_repos::RepoError;
 
 use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
@@ -115,8 +124,8 @@ pub struct PatDto {
     pub created_at: String,
 }
 
-impl From<&Pat> for PatDto {
-    fn from(p: &Pat) -> Self {
+impl From<&PatRow> for PatDto {
+    fn from(p: &PatRow) -> Self {
         let display = format!("{PAT_PREFIX}{}", p.token_last4);
         Self {
             id: p.id.as_string(),
@@ -124,11 +133,18 @@ impl From<&Pat> for PatDto {
             token_last4: p.token_last4.clone(),
             display_token: display,
             expires_at: p.expires_at.to_rfc3339(),
-            last_used_at: p.last_used_at.as_ref().map(chrono::DateTime::to_rfc3339),
-            scopes: p.scopes.clone(),
+            last_used_at: p.last_used_at.map(|t| t.to_rfc3339()),
+            scopes: scopes_of(p),
             created_at: p.created_at.to_rfc3339(),
         }
     }
+}
+
+/// `personal_access_token.scopes` 在 DB 里是 `JSONB`（`PatRow.scopes` 为
+/// `serde_json::Value`）；本仓的对外形状是 `Vec<String>`。非数组 / 非字符串
+/// 元素一律退化为空列表，避免一行脏数据把整个 list 响应打成 500。
+fn scopes_of(row: &PatRow) -> Vec<String> {
+    serde_json::from_value::<Vec<String>>(row.scopes.clone()).unwrap_or_default()
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,8 +185,8 @@ async fn list_my_pats(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
 ) -> ApiResult<Json<Vec<PatDto>>> {
-    let store = state.pat.store();
-    let pats = store.list_for_user(user.id()).await.map_err(pat_err)?;
+    let repo = PatRepo::new(state.db.clone());
+    let pats = repo.list_for_user(user.id()).await.map_err(pat_err)?;
     Ok(Json(pats.iter().map(PatDto::from).collect()))
 }
 
@@ -190,39 +206,31 @@ async fn create_my_pat(
     // 32 字节随机 → hex（64 字符）+ 前缀 `mk_pat_`。
     let raw = generate_pat_secret();
     let token = format!("{PAT_PREFIX}{raw}");
-    let token_hash = sha256_hex(&raw);
-    let token_last4 = raw
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
 
-    let now = Utc::now();
     let ttl = match (req.expires_in_days, req.ttl_secs) {
         // 上游 `expires_in_days`：仅 > 0 有效；`nil` / `<= 0` 上游为「永不过期」。
         (Some(days), _) if days > 0 => days * 24 * 60 * 60,
         _ => req.ttl_secs.unwrap_or(60 * 60 * 24 * 30),
     };
-    let expires_at = now + chrono::Duration::seconds(ttl);
+    let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
 
-    let pat = Pat {
-        id: Id::new(),
-        user_id: user.id(),
-        name: req.name.trim().to_string(),
-        token_hash,
-        token_last4,
-        expires_at,
-        last_used_at: None,
-        scopes: req.scopes.unwrap_or_default(),
-        created_at: now,
-    };
+    let repo = PatRepo::new(state.db.clone());
+    let row = repo
+        .create(NewPat {
+            user_id: user.id(),
+            name: req.name.trim().to_string(),
+            // hash / last4 都用 `PatRepo` 的 canonical helper：与
+            // `get_by_token` 的查询口径、以及 daemon 中间件（M3）必须完全一致。
+            token_hash: PatRepo::hash_token(&raw),
+            token_last4: PatRepo::last4(&raw),
+            expires_at,
+            scopes: req.scopes.unwrap_or_default(),
+        })
+        .await
+        .map_err(pat_err)?;
 
-    state.pat.store().put(pat.clone()).await.map_err(pat_err)?;
-
-    let dto = PatDto::from(&pat);
+    // `create` 的 RETURNING 带回 DB 生成的 id / created_at —— 响应即库内真实状态。
+    let dto = PatDto::from(&row);
     Ok((
         StatusCode::CREATED,
         Json(CreatePatResponse {
@@ -242,16 +250,20 @@ async fn revoke_my_pat(
         resource: "pat".into(),
     })?;
 
-    let store = state.pat.store();
-    // 仅允许用户撤销自己的 PAT；先 list 校验所有权
-    let mine = store.list_for_user(user.id()).await.map_err(pat_err)?;
+    let repo = PatRepo::new(state.db.clone());
+    // 仅允许用户撤销自己的 PAT；先按用户列出（`list_for_user` 的 SQL 已带
+    // `user_id = $1 AND revoked_at IS NULL`）再撤销 —— 别人的 id 一律 404，
+    // 不泄露「该 id 存在」这一信息。
+    let mine = repo.list_for_user(user.id()).await.map_err(pat_err)?;
     if !mine.iter().any(|p| p.id == id) {
         return Err(Error::NotFound {
             resource: "pat".into(),
         }
         .into());
     }
-    store.delete(id).await.map_err(pat_err)?;
+    // 撤销 = `revoked_at = now()`（迁移 0002），不是物理删除：
+    // 行留在库里，`get_by_token` / `list_for_user` 都会过滤掉它。
+    repo.revoke(id).await.map_err(pat_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -274,38 +286,37 @@ pub async fn renew_current_pat(
     let raw = bearer_token(&headers).ok_or_else(renew_not_a_pat)?;
     let secret = raw.strip_prefix(PAT_PREFIX).ok_or_else(renew_not_a_pat)?;
 
-    let store = state.pat.store();
-    let mut pat = store.get_by_hash(&sha256_hex(secret)).await.map_err(|e| {
-        // 上游：中间件已校验过 token，这里查不到说明「缓存命中与本次读取之间被撤销」。
-        // 统一回 401，让 daemon 走「请重新 login」分支，而不是拿到 500。
-        let _ = e;
-        Error::Unauthorized {
+    let repo = PatRepo::new(state.db.clone());
+    // `get_by_token` 的 SQL 自带 `revoked_at IS NULL AND expires_at > now()` 过滤：
+    // `Ok(None)` = 不存在 / 已撤销 / 已过期。上游由 auth 中间件拦过期 token，
+    // 本仓没有该中间件，所以由这条 SQL 承担（否则会把过期 PAT 复活成 now+90d）。
+    //
+    // 注意与旧内存实现的差别：真实的 DB 故障现在是 500（`RepoError::Db`），
+    // 不再被伪装成 401 —— 基础设施错误不该让客户端去重新 login。
+    let row = repo
+        .get_by_token(secret)
+        .await
+        .map_err(pat_err)?
+        .ok_or_else(|| Error::Unauthorized {
             message: "token is no longer valid".into(),
-        }
-    })?;
+        })?;
 
     let now = Utc::now();
-    // 上游由 auth 中间件拦掉过期 token；本仓没有该中间件，故在此显式拦（否则会把
-    // 已过期的 PAT 复活成 now+90d）。
-    if pat.expires_at <= now {
-        return Err(Error::Unauthorized {
-            message: "token is no longer valid".into(),
-        }
-        .into());
-    }
-
-    let remaining = pat.expires_at - now;
+    let remaining = row.expires_at - now;
     if remaining > chrono::Duration::seconds(PAT_RENEW_THRESHOLD_SECS) {
         return Ok(Json(RenewPatResponse {
-            expires_at: pat.expires_at.to_rfc3339(),
+            expires_at: row.expires_at.to_rfc3339(),
             renewed: false,
         }));
     }
 
-    pat.expires_at = now + chrono::Duration::seconds(PAT_RENEW_EXTENSION_SECS);
-    store.put(pat.clone()).await.map_err(pat_err)?;
+    // 就地延长（不轮换明文），并**落库** —— 否则重启后续期白做。
+    let new_expiry = now + chrono::Duration::seconds(PAT_RENEW_EXTENSION_SECS);
+    repo.update_expires_at(row.id, new_expiry)
+        .await
+        .map_err(pat_err)?;
     Ok(Json(RenewPatResponse {
-        expires_at: pat.expires_at.to_rfc3339(),
+        expires_at: new_expiry.to_rfc3339(),
         renewed: true,
     }))
 }
@@ -335,15 +346,18 @@ fn renew_not_a_pat() -> Error {
 // 内部 helper
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::needless_pass_by_value)] // 4 处 `.map_err(pat_err)` 的函数指针必须按值接收。
-fn pat_err(e: mc_auth::pat::PatError) -> Error {
+#[allow(clippy::needless_pass_by_value)] // 5 处 `.map_err(pat_err)` 的函数指针必须按值接收。
+fn pat_err(e: RepoError) -> Error {
     match e {
-        mc_auth::pat::PatError::NotFound => Error::NotFound {
+        RepoError::NotFound => Error::NotFound {
             resource: "pat".into(),
         },
-        mc_auth::pat::PatError::Expired => Error::Unauthorized {
-            message: "pat expired".into(),
+        // `personal_access_token` 目前没有唯一约束会触发 Conflict；保留分支是为了
+        // 穷尽匹配，映射成 409 而不是 500。
+        RepoError::Conflict => Error::Conflict {
+            message: "pat already exists".into(),
         },
+        RepoError::Db(msg) => Error::Internal(msg),
     }
 }
 
@@ -352,13 +366,6 @@ fn generate_pat_secret() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
-}
-
-fn sha256_hex(input: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(input.as_bytes());
-    hex::encode(h.finalize())
 }
 
 // ---------------------------------------------------------------------------
@@ -377,26 +384,25 @@ mod tests {
         assert_ne!(s, s2);
     }
 
+    /// 入库口径 = `sha256 hex`，与上游 `personal_access_tokens.token_hash` 列一致。
+    /// 钉死已知值（而不是自己和自己比），这样 helper 被换掉时会立刻红。
     #[test]
-    fn sha256_is_deterministic() {
-        let a = sha256_hex("hello");
-        let b = sha256_hex("hello");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 64);
+    fn token_hash_is_sha256_hex() {
+        assert_eq!(
+            PatRepo::hash_token("hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        assert_eq!(PatRepo::hash_token("hello").len(), 64);
     }
 
+    /// 展示用的 last4 必须与入库时用的 helper 同源，否则 list 响应里的
+    /// `display_token` 会和 daemon（M3）反查出的行对不上。
     #[test]
     fn last4_extraction() {
         let raw = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let last4: String = raw
-            .chars()
-            .rev()
-            .take(4)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        assert_eq!(last4, "cdef");
+        assert_eq!(PatRepo::last4(raw), "cdef");
+        // 短于 4 位时原样返回（`PatRepo::last4` 的约定）。
+        assert_eq!(PatRepo::last4("ab"), "ab");
     }
 
     #[test]

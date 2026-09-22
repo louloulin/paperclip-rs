@@ -11,6 +11,9 @@
 - 相关文档：`docs/05`（workspace/member）、`docs/06`（auth）、`docs/07`（invitation）、
   `docs/08`（PAT，本 issue 更正其中一处事实错误）、`docs/09` §9.5（验证门口径）
 
+> **2026-09-22 追加（M1-F / LUM-1375）**：本文 §4 的 **R7 已闭环**，并新登记 **R9**
+> （`/api/cli-token` 仍用内存 store）；闭环记录见 §6。
+
 ## 0. 缺口总表与处置
 
 | # | 类别 | 路由 | 上游出处 | 处置 |
@@ -160,9 +163,11 @@ M1-B 的语义替换（无 JWT 链 → 返回 30 天 TTL 的 PAT，落 `PatStore
 
 新增 e2e：`crates/mc-http/tests/contract_gaps.rs`
 
-- 无 DB（`InMemoryPatStore`）：`/api/tokens` create→list→revoke、`expires_in_days` 兼容、
-  `current/renew` 三种分支（窗口内延长 / 窗口外 no-op / 非 PAT 400 / 未知 token 401）、
-  alias 的 `Deprecation` 头、三条幽灵占位都已 404；
+- PAT 用例（`/api/tokens` create→list→revoke、`expires_in_days` 兼容、`current/renew` 三种分支、
+  alias 的 `Deprecation` 头）：**M1-F（LUM-1375）起改为 `#[ignore]` + `MULTICA_TEST_DATABASE_URL`**
+  ——PAT 不再有纯内存路径，`/api/tokens*` 直连 `personal_access_token` 表。
+  不需要 DB 的 PAT 守卫（401 / 400 / 非法 id 404 / 迁移头）落在 `tests/pats.rs`；
+- 三条幽灵占位都已 404（无 DB）；
 - 需 DB（`#[ignore]` + `MULTICA_TEST_DATABASE_URL`）：`PUT` 更新成功 + member 403、
   `PATCH` 角色（含 `guest` 400、admin 提升 owner 403、未知 member 404）、
   `DELETE` 204 + 幂等 404、最后一个 owner 降级/移除 409。
@@ -177,8 +182,9 @@ M1-B 的语义替换（无 JWT 链 → 返回 30 天 TTL 的 PAT，落 `PatStore
 | R4 | 创建响应字段：上游 `token_prefix`（前 12 字符）；本仓 `token_last4` + `display_token` | daemon 若读 `token_prefix` 会拿到空 | PAT DTO 对齐切片；需 `Pat` 增列存前缀 |
 | R5 | 创建响应/请求的其他差异：本仓多 `scopes`，且 `expires_at` 始终存在 | 上游多发字段，本仓忽略；反之缺失字段为 `null` | 同上 |
 | R6 | `PATCH` member 响应字段名（`name`/`email` 扁平 vs 上游 `user.name`） | 前端渲染差异 | member DTO 对齐切片 |
-| R7 | PAT 仍存 `InMemoryPatStore`（重启丢失），上游落 `personal_access_token` 表 | 重启后 token 失效 | PAT DB repo 切片（迁移 `0003` 已有表） |
-| R8 | PAT 的 daemon 消费中间件（`Authorization: Bearer` → session）未实现 | daemon 无法用 PAT 调本仓 | M3 |
+| R7 | ~~PAT 仍存 `InMemoryPatStore`（重启丢失），上游落 `personal_access_token` 表~~ | 重启后 token 失效 | ✅ **已闭环**：M1-F（LUM-1375）—— 见下方 §5 |
+| R8 | PAT 的 daemon 消费中间件（`Authorization: Bearer` → session）未实现 | daemon 无法用 PAT 调本仓 | M3（`PatRepo::touch` 的调用点同样在此） |
+| R9 | `POST /api/cli-token`（`routes/auth.rs:477`）**仍**把签发的 PAT 写进 `InMemoryPatStore` | CLI 登录换来的 token 重启即失效，且 `/api/tokens` 看不到它（两张存储不一致） | PAT 收敛小切片（M1-F 的隔离范围只覆盖 `/api/tokens*`，未动 `routes/auth.rs`）；上游该路由签发无状态 JWT，长期做法随 M9 JWT 切片一并决定 |
 
 ## 5. 上游行号索引（本次用到的）
 
@@ -194,3 +200,15 @@ M1-B 的语义替换（无 JWT 链 → 返回 30 天 TTL 的 PAT，落 `PatStore
 | 1703-1704 | `PATCH` / `DELETE /api/workspaces/{id}/members/{memberId}` |
 | 1706 | `DELETE /api/workspaces/{id}/invitations/{invitationId}` |
 | 1879-1884 | `/api/tokens` 组（GET / POST / POST `current/renew` / DELETE `{id}`） |
+
+## 6. 闭环记录（M1 残留缺口 → 后续切片）
+
+| 登记于 | 编号 | 闭环切片 | 落地内容 |
+| --- | --- | --- | --- |
+| 本文 §4 | R7 | **M1-F / LUM-1375**（分支 `feat/multica-rs-m1f-pat-persistence`） | `crates/mc-http/src/routes/pats.rs` 的 `list_my_pats` / `create_my_pat` / `revoke_my_pat` / `renew_current_pat` 全部改走 `mc_repos::pat::PatRepo`（`personal_access_token` 表）；新增 `PatRepo::update_expires_at` 承接续期写库；撤销改软删（`revoked_at`）。`mc_auth::InMemoryPatStore` 降级为无库场景 fallback，`mc-auth` 未加 `sqlx` 依赖。验证：`cargo build --workspace` + 两条 clippy + `cargo fmt --all --check` 全绿；`pats.rs` 4 条无库守卫 + 4 条 DB e2e（含跨进程持久化）绿。 |
+| 本文 §4 | R9 | 待立项 | `POST /api/cli-token` 仍写 `InMemoryPatStore`（M1-F 的隔离边界之外）。 |
+
+> 交付时事实补充：`/api/tokens*` 的 DB 化的**唯一**外部可观测后果是「重启后
+> `GET /api/tokens` 仍能看到旧 token、`DELETE` 后 `revoked_at` 落库」——这两条
+> 现在由 `crates/mc-http/tests/pats.rs::pat_persists_across_appstate_rebuild` 与
+> `::revoke_marks_revoked_at_and_is_not_listed` 覆盖（新建连接池 + 重建 `AppState` 后再查）。
