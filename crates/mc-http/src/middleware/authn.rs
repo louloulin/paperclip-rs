@@ -9,9 +9,9 @@
 //!   2. 未命中 → 若字符串本身是合法 UUID，直接当作 user id 接受（本地联调通道：
 //!      测试 / 本地 curl 直接传 user id 即可）；
 //!   3. 否则 → 401。
-//! - 认证结果写入 request extensions：`AuthUser`（user_id）、
-//!   `WorkspacePathId`（workspace_id，自 URL `/api/workspaces/{id}` 解析）、
-//!   `WorkspaceContext`（membership 校验通过后的 member_id + role）。
+//! - 认证结果写入 request extensions：`AuthUser`（`user_id`）、
+//!   `WorkspacePathId`（`workspace_id`，自 URL `/api/workspaces/{id}` 解析）、
+//!   `WorkspaceContext`（membership 校验通过后的 `member_id` + `role`）。
 //!
 //! 状态码与上游 `server/internal/middleware/workspace.go` 对齐：
 //! 未认证 401、非成员 404（workspace not found，隐藏资源存在性）、角色不足 403。
@@ -74,7 +74,7 @@ pub fn session_id_from_headers(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-/// 占位 session 解析：store 命中 → session.user_id；否则 UUID 直通；否则 None。
+/// 占位 session 解析：store 命中 → `session.user_id`；否则 UUID 直通；否则 None。
 pub async fn resolve_session_user(state: &AppState, headers: &HeaderMap) -> Option<Id> {
     let sid = session_id_from_headers(headers)?;
     if let Ok(sess) = state.auth.store().get(&sid).await {
@@ -116,12 +116,15 @@ fn internal(msg: String) -> Response {
     err_response(Error::Internal(msg))
 }
 
-/// 认证 + 把 user_id / workspace_id（来自 URL）写入 extensions。
+/// 认证 + 把 `user_id` / `workspace_id`（来自 URL）写入 extensions。
 /// 失败时返回 401 response。
-async fn authenticate(state: &AppState, req: &mut Request) -> Result<Id, Response> {
+/// 中间件内部 Result 别名：错误即待返回的 HTTP 响应，装箱以避免 `Result` 过大。
+type MiddlewareResult<T> = Result<T, Box<Response>>;
+
+async fn authenticate(state: &AppState, req: &mut Request) -> MiddlewareResult<Id> {
     let user_id = resolve_session_user(state, req.headers())
         .await
-        .ok_or_else(unauthorized)?;
+        .ok_or_else(|| Box::new(unauthorized()))?;
     req.extensions_mut().insert(AuthUser(user_id));
     if let Some(ws) = workspace_id_from_path(req.uri()) {
         req.extensions_mut().insert(WorkspacePathId(ws));
@@ -137,13 +140,15 @@ async fn check_membership(
     state: &AppState,
     user_id: Id,
     workspace_id: Id,
-) -> Result<WorkspaceMember, Response> {
+) -> MiddlewareResult<WorkspaceMember> {
     MemberRepo::new(state.db.clone())
         .get_for_user(workspace_id, user_id)
         .await
-        .map_err(|e| match e {
-            RepoError::NotFound => workspace_not_found(),
-            other => internal(other.to_string()),
+        .map_err(|e| {
+            Box::new(match e {
+                RepoError::NotFound => workspace_not_found(),
+                other => internal(other.to_string()),
+            })
         })
 }
 
@@ -162,7 +167,7 @@ pub async fn require_user(
     next: Next,
 ) -> Response {
     if let Err(resp) = authenticate(&state, &mut req).await {
-        return resp;
+        return *resp;
     }
     next.run(req).await
 }
@@ -175,15 +180,14 @@ pub async fn require_member(
 ) -> Response {
     let user_id = match authenticate(&state, &mut req).await {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
-    let ws_id = match req.extensions().get::<WorkspacePathId>().map(|w| w.0) {
-        Some(w) => w,
-        None => return workspace_not_found(),
+    let Some(ws_id) = req.extensions().get::<WorkspacePathId>().map(|w| w.0) else {
+        return workspace_not_found();
     };
     let member = match check_membership(&state, user_id, ws_id).await {
         Ok(m) => m,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     insert_context(&mut req, ws_id, &member);
     next.run(req).await
@@ -216,15 +220,14 @@ pub fn require_role_guard(
     Box::pin(async move {
         let user_id = match authenticate(&rs.app, &mut req).await {
             Ok(u) => u,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
-        let ws_id = match req.extensions().get::<WorkspacePathId>().map(|w| w.0) {
-            Some(w) => w,
-            None => return workspace_not_found(),
+        let Some(ws_id) = req.extensions().get::<WorkspacePathId>().map(|w| w.0) else {
+            return workspace_not_found();
         };
         let member = match check_membership(&rs.app, user_id, ws_id).await {
             Ok(m) => m,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
         if !rs.roles.contains(&member.role) {
             return err_response(Error::Forbidden {

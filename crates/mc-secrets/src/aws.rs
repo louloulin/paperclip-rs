@@ -5,8 +5,8 @@ mod inner {
     use async_trait::async_trait;
     use aws_sdk_secretsmanager::Client;
 
-    use crate::{Result, SecretError};
     use crate::store::{SecretValue, SecretsStore};
+    use crate::{Result, SecretError};
 
     pub struct AwsSecretsManagerStore {
         client: Client,
@@ -21,16 +21,24 @@ mod inner {
     #[async_trait]
     impl SecretsStore for AwsSecretsManagerStore {
         async fn get(&self, _name: &str) -> Result<SecretValue> {
-            Err(SecretError::Provider("AwsSecretsManagerStore::get not implemented".into()))
+            Err(SecretError::Provider(
+                "AwsSecretsManagerStore::get not implemented".into(),
+            ))
         }
         async fn put(&self, _name: &str, _value: SecretValue) -> Result<()> {
-            Err(SecretError::Provider("AwsSecretsManagerStore::put not implemented".into()))
+            Err(SecretError::Provider(
+                "AwsSecretsManagerStore::put not implemented".into(),
+            ))
         }
         async fn delete(&self, _name: &str) -> Result<()> {
-            Err(SecretError::Provider("AwsSecretsManagerStore::delete not implemented".into()))
+            Err(SecretError::Provider(
+                "AwsSecretsManagerStore::delete not implemented".into(),
+            ))
         }
         async fn list(&self) -> Result<Vec<String>> {
-            Err(SecretError::Provider("AwsSecretsManagerStore::list not implemented".into()))
+            Err(SecretError::Provider(
+                "AwsSecretsManagerStore::list not implemented".into(),
+            ))
         }
     }
 }

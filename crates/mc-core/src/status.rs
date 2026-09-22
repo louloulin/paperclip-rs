@@ -16,9 +16,10 @@ pub const CANONICAL_KEYS: &[&str] = &[
 ];
 
 /// Wire enum 7 值（用于 protocol legacy 兼容）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueStatus {
+    #[default]
     Backlog,
     Todo,
     InProgress,
@@ -67,12 +68,6 @@ impl IssueStatus {
     }
 }
 
-impl Default for IssueStatus {
-    fn default() -> Self {
-        Self::Backlog
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatusCategory {
@@ -81,9 +76,9 @@ pub enum StatusCategory {
 }
 
 /// Transition guard: 哪些 status 转换是合法的。
-/// 与 multica issue_guard 模块一致：open→open 永远允许；closed→open 仅 undo 操作允许。
+/// 与 multica `issue_guard` 模块一致：open→open 永远允许；closed→open 仅 undo 操作允许。
 pub fn is_valid_transition(from: IssueStatus, to: IssueStatus) -> bool {
-    use IssueStatus::*;
+    use IssueStatus::{Backlog, Cancelled, Done, Todo, Triage};
     if from == to {
         return true;
     }
@@ -106,7 +101,7 @@ mod tests {
     #[test]
     fn canonical_keys_unique() {
         let mut v = CANONICAL_KEYS.to_vec();
-        v.sort();
+        v.sort_unstable();
         v.dedup();
         assert_eq!(v.len(), CANONICAL_KEYS.len());
     }
@@ -119,22 +114,40 @@ mod tests {
     #[test]
     fn closed_to_open_is_rejected() {
         assert!(!is_valid_transition(IssueStatus::Done, IssueStatus::Todo));
-        assert!(!is_valid_transition(IssueStatus::Cancelled, IssueStatus::Todo));
+        assert!(!is_valid_transition(
+            IssueStatus::Cancelled,
+            IssueStatus::Todo
+        ));
     }
 
     #[test]
     fn triage_can_only_go_to_backlog_todo_cancelled() {
-        assert!(is_valid_transition(IssueStatus::Triage, IssueStatus::Backlog));
+        assert!(is_valid_transition(
+            IssueStatus::Triage,
+            IssueStatus::Backlog
+        ));
         assert!(is_valid_transition(IssueStatus::Triage, IssueStatus::Todo));
-        assert!(is_valid_transition(IssueStatus::Triage, IssueStatus::Cancelled));
-        assert!(!is_valid_transition(IssueStatus::Triage, IssueStatus::InProgress));
+        assert!(is_valid_transition(
+            IssueStatus::Triage,
+            IssueStatus::Cancelled
+        ));
+        assert!(!is_valid_transition(
+            IssueStatus::Triage,
+            IssueStatus::InProgress
+        ));
         assert!(!is_valid_transition(IssueStatus::Triage, IssueStatus::Done));
     }
 
     #[test]
     fn open_to_open_is_allowed() {
-        assert!(is_valid_transition(IssueStatus::Todo, IssueStatus::InProgress));
-        assert!(is_valid_transition(IssueStatus::InProgress, IssueStatus::InReview));
+        assert!(is_valid_transition(
+            IssueStatus::Todo,
+            IssueStatus::InProgress
+        ));
+        assert!(is_valid_transition(
+            IssueStatus::InProgress,
+            IssueStatus::InReview
+        ));
     }
 
     #[test]

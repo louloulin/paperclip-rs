@@ -5,11 +5,9 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use mc_core::timestamp::Timestamp;
 use mc_core::Id;
 
 pub mod envelope;

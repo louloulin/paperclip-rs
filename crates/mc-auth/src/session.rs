@@ -36,7 +36,8 @@ impl Session {
             ip: None,
             user_agent: None,
             csrf_token: Uuid::new_v4().to_string(),
-            expires_at: now + chrono::Duration::seconds(ttl_secs as i64),
+            expires_at: now
+                + chrono::Duration::seconds(i64::try_from(ttl_secs).unwrap_or(i64::MAX)),
             created_at: now,
             last_seen_at: now,
             metadata: HashMap::new(),

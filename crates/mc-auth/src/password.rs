@@ -13,7 +13,12 @@ pub fn hash_password(password: &str) -> String {
     let mut salt = [0u8; SALT_LEN];
     rand::thread_rng().fill_bytes(&mut salt);
 
-    let hash = pbkdf2_sha256(password.as_bytes(), &salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LEN);
+    let hash = pbkdf2_sha256(
+        password.as_bytes(),
+        &salt,
+        PBKDF2_ITERATIONS,
+        PBKDF2_KEY_LEN,
+    );
     format!(
         "pbkdf2${}${}${}",
         PBKDF2_ITERATIONS,
@@ -28,17 +33,14 @@ pub fn verify_password(password: &str, encoded: &str) -> bool {
     if parts.len() != 4 || parts[0] != "pbkdf2" {
         return false;
     }
-    let iterations = match parts[1].parse::<u32>() {
-        Ok(n) => n,
-        Err(_) => return false,
+    let Ok(iterations) = parts[1].parse::<u32>() else {
+        return false;
     };
-    let salt = match base64::engine::general_purpose::STANDARD.decode(parts[2]) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(salt) = base64::engine::general_purpose::STANDARD.decode(parts[2]) else {
+        return false;
     };
-    let expected = match base64::engine::general_purpose::STANDARD.decode(parts[3]) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(expected) = base64::engine::general_purpose::STANDARD.decode(parts[3]) else {
+        return false;
     };
     let actual = pbkdf2_sha256(password.as_bytes(), &salt, iterations, expected.len());
     constant_time_eq(&actual, &expected)

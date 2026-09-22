@@ -188,8 +188,6 @@ impl fmt::Display for ValidationDetail {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,7 +195,12 @@ mod tests {
     #[test]
     fn code_for_each_variant_is_stable() {
         let cases = [
-            (Error::NotFound { resource: "issue".into() }, "not_found"),
+            (
+                Error::NotFound {
+                    resource: "issue".into(),
+                },
+                "not_found",
+            ),
             (
                 Error::WorkspaceNotFound("ws-1".into()),
                 "workspace_not_found",
@@ -206,10 +209,7 @@ mod tests {
                 Error::AgentUnavailable("agent-1".into()),
                 "agent_unavailable",
             ),
-            (
-                Error::TaskQueueFull("agent-1".into()),
-                "task_queue_full",
-            ),
+            (Error::TaskQueueFull("agent-1".into()), "task_queue_full"),
             (
                 Error::IssueTransitionInvalid {
                     from: "todo".into(),
@@ -225,9 +225,18 @@ mod tests {
 
     #[test]
     fn http_status_for_each_variant() {
-        assert_eq!(Error::NotFound { resource: "x".into() }.http_status(), 404);
         assert_eq!(
-            Error::Conflict { message: "x".into() }.http_status(),
+            Error::NotFound {
+                resource: "x".into()
+            }
+            .http_status(),
+            404
+        );
+        assert_eq!(
+            Error::Conflict {
+                message: "x".into()
+            }
+            .http_status(),
             409
         );
         assert_eq!(
@@ -240,17 +249,20 @@ mod tests {
         );
         assert_eq!(Error::SessionExpired.http_status(), 401);
         assert_eq!(
-            Error::Forbidden { message: "x".into() }.http_status(),
+            Error::Forbidden {
+                message: "x".into()
+            }
+            .http_status(),
             403
         );
         assert_eq!(
-            Error::RateLimited { retry_after_secs: 60 }.http_status(),
+            Error::RateLimited {
+                retry_after_secs: 60
+            }
+            .http_status(),
             429
         );
-        assert_eq!(
-            Error::Internal("oops".into()).http_status(),
-            500
-        );
+        assert_eq!(Error::Internal("oops".into()).http_status(), 500);
     }
 
     #[test]

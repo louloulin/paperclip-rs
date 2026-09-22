@@ -43,7 +43,8 @@ struct ErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.0.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status =
+            StatusCode::from_u16(self.0.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = ErrorBody {
             error: ErrorResponse::from(&self.0),
         };
@@ -57,7 +58,9 @@ mod tests {
 
     #[test]
     fn api_error_serializes() {
-        let e = ApiError(Error::NotFound { resource: "issue".into() });
+        let e = ApiError(Error::NotFound {
+            resource: "issue".into(),
+        });
         let body = ErrorResponse::from(&e.0);
         assert_eq!(body.code, "not_found");
         assert_eq!(e.0.http_status(), 404);

@@ -24,11 +24,13 @@ impl ErrorResponse {
         }
     }
 
+    #[must_use]
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
     }
 
+    #[must_use]
     pub fn with_request_id(mut self, id: impl Into<String>) -> Self {
         self.request_id = Some(id.into());
         self
@@ -53,11 +55,22 @@ pub struct ErrorBody {
 
 /// 将内部 `Error` 映射到 HTTP 状态码。
 pub fn status_for(err: &Error) -> u16 {
-    use Error::*;
+    use Error::{
+        AgentUnavailable, AutopilotQuotaExceeded, ChannelSignatureInvalid, Conflict, Database,
+        Forbidden, Internal, Io, IssueClosed, IssueTransitionInvalid, MemberAlreadyExists,
+        NotFound, PluginSignatureInvalid, RateLimited, RuntimeOffline, SessionExpired,
+        TaskLeaseExpired, TaskQueueFull, Unauthorized, Unprocessable, Upstream, Validation,
+        VcsConflict, VerificationCodeInvalid, WorkspaceArchived, WorkspaceNotFound,
+    };
     match err {
         // 4xx
         Validation { .. } => 400,
-        Unauthorized { .. } | SessionExpired => 401,
+        // 未通过凭证校验（含验证码错误 / 已消费 / 过期，LUM-1345 要求 401）与签名错误
+        Unauthorized { .. }
+        | SessionExpired
+        | VerificationCodeInvalid(_)
+        | PluginSignatureInvalid(_)
+        | ChannelSignatureInvalid(_) => 401,
         Forbidden { .. } => 403,
         NotFound { .. } | WorkspaceNotFound(_) => 404,
         Conflict { .. }
@@ -65,8 +78,6 @@ pub fn status_for(err: &Error) -> u16 {
         | VcsConflict(_)
         | IssueTransitionInvalid { .. } => 409,
         Unprocessable { .. } | IssueClosed(_) | AgentUnavailable(_) | RuntimeOffline(_) => 422,
-        // 验证码错误 / 已消费 / 过期 —— 按未通过凭证校验处理（LUM-1345 要求 401）
-        VerificationCodeInvalid(_) => 401,
         RateLimited { .. } => 429,
         // 业务资源已下线 / 软删除
         WorkspaceArchived(_) => 410,
@@ -75,8 +86,6 @@ pub fn status_for(err: &Error) -> u16 {
         Upstream { .. } | Database(_) | Io(_) | Internal(_) => 500,
         // 业务限流：按 503 处理（quota / lease）
         AutopilotQuotaExceeded(_) | TaskQueueFull(_) | TaskLeaseExpired(_) => 503,
-        // 签名错误：401
-        PluginSignatureInvalid(_) | ChannelSignatureInvalid(_) => 401,
     }
 }
 

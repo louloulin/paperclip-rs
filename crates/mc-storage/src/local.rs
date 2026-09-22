@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use tokio::io::AsyncReadExt;
 
 use crate::{sha256_etag, validate_key, Object, Result, StorageError, StorageProvider};
 
@@ -57,7 +56,7 @@ impl StorageProvider for LocalDiskStorage {
         Ok(Object {
             key: key.to_string(),
             size: data.len() as u64,
-            content_type: content_type.map(|s| s.to_string()),
+            content_type: content_type.map(std::string::ToString::to_string),
             etag: Some(etag),
             provider: self.name.to_string(),
             bucket: bucket.to_string(),

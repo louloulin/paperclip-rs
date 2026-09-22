@@ -13,31 +13,31 @@
 //! - 实体定义公开、内部状态由 typedef + schema 校验保护
 //! - 不直接依赖 sqlx（feature-gated），便于 pure logic 单元测试
 
-pub mod id;
-pub mod timestamp;
-pub mod hash;
-pub mod slug;
-pub mod priority;
-pub mod status;
 pub mod actor;
+pub mod hash;
+pub mod id;
 pub mod pagination;
+pub mod priority;
+pub mod slug;
+pub mod status;
+pub mod timestamp;
 
-pub mod workspace;
-pub mod user;
-pub mod member;
 pub mod agent;
-pub mod runtime;
-pub mod issue;
-pub mod comment;
-pub mod project;
 pub mod autopilot;
-pub mod squad;
-pub mod skill;
-pub mod chat;
-pub mod inbox;
-pub mod plugin;
 pub mod channel;
+pub mod chat;
+pub mod comment;
+pub mod inbox;
+pub mod issue;
+pub mod member;
+pub mod plugin;
+pub mod project;
+pub mod runtime;
+pub mod skill;
+pub mod squad;
+pub mod user;
 pub mod wakeup;
+pub mod workspace;
 
 pub use actor::{spawn_system_actor, ActorKey, ActorRegistry};
 pub use hash::{ContentHash, HashAlgo};

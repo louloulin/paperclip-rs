@@ -5,32 +5,22 @@ use serde::{Deserialize, Serialize};
 use super::id::Id;
 use super::timestamp::Timestamp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
+    #[default]
     Local,
     Cloud,
 }
 
-impl Default for RuntimeMode {
-    fn default() -> Self {
-        Self::Local
-    }
-}
-
 /// Runtime 状态（与 multica `runtime.Status` 一致）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeStatus {
     Online,
+    #[default]
     Offline,
     OnlineLastSeen,
-}
-
-impl Default for RuntimeStatus {
-    fn default() -> Self {
-        Self::Offline
-    }
 }
 
 /// 26 种 runtime profile。
@@ -192,9 +182,12 @@ mod tests {
 
     #[test]
     fn cli_command_is_unique() {
-        let cmds: Vec<&str> = RuntimeProfile::all().iter().map(|p| p.cli_command()).collect();
+        let cmds: Vec<&str> = RuntimeProfile::all()
+            .iter()
+            .map(|p| p.cli_command())
+            .collect();
         let mut sorted = cmds.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), cmds.len(), "CLI commands must be unique");
     }

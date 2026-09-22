@@ -42,7 +42,14 @@ impl ChannelKind {
     }
 
     pub fn all() -> [ChannelKind; 6] {
-        [Self::Slack, Self::Lark, Self::DingTalk, Self::WeCom, Self::Telegram, Self::Custom]
+        [
+            Self::Slack,
+            Self::Lark,
+            Self::DingTalk,
+            Self::WeCom,
+            Self::Telegram,
+            Self::Custom,
+        ]
     }
 }
 

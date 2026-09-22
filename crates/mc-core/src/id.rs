@@ -90,9 +90,9 @@ impl PrefixedId {
     }
 
     pub fn parse(s: &str) -> Result<(String, Id), IdError> {
-        let (prefix, raw) = s.split_once('_').ok_or_else(|| {
-            IdError::InvalidUuid(format!("missing prefix separator: {s}"))
-        })?;
+        let (prefix, raw) = s
+            .split_once('_')
+            .ok_or_else(|| IdError::InvalidUuid(format!("missing prefix separator: {s}")))?;
         let id = Id::parse(raw)?;
         Ok((prefix.to_string(), id))
     }

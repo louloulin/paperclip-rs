@@ -6,7 +6,7 @@
 //! - `X-Multica-User-Id` header 携带当前用户 UUID（dev / test 简化路径）
 //! - sub-issue B 完成 auth 中间件后，会替换为 session / cookie 提取
 //! - 当前 handler 都通过 `auth::AuthUser` 提取器校验「已登录」
-//! - workspace 管理员检查走 `member` 表（SQL 直查，不依赖 MemberRepo）
+//! - workspace 管理员检查走 `member` 表（SQL 直查，不依赖 `MemberRepo`）
 //!
 //! 速率限制：`AuthConfig::invitation_per_workspace_per_hour`（默认 50/h）。
 //! 邀请邮件：用 `tracing::warn!` 占位，不接 SMTP。
@@ -79,8 +79,8 @@ impl From<&InvitationRow> for InvitationDto {
             role: row.role.clone(),
             invited_by_user_id: row.invited_by_user_id.to_string(),
             expires_at: row.expires_at.to_rfc3339(),
-            accepted_at: row.accepted_at.as_ref().map(|t| t.to_rfc3339()),
-            revoked_at: row.revoked_at.as_ref().map(|t| t.to_rfc3339()),
+            accepted_at: row.accepted_at.as_ref().map(chrono::DateTime::to_rfc3339),
+            revoked_at: row.revoked_at.as_ref().map(chrono::DateTime::to_rfc3339),
             created_at: row.created_at.to_rfc3339(),
         }
     }
@@ -138,7 +138,7 @@ async fn create_invitation(
 
     // 速率限制：单 workspace 1h 内 N 条
     let since = Utc::now() - Duration::hours(1);
-    let limit = state.config.invitation_per_workspace_per_hour.unwrap_or(50) as i64;
+    let limit = i64::from(state.config.invitation_per_workspace_per_hour.unwrap_or(50));
     let repo = InvitationRepo::new(&state.db);
     let recent = repo
         .count_recent_in_workspace(ws_id, since)
@@ -252,10 +252,10 @@ async fn decline_invitation(
     let email = resolve_user_email(&state, user.id(), &HeaderMap::new())
         .await
         .ok();
-    if email
+    // email 无法解析（None）时不做严格校验。
+    if !email
         .as_deref()
-        .map(|e| !row.email.eq_ignore_ascii_case(e))
-        .unwrap_or(true)
+        .is_some_and(|e| row.email.eq_ignore_ascii_case(e))
     {
         // 没有 email 解析能力时不做严格校验；sub-issue B auth 接管后会收紧。
     }
@@ -364,7 +364,7 @@ async fn resolve_user_email(
     if let Ok(Some((email,))) = row {
         return Ok(email);
     }
-    Ok(format!("user-{}@unknown.local", user_id))
+    Ok(format!("user-{user_id}@unknown.local"))
 }
 
 /// `(workspace_id, user_id)` 校验 helper，供测试使用。

@@ -2,21 +2,23 @@
 //!
 //! 与 paperclip-rs `pc-auth` 风格一致，但 API key / cookie 命名走 multica 前缀。
 
-pub mod session;
-pub mod cookie;
 pub mod api_key;
-pub mod pat;
-pub mod verification;
+pub mod cookie;
 pub mod password;
+pub mod pat;
+pub mod session;
+pub mod verification;
 
-pub use session::{Session, SessionStore, InMemorySessionStore};
+pub use session::{InMemorySessionStore, Session, SessionStore};
 
-pub use container::{SessionStoreContainer, PatStoreContainer, VerificationStoreContainer, DefaultSecretsBackend};
-pub use cookie::{CookieOptions, SameSite};
 pub use api_key::ApiKey;
-pub use pat::{Pat, PatStore, InMemoryPatStore};
-pub use verification::{VerificationCode, VerificationCodeStore, InMemoryVerificationStore};
+pub use container::{
+    DefaultSecretsBackend, PatStoreContainer, SessionStoreContainer, VerificationStoreContainer,
+};
+pub use cookie::{CookieOptions, SameSite};
 pub use password::{hash_password, verify_password};
+pub use pat::{InMemoryPatStore, Pat, PatStore};
+pub use verification::{InMemoryVerificationStore, VerificationCode, VerificationCodeStore};
 
 pub mod container;
 

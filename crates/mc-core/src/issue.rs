@@ -76,7 +76,7 @@ pub struct Issue {
     pub assignee_type: Option<AssigneeType>,
     pub assignee_id: Option<Id>,
     pub creator_type: String, // user / agent / system
-    pub creator_id: String,  // user id or agent id
+    pub creator_id: String,   // user id or agent id
     pub parent_issue_id: Option<Id>,
     pub project_id: Option<Id>,
     pub position: f64,

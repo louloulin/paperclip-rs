@@ -6,17 +6,12 @@ use super::id::Id;
 use super::timestamp::Timestamp;
 
 /// Skill visibility。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillVisibility {
+    #[default]
     Workspace,
     Private,
-}
-
-impl Default for SkillVisibility {
-    fn default() -> Self {
-        Self::Workspace
-    }
 }
 
 /// Skill 主体。

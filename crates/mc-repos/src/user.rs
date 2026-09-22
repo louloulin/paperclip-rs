@@ -176,7 +176,7 @@ where
     }
 
     async fn list(&self, filter: UserFilter) -> Result<Vec<User>> {
-        let limit: i64 = filter.limit.unwrap_or(100).min(500) as i64;
+        let limit: i64 = i64::from(filter.limit.unwrap_or(100).min(500));
         let after_id = filter.after_id;
         let rows = sqlx::query_as::<_, UserRow>(
             "SELECT id, name, email, avatar_url, email_verified_at, language, timezone, \
@@ -185,7 +185,7 @@ where
              WHERE ($1::uuid IS NULL OR id > $1) \
              ORDER BY id ASC LIMIT $2",
         )
-        .bind(after_id.map(|i| i.as_uuid()))
+        .bind(after_id.map(mc_core::Id::as_uuid))
         .bind(limit)
         .fetch_all(self.db.pool())
         .await
@@ -275,7 +275,7 @@ mod tests {
 
     // ---- DB 集成测试 ----
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_upsert_by_email_is_idempotent() {
         let url =
@@ -306,7 +306,7 @@ mod tests {
         repo.delete(&u1.id).await.ok();
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_get_by_email_returns_none_on_missing() {
         let url =
@@ -320,7 +320,7 @@ mod tests {
         assert!(none.is_none());
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_update_me_partial_fields() {
         let url =

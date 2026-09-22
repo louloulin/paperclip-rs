@@ -9,7 +9,7 @@
 //! - 文件名形如 `NNN_<name>.up.sql`
 //! - 配套 `.down.sql` 由 `multica-migrate diff` 等工具生成，不在运行时执行
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -78,14 +78,14 @@ impl Migrator {
     /// 确保 `schema_migrations` 表存在。
     pub async fn ensure_table(db: &Db) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version BIGINT PRIMARY KEY,
                 name TEXT NOT NULL,
                 source TEXT,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
-            "#,
+            ",
         )
         .execute(db.pool())
         .await?;
@@ -155,7 +155,7 @@ impl Migrator {
 
         info!(
             version = step.version,
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
             statements = statements.len(),
             "migration applied"
         );
@@ -199,8 +199,8 @@ impl Migrator {
     }
 
     /// 把 migrations 目录打包成单个 Vec<MigrationStep>：可放进 `pc-server` 主流程。
-    pub fn load(root: PathBuf) -> std::io::Result<Vec<MigrationStep>> {
-        Self::load_dir(&root)
+    pub fn load(root: impl AsRef<Path>) -> std::io::Result<Vec<MigrationStep>> {
+        Self::load_dir(root.as_ref())
     }
 }
 
@@ -211,9 +211,6 @@ impl Migrator {
 fn split_sql_statements(input: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut buf = String::new();
-    // buf 中是否已经出现过真正的 SQL（非纯注释 / 纯空白），
-    // 用于避免把尾部仅剩的 `-- ...` 注释当成一条独立语句。
-    let mut buf_has_sql = false;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut in_string = false;
@@ -237,7 +234,6 @@ fn split_sql_statements(input: &str) -> Vec<String> {
         }
         if in_dollar_quote {
             buf.push(c);
-            buf_has_sql = true;
             if c == '$' {
                 in_dollar_quote = false;
             }
@@ -245,7 +241,6 @@ fn split_sql_statements(input: &str) -> Vec<String> {
         }
         if in_string {
             buf.push(c);
-            buf_has_sql = true;
             if c == '\\' {
                 if let Some(next) = iter.next() {
                     buf.push(next);
@@ -269,13 +264,11 @@ fn split_sql_statements(input: &str) -> Vec<String> {
             in_string = true;
             string_quote = c;
             buf.push(c);
-            buf_has_sql = true;
             continue;
         }
         if c == '$' {
             in_dollar_quote = true;
             buf.push(c);
-            buf_has_sql = true;
             continue;
         }
         if c == ';' {
@@ -286,9 +279,6 @@ fn split_sql_statements(input: &str) -> Vec<String> {
             continue;
         }
         buf.push(c);
-        if !c.is_whitespace() {
-            buf_has_sql = true;
-        }
     }
     if has_sql_content(&buf) {
         out.push(buf);

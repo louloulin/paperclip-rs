@@ -1,4 +1,4 @@
-//! RealtimeHandle：`apps/mc-server` 持有的全局 event bus handle。
+//! `RealtimeHandle`：`apps/mc-server` 持有的全局 event bus handle。
 
 use tokio::sync::broadcast;
 
@@ -32,7 +32,7 @@ impl RealtimeHandle {
         &self.bus
     }
 
-    /// Convert to broadcast::Receiver (for WS handler).
+    /// Convert to `broadcast::Receiver` (for WS handler).
     pub fn subscribe_raw(&self) -> broadcast::Receiver<crate::envelope::EventEnvelope> {
         self.bus.subscribe().rx
     }

@@ -59,7 +59,8 @@ impl ActorRegistry {
         self.inner.read().unwrap().keys().cloned().collect()
     }
 
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
+    /// 同步关闭所有已注册 actor（`kill_box` 本身同步，无需 `async`）。
+    pub fn shutdown(&self) -> anyhow::Result<()> {
         let actors: Vec<Arc<dyn AnyActor>> = self.inner.read().unwrap().values().cloned().collect();
         for actor in actors {
             let _ = actor.kill_box();
@@ -112,7 +113,8 @@ mod tests {
     fn registry_insert_and_get() {
         let reg = ActorRegistry::new();
         let sys = spawn_system_actor("root");
-        reg.register(ActorKey::new("system", "root"), sys.clone()).unwrap();
+        reg.register(ActorKey::new("system", "root"), sys.clone())
+            .unwrap();
         assert_eq!(reg.list().len(), 1);
         let got = reg.get(&ActorKey::new("system", "root"));
         assert!(got.is_some());
@@ -124,7 +126,6 @@ mod tests {
         let sys = spawn_system_actor("root");
         reg.register(ActorKey::new("system", "root"), sys).unwrap();
         // Should not panic.
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        rt.block_on(reg.shutdown()).unwrap();
+        reg.shutdown().unwrap();
     }
 }

@@ -47,8 +47,12 @@ impl FeatureFlagCatalog {
         Self::default()
     }
 
-    pub fn register(&self, key: FeatureKey, enabled: bool, strategy: Option<RolloutStrategy>) {
-        let strategy = strategy.unwrap_or(if enabled { RolloutStrategy::All } else { RolloutStrategy::Off });
+    pub fn register(&self, key: &FeatureKey, enabled: bool, strategy: Option<RolloutStrategy>) {
+        let strategy = strategy.unwrap_or(if enabled {
+            RolloutStrategy::All
+        } else {
+            RolloutStrategy::Off
+        });
         let flag = FeatureFlag {
             key: key.clone(),
             enabled,
@@ -64,7 +68,10 @@ impl FeatureFlagCatalog {
     }
 
     pub fn is_enabled(&self, key: &FeatureKey) -> bool {
-        self.flags.read().get(key.as_str()).map(|f| f.enabled).unwrap_or(false)
+        self.flags
+            .read()
+            .get(key.as_str())
+            .is_some_and(|f| f.enabled)
     }
 
     pub fn list(&self) -> Vec<FeatureFlag> {
@@ -79,7 +86,7 @@ mod tests {
     #[test]
     fn register_and_lookup() {
         let catalog = FeatureFlagCatalog::new();
-        catalog.register(FeatureKey::new("multica.ui.dense-mode"), true, None);
+        catalog.register(&FeatureKey::new("multica.ui.dense-mode"), true, None);
         assert!(catalog.is_enabled(&FeatureKey::new("multica.ui.dense-mode")));
         assert!(!catalog.is_enabled(&FeatureKey::new("multica.unknown")));
     }
@@ -87,8 +94,8 @@ mod tests {
     #[test]
     fn list_returns_all() {
         let catalog = FeatureFlagCatalog::new();
-        catalog.register(FeatureKey::new("a"), true, None);
-        catalog.register(FeatureKey::new("b"), false, None);
+        catalog.register(&FeatureKey::new("a"), true, None);
+        catalog.register(&FeatureKey::new("b"), false, None);
         let list = catalog.list();
         assert_eq!(list.len(), 2);
     }

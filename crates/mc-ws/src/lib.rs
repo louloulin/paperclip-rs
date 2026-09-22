@@ -15,8 +15,9 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use mc_realtime::{EventEnvelope, RealtimeHandle};
+use mc_realtime::RealtimeHandle;
 
+#[allow(clippy::unused_async)] // axum WebSocket handler 形状；本切片尚未挂载到 router。
 pub async fn live_events_handler(
     ws: WebSocketUpgrade,
     State(handle): State<Arc<RealtimeHandle>>,
@@ -36,7 +37,7 @@ async fn handle_connection(socket: WebSocket, handle: Arc<RealtimeHandle>) {
     let (mut sender, mut receiver) = socket.split();
     let mut subscription = handle.subscribe();
 
-    let mut send_task = tokio::spawn(async move {
+    let send_task = tokio::spawn(async move {
         while let Some(env) = subscription.recv().await {
             let json = match serde_json::to_string(&env) {
                 Ok(s) => s,
@@ -81,6 +82,7 @@ async fn handle_connection(socket: WebSocket, handle: Arc<RealtimeHandle>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mc_realtime::EventEnvelope;
 
     #[test]
     fn client_message_round_trip() {

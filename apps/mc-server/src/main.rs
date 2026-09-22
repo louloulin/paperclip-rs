@@ -22,6 +22,7 @@ use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)] // 启动流程按 1..N 步骤线性展开（配置→迁移→路由→监听）。
 async fn main() -> anyhow::Result<()> {
     let startup_start = std::time::Instant::now();
 
@@ -73,9 +74,10 @@ async fn main() -> anyhow::Result<()> {
     // 5. 迁移
     if cfg.database.run_migrations {
         // 默认从 ./migrations 目录加载
-        let dir = std::env::var("MULTICA_MIGRATIONS_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("migrations"));
+        let dir = std::env::var("MULTICA_MIGRATIONS_DIR").map_or_else(
+            |_| std::path::PathBuf::from("migrations"),
+            std::path::PathBuf::from,
+        );
         match Migrator::load(dir) {
             Ok(steps) if !steps.is_empty() => {
                 tracing::info!(count = steps.len(), "applying migrations");
@@ -144,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         host = %cfg.server.host,
         port = cfg.server.port,
-        total_startup_ms = startup_start.elapsed().as_millis() as u64,
+        total_startup_ms = u64::try_from(startup_start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "multica http listening"
     );
 
@@ -156,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("axum serve")?;
 
-    actors.shutdown().await.context("shutdown actors")?;
+    actors.shutdown().context("shutdown actors")?;
     tracing::info!("shutdown complete");
     Ok(())
 }

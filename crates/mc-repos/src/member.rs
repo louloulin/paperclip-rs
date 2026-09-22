@@ -18,7 +18,7 @@ use crate::{RepoError, RepoWithDb, Repository, Result};
 
 use mc_db::Db;
 
-/// MemberRepo。
+/// `MemberRepo`。
 #[derive(Clone)]
 pub struct MemberRepo {
     db: Db,
@@ -58,7 +58,7 @@ pub struct MemberFilter {
     pub role: Option<WorkspaceRole>,
 }
 
-/// Member 与 User 的连接结果（API 层 list_members 直接吐出）。
+/// Member 与 User 的连接结果（API 层 `list_members` 直接吐出）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberWithUser {
     pub id: Id,
@@ -188,8 +188,8 @@ where
                AND ($3::text IS NULL OR role = $3) \
              ORDER BY created_at ASC LIMIT $4",
         )
-        .bind(filter.workspace_id.map(|i| i.as_uuid()))
-        .bind(filter.user_id.map(|i| i.as_uuid()))
+        .bind(filter.workspace_id.map(mc_core::Id::as_uuid))
+        .bind(filter.user_id.map(mc_core::Id::as_uuid))
         .bind(role_str)
         .bind(limit)
         .fetch_all(self.db.pool())
@@ -312,7 +312,7 @@ mod tests {
         Slug::parse(&format!("{prefix}-{}", &s[..10])).unwrap()
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_add_list_remove() {
         let url = std::env::var("MULTICA_TEST_DATABASE_URL")
@@ -362,7 +362,7 @@ mod tests {
             .ok();
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_unique_member_conflict() {
         let url = std::env::var("MULTICA_TEST_DATABASE_URL")
@@ -403,7 +403,7 @@ mod tests {
             .ok();
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_role_check_admin_can_grant_owner_only_owner_can_change() {
         let url =

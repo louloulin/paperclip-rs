@@ -5,34 +5,24 @@ use serde::{Deserialize, Serialize};
 use super::id::Id;
 use super::timestamp::Timestamp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Idle,
     Working,
     Blocked,
     Error,
+    #[default]
     Offline,
 }
 
-impl Default for AgentStatus {
-    fn default() -> Self {
-        Self::Offline
-    }
-}
-
 /// Agent 可见性。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentVisibility {
+    #[default]
     Workspace,
     Private,
-}
-
-impl Default for AgentVisibility {
-    fn default() -> Self {
-        Self::Workspace
-    }
 }
 
 /// Agent 主体。

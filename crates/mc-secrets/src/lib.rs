@@ -1,14 +1,14 @@
 //! Multica secrets: 本地加密 / AWS Secrets Manager / MCP / plugin。
 
 pub mod cipher;
-pub mod store;
 pub mod provider;
+pub mod store;
 
 #[cfg(feature = "aws")]
 pub mod aws;
 
 pub use cipher::{decrypt, encrypt, EncryptedPayload};
-pub use store::{InMemorySecretsStore, SecretsBackend, SecretsStore, SecretValue};
+pub use store::{InMemorySecretsStore, SecretValue, SecretsBackend, SecretsStore};
 
 use std::sync::Arc;
 
@@ -31,6 +31,7 @@ pub type Result<T> = std::result::Result<T, SecretError>;
 
 /// 启动时确保密钥存在；不存在则生成并落盘。
 pub fn ensure_root_key(root_key_path: &std::path::Path) -> Result<[u8; 32]> {
+    use rand::RngCore;
     use std::io::Write;
     if root_key_path.exists() {
         let bytes = std::fs::read(root_key_path).map_err(|e| SecretError::Io(e.to_string()))?;
@@ -42,13 +43,13 @@ pub fn ensure_root_key(root_key_path: &std::path::Path) -> Result<[u8; 32]> {
         return Ok(out);
     }
     let mut key = [0u8; 32];
-    use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut key);
     if let Some(parent) = root_key_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| SecretError::Io(e.to_string()))?;
     }
     let mut f = std::fs::File::create(root_key_path).map_err(|e| SecretError::Io(e.to_string()))?;
-    f.write_all(&key).map_err(|e| SecretError::Io(e.to_string()))?;
+    f.write_all(&key)
+        .map_err(|e| SecretError::Io(e.to_string()))?;
     f.sync_all().map_err(|e| SecretError::Io(e.to_string()))?;
     Ok(key)
 }

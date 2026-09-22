@@ -17,7 +17,7 @@ pub struct ConfigSnapshot {
     pub session_cookie: String,
     pub api_key_header: String,
     pub csrf_header: String,
-    /// 开发模式 —— 当 false 时 cookie 不设 Secure，send-code 不返回 dev_code，
+    /// 开发模式 —— 当 false 时 cookie 不设 Secure，send-code 不返回 `dev_code`，
     /// 邮件发送用纯生产日志路径。
     pub dev_mode: bool,
     /// Session TTL（秒）；由 `/api/auth/refresh` 与 `verify-code` 使用。

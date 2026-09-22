@@ -9,7 +9,7 @@
 //!
 //! 设计要点：
 //! - `accept` 在单事务中完成：避免「已经接受但 member 行未插入」导致再次接受失败
-//! - `accept` 走 UNIQUE(workspace_id, user_id) 冲突 → 幂等返回已存在 member
+//! - `accept` 走 UNIQUE(`workspace_id`, `user_id`) 冲突 → 幂等返回已存在 member
 //! - `revoked_at` 与 `accepted_at` 互斥：再次 accept 时检查 `revoked_at`
 //!
 //! Token 形态：32 字节随机 → 43 字符 base64url（无 padding），URL 安全，无歧义字符。
@@ -143,13 +143,13 @@ impl InvitationRepo {
         let token = Self::generate_token();
 
         let row = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             INSERT INTO workspace_invitation
                 (workspace_id, email, role, invited_by_user_id, token, expires_at, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id, workspace_id, email, role, invited_by_user_id, token,
                       expires_at, accepted_at, revoked_at, created_at
-            "#,
+            ",
         )
         .bind(input.workspace_id.0)
         .bind(&input.email)
@@ -178,12 +178,12 @@ impl InvitationRepo {
     /// 按 token 查询（含已撤销 / 已过期）。返回 `Ok(None)` 表示不存在。
     pub async fn get_by_token(&self, token: &str) -> Result<Option<InvitationRow>> {
         let row = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             SELECT id, workspace_id, email, role, invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE token = $1
-            "#,
+            ",
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -195,12 +195,12 @@ impl InvitationRepo {
     /// 按 id 查询。404 if missing。
     pub async fn get_by_id(&self, id: Id) -> Result<InvitationRow> {
         let row = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             SELECT id, workspace_id, email, role, invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(id.0)
         .fetch_optional(&self.pool)
@@ -210,11 +210,11 @@ impl InvitationRepo {
         Ok(row)
     }
 
-    /// 列出一个 workspace 下所有未撤销 / 未过期的邀请（按 created_at 倒序）。
+    /// 列出一个 workspace 下所有未撤销 / 未过期的邀请（按 `created_at` 倒序）。
     pub async fn list_for_workspace(&self, workspace_id: Id) -> Result<Vec<InvitationRow>> {
         let now = Utc::now();
         let rows = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             SELECT id, workspace_id, email, role, invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
@@ -222,7 +222,7 @@ impl InvitationRepo {
               AND revoked_at IS NULL
               AND expires_at > $2
             ORDER BY created_at DESC
-            "#,
+            ",
         )
         .bind(workspace_id.0)
         .bind(now)
@@ -236,7 +236,7 @@ impl InvitationRepo {
     pub async fn list_for_user_email(&self, email: &str) -> Result<Vec<InvitationRow>> {
         let now = Utc::now();
         let rows = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             SELECT id, workspace_id, email, role, invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
@@ -245,7 +245,7 @@ impl InvitationRepo {
               AND accepted_at IS NULL
               AND expires_at > $2
             ORDER BY created_at DESC
-            "#,
+            ",
         )
         .bind(email)
         .bind(now)
@@ -262,6 +262,7 @@ impl InvitationRepo {
     /// 2. 校验：未撤销 / 未过期 / 未接受
     /// 3. 写 `accepted_at = now()`
     /// 4. 插入 `member` row，UNIQUE 冲突 → 已接受过，返回已存在 member
+    #[allow(clippy::too_many_lines)] // 事务步骤 + 冲突分支线性展开，拆函数反而割裂锁语义。
     pub async fn accept(&self, token: &str, accepting_user_id: Id) -> Result<AcceptOutcome> {
         let mut tx = self
             .pool
@@ -270,13 +271,13 @@ impl InvitationRepo {
             .map_err(map_db_err("invitation.accept.begin"))?;
 
         let row: Option<InvitationRow> = sqlx::query_as::<_, InvitationRow>(
-            r#"
+            r"
             SELECT id, workspace_id, email, role, invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE token = $1
             FOR UPDATE
-            "#,
+            ",
         )
         .bind(token)
         .fetch_optional(&mut *tx)
@@ -295,11 +296,11 @@ impl InvitationRepo {
         if row.accepted_at.is_some() {
             // 已经被接受：直接返回当前 member，幂等。
             let member_row: Option<(Uuid, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
-                r#"
+                r"
                     SELECT id, role, created_at, updated_at
                     FROM member
                     WHERE workspace_id = $1 AND user_id = $2
-                    "#,
+                    ",
             )
             .bind(row.workspace_id)
             .bind(accepting_user_id.0)
@@ -336,10 +337,10 @@ impl InvitationRepo {
         let role = row.role.as_str();
 
         let insert_res = sqlx::query(
-            r#"
+            r"
             INSERT INTO member (id, workspace_id, user_id, role, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $5)
-            "#,
+            ",
         )
         .bind(member_id)
         .bind(row.workspace_id)
@@ -372,11 +373,11 @@ impl InvitationRepo {
                 // 已存在 member —— 视为幂等成功。
                 let member_row: Option<(Uuid, String, DateTime<Utc>, DateTime<Utc>)> =
                     sqlx::query_as(
-                        r#"
+                        r"
                         SELECT id, role, created_at, updated_at
                         FROM member
                         WHERE workspace_id = $1 AND user_id = $2
-                        "#,
+                        ",
                     )
                     .bind(row.workspace_id)
                     .bind(accepting_user_id.0)
@@ -407,13 +408,13 @@ impl InvitationRepo {
     pub async fn decline(&self, token: &str) -> Result<()> {
         let now = Utc::now();
         let res = sqlx::query(
-            r#"
+            r"
             UPDATE workspace_invitation
             SET revoked_at = $2
             WHERE token = $1
               AND revoked_at IS NULL
               AND accepted_at IS NULL
-            "#,
+            ",
         )
         .bind(token)
         .bind(now)
@@ -432,13 +433,13 @@ impl InvitationRepo {
     pub async fn revoke(&self, id: Id, by_user_id: Id) -> Result<()> {
         let now = Utc::now();
         let res = sqlx::query(
-            r#"
+            r"
             UPDATE workspace_invitation
             SET revoked_at = $2
             WHERE id = $1
               AND revoked_at IS NULL
               AND accepted_at IS NULL
-            "#,
+            ",
         )
         .bind(id.0)
         .bind(now)
@@ -465,12 +466,12 @@ impl InvitationRepo {
         since: DateTime<Utc>,
     ) -> Result<i64> {
         let (count,): (i64,) = sqlx::query_as(
-            r#"
+            r"
             SELECT COUNT(*)::BIGINT
             FROM workspace_invitation
             WHERE workspace_id = $1
               AND created_at >= $2
-            "#,
+            ",
         )
         .bind(workspace_id.0)
         .bind(since)
@@ -623,7 +624,7 @@ mod integration_tests {
             .await;
     }
 
-    /// 1. create + get_by_token 往返。
+    /// 1. create + `get_by_token` 往返。
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
     async fn create_then_get_by_token() {
@@ -658,7 +659,7 @@ mod integration_tests {
         pool.close().await;
     }
 
-    /// 2. accept → 插入 member row + accepted_at 标记 + UNIQUE 冲突幂等。
+    /// 2. accept → 插入 member row + `accepted_at` 标记 + UNIQUE 冲突幂等。
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
     async fn accept_creates_member_and_is_idempotent() {
@@ -714,7 +715,7 @@ mod integration_tests {
         pool.close().await;
     }
 
-    /// 3. decline 标记 revoked_at。
+    /// 3. decline 标记 `revoked_at`。
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
     async fn decline_marks_revoked() {
@@ -748,7 +749,7 @@ mod integration_tests {
         pool.close().await;
     }
 
-    /// 4. revoke by admin 标记 revoked_at（以及再次 revoke 返回 NotFound）。
+    /// 4. revoke by admin 标记 `revoked_at`（以及再次 revoke 返回 `NotFound`）。
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
     async fn revoke_by_admin_marks_revoked() {
@@ -782,7 +783,7 @@ mod integration_tests {
         pool.close().await;
     }
 
-    /// 5. count_recent_in_workspace 速率窗口。
+    /// 5. `count_recent_in_workspace` 速率窗口。
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
     async fn count_recent_in_workspace_window() {

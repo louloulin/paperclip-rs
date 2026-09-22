@@ -251,6 +251,7 @@ impl Config {
 
     /// 测试 / 嵌入式场景下，使用传入的 lookup 函数读取 env。
     /// 允许并行测试而不会污染全局 env。
+    #[allow(clippy::too_many_lines)] // 逐项 env 映射，线性展开比拆函数更易核对。
     pub fn build_with<F>(mut lookup: F) -> Result<Self, ConfigError>
     where
         F: FnMut(&str) -> Option<String>,
@@ -269,7 +270,8 @@ impl Config {
         {
             config.server.port = port;
         }
-        if let Some(url) = lookup("MULTICA_EXTERNAL_URL").or_else(|| lookup("PAPERCLIP_EXTERNAL_URL"))
+        if let Some(url) =
+            lookup("MULTICA_EXTERNAL_URL").or_else(|| lookup("PAPERCLIP_EXTERNAL_URL"))
         {
             config.server.external_url = Some(Url::parse(&url)?);
         }
@@ -283,18 +285,14 @@ impl Config {
             .or_else(|| lookup("DATABASE_URL"))
             .ok_or(ConfigError::MissingEnv("MULTICA_DATABASE_URL"))?;
         config.database.url = db_url;
-        if let Some(max) = lookup("MULTICA_DB_MAX_CONNECTIONS")
-            .and_then(|s| s.parse().ok())
-        {
+        if let Some(max) = lookup("MULTICA_DB_MAX_CONNECTIONS").and_then(|s| s.parse().ok()) {
             config.database.max_connections = max;
         }
-        if let Some(min) = lookup("MULTICA_DB_MIN_CONNECTIONS")
-            .and_then(|s| s.parse().ok())
-        {
+        if let Some(min) = lookup("MULTICA_DB_MIN_CONNECTIONS").and_then(|s| s.parse().ok()) {
             config.database.min_connections = min;
         }
-        if let Some(run) = lookup("MULTICA_DB_RUN_MIGRATIONS")
-            .or_else(|| lookup("PAPERCLIP_DB_RUN_MIGRATIONS"))
+        if let Some(run) =
+            lookup("MULTICA_DB_RUN_MIGRATIONS").or_else(|| lookup("PAPERCLIP_DB_RUN_MIGRATIONS"))
         {
             config.database.run_migrations = parse_bool(&run).unwrap_or(true);
         }
@@ -309,29 +307,25 @@ impl Config {
         if let Some(h) = lookup("MULTICA_CSRF_HEADER") {
             config.auth.csrf_header = h;
         }
-        if let Some(ttl) = lookup("MULTICA_SESSION_TTL_SECS")
-            .and_then(|s| s.parse().ok())
-        {
+        if let Some(ttl) = lookup("MULTICA_SESSION_TTL_SECS").and_then(|s| s.parse().ok()) {
             config.auth.session_ttl_secs = ttl;
         }
-        if let Some(ttl) = lookup("MULTICA_AUTH_VERIFICATION_CODE_TTL_SECS")
-            .and_then(|s| s.parse().ok())
+        if let Some(ttl) =
+            lookup("MULTICA_AUTH_VERIFICATION_CODE_TTL_SECS").and_then(|s| s.parse().ok())
         {
             config.auth.verification_code_ttl_secs = ttl;
         }
-        if let Some(n) = lookup("MULTICA_AUTH_SEND_CODE_PER_MIN")
-            .and_then(|s| s.parse().ok())
-        {
+        if let Some(n) = lookup("MULTICA_AUTH_SEND_CODE_PER_MIN").and_then(|s| s.parse().ok()) {
             config.auth.send_code_per_min = n;
         }
-        if let Some(n) = lookup("MULTICA_AUTH_SEND_CODE_PER_EMAIL_PER_MIN")
-            .and_then(|s| s.parse().ok())
+        if let Some(n) =
+            lookup("MULTICA_AUTH_SEND_CODE_PER_EMAIL_PER_MIN").and_then(|s| s.parse().ok())
         {
             config.auth.send_code_per_email_per_min = n;
         }
         // Invitation rate limit（M1 sub-issue C 追加）。
-        if let Some(n) = lookup("MULTICA_INVITATION_PER_WORKSPACE_PER_HOUR")
-            .and_then(|s| s.parse().ok())
+        if let Some(n) =
+            lookup("MULTICA_INVITATION_PER_WORKSPACE_PER_HOUR").and_then(|s| s.parse().ok())
         {
             config.auth.invitation_per_workspace_per_hour = n;
         }
@@ -361,9 +355,7 @@ impl Config {
         }
 
         // Channel
-        if let Some(n) = lookup("MULTICA_CHANNEL_RATE_LIMIT")
-            .and_then(|s| s.parse().ok())
-        {
+        if let Some(n) = lookup("MULTICA_CHANNEL_RATE_LIMIT").and_then(|s| s.parse().ok()) {
             config.channel.rate_limit_per_minute = n;
         }
 
@@ -427,9 +419,15 @@ mod tests {
 
     #[test]
     fn run_mode_parses() {
-        assert_eq!(RunMode::from_env_or_default(Some("dev")), RunMode::Development);
+        assert_eq!(
+            RunMode::from_env_or_default(Some("dev")),
+            RunMode::Development
+        );
         assert_eq!(RunMode::from_env_or_default(Some("test")), RunMode::Test);
-        assert_eq!(RunMode::from_env_or_default(Some("prod")), RunMode::Production);
+        assert_eq!(
+            RunMode::from_env_or_default(Some("prod")),
+            RunMode::Production
+        );
         assert_eq!(RunMode::from_env_or_default(None), RunMode::Production);
     }
 

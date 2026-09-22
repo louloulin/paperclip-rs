@@ -58,7 +58,7 @@ pub fn decrypt(payload: &EncryptedPayload, key: &[u8]) -> Result<Vec<u8>, Cipher
         .decode(&payload.ciphertext)
         .map_err(|e| CipherError::Decrypt(e.to_string()))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let mut pt = cipher
+    let pt = cipher
         .decrypt(nonce, ct.as_ref())
         .map_err(|e| CipherError::Decrypt(e.to_string()))?;
     // 不在此处 zeroize：调用方负责；zeroize 会让借用冲突。

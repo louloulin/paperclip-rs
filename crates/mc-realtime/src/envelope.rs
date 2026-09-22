@@ -54,6 +54,7 @@ impl EventEnvelope {
         }
     }
 
+    #[must_use]
     pub fn with_type(mut self, event_type: impl Into<String>) -> Self {
         self.event_type = event_type.into();
         self

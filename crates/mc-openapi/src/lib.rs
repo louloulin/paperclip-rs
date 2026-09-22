@@ -1,4 +1,4 @@
-//! Multica OpenAPI 3.1 spec generator。
+//! Multica `OpenAPI` 3.1 spec generator。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -35,7 +35,11 @@ pub struct OpenApiComponent {
 }
 
 impl OpenApiSpec {
-    pub fn minimal(title: impl Into<String>, version: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn minimal(
+        title: impl Into<String>,
+        version: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
             openapi: OPENAPI_VERSION.into(),
             info: OpenApiInfo {
@@ -52,7 +56,12 @@ impl OpenApiSpec {
         }
     }
 
-    pub fn add_path(&mut self, path: impl Into<String>, method: impl Into<String>, operation: Value) {
+    pub fn add_path(
+        &mut self,
+        path: impl Into<String>,
+        method: impl Into<String>,
+        operation: Value,
+    ) {
         let path = path.into();
         let method = method.into().to_ascii_lowercase();
         let path_entry = self
@@ -86,6 +95,7 @@ impl OpenApiSpec {
 }
 
 /// axum 路由：暴露 `/openapi.json`。
+#[allow(clippy::unused_async)] // 保留 axum handler 形状；本切片尚未挂载。
 pub async fn openapi_json_handler() -> axum::Json<Value> {
     let spec = OpenApiSpec::minimal(
         "Multica-rs API",

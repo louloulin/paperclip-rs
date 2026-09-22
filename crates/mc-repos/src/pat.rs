@@ -78,6 +78,7 @@ pub struct PatRepo {
 }
 
 impl PatRepo {
+    #[allow(clippy::needless_pass_by_value)] // 入参保留 `Db` 所有权，调用方直接 `state.db.clone()`。
     pub fn new(db: Db) -> Self {
         Self {
             pool: Arc::new(db.pool().clone()),
@@ -123,7 +124,7 @@ impl PatRepo {
         let scopes_json =
             serde_json::to_value(&input.scopes).unwrap_or_else(|_| serde_json::json!([]));
         let row = sqlx::query_as::<_, PatRow>(
-            r#"
+            r"
             INSERT INTO personal_access_token
                 (id, user_id, name, token_hash, token_last4,
                  expires_at, scopes, created_at)
@@ -131,7 +132,7 @@ impl PatRepo {
             RETURNING id, user_id, name, token_hash, token_last4,
                       expires_at, last_used_at, scopes,
                       revoked_at, created_at
-            "#,
+            ",
         )
         .bind(id)
         .bind(input.user_id.as_uuid())
@@ -151,7 +152,7 @@ impl PatRepo {
     pub async fn get_by_token(&self, raw: &str) -> Result<Option<PatRow>> {
         let hash = Self::hash_token(raw);
         let row = sqlx::query_as::<_, PatRow>(
-            r#"
+            r"
             SELECT id, user_id, name, token_hash, token_last4,
                    expires_at, last_used_at, scopes,
                    revoked_at, created_at
@@ -159,7 +160,7 @@ impl PatRepo {
             WHERE token_hash = $1
               AND revoked_at IS NULL
               AND expires_at > now()
-            "#,
+            ",
         )
         .bind(&hash)
         .fetch_optional(self.pool())
@@ -172,7 +173,7 @@ impl PatRepo {
     /// 列某用户所有未撤销的 PAT（按创建时间倒序）。
     pub async fn list_for_user(&self, user_id: Id) -> Result<Vec<PatRow>> {
         let rows = sqlx::query_as::<_, PatRow>(
-            r#"
+            r"
             SELECT id, user_id, name, token_hash, token_last4,
                    expires_at, last_used_at, scopes,
                    revoked_at, created_at
@@ -180,7 +181,7 @@ impl PatRepo {
             WHERE user_id = $1
               AND revoked_at IS NULL
             ORDER BY created_at DESC
-            "#,
+            ",
         )
         .bind(user_id.as_uuid())
         .fetch_all(self.pool())
@@ -193,11 +194,11 @@ impl PatRepo {
     /// 撤销 PAT（设置 `revoked_at = now()`）。
     pub async fn revoke(&self, id: Id) -> Result<()> {
         let res = sqlx::query(
-            r#"
+            r"
             UPDATE personal_access_token
             SET revoked_at = now()
             WHERE id = $1 AND revoked_at IS NULL
-            "#,
+            ",
         )
         .bind(id.as_uuid())
         .execute(self.pool())
@@ -215,11 +216,11 @@ impl PatRepo {
     #[allow(dead_code)]
     pub async fn touch(&self, id: Id) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             UPDATE personal_access_token
             SET last_used_at = now()
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(id.as_uuid())
         .execute(self.pool())
@@ -229,6 +230,7 @@ impl PatRepo {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // 作为 `map_err` 的函数指针必须按值接收。
 fn map_sqlx(e: sqlx::Error) -> RepoError {
     RepoError::Db(e.to_string())
 }

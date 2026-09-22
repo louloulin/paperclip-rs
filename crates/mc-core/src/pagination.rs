@@ -10,7 +10,7 @@ impl PageSize {
     pub const MAX: u32 = 200;
 
     pub fn new(n: u32) -> Self {
-        Self(n.min(Self::MAX).max(1))
+        Self(n.clamp(1, Self::MAX))
     }
 
     pub fn as_u32(self) -> u32 {
@@ -24,35 +24,19 @@ impl Default for PageSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SortOrder {
     Asc,
+    #[default]
     Desc,
 }
 
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Desc
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PageRequest {
     pub size: PageSize,
     pub after: Option<String>,
     pub before: Option<String>,
     pub sort: SortOrder,
-}
-
-impl Default for PageRequest {
-    fn default() -> Self {
-        Self {
-            size: PageSize::default(),
-            after: None,
-            before: None,
-            sort: SortOrder::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

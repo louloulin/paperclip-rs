@@ -4,20 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// 与 multica `validIssuePriorities` 对齐：5 个内置值。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     Urgent,
     High,
     Medium,
     Low,
+    #[default]
     None,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl Priority {

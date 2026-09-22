@@ -24,7 +24,7 @@ impl HealthCheck {
     pub fn healthy(latency: Duration) -> Self {
         Self {
             status: HealthStatus::Healthy,
-            latency_ms: latency.as_millis() as u64,
+            latency_ms: u64::try_from(latency.as_millis()).unwrap_or(u64::MAX),
             message: None,
         }
     }
@@ -32,7 +32,7 @@ impl HealthCheck {
     pub fn unhealthy(latency: Duration, message: impl Into<String>) -> Self {
         Self {
             status: HealthStatus::Unhealthy,
-            latency_ms: latency.as_millis() as u64,
+            latency_ms: u64::try_from(latency.as_millis()).unwrap_or(u64::MAX),
             message: Some(message.into()),
         }
     }
@@ -40,7 +40,7 @@ impl HealthCheck {
     pub fn degraded(latency: Duration, message: impl Into<String>) -> Self {
         Self {
             status: HealthStatus::Degraded,
-            latency_ms: latency.as_millis() as u64,
+            latency_ms: u64::try_from(latency.as_millis()).unwrap_or(u64::MAX),
             message: Some(message.into()),
         }
     }

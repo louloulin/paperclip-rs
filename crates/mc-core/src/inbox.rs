@@ -53,7 +53,11 @@ mod tests {
 
     #[test]
     fn actor_str_round_trip() {
-        for a in [InboxActorType::User, InboxActorType::Agent, InboxActorType::Channel] {
+        for a in [
+            InboxActorType::User,
+            InboxActorType::Agent,
+            InboxActorType::Channel,
+        ] {
             assert!(!a.as_str().is_empty());
         }
     }

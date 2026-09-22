@@ -75,7 +75,7 @@ impl Redactor {
     ///
     /// 扫描 key token（`[A-Za-z_-]`），若 key 敏感且其后（可跨引号与空白）出现
     /// `=` / `:` 分隔符，则消费对应 value 并替换为 replacement；否则原样输出。
-    pub fn redact_str<'a>(&self, input: &'a str) -> String {
+    pub fn redact_str(&self, input: &str) -> String {
         let chars: Vec<char> = input.chars().collect();
         let mut out = String::with_capacity(chars.len());
         let mut i = 0;

@@ -189,7 +189,7 @@ pub struct UpdateMeRequest {
     pub profile_description: Option<String>,
 }
 
-/// `PATCH /api/me` — 更新 name / language / timezone / profile_description。
+/// `PATCH /api/me` — 更新 name / language / timezone / `profile_description`。
 pub async fn update_me(
     State(state): State<Arc<AppState>>,
     Extension(AuthUser(user_id)): Extension<AuthUser>,
@@ -354,7 +354,7 @@ pub async fn update_workspace(
     Ok(Json(ws.into()))
 }
 
-/// `DELETE /api/workspaces/{id}` — 要求 owner；软删（archived_at）。
+/// `DELETE /api/workspaces/{id}` — 要求 owner；软删（`archived_at`）。
 ///
 /// 上游是带 FOR UPDATE / advisory lock / cascade sweep 的重型事务
 /// （`workspace_delete_*` 系列，含 10s lock timeout fence），M1-A 仅软删。
@@ -411,6 +411,7 @@ pub async fn list_members(
 /// 注意：axum 0.7 同一 path + 同一 method 重复注册会 panic
 /// （`Overlapping method route`），因此 M0 的 `/api/workspaces` 占位路由
 /// 已从 `mount.rs::router()` 移除，由本函数提供真实 handler。
+#[allow(clippy::needless_pass_by_value)] // M1-D 集成契约签名（同 mount.rs::router）。
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     // 显式指定提取器元组 T（from_fn_with_state 的第三泛参），
     // 否则 route_layer 处无法反推。

@@ -25,7 +25,9 @@ fn full_smoke() {
     assert!(!id.is_nil());
 
     // 3. Errors round-trip.
-    let err = Error::NotFound { resource: "issue".into() };
+    let err = Error::NotFound {
+        resource: "issue".into(),
+    };
     assert_eq!(err.http_status(), 404);
     assert_eq!(err.code(), "not_found");
 
@@ -40,7 +42,11 @@ fn full_smoke() {
         role: WorkspaceRole::Owner,
     };
     assert_eq!(
-        decide(&AuthorizationRequest::new(owner, Resource::Workspace, Action::Admin)),
+        decide(&AuthorizationRequest::new(
+            owner,
+            Resource::Workspace,
+            Action::Admin
+        )),
         Decision::Allow
     );
 
@@ -67,7 +73,7 @@ fn full_smoke() {
     // 8. Feature flag catalog.
     let catalog = mc_feature_flags::FeatureFlagCatalog::new();
     catalog.register(
-        mc_feature_flags::FeatureKey::new("multica.test.flag"),
+        &mc_feature_flags::FeatureKey::new("multica.test.flag"),
         true,
         None,
     );
@@ -94,17 +100,22 @@ fn decide(req: &AuthorizationRequest) -> Decision {
 // ===========================================================================
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // 单条端到端剧本：按 1..8 步骤线性展开，便于对照验收清单。
 async fn workspace_member_http_e2e() {
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
-    use serde_json::json;
     use mc_repos::Repository;
+    use serde_json::json;
     use tower04::ServiceExt;
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|e| panic!("invalid json body: {e}; raw={:?}", String::from_utf8_lossy(&bytes)))
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            panic!(
+                "invalid json body: {e}; raw={:?}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })
     }
 
     fn get(uri: &str, session: &str) -> Request<Body> {
@@ -120,7 +131,7 @@ async fn workspace_member_http_e2e() {
         method: &str,
         uri: &str,
         session: Option<&str>,
-        body: serde_json::Value,
+        body: &serde_json::Value,
     ) -> Request<Body> {
         let mut b = Request::builder()
             .method(method)
@@ -132,14 +143,13 @@ async fn workspace_member_http_e2e() {
         b.body(Body::from(body.to_string())).unwrap()
     }
 
-    let url = match std::env::var("MULTICA_TEST_DATABASE_URL") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("workspace_member_http_e2e: MULTICA_TEST_DATABASE_URL not set; skipping");
-            return;
-        }
+    let Ok(url) = std::env::var("MULTICA_TEST_DATABASE_URL") else {
+        eprintln!("workspace_member_http_e2e: MULTICA_TEST_DATABASE_URL not set; skipping");
+        return;
     };
-    let db = mc_db::pool::Db::connect(&url, 4, 0).await.expect("db connect");
+    let db = mc_db::pool::Db::connect(&url, 4, 0)
+        .await
+        .expect("db connect");
     let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
     let steps = mc_db::Migrator::load_dir(&migrations).expect("load migrations");
     mc_db::Migrator::run(&db, steps).await.expect("migrate");
@@ -183,6 +193,7 @@ async fn workspace_member_http_e2e() {
             session_cookie: "multica_session".into(),
             api_key_header: "X-Multica-Api-Key".into(),
             csrf_header: "X-Multica-Csrf".into(),
+            ..Default::default()
         },
         realtime,
         ws_state,
@@ -194,10 +205,19 @@ async fn workspace_member_http_e2e() {
     // ---- 1. 无 session → 401 ----
     let resp = app
         .clone()
-        .oneshot(send("POST", "/api/workspaces", None, json!({"name":"x","slug":slug})))
+        .oneshot(send(
+            "POST",
+            "/api/workspaces",
+            None,
+            &json!({"name":"x","slug":slug}),
+        ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "no session must 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "no session must 401"
+    );
 
     // ---- 2. POST /api/workspaces → 201，自动 owner member ----
     let resp = app
@@ -206,7 +226,7 @@ async fn workspace_member_http_e2e() {
             "POST",
             "/api/workspaces",
             Some(&owner_session),
-            json!({"name": format!("E2E WS {suffix}"), "slug": slug}),
+            &json!({"name": format!("E2E WS {suffix}"), "slug": slug}),
         ))
         .await
         .unwrap();
@@ -222,11 +242,15 @@ async fn workspace_member_http_e2e() {
             "POST",
             "/api/workspaces",
             Some(&owner_session),
-            json!({"name": "dup", "slug": slug}),
+            &json!({"name": "dup", "slug": slug}),
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CONFLICT, "duplicate slug must 409");
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "duplicate slug must 409"
+    );
 
     // ---- 3. GET /api/workspaces（列表包含新 workspace） ----
     let resp = app
@@ -237,7 +261,10 @@ async fn workspace_member_http_e2e() {
     assert_eq!(resp.status(), StatusCode::OK);
     let list = body_json(resp).await;
     assert!(
-        list.as_array().unwrap().iter().any(|w| w["id"] == ws_id.as_str()),
+        list.as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["id"] == ws_id.as_str()),
         "list must contain created workspace: {list}"
     );
 
@@ -270,24 +297,41 @@ async fn workspace_member_http_e2e() {
         .expect("add member");
     let resp = app
         .clone()
-        .oneshot(get(&format!("/api/workspaces/{ws_id}/members"), &owner_session))
+        .oneshot(get(
+            &format!("/api/workspaces/{ws_id}/members"),
+            &owner_session,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let members = body_json(resp).await;
     let members = members.as_array().unwrap();
-    assert_eq!(members.len(), 2, "members must list owner + member: {members:?}");
-    assert!(members.iter().any(|m| m["role"] == "owner" && m["name"] == "E2E Owner"));
-    assert!(members.iter().any(|m| m["role"] == "member" && m["name"] == "E2E Member"));
+    assert_eq!(
+        members.len(),
+        2,
+        "members must list owner + member: {members:?}"
+    );
+    assert!(members
+        .iter()
+        .any(|m| m["role"] == "owner" && m["name"] == "E2E Owner"));
+    assert!(members
+        .iter()
+        .any(|m| m["role"] == "member" && m["name"] == "E2E Member"));
 
     // ---- 6. GET /api/me：user + memberships ----
-    let resp = app.clone().oneshot(get("/api/me", &owner_session)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(get("/api/me", &owner_session))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let me = body_json(resp).await;
     assert_eq!(me["email"], email);
     let memberships = me["memberships"].as_array().expect("memberships array");
     assert!(
-        memberships.iter().any(|m| m["workspace_id"] == ws_id.as_str() && m["role"] == "owner"),
+        memberships
+            .iter()
+            .any(|m| m["workspace_id"] == ws_id.as_str() && m["role"] == "owner"),
         "me.memberships must contain owner membership: {me}"
     );
 
@@ -299,11 +343,15 @@ async fn workspace_member_http_e2e() {
             "PATCH",
             &format!("/api/workspaces/{ws_id}"),
             Some(&member_session),
-            json!({"name": "hacked"}),
+            &json!({"name": "hacked"}),
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "member must not patch");
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "member must not patch"
+    );
     // owner → PATCH 200
     let resp = app
         .clone()
@@ -311,7 +359,7 @@ async fn workspace_member_http_e2e() {
             "PATCH",
             &format!("/api/workspaces/{ws_id}"),
             Some(&owner_session),
-            json!({"name": format!("E2E WS {suffix} v2")}),
+            &json!({"name": format!("E2E WS {suffix} v2")}),
         ))
         .await
         .unwrap();
@@ -326,7 +374,7 @@ async fn workspace_member_http_e2e() {
             "POST",
             &format!("/api/workspaces/{ws_id}/leave"),
             Some(&owner_session),
-            json!({}),
+            &json!({}),
         ))
         .await
         .unwrap();
@@ -337,7 +385,7 @@ async fn workspace_member_http_e2e() {
             "POST",
             &format!("/api/workspaces/{ws_id}/leave"),
             Some(&member_session),
-            json!({}),
+            &json!({}),
         ))
         .await
         .unwrap();

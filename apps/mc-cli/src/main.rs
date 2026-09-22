@@ -6,11 +6,15 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "multica", version, about = "Multica CLI")]
 struct Cli {
-    /// Base URL of multica-server (default http://127.0.0.1:3500)
-    #[arg(long, env = "MULTICA_BASE_URL", default_value = "http://127.0.0.1:3500")]
+    /// Base URL of multica-server (default <http://127.0.0.1:3500>)
+    #[arg(
+        long,
+        env = "MULTICA_BASE_URL",
+        default_value = "http://127.0.0.1:3500"
+    )]
     base_url: String,
 
-    /// API key for authentication (env MULTICA_API_KEY)
+    /// API key for authentication (env `MULTICA_API_KEY`)
     #[arg(long, env = "MULTICA_API_KEY")]
     api_key: Option<String>,
 

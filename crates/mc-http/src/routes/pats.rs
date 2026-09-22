@@ -65,7 +65,7 @@ impl From<&Pat> for PatDto {
             token_last4: p.token_last4.clone(),
             display_token: display,
             expires_at: p.expires_at.to_rfc3339(),
-            last_used_at: p.last_used_at.as_ref().map(|t| t.to_rfc3339()),
+            last_used_at: p.last_used_at.as_ref().map(chrono::DateTime::to_rfc3339),
             scopes: p.scopes.clone(),
             created_at: p.created_at.to_rfc3339(),
         }
@@ -183,6 +183,7 @@ async fn revoke_my_pat(
 // 内部 helper
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::needless_pass_by_value)] // 4 处 `.map_err(pat_err)` 的函数指针必须按值接收。
 fn pat_err(e: mc_auth::pat::PatError) -> Error {
     match e {
         mc_auth::pat::PatError::NotFound => Error::NotFound {

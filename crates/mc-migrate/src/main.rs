@@ -3,12 +3,14 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use mc_migrate::{connect_db, init_tracing, redact_url, report_status, resolve_url, run_migrations};
+use mc_migrate::{
+    connect_db, init_tracing, redact_url, report_status, resolve_url, run_migrations,
+};
 
 #[derive(Parser)]
 #[command(name = "multica-migrate", version, about = "Multica migration CLI")]
 struct Cli {
-    /// Database URL override (default: MULTICA_DATABASE_URL)
+    /// Database URL override (default: `MULTICA_DATABASE_URL`)
     #[arg(long)]
     database_url: Option<String>,
 
@@ -46,10 +48,14 @@ async fn main() -> anyhow::Result<()> {
             if json {
                 println!(
                     "{}",
-                    report_status(applied, &redact_url(&url), start.elapsed().as_millis() as u64)
+                    report_status(
+                        applied,
+                        &redact_url(&url),
+                        u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    )
                 );
             } else {
-                println!("applied {} migration(s)", applied);
+                println!("applied {applied} migration(s)");
             }
         }
         Command::Status => {

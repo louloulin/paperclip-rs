@@ -5,7 +5,7 @@
 //! - 所有 Repo 通过 `RepoWithDb::db(&Db)` 共享 sqlx 连接池
 //! - DB 错误统一翻译为 `RepoError`
 //!
-//! M1 增量（workspace / member / invitation / verification_code / pat）已声明 pub，
+//! M1 增量（workspace / member / invitation / `verification_code` / pat）已声明 pub，
 //! 各 sub-issue 在不修改本 lib 的前提下独立新增文件实现 Repo。
 
 use async_trait::async_trait;
@@ -14,12 +14,12 @@ use serde::Serialize;
 
 use mc_db::Db;
 
-pub mod workspace;
+pub mod invitation;
 pub mod member;
+pub mod pat;
 pub mod user;
 pub mod verification_code;
-pub mod invitation;
-pub mod pat;
+pub mod workspace;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {

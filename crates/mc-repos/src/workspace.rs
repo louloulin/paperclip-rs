@@ -18,7 +18,7 @@ use crate::{RepoError, RepoWithDb, Repository, Result};
 
 use mc_db::Db;
 
-/// WorkspaceRepo — `workspace` 表 + 必要的 JOIN。
+/// `WorkspaceRepo` — `workspace` 表 + 必要的 JOIN。
 #[derive(Clone)]
 pub struct WorkspaceRepo {
     db: Db,
@@ -70,9 +70,7 @@ impl TryFrom<WorkspaceRow> for Workspace {
     }
 }
 
-const COLUMNS: &str = "id, name, slug, description, avatar_url, settings, \
-                       archived_at, created_at, updated_at";
-
+#[allow(clippy::needless_pass_by_value)] // 作为 `map_err` 的函数指针必须按值接收。
 pub(crate) fn map_sqlx_err(err: sqlx::Error) -> RepoError {
     match &err {
         sqlx::Error::RowNotFound => RepoError::NotFound,
@@ -180,8 +178,8 @@ where
              ORDER BY id ASC LIMIT $3",
         )
         .bind(include_archived)
-        .bind(after_id.map(|i| i.as_uuid()))
-        .bind(limit as i64)
+        .bind(after_id.map(mc_core::Id::as_uuid))
+        .bind(i64::from(limit))
         .fetch_all(self.db.pool())
         .await
         .map_err(map_sqlx_err)?;
@@ -273,7 +271,7 @@ mod tests {
         Slug::parse(&format!("{prefix}-{}", &s[..10])).unwrap()
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_create_and_get_roundtrip() {
         let url = std::env::var("MULTICA_TEST_DATABASE_URL")
@@ -296,7 +294,7 @@ mod tests {
         repo.delete(&created.id).await.expect("soft delete ok");
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_unique_slug_conflict() {
         let url = std::env::var("MULTICA_TEST_DATABASE_URL")
@@ -324,7 +322,7 @@ mod tests {
         repo.delete(&a.id).await.ok();
     }
 
-    #[ignore]
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
     #[tokio::test]
     async fn db_list_for_user_filters_by_membership() {
         let url = std::env::var("MULTICA_TEST_DATABASE_URL")

@@ -118,12 +118,6 @@ fn session_response(
     response
 }
 
-fn sha256_hex(input: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(input);
-    hex::encode(h.finalize())
-}
-
 // ============================================================
 // POST /auth/send-code
 // ============================================================
@@ -165,7 +159,7 @@ async fn send_code(
     let repo = VerificationCodeRepo::new(state.db.clone());
 
     // 速率限制 —— 单邮箱每分钟上限（参考 upstream RATE_LIMIT_AUTH_VERIFY）。
-    let per_min = state.config.send_code_per_email_per_min.max(1) as i64;
+    let per_min = i64::from(state.config.send_code_per_email_per_min.max(1));
     let recent = repo
         .recent_for(&email, 60)
         .await
@@ -179,7 +173,8 @@ async fn send_code(
     // 生成 6 位数字 code
     let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
     let ttl_secs = state.config.verification_code_ttl_secs;
-    let expires_at: DateTime<Utc> = Utc::now() + Duration::seconds(ttl_secs as i64);
+    let expires_at: DateTime<Utc> =
+        Utc::now() + Duration::seconds(i64::try_from(ttl_secs).unwrap_or(i64::MAX));
 
     let _ = repo
         .create(NewVerificationCode {
@@ -202,7 +197,7 @@ async fn send_code(
 
     let body = SendCodeResponse {
         message: "Verification code sent",
-        dev_code: dev_mode(&state).then(|| code),
+        dev_code: dev_mode(&state).then_some(code),
     };
     Ok((StatusCode::OK, Json(body)).into_response())
 }
@@ -433,7 +428,8 @@ async fn refresh_session(
     // 续期：touch + 延长 TTL；新 csrf_token 不再更换（MUL-7436 把 csrf 绑
     // session.id 而不是 token 字符串本身）。
     session.last_seen_at = Utc::now();
-    session.expires_at = Utc::now() + Duration::seconds(state.config.session_ttl_secs as i64);
+    session.expires_at = Utc::now()
+        + Duration::seconds(i64::try_from(state.config.session_ttl_secs).unwrap_or(i64::MAX));
     session_store
         .put(session.clone())
         .await
@@ -664,12 +660,12 @@ mod tests {
         // 直接造一条已过期 + 未消费的 code
         let email = format!("expired-{}@example.test", Uuid::new_v4());
         sqlx::query(
-            r#"
+            r"
             INSERT INTO verification_code
                 (id, email, purpose, code_hash, expires_at, created_at)
             VALUES ($1, $2, 'email_verification', $3,
                     now() - interval '1 hour', now() - interval '2 hours')
-            "#,
+            ",
         )
         .bind(Uuid::new_v4())
         .bind(&email)

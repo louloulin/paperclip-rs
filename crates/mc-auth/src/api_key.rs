@@ -26,11 +26,7 @@ impl ApiKey {
         use rand::RngCore;
         let mut buf = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut buf);
-        let raw = format!(
-            "{}{}",
-            DEFAULT_API_KEY_PREFIX,
-            hex::encode(buf)
-        );
+        let raw = format!("{}{}", DEFAULT_API_KEY_PREFIX, hex::encode(buf));
         let hash = sha256_hex(raw.as_bytes());
         Self {
             raw,

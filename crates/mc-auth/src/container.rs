@@ -1,4 +1,4 @@
-//! AppState 友好的容器：默认实现 + 注入点。
+//! `AppState` 友好的容器：默认实现 + 注入点。
 
 use std::sync::Arc;
 

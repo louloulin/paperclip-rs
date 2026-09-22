@@ -1,6 +1,5 @@
 //! Workspace 领域类型。
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::id::Id;
@@ -38,7 +37,7 @@ pub struct Workspace {
     pub avatar_url: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
-    /// 是否归档。归档后所有 mutation 拒绝（参见 IssueGuard）。
+    /// 是否归档。归档后所有 mutation 拒绝（参见 `IssueGuard`）。
     pub archived_at: Option<Timestamp>,
     /// 工作空间默认 settings。
     pub settings: serde_json::Value,
@@ -67,13 +66,41 @@ pub struct WorkspaceUpdate {
     pub settings: Option<serde_json::Value>,
 }
 
+// Need FromStr impl for tests:
+impl std::str::FromStr for WorkspaceRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "owner" => Ok(Self::Owner),
+            "admin" => Ok(Self::Admin),
+            "member" => Ok(Self::Member),
+            "guest" => Ok(Self::Guest),
+            other => Err(format!("unknown workspace role: {other}")),
+        }
+    }
+}
+
+impl WorkspaceRole {
+    /// 宽松解析：未知值返回 `None`（区别于上面严格版的 `FromStr`）。
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn role_str_round_trip() {
-        for r in [WorkspaceRole::Owner, WorkspaceRole::Admin, WorkspaceRole::Member, WorkspaceRole::Guest] {
+        for r in [
+            WorkspaceRole::Owner,
+            WorkspaceRole::Admin,
+            WorkspaceRole::Member,
+            WorkspaceRole::Guest,
+        ] {
             assert_eq!(WorkspaceRole::from_str(r.as_str()), Some(r));
         }
     }
@@ -92,26 +119,5 @@ mod tests {
             settings: serde_json::json!({}),
         };
         assert!(w.is_archived());
-    }
-}
-
-// Need FromStr impl for tests:
-impl std::str::FromStr for WorkspaceRole {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "owner" => Ok(Self::Owner),
-            "admin" => Ok(Self::Admin),
-            "member" => Ok(Self::Member),
-            "guest" => Ok(Self::Guest),
-            other => Err(format!("unknown workspace role: {other}")),
-        }
-    }
-}
-
-impl WorkspaceRole {
-    pub fn from_str(s: &str) -> Option<Self> {
-        s.parse().ok()
     }
 }

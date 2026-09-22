@@ -58,7 +58,8 @@ impl MulticaHomePaths {
     }
 
     pub fn config_path(&self) -> PathBuf {
-        self.instance_root().join(format!("{MULTICA_CONFIG_BASENAME}.toml"))
+        self.instance_root()
+            .join(format!("{MULTICA_CONFIG_BASENAME}.toml"))
     }
 
     pub fn env_path(&self) -> PathBuf {

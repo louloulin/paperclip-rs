@@ -15,7 +15,9 @@ pub struct SecretValue {
 
 impl SecretValue {
     pub fn new(plaintext: impl Into<String>) -> Self {
-        Self { plaintext: plaintext.into() }
+        Self {
+            plaintext: plaintext.into(),
+        }
     }
 }
 
@@ -86,7 +88,10 @@ mod tests {
     #[tokio::test]
     async fn round_trip() {
         let store = InMemorySecretsStore::default();
-        store.put("api_key", SecretValue::new("secret")).await.unwrap();
+        store
+            .put("api_key", SecretValue::new("secret"))
+            .await
+            .unwrap();
         let got = store.get("api_key").await.unwrap();
         assert_eq!(got.plaintext, "secret");
         store.delete("api_key").await.unwrap();

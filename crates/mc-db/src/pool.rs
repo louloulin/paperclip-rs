@@ -22,6 +22,8 @@ impl std::fmt::Debug for Db {
 
 impl Db {
     /// 连接到一个 PostgreSQL 数据库。
+    // MSRV 1.80：`Duration::from_mins` 需要 Rust 1.91，故保留 `from_secs(60 * 5)`。
+    #[allow(clippy::duration_suboptimal_units)]
     pub async fn connect(
         url: &str,
         max_connections: u32,
@@ -39,6 +41,7 @@ impl Db {
 
     /// 用于测试 / 占位场景的懒构造 —— 不会立即拨号，但 pool 类型保持一致。
     /// 调用方负责在使用前确保 DB 可达；调用 `pool()` / `stats()` 不会触发网络。
+    #[allow(clippy::duration_suboptimal_units)] // 同上：MSRV 1.80 无 `from_mins`。
     pub fn connect_lazy(
         url: &str,
         max_connections: u32,
@@ -58,7 +61,7 @@ impl Db {
     /// 仅用于不需要实际查库的 handler（PAT / 内存型 store）。
     /// 调用 `pool().acquire()` 会失败，不要在集成测试里发起实际查询。
     #[cfg(any(test, feature = "test-util"))]
-    pub async fn placeholder() -> Self {
+    pub fn placeholder() -> Self {
         use sqlx::postgres::PgConnectOptions;
         let opts = PgConnectOptions::new()
             .host("127.0.0.1")
@@ -85,8 +88,8 @@ impl Db {
     /// 当前连接池统计。
     pub fn stats(&self) -> PoolStats {
         PoolStats {
-            size: self.pool.size() as u32,
-            idle: self.pool.num_idle() as u32,
+            size: self.pool.size(),
+            idle: u32::try_from(self.pool.num_idle()).unwrap_or(u32::MAX),
             max: self.pool.options().get_max_connections(),
         }
     }

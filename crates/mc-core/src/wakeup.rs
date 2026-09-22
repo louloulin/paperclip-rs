@@ -61,7 +61,11 @@ mod tests {
 
     #[test]
     fn source_str_round_trip() {
-        for s in [WakeupSource::Event, WakeupSource::Time, WakeupSource::Manual] {
+        for s in [
+            WakeupSource::Event,
+            WakeupSource::Time,
+            WakeupSource::Manual,
+        ] {
             assert!(!s.as_str().is_empty());
         }
     }

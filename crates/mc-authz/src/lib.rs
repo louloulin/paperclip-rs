@@ -97,8 +97,7 @@ impl Principal {
             Principal::Agent { .. } | Principal::System | Principal::Plugin { .. } => {
                 WorkspaceRole::Member
             }
-            Principal::Channel { .. } => WorkspaceRole::Guest,
-            Principal::Anonymous => WorkspaceRole::Guest,
+            Principal::Channel { .. } | Principal::Anonymous => WorkspaceRole::Guest,
         }
     }
 }
@@ -124,11 +123,13 @@ impl AuthorizationRequest {
         }
     }
 
+    #[must_use]
     pub fn with_workspace(mut self, workspace_id: Id) -> Self {
         self.workspace_id = Some(workspace_id);
         self
     }
 
+    #[must_use]
     pub fn with_owner(mut self, owner_id: Id) -> Self {
         self.resource_owner_id = Some(owner_id);
         self
@@ -163,8 +164,8 @@ pub enum AuthzError {
 /// - Agent / System：dispatch / read 自家资源
 /// - Channel：仅 comment / message 投递
 pub fn decide(req: &AuthorizationRequest) -> Decision {
-    use Action::*;
-    use Principal::*;
+    use Action::{Admin, Archive, Assign, Comment, Delete, Dispatch, Invite, Read, Trigger, Write};
+    use Principal::{Agent, Anonymous, Channel, Plugin, System, User};
     // 注意：不要 `use Resource::*;` —— Resource 与 Action / Principal 存在同名 variant
     //（Comment / Agent / Channel / Plugin），glob 导入会导致 E0659 歧义与 E0408 绑定错误。
     // 下文所有 Resource variant 均使用 `Resource::` 全路径。
@@ -175,35 +176,26 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
     }
 
     match req.principal {
-        Anonymous => match (req.resource, req.action) {
-            // health / openapi / auth 等公开端点由 routing 层处理；
-            // 业务资源一律 deny。
-            _ => Decision::Deny,
-        },
+        // health / openapi / auth 等公开端点由 routing 层处理；业务资源一律 deny。
+        Anonymous => Decision::Deny,
         User { role, .. } => match role {
             WorkspaceRole::Owner | WorkspaceRole::Admin => Decision::Allow,
             WorkspaceRole::Member => match (req.resource, req.action) {
-                (Resource::Workspace, Admin) => Decision::Deny,
-                (Resource::Member, Delete) => Decision::Deny,
-                (Resource::Member, Admin) => Decision::Deny,
-                (Resource::Invitation, Admin) => Decision::Deny,
-                (Resource::Seat, _) => Decision::Deny,
-                (Resource::Channel, Admin) => Decision::Deny,
-                (Resource::Plugin, Admin) => Decision::Deny,
-                (Resource::Webhook, _) => Decision::Deny,
-                (Resource::Autopilot, Trigger) => Decision::Allow,
-                (Resource::Autopilot, Dispatch) => Decision::Allow,
-                (Resource::Squad, Admin) => Decision::Deny,
-                (_, Read) => Decision::Allow,
-                (_, Comment) => Decision::Allow,
-                (_, Assign) => Decision::Allow,
-                (_, Write) => Decision::Allow,
-                (_, Delete) => Decision::Deny,
-                (_, Archive) => Decision::Deny,
-                (_, Invite) => Decision::Deny,
-                (_, Admin) => Decision::Deny,
-                (_, Trigger) => Decision::Deny,
-                (_, Dispatch) => Decision::Deny,
+                // 先列「资源 + 动作」的特例 deny（Seat / Webhook 全动作 deny 必须在
+                // `(_, Read)` 之前，否则会被下面的通配 allow 抢先匹配）。
+                (
+                    Resource::Workspace
+                    | Resource::Invitation
+                    | Resource::Channel
+                    | Resource::Plugin
+                    | Resource::Squad,
+                    Admin,
+                )
+                | (Resource::Member, Delete | Admin)
+                | (Resource::Seat | Resource::Webhook, _) => Decision::Deny,
+                (Resource::Autopilot, Trigger | Dispatch)
+                | (_, Read | Comment | Assign | Write) => Decision::Allow,
+                (_, Delete | Archive | Invite | Admin | Trigger | Dispatch) => Decision::Deny,
             },
             WorkspaceRole::Guest => match (req.resource, req.action) {
                 (_, Read) => Decision::Allow,
@@ -217,8 +209,8 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
             // agent 仅能操作自己的 issue / task
             if req.workspace_id == Some(workspace_id) {
                 match (req.resource, req.action) {
-                    (Resource::Issue, Read) => Decision::Allow,
-                    (Resource::Comment, Read | Comment) => Decision::Allow,
+                    (Resource::Issue | Resource::Chat, Read)
+                    | (Resource::Comment, Read | Comment) => Decision::Allow,
                     (Resource::Comment, Write) => {
                         // 仅当 agent 是 comment author 时允许
                         if req.resource_owner_id == Some(agent_id) {
@@ -227,7 +219,6 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
                             Decision::Deny
                         }
                     }
-                    (Resource::Chat, Read) => Decision::Allow,
                     _ => Decision::Deny,
                 }
             } else {
@@ -239,9 +230,8 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
         } => {
             if pid.is_none() || pid == req.workspace_id {
                 match (req.resource, req.action) {
-                    (Resource::Comment, Comment | Write | Read) => Decision::Allow,
-                    (Resource::Webhook, Read) => Decision::Allow,
-                    (Resource::SourceContext, Read) => Decision::Allow,
+                    (Resource::Comment, Comment | Write | Read)
+                    | (Resource::Webhook | Resource::SourceContext, Read) => Decision::Allow,
                     _ => Decision::Deny,
                 }
             } else {

@@ -2,7 +2,7 @@
 //!
 //! 设计目的：
 //! - 每个 M1 / M2 / ... sub-issue 添加新文件 `auth.rs` / `workspaces.rs` / ...
-//! - 每个 sub-issue 只在自己新增的 mount_slice 函数内追加 `.merge(...)`
+//! - 每个 sub-issue 只在自己新增的 `mount_slice` 函数内追加 `.merge(...)`
 //! - 多分支并发开发时只读不写公共 anchor，避免 3-way merge 冲突
 //!
 //! 公共 anchor（本文件）：仅维护一个稳定的 `Router::new()` + 健康/占位切片。
@@ -11,9 +11,9 @@ use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
 
+use super::auth;
 use super::health;
 use super::openapi;
-use super::auth;
 use super::workspaces;
 use crate::state::AppState;
 
@@ -21,6 +21,7 @@ use crate::state::AppState;
 // 本文件仅负责把各 sub-issue 的 router 切片合并到全局 router（签名以 A 的
 // `router(state)` 为基，B/C 的无参 router() 在集成后统一收敛到这里）。
 
+#[allow(clippy::needless_pass_by_value)] // M1-D 集成契约签名：main.rs 以 Arc 传入并最终 `with_state(state)`。
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         // ----- 健康 / OpenAPI / 通用 -----
@@ -88,6 +89,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
 ///
 /// M1 sub-issue A：真实 handler 在 crates/mc-http/src/routes/workspaces.rs，
 /// 注入 `State(state: Arc<AppState>)` 后 merge 进来。
+#[allow(clippy::needless_pass_by_value)] // 同 `router`：切片签名保持 Arc 传入，内部 clone 分发。
 fn mount_slice_workspace_member(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new().merge(workspaces::router(state.clone()))
 }

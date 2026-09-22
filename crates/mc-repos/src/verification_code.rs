@@ -2,7 +2,7 @@
 //!
 //! 对应 upstream `multica/server/pkg/db/queries/verification_code.sql` 的核心子集：
 //! - `create`        — 写入 `verification_code` 表
-//! - `consume`       — 原子化校验 + 标记 consumed_at（避免重放）
+//! - `consume`       — 原子化校验 + 标记 `consumed_at`（避免重放）
 //! - `prune_expired` — 清掉过期记录
 //! - `recent_for`    — 速率限制窗口计数
 //!
@@ -36,7 +36,7 @@ pub struct NewVerificationCode {
     pub expires_at: DateTime<Utc>,
 }
 
-/// 单行 verification_code 视图。
+/// 单行 `verification_code` 视图。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationRow {
     pub id: Id,
@@ -99,6 +99,7 @@ pub struct VerificationCodeRepo {
 }
 
 impl VerificationCodeRepo {
+    #[allow(clippy::needless_pass_by_value)] // 入参保留 `Db` 所有权，调用方直接 `state.db.clone()`。
     pub fn new(db: Db) -> Self {
         Self {
             pool: Arc::new(db.pool().clone()),
@@ -121,16 +122,16 @@ impl VerificationCodeRepo {
         let id = Uuid::new_v4();
         let purpose = VerificationRow::purpose_str(input.purpose);
         let row = sqlx::query_as::<_, VerificationRow>(
-            r#"
+            r"
             INSERT INTO verification_code
                 (id, user_id, email, purpose, code_hash, attempts, expires_at, created_at)
             VALUES ($1, $2, $3, $4, $5, 0, $6, now())
             RETURNING id, user_id, email, purpose, code_hash, attempts,
                       expires_at, consumed_at, created_at
-            "#,
+            ",
         )
         .bind(id)
-        .bind(input.user_id.map(|u| u.as_uuid()))
+        .bind(input.user_id.map(mc_core::Id::as_uuid))
         .bind(input.email.as_deref())
         .bind(purpose)
         .bind(&input.code_hash)
@@ -157,7 +158,7 @@ impl VerificationCodeRepo {
 
         // 1) 找出最近一条匹配 hash + purpose、未消费、未过期的行
         let row = sqlx::query_as::<_, VerificationRow>(
-            r#"
+            r"
             SELECT id, user_id, email, purpose, code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
@@ -168,7 +169,7 @@ impl VerificationCodeRepo {
               AND attempts < 5
             ORDER BY created_at DESC
             LIMIT 1
-            "#,
+            ",
         )
         .bind(code_hash)
         .bind(purpose_str)
@@ -182,11 +183,11 @@ impl VerificationCodeRepo {
 
         // 2) 原子标记 consumed_at；若已被另一进程抢先消费则返回 None
         let res = sqlx::query(
-            r#"
+            r"
             UPDATE verification_code
             SET consumed_at = now()
             WHERE id = $1 AND consumed_at IS NULL
-            "#,
+            ",
         )
         .bind(row.id.as_uuid())
         .execute(self.pool())
@@ -199,12 +200,12 @@ impl VerificationCodeRepo {
 
         // 3) 返回最新视图（含 consumed_at）
         let consumed = sqlx::query_as::<_, VerificationRow>(
-            r#"
+            r"
             SELECT id, user_id, email, purpose, code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(row.id.as_uuid())
         .fetch_one(self.pool())
@@ -217,28 +218,28 @@ impl VerificationCodeRepo {
     /// 增加 `attempts` 计数（在 verify 失败时 handler 调用，避免暴力枚举）。
     pub async fn increment_attempts(&self, id: Id) -> Result<i32> {
         let row = sqlx::query_as::<_, (i32,)>(
-            r#"
+            r"
             UPDATE verification_code
             SET attempts = attempts + 1
             WHERE id = $1 AND consumed_at IS NULL
             RETURNING attempts
-            "#,
+            ",
         )
         .bind(id.as_uuid())
         .fetch_optional(self.pool())
         .await
         .map_err(map_sqlx)?;
 
-        Ok(row.map(|(n,)| n).unwrap_or(0))
+        Ok(row.map_or(0, |(n,)| n))
     }
 
     /// 清理过期验证码（保守：仅清理 1 小时前已过期的，留出时钟偏移）。
     pub async fn prune_expired(&self) -> Result<u64> {
         let res = sqlx::query(
-            r#"
+            r"
             DELETE FROM verification_code
             WHERE expires_at < now() - interval '1 hour'
-            "#,
+            ",
         )
         .execute(self.pool())
         .await
@@ -248,14 +249,15 @@ impl VerificationCodeRepo {
     }
 
     /// 速率限制：返回 `(now - window_secs)` 之内该 email 申请过的验证码数量。
+    #[allow(clippy::cast_precision_loss)] // `make_interval(secs => …)` 取 double precision；窗口秒数为小整数。
     pub async fn recent_for(&self, email: &str, window_secs: i64) -> Result<i64> {
         let row = sqlx::query_as::<_, (Option<i64>,)>(
-            r#"
+            r"
             SELECT COUNT(*)::BIGINT
             FROM verification_code
             WHERE email = $1
               AND created_at > now() - make_interval(secs => $2)
-            "#,
+            ",
         )
         .bind(email)
         .bind(window_secs as f64)
@@ -274,7 +276,7 @@ impl VerificationCodeRepo {
     ) -> Result<Option<VerificationRow>> {
         let purpose_str = VerificationRow::purpose_str(purpose);
         let row = sqlx::query_as::<_, VerificationRow>(
-            r#"
+            r"
             SELECT id, user_id, email, purpose, code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
@@ -284,7 +286,7 @@ impl VerificationCodeRepo {
               AND expires_at > now()
             ORDER BY created_at DESC
             LIMIT 1
-            "#,
+            ",
         )
         .bind(email)
         .bind(purpose_str)
@@ -296,6 +298,7 @@ impl VerificationCodeRepo {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // 作为 `map_err` 的函数指针必须按值接收。
 fn map_sqlx(e: sqlx::Error) -> RepoError {
     RepoError::Db(e.to_string())
 }
@@ -392,10 +395,10 @@ mod tests {
         let hash = hash_code(&format!("c-{}", Uuid::new_v4()));
         // 直接插一条已过期的行（绕过 create 的 TTL 检查）
         sqlx::query(
-            r#"
+            r"
             INSERT INTO verification_code (id, email, purpose, code_hash, expires_at, created_at)
             VALUES ($1, $2, 'email_verification', $3, now() - interval '1 hour', now() - interval '2 hours')
-            "#,
+            ",
         )
         .bind(Uuid::new_v4())
         .bind(unique_email("expired"))
@@ -441,11 +444,11 @@ mod tests {
         let repo = VerificationCodeRepo::new(db);
         // 插一条 2 小时前过期的
         sqlx::query(
-            r#"
+            r"
             INSERT INTO verification_code (id, email, purpose, code_hash, expires_at, created_at)
             VALUES ($1, 'prune@example.test', 'email_verification', $2,
                     now() - interval '2 hours', now() - interval '3 hours')
-            "#,
+            ",
         )
         .bind(Uuid::new_v4())
         .bind(hash_code("prune-1"))

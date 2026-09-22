@@ -1,18 +1,14 @@
 //! Cookie 设置选项。
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SameSite {
     Strict,
+    #[default]
     Lax,
     None,
-}
-
-impl Default for SameSite {
-    fn default() -> Self {
-        Self::Lax
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,11 +40,11 @@ impl CookieOptions {
     pub fn render(&self) -> String {
         let mut out = format!("{}={}", self.name, self.value);
         if let Some(max_age) = self.max_age_secs {
-            out.push_str(&format!("; Max-Age={max_age}"));
+            let _ = write!(out, "; Max-Age={max_age}");
         }
-        out.push_str(&format!("; Path={}", self.path));
+        let _ = write!(out, "; Path={}", self.path);
         if let Some(domain) = &self.domain {
-            out.push_str(&format!("; Domain={domain}"));
+            let _ = write!(out, "; Domain={domain}");
         }
         if self.secure {
             out.push_str("; Secure");
@@ -61,7 +57,7 @@ impl CookieOptions {
             SameSite::Lax => "Lax",
             SameSite::None => "None",
         };
-        out.push_str(&format!("; SameSite={ss}"));
+        let _ = write!(out, "; SameSite={ss}");
         out
     }
 }

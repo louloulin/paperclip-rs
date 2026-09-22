@@ -25,7 +25,7 @@ async fn build_state() -> Arc<AppState> {
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
     let adapters = Arc::new(AdapterRegistryStub::default());
-    let db = Db::placeholder().await;
+    let db = Db::placeholder();
     let state = AppState::new(
         db,
         RuntimeHandles { actors, adapters },

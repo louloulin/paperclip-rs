@@ -128,7 +128,7 @@ impl Default for OtlpConfig {
 /// Instance telemetry 客户端 stub：把遥测事件 append 到一个本地 outbox，
 /// 由后台 actor 周期 flush 到 instance telemetry endpoint。
 pub mod global {
-    use super::*;
+    use serde::Serialize;
     use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Clone, Serialize)]

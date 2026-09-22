@@ -2,7 +2,7 @@
 //!
 //! 与 multica `packages/plugin-sdk` 兼容；envelope 与 paperclip `pc-plugin-protocol` 同构。
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ pub async fn read_response<R: tokio::io::AsyncBufReadExt + Unpin>(
 }
 
 /// Helper: encode + dispatch a method by name.
-pub fn encode_method(name: &str, params: Value) -> Value {
+pub fn encode_method(name: &str, params: &Value) -> Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": new_request_id(),
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn encode_method_includes_id() {
-        let v = encode_method("initialize", serde_json::json!({}));
+        let v = encode_method("initialize", &serde_json::json!({}));
         assert_eq!(v["jsonrpc"], "2.0");
         assert_eq!(v["method"], "initialize");
         assert!(v["id"].is_string());

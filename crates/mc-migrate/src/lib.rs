@@ -18,7 +18,7 @@ pub fn init_tracing() {
         .try_init();
 }
 
-/// 解析数据库 URL(优先级: --database-url > MULTICA_DATABASE_URL > DATABASE_URL)。
+/// 解析数据库 URL(优先级: `--database-url` > `MULTICA_DATABASE_URL` > `DATABASE_URL`)。
 pub fn resolve_url(cli_db: Option<&str>) -> Result<String> {
     if let Some(url) = cli_db {
         if !url.is_empty() {
@@ -35,9 +35,7 @@ pub fn resolve_url(cli_db: Option<&str>) -> Result<String> {
             return Ok(url);
         }
     }
-    anyhow::bail!(
-        "database url not set: pass --database-url or MULTICA_DATABASE_URL/DATABASE_URL"
-    )
+    anyhow::bail!("database url not set: pass --database-url or MULTICA_DATABASE_URL/DATABASE_URL")
 }
 
 /// 从 URL 中脱敏 userinfo。
@@ -50,7 +48,7 @@ pub fn redact_url(url: &str) -> String {
     url.to_string()
 }
 
-/// 默认需要 verify 的关键表集合（multica schema_migrations 初始化后可见）。
+/// 默认需要 verify 的关键表集合（multica `schema_migrations` 初始化后可见）。
 pub const DEFAULT_REQUIRED_TABLES: &[&str] = &[
     "user",
     "workspace",
@@ -79,7 +77,11 @@ pub async fn run_migrations(db: &Db, dir: PathBuf) -> Result<usize> {
     info!(count = steps.len(), "loaded migration files");
     Migrator::run(db, steps).await?;
     let applied = Migrator::list_applied(db).await?.len();
-    info!(applied, elapsed_ms = start.elapsed().as_millis() as u64, "migrations done");
+    info!(
+        applied,
+        elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "migrations done"
+    );
     Ok(applied)
 }
 
