@@ -1,6 +1,6 @@
 # M3 W3c 预飞：daemon 面 / execenv+adapters 写集实测与 ws 传输层切片可行性
 
-> 编制：编程助手devbox5（LUM-1437）｜基线：`feat/multica-rs-initial` @ `a09789d`｜协议权威：上游 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`
+> 编制：编程助手devbox5（LUM-1437）｜实测基线：`feat/multica-rs-initial` @ `a09789d`（issue 指定的起点）；**当前 base head 已前进到 `7888cf3`，两者的数字必须在 §2.6 里分开读**｜协议权威：上游 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`
 > 本文件只回答「W3c 能不能切、怎么切、切之前必须先做什么」，**不含任何实现**。所有数字都由 §8 的命令实测得到；与 `docs/35`/`docs/36` 同构。
 
 ---
@@ -11,8 +11,9 @@
 2. **W3c 有三个真 anchor 缺口**（§3.1）：`mc-repos/src/daemon.rs` 与其 `pub mod` **未预置**；`mc-http/Cargo.toml` 缺 `mc-daemon-proto`/`mc-task`（`mc-ws` 另缺 `mc-daemon-proto`/`uuid`）；文档里「需先删 M0 占位」的 3 条**都不在 W3c 写集**（占位属 M3-4/M3-5）。
 3. **ws 传输层可切出一个 0 路由 0 DB 的预切片，且无需等任何人** —— 已据此预建 **LUM-1439**（`docs/37` §4 给出写集、依赖、反证）。它应排在 M3-7 之前，是 W3c 串行链上唯一「现在就能开工」的一段。
 4. **M3-8 的 25 项里只有 16 项能由冻结规则定族**，其余 8 项（copilot/opencode/codearts/deveco/openclaw/dsh/grok/antigravity）必须逐项定并写依据；`docs/15` §6 的 8/8/9 批划分**不按协议族**，建议**保留批边界、批内按族分组**（§5.3）。
-5. **门 ⑦ / ⑨ 都不会因为 W3c 写集而需要刷新** —— 实测：加真实路由后 ⑦ 仍 `exit 0`（`unclaimed 0`、`regression 0`，基线 139 不动），⑨ 打印 `report matches crates/mc-conformance/report.json`（§2.2、§8）。
-6. **前置实况**：M3-1/M3-2/M3-3（W3a 三片）**已合**（实测均为 HEAD 祖先）；`W0-B2`（LUM-1387）仍 `todo` 但**有一个 active run**（状态与 run 不一致，§3.3）。
+5. **门 ⑦ / ⑨ 都不会因为 W3c 写集而需要刷新** —— 实测：加真实路由后 ⑦ 仍 `exit 0`（`unclaimed 0`、`regression 0`，基线数字不动），⑨ 打印 `report matches crates/mc-conformance/report.json`（§2.2、§8）。
+6. **基线口径**：issue 里写的 ⑦ `122/136/11`、⑨ `unmounted 6 / placeholder 0` **是对的**，但属于**当前 base head `7888cf3`**，不是 issue 指定的起点 `a09789d` —— 中间 `8895abe` 已把 W3b 的 anchor 预删落底（删 `/api/agents`+`/api/runtimes` 两条占位）并同步刷了 ⑦ 基线 + ⑨ 快照。**W3c 派发请按 `7888cf3` 的口径**（§2.6）。
+7. **前置实况**：M3-1/M3-2/M3-3（W3a 三片）**已合**（实测均为 HEAD 祖先）；`W0-B2`（LUM-1387）仍 `todo` 但**有一个 active run**（状态与 run 不一致，§3.3）。
 
 ---
 
@@ -116,7 +117,32 @@ grep -rn 'not_implemented' crates/mc-http/src/routes/                  # M2 那 
 
 **W3c 的实测结论：预删项 0 个。** 9 处占位分别属 M3-4（`/api/runtimes`）、M3-5（`/api/agents`）、M4/M5/M6/M10；`/api/daemon*` 与 `/api/runtimes/{runtimeId}/*` 没有被占位注册（探针实测 `POST /api/daemon/deregister` 无冲突）。
 
-### 2.5 回退证据（预飞不留代码）
+### 2.5 基线口径：`a09789d`（issue 起点）vs `7888cf3`（当前 base head）
+
+issue 让从 `a09789d` 起分支，所以本片所有实测都在 `a09789d` 上做；但 base 分支随后前进了两步：
+
+```
+a09789d  merge(#24) R7 拆分 + #19 校验                    ← issue 指定的起点（本片实测基线）
+8895abe  chore(m3-anchor): W3b anchor 预删（删 /api/agents + /api/runtimes 占位，刷 ⑦ 基线 + ⑨ 快照）
+7888cf3  docs(36): 03:30 cycle 落地记录（LUM-1435）        ← 当前 base head
+```
+
+两套数字（同一套命令，只是换 commit）：
+
+| 口径 | ⑦ | ⑨ totals | `mount.rs` 占位数 |
+| --- | --- | --- | --- |
+| **`a09789d`（issue 起点，本片 §2.2/§2.3 实测）** | `local 140 / baseline 139 / implemented 125 (112 real+13 placeholder) / known_gap 331 / local_only 12 / unclaimed 0 / regression 0` | `pass 4 / mismatch 1 / **unmounted 5** / **placeholder 1** / unevaluable 47` | 9（含 `/api/agents`、`/api/runtimes`） |
+| **`7888cf3`（当前 base head，临时 worktree 实测）** | `local 136 / baseline 136 / implemented 122 (112 real+10 placeholder) / known_gap 334 / local_only 11 / unclaimed 0 / regression 0` | `pass 4 / mismatch 1 / **unmounted 6** / **placeholder 0** / unevaluable 47` | 7（两条已被 `8895abe` 删除） |
+
+⇒ **issue 里给出的预期值（122 / 136 / 11、unmounted 6 / placeholder 0）不是错的，而是属于 `7888cf3`**。本片没有改用后者的原因很实际：issue 指定从 `a09789d` 起分支，而预删本身**改变不了 W3c 的结论** ——
+
+- W3c 的预删项在**两个口径下都是 0**（被删的两条属 M3-4/M3-5）；
+- 锚点（`mount.rs:96` / `mount_slice_daemon()`）在**两个口径下都已接好**（`8895abe` 只删占位行，未动 merge）；
+- ⑦/⑨ 的不变性结论在两个口径下同样成立（加真实路由只动 `local_only`/`known_gap`，⑨ 只把 `placeholder 1 → unmounted 1`）。
+
+**给 M3-7 的口径纪律**：晋升与验收引用 ⑦/⑨ 数字时，**必须写清是哪一版 base**（`8895abe` 之后 baseline 从 139 变 136、⑨ 快照也变过）；`docs/15`/本篇 `a09789d` 的数字只在 `a09789d` 上成立。本片没有刷新任何基线/快照（那是 cycle/集成的活）。
+
+### 2.5b 回退证据（预飞不留代码）
 
 ```
 $ git status --porcelain
@@ -137,7 +163,7 @@ $ git diff --stat        # 无输出
 | --- | --- | --- | --- |
 | **A** | `crates/mc-repos/src/daemon.rs` **不存在**，`lib.rs` **也没有** `pub mod daemon;` | `ls crates/mc-repos/src/` → `{agent,comment,inbox,invitation,issue,issue_status,issue_table,member,pat,runtime,share_link,subscriber,task,user,verification_code,workspace}.rs`；`lib.rs` 只声明了其中 13 个 | M3-7（**要改他人也会碰的共享 `lib.rs`** ⇒ 必须排在 W0-B2 之后） |
 | **B** | 依赖未预声明：`mc-http/Cargo.toml` **没有** `mc-daemon-proto`、**没有** `mc-task`；`mc-ws/Cargo.toml` **没有** `mc-daemon-proto`、**没有** `uuid` | `grep -c 'mc-daemon-proto\|mc-task' crates/mc-http/Cargo.toml` → `0`；`mc-ws` 现有 deps = serde/serde_json/thiserror/anyhow/tracing/tokio/tokio-tungstenite/futures-util/axum/mc-realtime/mc-core | M3-7（或先由 ws 预切片吸收一部分） |
-| **C** | 「需先删 M0 占位」的 3 条**不在 W3c** | `GET|POST /api/agents`（`mount.rs:49`→M3-5）、`GET /api/runtimes`（`:53`→M3-4）；探针实测 daemon 路径无占位冲突 | 无（W3c 预删项 0） |
+| **C** | 「需先删 M0 占位」的 3 条**不在 W3c**（且其中两条已由 base 的 `8895abe` 预删落底） | `a09789d` 上 `GET|POST /api/agents`（`mount.rs:49`→M3-5）、`GET /api/runtimes`（`:53`→M3-4）；`7888cf3` 上已删（占位只剩 7 处）；探针实测 daemon 路径在两个口径下都无占位冲突 | 无（W3c 预删项 0） |
 
 > 依赖 delta 会写 `Cargo.lock`，而 `Cargo.lock` 是**共享面**（`docs/15` §7.5 规定 rebase 规则）。**把这次 delta 放在 ws 预切片（LUM-1439）里先落地**，M3-7 就只需 rebase，冲突面最小。
 
@@ -363,7 +389,7 @@ test daemon_min_loop_register_claim_start_progress_complete ... ok
 | issue | 内容 | 写集主体 | 前置（晋升判据） | 文档 |
 | --- | --- | --- | --- | --- |
 | **LUM-1439** | ws 传输层预切片（0 路由 0 DB） | `mc-ws/src/{hub,identity,frames}.rs` + tests + Cargo | **无**（M3-1 已合）⇒ 可立即派 | `docs/38` |
-| **LUM-1438** | M3-7 daemon 面 44 条 + ws 服务端 | `routes/daemon/*` + `mc-repos/src/daemon.rs` + `mc-ws` 消费 + `mc-daemon` 客户端 | W0-B2 合 + M3-1/3 合（已满足）+ **M3-4 先合** + LUM-1439 先合 | `docs/32` |
+| **LUM-1438** | M3-7 daemon 面 44 条 + ws 服务端 | `routes/daemon/*` + `mc-repos/src/daemon.rs` + `mc-ws` 消费 + `mc-daemon` 客户端 | W0-B2 合 + M3-1/3 合（已满足）+ **M3-4 先合** + LUM-1439 先合；开工前 rebase 到当日 base head（口径见 §2.5） | `docs/32` |
 | **LUM-1440** | M3-8-p0 execenv（99 文件） | `mc-daemon/src/execenv/**` | LUM-1438 合（同 crate 串行） | `docs/33` |
 | **LUM-1441** | M3-8-a adapters 批 1（新增 7） | `mc-runtime/src/adapters/**` + registry + 族映射 | LUM-1438 合 | `docs/33` |
 | **LUM-1442** | M3-8-b adapters 批 2（8 项） | 同上（串行） | LUM-1441 合 | `docs/33` |
@@ -381,7 +407,13 @@ test daemon_min_loop_register_claim_start_progress_complete ... ok
 export PATH="$HOME/.cargo/bin:$PATH"                 # 本机 rustup stable 1.98.1
 
 # ── 0. 基线与前置 ────────────────────────────────────────────────
-git log -1 --format='%H %s'                          # a09789d …
+git log -1 --format='%H %s'                          # a09789d …（issue 起点）
+# 口径对照（§2.5）：base head 已到 7888cf3；临时 worktree 实测另一套数字
+git fetch -q origin feat/multica-rs-initial && git rev-parse --short origin/feat/multica-rs-initial
+git log --oneline a09789d..origin/feat/multica-rs-initial | cat   # 8895abe / 7888cf3
+git worktree add -q --detach /tmp/base1437 origin/feat/multica-rs-initial
+( cd /tmp/base1437 && python3 scripts/route_parity.py | head -2 )   # local 136 / implemented 122 (112+10)
+git worktree remove /tmp/base1437 --force
 git merge-base --is-ancestor 0ed37b5 HEAD && echo "M3-1 landed"
 git merge-base --is-ancestor 59b89e6 HEAD && echo "M3-2 landed"
 git merge-base --is-ancestor 418c2b0 HEAD && echo "M3-3 landed"
