@@ -2,7 +2,8 @@
 
 > **冻结声明**：本文件冻结 `crates/mc-daemon-proto` 的类型、帧契约、事件常量表、能力协商与 RPC method 表，
 > 作为 M3 子波二/三（W3b/W3c）**全部 36 条 daemon 路由 + 8 条异步请求-应答路由**的请求/响应形状来源。
-> **冻结 commit**：`{{FREEZE_SHA}}`（`feat/multica-rs-m3a-daemon-proto` 的第一笔 commit）。
+> **冻结 commit**：`0ed37b5`（`feat/multica-rs-m3a-daemon-proto` 的第一笔 commit，含全部类型/用例与本文首版；
+> 该 sha 由本片第二笔 commit 回填，见 `git log 0ed37b5..HEAD`）。
 > **上游权威**：`server/pkg/protocol/` @ `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`（与 `docs/fixtures/upstream-routes.tsv` 同源），
 > 辅以 `server/internal/daemonws/hub.go`、`server/internal/daemon/client.go`、`server/internal/handler/{daemon,daemon_rpc,runtime_update,runtime_models,runtime_local_skills}.go`。
 > **编制**：LUM-1407（M3-1）。基线 `feat/multica-rs-initial` @ `d7639f0`。
