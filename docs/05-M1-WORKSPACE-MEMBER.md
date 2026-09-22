@@ -12,9 +12,12 @@ member-visible 路由 + `/api/me`，以及占位认证中间件 `require_user` /
 | POST | `/api/workspaces` | `workspaces::create_workspace` | `require_user` | `workspace.go:202 CreateWorkspace` |
 | GET | `/api/workspaces/{id}` | `workspaces::get_workspace` | `require_member` | `workspace.go:179 GetWorkspace` |
 | PATCH | `/api/workspaces/{id}` | `workspaces::update_workspace` | `require_role(Owner, Admin)` | `workspace.go:373 UpdateWorkspace` |
+| PUT | `/api/workspaces/{id}` | `workspaces::update_workspace`（同上，LUM-1362 补） | `require_role(Owner, Admin)` | 上游 `router.go:1699` 与 PATCH 同 handler |
 | DELETE | `/api/workspaces/{id}` | `workspaces::delete_workspace` | `require_role(Owner)` | `workspace.go:1059 DeleteWorkspace` |
 | POST | `/api/workspaces/{id}/leave` | `workspaces::leave_workspace` | `require_member` | `workspace.go:702 LeaveWorkspace` |
 | GET | `/api/workspaces/{id}/members` | `workspaces::list_members` | `require_member` | `workspace.go:499 ListMembersWithUser` |
+| PATCH | `/api/workspaces/{id}/members/{memberId}` | `workspaces::update_member`（LUM-1362 补） | `require_role(Owner, Admin)` + handler 内 owner 校验 | `workspace.go:565 UpdateMember` |
+| DELETE | `/api/workspaces/{id}/members/{memberId}` | `workspaces::delete_member`（LUM-1362 补） | `require_role(Owner, Admin)` + handler 内 owner 校验 | `workspace.go:641 DeleteMember` |
 | GET | `/api/me` | `workspaces::get_me` | `require_user` | `auth.go:473 GetMe` |
 | PATCH | `/api/me` | `workspaces::update_me` | `require_user` | `auth.go:768 UpdateMe` |
 

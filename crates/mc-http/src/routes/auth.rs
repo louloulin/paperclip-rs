@@ -52,7 +52,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/refresh", post(refresh_session))
         // M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick 的增量：
         // CLI 登录用的一次性 PAT（浏览器会话 → token）。
-        .route("/api/auth/cli-token", post(cli_token))
+        //
+        // 路径 M1-E（LUM-1362）修正：上游是 `POST /api/cli-token`
+        // （`router.go:1628`，**没有** `/auth` 这一层）；M1-B 曾误注册为
+        // `/api/auth/cli-token`。见 docs/17-M1-CONTRACT-GAPS.md 缺口 #7。
+        .route("/api/cli-token", post(cli_token))
     // 注：`/api/me` 由 M1-A 的 routes/workspaces.rs 真实实现（仲裁 #4）。
     // 此处不得再注册同 path+method —— axum 0.7 `.merge` 重复注册会 panic。
 }
@@ -391,7 +395,7 @@ fn parse_session_cookie(header: &str, name: &str) -> Option<String> {
 }
 
 // ============================================================
-// POST /api/auth/cli-token —— CLI 登录换取 PAT
+// POST /api/cli-token（上游 router.go:1628）—— CLI 登录换取 PAT
 // ============================================================
 
 /// 当前用户解析：优先 session cookie，其次 M1 dev-mode 的 `X-Multica-User-Id`。
@@ -436,7 +440,7 @@ pub struct CliTokenResponse {
     pub user_id: String,
 }
 
-/// `POST /api/auth/cli-token` —— 用已登录会话换取一个 CLI 用的 token。
+/// `POST /api/cli-token` —— 用已登录会话换取一个 CLI 用的 token。
 ///
 /// 上游（`handler/auth.go::IssueCliToken`）签发一个无状态 JWT；本仓 M1 还没有 JWT
 /// 签发链，因此本实现返回一个 **30 天 TTL 的 PAT**（与 `/api/me/pats` 同一个
@@ -832,7 +836,7 @@ mod tests {
         );
     }
 
-    /// `/api/auth/cli-token`：dev header 路径 → 200 + 可用的 PAT（真正落 store）。
+    /// `/api/cli-token`：dev header 路径 → 200 + 可用的 PAT（真正落 store）。
     #[tokio::test]
     async fn cli_token_issues_usable_pat() {
         let state = build_state(60, true);
@@ -841,7 +845,7 @@ mod tests {
 
         let req = Request::builder()
             .method("POST")
-            .uri("/api/auth/cli-token")
+            .uri("/api/cli-token")
             .header("x-multica-user-id", user_id.as_string())
             .body(Body::empty())
             .unwrap();
@@ -891,7 +895,7 @@ mod tests {
 
         let req = Request::builder()
             .method("POST")
-            .uri("/api/auth/cli-token")
+            .uri("/api/cli-token")
             .header("cookie", format!("multica_session={sid}"))
             .body(Body::empty())
             .unwrap();
@@ -906,7 +910,7 @@ mod tests {
         // 既无 cookie 也无 header → 401
         let req = Request::builder()
             .method("POST")
-            .uri("/api/auth/cli-token")
+            .uri("/api/cli-token")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();

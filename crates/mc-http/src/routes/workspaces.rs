@@ -6,8 +6,13 @@
 //! 鉴权全部走 `crate::middleware::authn`：
 //! - `GET/PATCH /api/me`、`GET/POST /api/workspaces` → `require_user`
 //! - `GET /api/workspaces/{id}`、`POST .../leave`、`GET .../members` → `require_member`
-//! - `PATCH /api/workspaces/{id}` → `require_role(Owner | Admin)`
+//! - `PATCH|PUT /api/workspaces/{id}`、`PATCH|DELETE .../members/{memberId}`
+//!   → `require_role(Owner | Admin)`（member 路径另有 handler 级 owner 校验）
 //! - `DELETE /api/workspaces/{id}` → `require_role(Owner)`
+//!
+//! M1-E（LUM-1362）按上游 `router.go:1699-1704` 补齐 `PUT /api/workspaces/{id}` 与
+//! `PATCH`/`DELETE /api/workspaces/{id}/members/{memberId}`，见
+//! `docs/17-M1-CONTRACT-GAPS.md`。
 
 use std::sync::Arc;
 
@@ -15,10 +20,11 @@ use axum::extract::{Extension, Json, Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::Router;
+use mc_core::member::WorkspaceMember;
 use mc_core::user::User;
 use mc_core::workspace::{NewWorkspace, Workspace, WorkspaceRole, WorkspaceUpdate};
 use mc_core::{Id, Slug, Timestamp};
-use mc_repos::member::{MemberFilter, MemberRepo, MemberWithUser, NewMember};
+use mc_repos::member::{MemberFilter, MemberRepo, MemberUpdate, MemberWithUser, NewMember};
 use mc_repos::user::{UserRepo, UserUpdate};
 use mc_repos::workspace::WorkspaceRepo;
 use mc_repos::{RepoError, Repository};
@@ -50,6 +56,68 @@ fn validation(msg: impl Into<String>) -> ApiError {
         message: msg.into(),
         details: Vec::new(),
     })
+}
+
+fn not_found(resource: &str) -> ApiError {
+    ApiError(Error::NotFound {
+        resource: resource.into(),
+    })
+}
+
+fn forbidden(msg: &str) -> ApiError {
+    ApiError(Error::Forbidden {
+        message: msg.into(),
+    })
+}
+
+/// member 变更（PATCH / DELETE）的 repo 错误映射。
+///
+/// `MemberRepo::update` / `delete` 在「最后一个 owner 被降级 / 被移除」时返回
+/// `RepoError::Conflict`（`FOR UPDATE` 事务内的 owner-safeguard，LUM-1335 移植）。
+///
+/// 上游 `UpdateMember` / `DeleteMember`（`handler/workspace.go:565,641`）在同样场景
+/// 返回 **400** + `"workspace must have at least one owner"`；本仓把它映射为 **409**
+/// ——`Conflict` 语义比 `Validation` 更准，且能区分「请求体本身不合法」（400）。
+/// 这是有意的契约偏离，记录在 `docs/17-M1-CONTRACT-GAPS.md` §2 决策 D2。
+fn member_mutation_err(e: RepoError) -> ApiError {
+    match e {
+        RepoError::Conflict => ApiError(Error::Conflict {
+            message: "workspace must have at least one owner".into(),
+        }),
+        other => repo_err(other, "member"),
+    }
+}
+
+/// 上游 `normalizeMemberRole`（`handler/workspace.go:547`）：**更新**路径只接受
+/// `owner` / `admin` / `member`（`guest` 与未知值都是 400），空串单独报 400。
+fn normalize_member_role(raw: &str) -> ApiResult<WorkspaceRole> {
+    match raw.trim() {
+        "" => Err(validation("role is required")),
+        "owner" => Ok(WorkspaceRole::Owner),
+        "admin" => Ok(WorkspaceRole::Admin),
+        "member" => Ok(WorkspaceRole::Member),
+        _ => Err(validation("invalid member role")),
+    }
+}
+
+/// 取 `memberId` 指向的 member，并确认它属于 URL 里的 workspace。
+///
+/// 上游把「member 不存在」与「member 属于别的 workspace」都折叠成 404
+/// （`handler/workspace.go:579`：`target.WorkspaceID != requester.WorkspaceID` →
+/// `404 member not found`），避免泄露跨 workspace 的 member 存在性。
+async fn load_member_in_workspace(
+    state: &AppState,
+    workspace_id: Id,
+    member_id: &Id,
+) -> ApiResult<WorkspaceMember> {
+    let target = MemberRepo::new(state.db.clone())
+        .get(member_id)
+        .await
+        .map_err(|e| repo_err(e, "member"))?;
+    if target.workspace_id != workspace_id {
+        return Err(not_found("member"));
+    }
+    Ok(target)
 }
 
 /// workspace JSON（上游 `WorkspaceResponse` 的 multica-rs 子集；
@@ -354,6 +422,12 @@ pub async fn update_workspace(
     Ok(Json(ws.into()))
 }
 
+/// `PATCH` / `PUT /api/workspaces/{id}` 请求体共用（上游 `UpdateWorkspaceRequest`）。
+///
+/// `PUT` 与 `PATCH` 在上游指向同一个 handler（`router.go:1699-1700`），语义等价：
+/// 只更新请求体里出现的字段（`UpdateWorkspaceParams` 用 `pgtype.Text.Valid` 区分
+/// 「未提供」与「显式置空」）。
+///
 /// `DELETE /api/workspaces/{id}` — 要求 owner；软删（`archived_at`）。
 ///
 /// 上游是带 FOR UPDATE / advisory lock / cascade sweep 的重型事务
@@ -368,6 +442,81 @@ pub async fn delete_workspace(
         .delete(&ctx.workspace_id)
         .await
         .map_err(|e| repo_err(e, "workspace"))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PATCH /api/workspaces/{id}/members/{memberId}` 请求（上游 `UpdateMemberRequest`）。
+#[derive(Debug, Deserialize)]
+pub struct UpdateMemberRequest {
+    pub role: String,
+}
+
+/// `PATCH /api/workspaces/{id}/members/{memberId}` — 要求 admin/owner（中间件已校验）。
+///
+/// 上游 `UpdateMember`（`handler/workspace.go:565`）的语义逐条对齐：
+/// - 无效 / 跨 workspace 的 memberId → 404（`load_member_in_workspace`）；
+/// - role 缺失 / 非法 → 400；
+/// - **目标是 owner 或新角色是 owner → 仅 owner 可操作**（admin 越权 → 403）；
+/// - 降级最后一个 owner → 409（上游 400，偏离见 `member_mutation_err`）。
+///
+/// 响应用上游的 `memberWithUserResponse`（member + user 信息），便于前端就地刷新列表。
+pub async fn update_member(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<WorkspaceContext>,
+    Path((_id, member_id)): Path<(String, String)>,
+    Json(req): Json<UpdateMemberRequest>,
+) -> ApiResult<Json<MemberWithUser>> {
+    let member_id = Id::parse(&member_id).map_err(|_| validation("invalid member id"))?;
+    let new_role = normalize_member_role(&req.role)?;
+
+    let repo = MemberRepo::new(state.db.clone());
+    let target = load_member_in_workspace(&state, ctx.workspace_id, &member_id).await?;
+    if (target.role == WorkspaceRole::Owner || new_role == WorkspaceRole::Owner)
+        && ctx.role != WorkspaceRole::Owner
+    {
+        return Err(forbidden("insufficient permissions"));
+    }
+
+    let updated = repo
+        .update(
+            &member_id,
+            MemberUpdate {
+                role: Some(new_role),
+            },
+        )
+        .await
+        .map_err(member_mutation_err)?;
+
+    let row = repo
+        .list_with_user(ctx.workspace_id)
+        .await
+        .map_err(|e| repo_err(e, "member"))?
+        .into_iter()
+        .find(|m| m.id == updated.id)
+        .ok_or_else(|| ApiError(Error::Internal("member missing after update".into())))?;
+    Ok(Json(row))
+}
+
+/// `DELETE /api/workspaces/{id}/members/{memberId}` — 要求 admin/owner（中间件已校验）。
+///
+/// 上游 `DeleteMember`（`handler/workspace.go:641`）语义：
+/// - 无效 / 跨 workspace → 404；
+/// - 移除 owner 需要 requester 也是 owner（403）；
+/// - 移除最后一个 owner → 409（上游 400）；成功后 204。
+pub async fn delete_member(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<WorkspaceContext>,
+    Path((_id, member_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let member_id = Id::parse(&member_id).map_err(|_| validation("invalid member id"))?;
+    let target = load_member_in_workspace(&state, ctx.workspace_id, &member_id).await?;
+    if target.role == WorkspaceRole::Owner && ctx.role != WorkspaceRole::Owner {
+        return Err(forbidden("insufficient permissions"));
+    }
+    MemberRepo::new(state.db.clone())
+        .delete(&member_id)
+        .await
+        .map_err(member_mutation_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -448,10 +597,22 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
                 .route("/api/workspaces/:id/members", get(list_members))
                 .route_layer(member_guard),
         )
-        // admin/owner：PATCH workspace
+        // admin/owner：PATCH|PUT workspace + member 管理
+        //
+        // `PUT` 与 `PATCH` 同指 `update_workspace`（上游 router.go:1699-1700）；
+        // `/members/:memberId` 的 PATCH / DELETE 是上游 router.go:1703-1704，
+        // 路由级只要求 admin/owner，owner 专属操作（改 owner 角色 / 移除 owner）
+        // 由 handler 内的 `ctx.role` 检查收紧为 403。
         .merge(
             Router::new()
-                .route("/api/workspaces/:id", patch(update_workspace))
+                .route(
+                    "/api/workspaces/:id",
+                    patch(update_workspace).put(update_workspace),
+                )
+                .route(
+                    "/api/workspaces/:id/members/:memberId",
+                    patch(update_member).delete(delete_member),
+                )
                 .route_layer(require_role(
                     state.clone(),
                     &[WorkspaceRole::Owner, WorkspaceRole::Admin],
@@ -501,6 +662,42 @@ mod tests {
         assert_eq!(e.0.http_status(), 404);
         let e = validation("bad");
         assert_eq!(e.0.http_status(), 400);
+    }
+
+    #[test]
+    fn normalize_member_role_matches_upstream() {
+        assert_eq!(
+            normalize_member_role("owner").ok(),
+            Some(WorkspaceRole::Owner)
+        );
+        assert_eq!(
+            normalize_member_role(" admin ").ok(),
+            Some(WorkspaceRole::Admin)
+        );
+        assert_eq!(
+            normalize_member_role("member").ok(),
+            Some(WorkspaceRole::Member)
+        );
+        // 上游 UpdateMember 路径不接受 guest（与邀请路径不同）。
+        let e = normalize_member_role("guest").unwrap_err();
+        assert_eq!(e.0.http_status(), 400);
+        assert_eq!(normalize_member_role("").unwrap_err().0.http_status(), 400);
+        assert_eq!(
+            normalize_member_role("garbage")
+                .unwrap_err()
+                .0
+                .http_status(),
+            400
+        );
+    }
+
+    #[test]
+    fn last_owner_conflict_maps_to_409() {
+        // repo 层 owner-safeguard 的 Conflict → 409（上游 400，见 docs/17 决策 D2）。
+        let e = member_mutation_err(RepoError::Conflict);
+        assert_eq!(e.0.http_status(), 409);
+        let e = member_mutation_err(RepoError::NotFound);
+        assert_eq!(e.0.http_status(), 404);
     }
 
     #[test]

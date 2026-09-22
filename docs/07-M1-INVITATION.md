@@ -25,8 +25,8 @@
 | Method | Path | Handler | 鉴权 | DB 写 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/workspaces/{id}/invitations` | `list_workspace_invitations` | workspace member | R |
-| POST | `/api/workspaces/{id}/invitations` | `create_invitation` | workspace admin / owner | W |
-| POST | `/api/workspaces/{id}/members` | `create_invitation`（alias，见兼容决策） | workspace admin / owner | W |
+| ~~POST~~ | `/api/workspaces/{id}/invitations` | — | — | **已删（LUM-1362），上游此路径只有 GET** |
+| POST | `/api/workspaces/{id}/members` | `create_invitation` | workspace admin / owner | W |
 | DELETE | `/api/workspaces/{id}/invitations/{invitationId}` | `revoke_invitation` | workspace admin / owner | W |
 | GET | `/api/invitations` | `list_my_invitations` | authenticated | R |
 | GET | `/api/invitations/{id}` | `get_my_invitation` | authenticated（仅收件人） | R |
@@ -81,17 +81,25 @@ COMMIT;
 
 ## 与 sub-issue A 的兼容决策
 
+> ⚠️ **2026-09-22 更正（LUM-1362 / M1-E）**：下面把
+> `POST /api/workspaces/{id}/invitations` 当作「主路径」的判断已被推翻。
+> 上游 `router.go:1667` 该路径**只有 GET**，创建邀请是 `POST /api/workspaces/{id}/members`
+> （`router.go:1701`）。故本仓已删除那个 POST，只保留 `POST /members`。
+> 完整理由见 `docs/17-M1-CONTRACT-GAPS.md` 决策 D3。
+
 `POST /api/workspaces/{id}/members` 的语义冲突（A：直接加已存在 user vs C：按 email
 创建邀请），仲裁结论见 `docs/09-M1-INTEGRATION.md` §2.3：**上游 multica 把两者
 合并为同一个 `CreateInvitation` handler，以 sub-issue C 的「创建邀请」语义为准**。
 
-本 sub-issue C 的落地：
+本 sub-issue C 的落地（已含 M1-E 更正）：
 
-- `POST /api/workspaces/{id}/invitations` → 创建邀请（主路径，e2e 测试打它）
-- `POST /api/workspaces/{id}/members` → 同一个 `create_invitation` handler（alias，
-  满足规格路由表；上游兼容矩阵打这条）
-- `GET /api/workspaces/{id}/members` 仍归 sub-issue A（当前 mount.rs 占位）；
-  GET 与 POST 方法不同，merge 不冲突
+- `POST /api/workspaces/{id}/members` → 创建邀请（**唯一入口**，上游路径，e2e 测试打它）
+- ~~`POST /api/workspaces/{id}/invitations`~~ → **已删（M1-E）**；上游该路径只有 GET
+- `GET /api/workspaces/{id}/members` 归 sub-issue A；GET 与 POST 方法不同，merge 不冲突
+
+⚠️ 如果 sub-issue A 也实现了 `POST /api/workspaces/{id}/members`（直接 add user
+语义），合并时 axum 会对同 path+method 重复注册 panic——按 docs/09 决策删除 A 的
+该 handler（或迁到非冲突路径），由 LUM-1342 master 在集成 PR 里落实并注明。
 
 ⚠️ 如果 sub-issue A 也实现了 `POST /api/workspaces/{id}/members`（直接 add user
 语义），合并时 axum 会对同 path+method 重复注册 panic——按 docs/09 决策删除 A 的

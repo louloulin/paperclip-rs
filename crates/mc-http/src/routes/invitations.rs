@@ -2,6 +2,10 @@
 //!
 //! 对应 multica server `internal/handler/invitation.go`。
 //!
+//! M1-E（LUM-1362）仲裁：`POST /api/workspaces/{id}/invitations` 已删除
+//! （上游该路径只有 GET，创建走 `POST /api/workspaces/{id}/members`），
+//! 见 `docs/17-M1-CONTRACT-GAPS.md` 决策 D3。
+//!
 //! 鉴权策略（M1 阶段）：
 //! - `X-Multica-User-Id` header 携带当前用户 UUID（dev / test 简化路径）
 //! - sub-issue B 完成 auth 中间件后，会替换为 session / cookie 提取
@@ -34,18 +38,21 @@ use crate::state::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     // 注意：axum 0.7（matchit 0.7）路径参数语法是 `:id`，不是 `{id}`（那是 axum 0.8）。
     Router::new()
+        // 仲裁（M1-E / LUM-1362，docs/17 决策 D3）：上游该路径**只有 GET**
+        // （`router.go:1667`）；邀请创建是 `POST /api/workspaces/{id}/members`
+        // （`router.go:1701`）。M1-C 曾在 GET 上再挂一个 POST alias，属于
+        // 「多出」路由（同一 handler 的第二个入口，非上游契约），已删除。
         .route(
             "/api/workspaces/:id/invitations",
-            get(list_workspace_invitations).post(create_invitation),
+            get(list_workspace_invitations),
         )
         .route(
             "/api/workspaces/:id/invitations/:invitationId",
             axum::routing::delete(revoke_invitation),
         )
-        // 规格表中的 create_invitation 路径。上游 multica 将
-        // “POST /members（直接加已有用户）”与“按 email 邀请”合并为同一个
-        // CreateInvitation handler；仲裁（docs/09 §2.3）：以 sub-issue C 的
-        // “创建邀请”语义为准，与 sub-issue A 的占位冲突由 M1-D 集成时删除占位。
+        // 上游 `router.go:1701`：`POST /workspaces/{id}/members` = CreateInvitation。
+        // 上游把「按 email 邀请」实现为“写 invitation 行（+ 已有 user 时直接建 member）”，
+        // 与 sub-issue A 的占位冲突由 M1-D 集成时删除占位解决。
         .route("/api/workspaces/:id/members", post(create_invitation))
         .route("/api/invitations", get(list_my_invitations))
         .route("/api/invitations/:id", get(get_my_invitation))
