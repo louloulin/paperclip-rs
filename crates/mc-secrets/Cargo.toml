@@ -1,0 +1,35 @@
+[package]
+name = "mc-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica secrets: 本地加密 / AWS Secrets Manager / MCP / plugin"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+aws = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+aes-gcm = "0.10"
+
+aws-sdk-secretsmanager = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,37 @@
+[package]
+name = "mc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 领域模型：实体、值对象、不变量校验、actor 抽象"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+sqlx = ["dep:sqlx"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+
+# optional sqlx feature
+sqlx = { workspace = true, optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }

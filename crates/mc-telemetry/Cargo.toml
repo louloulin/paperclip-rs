@@ -1,0 +1,32 @@
+[package]
+name = "mc-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 遥测：tracing 初始化 + 启动横幅 + 实例遥测"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:opentelemetry-otlp"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# OTLP (optional)
+opentelemetry = { version = "0.24", optional = true }
+opentelemetry_sdk = { version = "0.24", optional = true }
+opentelemetry-otlp = { version = "0.17", optional = true }
+tracing-opentelemetry = { version = "0.25", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

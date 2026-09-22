@@ -1,0 +1,36 @@
+[package]
+name = "mc-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica storage providers: local-disk / s3"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+s3 = ["dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types"]
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true }
+async-stream = { workspace = true }
+bytes = "1"
+
+# s3 feature
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+aws-credential-types = { version = "1", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = "3"

@@ -1,0 +1,24 @@
+[package]
+name = "mc-authz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 资源 × 动作 × 主体授权"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-errors = { path = "../mc-errors" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

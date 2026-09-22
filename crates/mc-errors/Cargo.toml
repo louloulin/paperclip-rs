@@ -1,0 +1,19 @@
+[package]
+name = "mc-errors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 统一错误类型与 HTTP 状态码映射"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+http = "1"
+uuid = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }

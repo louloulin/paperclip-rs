@@ -1,0 +1,37 @@
+# Build artifacts
+/target/
+**/target/
+
+# Cargo
+Cargo.lock.bak
+.cargo/config.toml.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Test artifacts
+tests/target/
+**/tmp/
+
+# Coverage
+coverage/
+*.profraw
+
+# Bench artifacts
+benches/data/

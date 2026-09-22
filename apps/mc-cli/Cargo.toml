@@ -1,0 +1,30 @@
+[package]
+name = "mc-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "multica CLI binary"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "multica"
+path = "src/main.rs"
+
+[features]
+default = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+
+mc-config = { path = "../../crates/mc-config" }
+mc-errors = { path = "../../crates/mc-errors" }
+mc-telemetry = { path = "../../crates/mc-telemetry" }

@@ -1,0 +1,123 @@
+[workspace]
+resolver = "2"
+members = [
+    # ----- 基础设施 -----
+    "crates/mc-config",
+    "crates/mc-errors",
+    "crates/mc-telemetry",
+    "crates/mc-db",
+    "crates/mc-core",
+    "crates/mc-storage",
+    "crates/mc-secrets",
+    "crates/mc-auth",
+    "crates/mc-authz",
+    "crates/mc-realtime",
+    "crates/mc-ws",
+    "crates/mc-openapi",
+    "crates/mc-feature-flags",
+
+    # ----- 协议层 -----
+    "crates/mc-plugin-protocol",
+
+    # ----- 仓储层 -----
+    "crates/mc-repos",
+
+    # ----- 二进制 -----
+    "apps/mc-server",
+    "apps/mc-cli",
+
+    # ----- 工具 -----
+    "crates/mc-migrate",
+    "crates/mc-http",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Multica Contributors"]
+repository = "https://github.com/louloulin/multica-rs"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-stream = "0.3"
+async-trait = "0.1"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots", "url"] }
+futures-util = "0.3"
+
+# HTTP / Web
+axum = { version = "0.7", features = ["macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit", "fs"] }
+hyper = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
+
+# Serialization / Schema
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time / ID
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# Concurrency
+dashmap = "6"
+parking_lot = "0.12"
+
+# Crypto / Hash
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+hex = "0.4"
+
+# Regex / Random
+regex = "1"
+rand = "0.8"
+
+# JSON Schema
+schemars = { version = "0.8", default-features = false }
+
+# Error / Logging / Config
+thiserror = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dirs = "6"
+dotenvy = "0.15"
+
+# Test
+proptest = "1"
+mockall = "0.13"
+pretty_assertions = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+debug = 1

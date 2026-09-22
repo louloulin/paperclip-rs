@@ -1,0 +1,28 @@
+[package]
+name = "mc-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 数据库层：sqlx 连接池 + 迁移 runner + 健康检查"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,30 @@
+[package]
+name = "mc-repos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 仓储层（占位 — 后续 milestone 填充）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-db = { path = "../mc-db" }
+mc-errors = { path = "../mc-errors" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,26 @@
+[package]
+name = "mc-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 配置加载：env + .env → 强类型 Config"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+dotenvy = { workspace = true }
+chrono = { workspace = true }
+url = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
