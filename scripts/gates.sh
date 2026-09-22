@@ -46,6 +46,8 @@
 #     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库
 #     `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
 #     否则脚本 exit 2 → 本脚本记 FAIL（绝不静默跳过）。
+#     ⚠️ 那个 scratch 库名是**写死的** ⇒ 同一台 PG 上**并发**跑两个 ⑧ 会互踩（后到的在 1s 内 exit 2）。
+#     实测（LUM-1456）：全量门禁里 ⑧ 红了 1s、单独 `--only schema-drift` 重跑却 24s 绿 ⇒ 先重跑再当 finding。
 #   * ⑩ 只看**跟踪的代码文件**（`git ls-files`，不含 `docs/**`），并把存量违规钉在
 #     `scripts/file_size_baseline.tsv` 里：清单外的文件不得超过 800 行，清单内的只允许变短，
 #     已达标或已消失的条目必须从清单里删掉。刷新清单用 `--write-baseline`（基线只减不增）。
