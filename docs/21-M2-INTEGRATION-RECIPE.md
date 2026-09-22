@@ -109,16 +109,43 @@ MULTICA_TEST_DATABASE_URL=postgres://... cargo test -p mc-repos -p mc-http -- --
 
 ---
 
-## 6. 重复路由静态扫查（唯一守卫）
+## 6. 重复路由检查（两层守卫，勿信“.merge 不 panic”的传闻）
 
-`.merge()` 对同 `(method, path)` 的重叠**不会 panic**（M1-D 实测结论，见 `docs/10` §5.3），
-所以重复注册只能靠静态扫查发现。集成后执行：
+**源码级实测（axum 0.7.9，本机 registry）**：同 `(method, path)` 重复注册/合并会 **panic**，
+不是静默覆盖：
 
-```bash
-# 抽出所有路由注册的字面 path（含 mount_slice_* 文件），看有无跨切片重复
-grep -rhoE '\.route\( *"[^"]+"' crates/mc-http/src/routes/*.rs \
-  | sed 's/.*"\(.*\)"/\1/' | sort | uniq -d
-# 期望：M2-A/M2-B/M2-C/M1-E 之间的 path 集合无交集（只有 M0 以来就存在的 /api/health* 等共享项）
+- `src/routing/method_routing.rs:1053` — `panic!("Overlapping method route. Handler for `{name} {path}` already exists")`
+- 官方测试 `src/routing/tests/mod.rs:544` `merging_with_overlapping_method_routes`（`Router::merge(app.clone())`）
+  期望这条 panic；同文件 `:552` 另有“同 path 不同 method 可以 merge”的对照测试。
+
+所以集成时的守卫是两层的：
+
+1. **构建 router 就 panic**——只要有测试/启动路径真的构造 `router(state)`，重复路由会当场炸，
+   不会被静默掩盖（集成后务必让 DB e2e / smoke 真的把 `router(state)` 构造一遍）；
+2. **静态提前发现**（比等 panic 更快定位到是哪两个切片撞了）。注意：**只看 path 的
+   `grep ... | uniq -d` 会误报**——同 path 不同 method（`GET` + `PATCH /api/workspaces/:id`）是合法的，
+   本轮实测它在当前 base 上报出 `/api/workspaces/:id`、`/api/workspaces/:id/members` 两个假阳性。
+   必须把 method 一起抽出来配对（下列脚本逐字符配平括号后取整条 `method(...)` 链，本轮实测
+   在 `8df6888` 上得到 **71 个 `(method, path)` 对、零重复**）：
+
+```python
+import re, glob
+from collections import defaultdict
+pairs = defaultdict(list)
+for f in glob.glob("crates/mc-http/src/routes/*.rs"):
+    s = open(f).read()
+    for m in re.finditer(r'\.route\(\s*"([^"]+)"', s):
+        path, i, depth, start = m.group(1), m.end(), 0, m.end()
+        while i < len(s):
+            if s[i] in '([': depth += 1
+            elif s[i] in ')]':
+                if depth == 0: break
+                depth -= 1
+            i += 1
+        for meth in (re.findall(r'\b(get|post|put|patch|delete|head|options|any)\s*\(', s[start:i]) or ['?']):
+            pairs[(meth.upper(), path)].append(f.split('/')[-1])
+dups = {k: v for k, v in pairs.items() if len(v) > 1}
+print(f"(method, path) = {len(pairs)}; dups = {dups or 'none'}")
 ```
 
 同时按 `docs/09` §7.4 扫一遍 **`{param}` 字面量段**（axum 0.7 必须写 `:param`，写错恒 404 且不报错）：
