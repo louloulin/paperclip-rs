@@ -1,6 +1,7 @@
 # M2 集成配方（集成切片 LUM-1354 的执行手册 + 本轮实测）
 
-> 实测时间：**2026-09-22 19:00–19:20 CST**（autopilot 19:00 cycle，LUM-1373）。
+> 实测时间：**2026-09-22 19:00–19:20 CST**（autopilot 19:00 cycle，LUM-1373）；
+> **20:00 cycle（LUM-1379）追加 §1.1**：五条待并分支全部 push + merge dry-run 5/5 零冲突 + 合并树上 fmt / 重复路由 / 迁移编号实测。
 > 实测方式：只读 git（`log` / `diff --stat` / `show` / `ls-tree`）+ 在**独立 checkout** 里跑
 > `cargo fmt --all --check`。本轮**没有**在三个并发切片的工作区里跑 cargo（避免抢
 > `~/.cargo/.package-cache` 与 target 锁）。
@@ -16,15 +17,50 @@
 | 项 | 值 |
 | --- | --- |
 | 集成分支 | `feat/multica-rs-initial` |
-| 远端 head | **`6770df4`**（`f05b803` = M2-C 合并 → `8df6888`/`90cd17c`/`9c57592` = 19:00 cycle docs → `4e1e558`/`6770df4` = 本 cycle 的 `docs/23` + 本文 §9） |
+| 远端 head | **`afccdd5`**（`f05b803` = M2-C 合并 → `8df6888`/`90cd17c`/`9c57592` = 19:00 cycle docs → `4e1e558`/`6770df4` = 19:30 cycle 的 `docs/23` + 本文 §9 → `afccdd5` = 其 §1 刷新提交；20:00 cycle `git ls-remote` 实核） |
 | 已并入的 M2 切片 | **M2-C（LUM-1349）**：`fc8727b` → `f05b803`（inbox 仓储 + `/api/inbox` 14 条 + subscriber 4 条，`docs/13-M2-INBOX.md`） |
-| 待并入 | M1-E（LUM-1362）、M2-A（LUM-1348）、M2-B（LUM-1350） |
+| 待并入 | **五条**：M1-E（LUM-1362）、M2-A（LUM-1348）、M2-B（LUM-1350）、M1-F（LUM-1375）、T1（LUM-1376）——20:00 cycle 复测全部已 push 且 dry-run 零冲突，见 **§1.1** |
 | 迁移编号水位 | `0001`–`0004`（`0005` 空闲，按 `docs/10` §5.1 由集成 master 统一分配） |
 
 > ⚠️ **本文件的 SHA 快照会过期，且实测已经过期过一次**：本 cycle 19:0x 首次实测时
 > M1-E 还是 `592ef90`+`9ec5b56` 且未 push，M2-B 还是未提交的工作区文件；十几分钟后复测发现
 > **M1-E 已 rebase 并 push（`ae1dd3b`+`9851ebf`）、M2-B 已提交并 push（`48666c2`）**。
 > 集成时请**以远端分支 + issue 状态为准**，把 §2 当作「怎么核」的样例而不是真值。
+
+### 1.1 20:00 cycle 复测：五条待并分支全部就绪（LUM-1379 实测）
+
+实测 **2026-09-22 20:0x CST**（只读 git + 独立 worktree；不在任何切片工作区里跑 cargo）。基线未再前进：
+`feat/multica-rs-initial` = **`afccdd5`**。**19:30 那轮记录的「M2-A 未提交 / 未 push」状态已经消失**：
+
+| 切片 | issue | 远端分支 @ head | PR | `git diff --stat afccdd5 <branch>` |
+| --- | --- | --- | --- | --- |
+| M1-E 契约缺口 | LUM-1362 | `feat/multica-rs-m1e-contract-gaps` @ `9851ebf` | #5 | 20 文件 +1748 −565 |
+| M2-A issue 核心 | LUM-1348 | `feat/multica-rs-m2a-issue` @ `82d6b77` | #7 | 6 文件 +6220 −13 |
+| M2-B comment | LUM-1350 | `feat/multica-rs-m2b-comment` @ `48666c2` | #4 | 14 文件 +3194 −4597 |
+| M1-F PAT 持久化 | LUM-1375 | `feat/multica-rs-m1f-pat-persistence` @ `256c497` | #8 | 20 文件 +2496 −324 |
+| T1 路由对账工具 | LUM-1376 | `feat/multica-rs-tooling-route-parity` @ `2147b59` | #6 | 11 文件 +2323 −161 |
+
+> M1-E / M2-B / T1 那三个大额删除数（−565 / −4597 / −161）是 **stale base 假象**：它们的基线早于
+> base 上的 docs-only 提交（`docs/21`、`docs/23`、`docs/11` 等），diff 方向把「base 才有的新文件」显示成删除。
+> **merge 不会删掉这些文件**——下面 dry-run 的 5/5 零冲突 + 合并树实测即为证据。
+> 另：M2-A（`82d6b77`）与 M1-F（`256c497`）已自行并入 base（`git merge-base --is-ancestor afccdd5 <branch>` 为真），
+> 所以它们的 diff 是干净的「相对当前 base」增量。
+
+**merge dry-run 实测**（独立 worktree 自 `afccdd5` 起，`--no-ff` 逐个合并）：
+顺序 **M1-E → M2-A → M2-B → M1-F → T1** ⇒ **五个 merge 全部零冲突**，
+连 §3 预告「唯一要人看」的 `routes/mount.rs::router()` 与 `mc-repos/src/lib.rs` 都没留下冲突标记
+（各切片改的是不同段落）。合并树上当场实测：
+
+| 检查 | 命令 | 实测 |
+| --- | --- | --- |
+| rustfmt 门（§4 ①） | `cargo fmt --all --check` | **exit 0**（「M1-E 必须先并」的先决条件成立，见 §5） |
+| 重复路由静态预检（§6） | `(method, path)` 配对脚本 | **139 对、零重复**（单切片 base 上是 71 对） |
+| `{param}` 字面量段（§6） | `grep -rnoE '\.route\( *"[^"]*\{[a-zA-Z_]+\}'` | **无输出** |
+| 迁移编号冲突 | 各分支 `git diff --diff-filter=A afccdd5 <branch> -- migrations/` | **五条全为空** ⇒ `0005` 仍空闲，M2-E 可用 |
+
+⇒ LUM-1354 的**合并阶段已是机械操作**，剩余风险只在编译/测试面（§4 ②–⑤：`build` / `clippy` /
+`clippy test-util` / DB e2e）—— 那是集成任务自己的验收门。
+**建议一次性把 M1-F 与 T1 也并进去**（它们同样零冲突）：base 越接近全绿，后续 M2-D / M2-E / M3 计划的基线才越不脏。
 
 ---
 
@@ -183,7 +219,8 @@ grep -rnoE '\.route\( *"[^"]*\{[a-zA-Z_]+\}' crates/mc-http/src/routes/*.rs   # 
 1. **先推分支**：M1-E / M2-A / M2-B 各自 `git push -u origin <实际分支名>`；集成方 `git fetch` 后
    用 `git log --oneline origin/feat/multica-rs-initial..<分支>` 核对「分支包含哪些提交」，不要只看 issue 状态。
 2. **按「先 M1-E、后 M2-A、再 M2-B」顺序 `--no-ff` 合并**（M1-E 基线最新且改动面最杂，先并它可以让
-   后面两条的冲突被判在最新 base 上）。
+   后面两条的冲突被判在最新 base 上）；M1-F 与 T1 与三者零文件重叠，可在 M2-B 之后一并 `--no-ff` 并入
+   （20:00 cycle dry-run 实测五条全零冲突，见 §1.1）。
 3. **每次 merge 后跑 §4 的五道门禁**（尤其①，见 §5），再跑 §6 的静态扫查。
 4. **冲突预案**：
    - `mc-repos/src/lib.rs`（M2-A 加 1 行 `pub mod`）——保留双方 `pub mod` 行；
