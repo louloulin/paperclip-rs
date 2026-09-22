@@ -7,10 +7,10 @@
 //!
 //! | 上游列 | 本仓列 | 说明 |
 //! | --- | --- | --- |
-//! | `recipient_type` + `recipient_id` | `user_id UUID` | 本仓的 inbox 只投递给人类 user（agent 收件箱属 M3+），故收件人是单一列 |
-//! | `read BOOLEAN` | `read_at TIMESTAMPTZ` | 语义等价（`read_at IS NOT NULL` ⟺ 已读），且多保留"何时读的" |
+//! | `recipient_type` + `recipient_id` | `user_id UUID` | 收件人恒为人类 user，写入时固定 `recipient_type = 'user'`（agent 收件箱属 M3+） |
+//! | `read BOOLEAN` | `read_at TIMESTAMPTZ` | 语义等价（`read_at IS NOT NULL` ⟺ 已读），且多保留"何时读的"；写入时**双写**上游布尔，本地以 `read_at` 为准 |
 //! | `archived BOOLEAN` | `archived_at TIMESTAMPTZ` | 同上 |
-//! | `type` | `category TEXT` | 本仓沿用 `category`（无 CHECK，取值域由写入方约定） |
+//! | `type` | `category TEXT` | 本地字段仍叫 `category`（读出时 `type AS category`） |
 //! | `severity` / `details` | **不存在** | 故 archived 视图没有 comment anchor 行（上游靠 `details->>'comment_id'` 二次补行）；本仓一组只返回最新一行 |
 //! | `actor_type/actor_id` | 同名 | 本仓 `actor_id` 是 `TEXT`（上游 `UUID`） |
 //!
@@ -44,9 +44,8 @@ use crate::{RepoError, Result};
 ///
 /// 所有查询共用同一份列清单（`ITEM_COLUMNS`），任一查询的列漂移都会在运行时
 /// 立刻暴露（`try_get` 失败），与上游"两个查询列不一致就编译不过"的意图一致。
-const ITEM_COLUMNS: &str = "i.id, i.workspace_id, i.user_id, i.issue_id, i.actor_type, \
-     i.actor_id, i.category, i.title, i.body, i.read_at, i.archived_at, i.created_at, \
-     iss.status AS issue_status, iss.priority AS issue_priority";
+const ITEM_COLUMNS: &str = "i.id, i.workspace_id, i.recipient_id AS user_id, i.issue_id, i.actor_type, COALESCE(i.actor_id::text, '') AS actor_id, i.type AS category, i.title, i.body, i.read_at, \
+     i.archived_at, i.created_at, iss.status AS issue_status, iss.priority AS issue_priority";
 
 /// `inbox_item` 连接 `issue` 的 FROM 子句（issue 投影必需）。
 const ITEM_FROM: &str = "FROM inbox_item i \
@@ -64,11 +63,11 @@ const NEWEST_ARCHIVED_CTE: &str = "WITH newest AS MATERIALIZED ( \
                CASE WHEN i.actor_type = 'system' THEN 'system' \
                     ELSE i.actor_type || ':' || i.actor_id END AS actor \
         FROM inbox_item i \
-        WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NOT NULL \
+        WHERE i.workspace_id = $1 AND i.recipient_id = $2 AND i.archived_at IS NOT NULL \
           AND (i.issue_id IS NULL OR NOT EXISTS ( \
               SELECT 1 FROM inbox_item active \
               WHERE active.workspace_id = i.workspace_id \
-                AND active.user_id = i.user_id \
+                AND active.recipient_id = i.recipient_id \
                 AND active.issue_id = i.issue_id \
                 AND active.archived_at IS NULL)) \
         ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC \
@@ -252,8 +251,9 @@ impl InboxRepo {
         // 被写入的那张表；带别名的 `RETURNING i.col` 也会报 missing FROM-clause）。
         sqlx::query(
             "INSERT INTO inbox_item \
-                 (id, workspace_id, user_id, issue_id, actor_type, actor_id, category, title, body, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())",
+                 (id, workspace_id, recipient_type, recipient_id, issue_id, \
+                  actor_type, actor_id, type, title, body, created_at) \
+             VALUES ($1, $2, 'user', $3, $4, $5, $6::uuid, $7, $8, $9, now())",
         )
         .bind(id)
         .bind(input.workspace_id.as_uuid())
@@ -297,7 +297,7 @@ impl InboxRepo {
     ) -> Result<InboxItemRow> {
         let sql = format!(
             "SELECT {ITEM_COLUMNS} {ITEM_FROM} \
-             WHERE i.id = $1 AND i.workspace_id = $2 AND i.user_id = $3"
+             WHERE i.id = $1 AND i.workspace_id = $2 AND i.recipient_id = $3"
         );
         sqlx::query_as::<_, InboxItemRow>(&sql)
             .bind(id.as_uuid())
@@ -322,7 +322,7 @@ impl InboxRepo {
     ) -> Result<Vec<InboxItemRow>> {
         let sql = format!(
             "SELECT {ITEM_COLUMNS} {ITEM_FROM} \
-             WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NULL \
+             WHERE i.workspace_id = $1 AND i.recipient_id = $2 AND i.archived_at IS NULL \
              ORDER BY i.created_at DESC, i.id DESC \
              LIMIT $3 OFFSET $4"
         );
@@ -469,8 +469,7 @@ impl InboxRepo {
     pub async fn unread_count(&self, workspace_id: Id, user_id: Id) -> Result<i64> {
         let row = sqlx::query_as::<_, (i64,)>(
             "SELECT count(*) FROM inbox_item \
-             WHERE workspace_id = $1 AND user_id = $2 \
-               AND read_at IS NULL AND archived_at IS NULL",
+             WHERE workspace_id = $1 AND recipient_id = $2 AND read_at IS NULL AND archived_at IS NULL",
         )
         .bind(workspace_id.as_uuid())
         .bind(user_id.as_uuid())
@@ -492,8 +491,8 @@ impl InboxRepo {
                  SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id)) \
                         i.workspace_id, i.read_at \
                  FROM inbox_item i \
-                 JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.user_id \
-                 WHERE i.user_id = $1 AND i.archived_at IS NULL \
+                 JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id \
+                 WHERE i.recipient_id = $1 AND i.archived_at IS NULL \
                  ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC \
              ) newest \
              WHERE newest.read_at IS NULL \
@@ -519,8 +518,8 @@ impl InboxRepo {
 
     /// 标记已读（item 级，幂等）：已读行保持不变，`read_at` 不会被刷新。
     pub async fn mark_read(&self, id: Id) -> Result<InboxItemRow> {
-        self.retouch("read_at = COALESCE(read_at, now())", id.as_uuid())
-            .await
+        let set_clause = "read_at = COALESCE(read_at, now()), read = TRUE";
+        self.retouch(set_clause, id.as_uuid()).await
     }
 
     /// 标记未读（item 级，幂等）。
@@ -528,7 +527,8 @@ impl InboxRepo {
     /// 刻意只翻**这一行**：UI 渲染的是组内最新一条，组状态就是这行的状态。
     /// 翻整组会把用户已经处理完的旧兄弟节点变回未读。
     pub async fn mark_unread(&self, id: Id) -> Result<InboxItemRow> {
-        self.retouch("read_at = NULL", id.as_uuid()).await
+        self.retouch("read_at = NULL, read = FALSE", id.as_uuid())
+            .await
     }
 
     /// 归档（**issue 级**，幂等）：同 issue 的全部兄弟行一起归档。
@@ -560,9 +560,9 @@ impl InboxRepo {
     async fn archive_scope(&self, id: Id, archive: bool) -> Result<InboxItemRow> {
         let item = self.get(id).await?;
         let set_clause = if archive {
-            "archived_at = COALESCE(archived_at, now())"
+            "archived_at = COALESCE(archived_at, now()), archived = TRUE"
         } else {
-            "archived_at = NULL"
+            "archived_at = NULL, archived = FALSE"
         };
         // 幂等条件：归档只动未归档行，取消归档只动已归档行。
         let guard = if archive {
@@ -573,7 +573,7 @@ impl InboxRepo {
         if let Some(issue_id) = item.issue_id {
             let sql = format!(
                 "UPDATE inbox_item SET {set_clause} \
-                 WHERE workspace_id = $1 AND user_id = $2 AND issue_id = $3 AND {guard}"
+                 WHERE workspace_id = $1 AND recipient_id = $2 AND issue_id = $3 AND {guard}"
             );
             sqlx::query(&sql)
                 .bind(item.workspace_id)
@@ -597,8 +597,8 @@ impl InboxRepo {
     /// 全部标记已读（组语义上等价于"全部行已读"，因为读状态的粒度是行）。
     pub async fn mark_all_read(&self, workspace_id: Id, user_id: Id) -> Result<u64> {
         let res = sqlx::query(
-            "UPDATE inbox_item SET read_at = COALESCE(read_at, now()) \
-             WHERE workspace_id = $1 AND user_id = $2 \
+            "UPDATE inbox_item SET read_at = COALESCE(read_at, now()), read = TRUE \
+             WHERE workspace_id = $1 AND recipient_id = $2 \
                AND archived_at IS NULL AND read_at IS NULL",
         )
         .bind(workspace_id.as_uuid())
@@ -612,8 +612,8 @@ impl InboxRepo {
     /// 归档全部未归档通知（不分读写状态）。
     pub async fn archive_all(&self, workspace_id: Id, user_id: Id) -> Result<u64> {
         let res = sqlx::query(
-            "UPDATE inbox_item SET archived_at = COALESCE(archived_at, now()) \
-             WHERE workspace_id = $1 AND user_id = $2 AND archived_at IS NULL",
+            "UPDATE inbox_item SET archived_at = COALESCE(archived_at, now()), archived = TRUE \
+             WHERE workspace_id = $1 AND recipient_id = $2 AND archived_at IS NULL",
         )
         .bind(workspace_id.as_uuid())
         .bind(user_id.as_uuid())
@@ -633,14 +633,14 @@ impl InboxRepo {
                  SELECT DISTINCT ON (COALESCE(i.issue_id, i.id)) \
                         COALESCE(i.issue_id, i.id) AS group_id, (i.read_at IS NOT NULL) AS is_read \
                  FROM inbox_item i \
-                 WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NULL \
+                 WHERE i.workspace_id = $1 AND i.recipient_id = $2 AND i.archived_at IS NULL \
                  ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC \
              ), read_groups AS ( \
                  SELECT group_id FROM newest_groups WHERE is_read \
              ) \
-             UPDATE inbox_item i SET archived_at = COALESCE(i.archived_at, now()) \
+             UPDATE inbox_item i SET archived_at = COALESCE(i.archived_at, now()), archived = TRUE \
              FROM read_groups selected \
-             WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NULL \
+             WHERE i.workspace_id = $1 AND i.recipient_id = $2 AND i.archived_at IS NULL \
                AND COALESCE(i.issue_id, i.id) = selected.group_id",
         )
         .bind(workspace_id.as_uuid())
@@ -663,8 +663,8 @@ impl InboxRepo {
                  WHERE workspace_id = $1 AND category = 'closed' \
                  UNION SELECT unnest($3::text[]) \
              ) \
-             UPDATE inbox_item i SET archived_at = COALESCE(i.archived_at, now()) \
-             WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NULL \
+             UPDATE inbox_item i SET archived_at = COALESCE(i.archived_at, now()), archived = TRUE \
+             WHERE i.workspace_id = $1 AND i.recipient_id = $2 AND i.archived_at IS NULL \
                AND i.issue_id IN ( \
                    SELECT id FROM issue \
                    WHERE workspace_id = $1 AND status IN (SELECT key FROM terminal))",
@@ -794,8 +794,7 @@ mod tests {
             let issue_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO issue (id, workspace_id, number, identifier, title, status, \
-                  priority, creator_type, creator_id) \
-                 VALUES ($1, $2, $3, $4, 'fixture issue', $5, 'medium', 'user', $6)",
+                  priority, creator_type, creator_id) VALUES ($1, $2, $3, $4, 'fixture issue', $5, 'medium', 'user', $6::uuid)",
             )
             .bind(issue_id)
             .bind(ws)

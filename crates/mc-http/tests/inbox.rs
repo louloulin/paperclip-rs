@@ -200,7 +200,7 @@ async fn new_issue(
     sqlx::query_scalar(
         r"INSERT INTO issue(workspace_id, number, identifier, title, status, priority,
                              creator_type, creator_id, parent_issue_id)
-           VALUES ($1, $2, $3, $4, $5, $6, 'user', $7, $8) RETURNING id",
+           VALUES ($1, $2, $3, $4, $5, $6, 'user', $7::uuid, $8) RETURNING id",
     )
     .bind(ws)
     .bind(number)
@@ -228,11 +228,11 @@ async fn new_item(
     archived: bool,
 ) -> Uuid {
     sqlx::query_scalar(
-        r"INSERT INTO inbox_item(workspace_id, user_id, issue_id, actor_type, actor_id,
-                                 category, title, body, read_at, archived_at)
-          VALUES ($1, $2, $3, 'user', $4, $5, $6, $7,
+        r"INSERT INTO inbox_item(workspace_id, recipient_type, recipient_id, issue_id, actor_type, actor_id,
+                                 type, title, body, read_at, archived_at, read, archived)
+          VALUES ($1, 'user', $2, $3, 'user', $4::uuid, $5, $6, $7,
                   CASE WHEN $8 THEN now() ELSE NULL END,
-                  CASE WHEN $9 THEN now() ELSE NULL END) RETURNING id",
+                  CASE WHEN $9 THEN now() ELSE NULL END, $8, $9) RETURNING id",
     )
     .bind(ws)
     .bind(user)

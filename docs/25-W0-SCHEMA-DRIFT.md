@@ -6,6 +6,9 @@
 > `contracts/upstream-apply-exceptions.tsv`、`contracts/schema-deviations.tsv`、`scripts/{schema_snapshot,build_upstream_schema,schema_drift}.py`、本文件
 > 结论：**对账本机 `exit 0`**（767 处差异全部登记 / 25 行登记表 0 stale）；**上游取放字节级可校验**（`sha256sum -c` 560/560 OK）；
 > **本切片不切换运行时实际应用的迁移集合**（见 §8，切换是 W0-B2 = LUM-1387）
+>
+> **后续（2026-09-22）**：W0-B2 = **LUM-1387 已接管**——运行时集合换成 `upstream/` 560 + `compat/` 6，`missing` 从 460 降到 **0**，
+> 登记表 45 行，见 `docs/26-W0-SCHEMA-SWITCHOVER.md`。本文件 §5 的计数是**切换前**（`0001`–`0004` 单集合）的实测，保留作对照。
 
 ---
 
@@ -178,6 +181,10 @@ python3 scripts/schema_drift.py --apply-set full       # 探索：先上游、�
 ---
 
 ## 5. 首次运行的真实计数（2026-09-22 本机实测）
+
+> ⚠️ **W0-B2（LUM-1387）之后这一节的数字已过期**，它量的是切换前的单集合（`apply set local — 4 file(s)`）。
+> 现在的口径是 `apply set local — 566 file(s)`、`missing=0`、`extra=22`、`differs=14`、`apply-exception=9`（登记表 45 行），
+> 见 `docs/26-W0-SCHEMA-SWITCHOVER.md` §1/§6.4。本节保留下来，是因为它是「本仓自造 schema 与上游差多远」的基线。
 
 ```
 $ python3 scripts/schema_drift.py --db-url … --db-name w0b_drift_probe
@@ -404,7 +411,12 @@ exit 2
 3. `crates/**` 与 `migrations/0001`–`0004` 在本切片**一个字节都没改**（`git show --stat` 只有新增文件 + `contracts/schema-deviations.tsv`）。
 
 接管的实现（TEXT 键、词干排序、两目录合并、存量库再基线、`DEFAULT_REQUIRED_TABLES` 改 `issue_wakeup*`）
-全部留给 **W0-B2 = LUM-1387**；本切片为它准备好 `--apply-set full` 这个探索模式与 767 处差异的初始登记。
+全部留给 **W0-B2 = LUM-1387**；本切片为它准备好探索模式与 767 处差异的初始登记。
+
+**2026-09-22 已接管（LUM-1387 / W0-B2，`docs/26-W0-SCHEMA-SWITCHOVER.md`）**：`load_dir` 换成递归的 `load_dirs`（TEXT 键 = 文件 stem、
+词干排序、同 stem 报错），`mc-migrate` 的 `--dir` 可重复，`DEFAULT_REQUIRED_TABLES` 里的 `wakeup` 改成 `issue_wakeup`/`issue_wakeup_receipt`，
+旧 `BIGINT` 账本库**报错要求重建**（不做原地 rebaseline）；`--apply-set full` 换成 `--apply-set upstream`（只跑 vendored 集合，
+用来观察 compat 补丁关掉了哪些缺口，`local` 现在就是 560+6 的真实集合）。上面 §8 的 1/2/3 三条因此全部不再成立。
 
 ---
 

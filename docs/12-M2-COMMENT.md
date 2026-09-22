@@ -17,6 +17,10 @@
 各 `Cargo.toml`、`migrations/*`、`mc-repos/src/lib.rs`。`mount_slice_comment()` 与
 `pub mod comment;` / `0004_reactions_and_subscribers.up.sql` 全部由 M1-D 的 scaffold 提供。
 
+> ⚠️ **W0-B2（LUM-1387）之后**：`migrations/0001`–`0004` 已退役，本片的 repo 代码改到上游列上——
+> `comment.body` → 上游 `content`（读出仍叫 `body`）、`author_id`/`actor_id` 上游是 `uuid`（读出 `::text` 别名，写入 `$n::uuid`），
+> 见 `docs/26-W0-SCHEMA-SWITCHOVER.md` §5。HTTP 面与 `CommentRepo` 的签名未变。
+
 ## 2. 路由表（与上游 1:1）
 
 上游记法里的 `{id}` 落到 axum 0.7 的 `.route()` 时**必须写成 `:id`**（`{id}` 会被 matchit 当字面量段，恒 404）。

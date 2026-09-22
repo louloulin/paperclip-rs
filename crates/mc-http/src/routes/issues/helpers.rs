@@ -163,8 +163,9 @@ pub(crate) async fn validate_assignee_target(
             }
         }
         AssigneeType::Squad => {
+            // 上游 `squad.leader_id`（`NOT NULL`）；本仓退役的 `0001` 里叫 `leader_agent_id`。
             let row: Option<(bool, Option<Uuid>)> = sqlx::query_as(
-                "SELECT archived_at IS NOT NULL, leader_agent_id FROM squad \
+                "SELECT archived_at IS NOT NULL, leader_id FROM squad \
                  WHERE workspace_id = $1 AND id = $2",
             )
             .bind(workspace_id.0)

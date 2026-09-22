@@ -20,5 +20,4 @@ crates/mc-repos/src/inbox.rs	1186
 crates/mc-repos/src/invitation.rs	828
 crates/mc-repos/src/issue.rs	1950
 scripts/extract_upstream_fixtures.py	1863
-scripts/schema_drift.py	807
 scripts/schema_snapshot.py	1093

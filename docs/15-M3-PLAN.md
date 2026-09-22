@@ -234,6 +234,11 @@ M3 需要的表共 16 张（口径：`contracts/upstream-schema.sql` 的 116 张
 
 本地现有 28 张表（26 张与上游同名 + 自造 `plugin` / `wakeup`），覆盖率 26/116 ≈ 22%。
 
+> ⚠️ **本节描述的是 W0-B2（LUM-1387）之前的状态**。切换之后运行时应用的就是上游 116 张表本身，
+> `plugin` / `wakeup` 不再存在（上游对应物是 `issue_wakeup` / `issue_wakeup_receipt`），§2.2 的「同表不同形」也已经消失——
+> 所以 M3 可以在真正的上游表上干活。见 `docs/26-W0-SCHEMA-SWITCHOVER.md`。
+> 仍然成立的部分：**本地不再有 4 张「形状不同」的 agent/task 表**，M3 的 port/领域代码不用再绕。
+
 ### 2.2 ⚠️ 同表不同形：本仓那 4 张「有」的表，**都不是上游那张表**
 
 这是 M0 脚手架 `0001_init.up.sql` 按**推断**写的表，与上游同名表的定义相差很远（`docs/25 §5.2/§5.3` 的 `missing/extra/differs` 实测）：

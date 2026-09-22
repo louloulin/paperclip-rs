@@ -124,9 +124,9 @@ impl VerificationCodeRepo {
         let row = sqlx::query_as::<_, VerificationRow>(
             r"
             INSERT INTO verification_code
-                (id, user_id, email, purpose, code_hash, attempts, expires_at, created_at)
+                (id, user_id, email, purpose, code, attempts, expires_at, created_at)
             VALUES ($1, $2, $3, $4, $5, 0, $6, now())
-            RETURNING id, user_id, email, purpose, code_hash, attempts,
+            RETURNING id, user_id, email, purpose, code AS code_hash, attempts,
                       expires_at, consumed_at, created_at
             ",
         )
@@ -159,10 +159,10 @@ impl VerificationCodeRepo {
         // 1) 找出最近一条匹配 hash + purpose、未消费、未过期的行
         let row = sqlx::query_as::<_, VerificationRow>(
             r"
-            SELECT id, user_id, email, purpose, code_hash, attempts,
+            SELECT id, user_id, email, purpose, code AS code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
-            WHERE code_hash = $1
+            WHERE code = $1
               AND purpose = $2
               AND consumed_at IS NULL
               AND expires_at > now()
@@ -185,7 +185,7 @@ impl VerificationCodeRepo {
         let res = sqlx::query(
             r"
             UPDATE verification_code
-            SET consumed_at = now()
+            SET consumed_at = now(), used = TRUE
             WHERE id = $1 AND consumed_at IS NULL
             ",
         )
@@ -201,7 +201,7 @@ impl VerificationCodeRepo {
         // 3) 返回最新视图（含 consumed_at）
         let consumed = sqlx::query_as::<_, VerificationRow>(
             r"
-            SELECT id, user_id, email, purpose, code_hash, attempts,
+            SELECT id, user_id, email, purpose, code AS code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
             WHERE id = $1
@@ -277,7 +277,7 @@ impl VerificationCodeRepo {
         let purpose_str = VerificationRow::purpose_str(purpose);
         let row = sqlx::query_as::<_, VerificationRow>(
             r"
-            SELECT id, user_id, email, purpose, code_hash, attempts,
+            SELECT id, user_id, email, purpose, code AS code_hash, attempts,
                    expires_at, consumed_at, created_at
             FROM verification_code
             WHERE email = $1
@@ -396,7 +396,7 @@ mod tests {
         // 直接插一条已过期的行（绕过 create 的 TTL 检查）
         sqlx::query(
             r"
-            INSERT INTO verification_code (id, email, purpose, code_hash, expires_at, created_at)
+            INSERT INTO verification_code (id, email, purpose, code, expires_at, created_at)
             VALUES ($1, $2, 'email_verification', $3, now() - interval '1 hour', now() - interval '2 hours')
             ",
         )
@@ -445,7 +445,7 @@ mod tests {
         // 插一条 2 小时前过期的
         sqlx::query(
             r"
-            INSERT INTO verification_code (id, email, purpose, code_hash, expires_at, created_at)
+            INSERT INTO verification_code (id, email, purpose, code, expires_at, created_at)
             VALUES ($1, 'prune@example.test', 'email_verification', $2,
                     now() - interval '2 hours', now() - interval '3 hours')
             ",

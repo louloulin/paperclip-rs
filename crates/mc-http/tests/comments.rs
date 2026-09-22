@@ -96,7 +96,7 @@ async fn seed(pool: &sqlx::PgPool) -> Fixture {
 
     let issue_id: Uuid = sqlx::query_scalar(
         "INSERT INTO issue(workspace_id, number, identifier, title, creator_type, creator_id) \
-         VALUES ($1, $2, $3, 'itest comment issue', 'user', $4) RETURNING id",
+         VALUES ($1, $2, $3, 'itest comment issue', 'user', $4::uuid) RETURNING id",
     )
     .bind(workspace_id)
     .bind(1_i32)

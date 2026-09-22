@@ -196,12 +196,12 @@ impl PatRepo {
         Ok(rows)
     }
 
-    /// 撤销 PAT（设置 `revoked_at = now()`）。
+    /// 撤销 PAT（`revoked_at = now()` + 双写上游的 `revoked` 布尔，后者为权威）。
     pub async fn revoke(&self, id: Id) -> Result<()> {
         let res = sqlx::query(
             r"
             UPDATE personal_access_token
-            SET revoked_at = now()
+            SET revoked_at = now(), revoked = TRUE
             WHERE id = $1 AND revoked_at IS NULL
             ",
         )

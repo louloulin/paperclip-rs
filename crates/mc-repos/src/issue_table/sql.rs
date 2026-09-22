@@ -246,16 +246,16 @@ pub(crate) fn compile_where(
         }
         TableScope::Assignee(actor) => {
             let kind_ref = builder.text(actor.kind.clone());
-            let id_ref = builder.text(actor.id.to_string());
+            let id_ref = builder.uuid(actor.id);
             parts.push(format!(
-                "(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref}::text)"
+                "(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref})"
             ));
         }
         TableScope::Creator(actor) => {
             let kind_ref = builder.text(actor.kind.clone());
-            let id_ref = builder.text(actor.id.to_string());
+            let id_ref = builder.uuid(actor.id);
             parts.push(format!(
-                "(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref}::text)"
+                "(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref})"
             ));
         }
         TableScope::My { actor, relation } => {
@@ -296,9 +296,9 @@ pub(crate) fn compile_where(
         let mut ors: Vec<String> = Vec::new();
         for actor in filter.assignees.iter().flatten() {
             let kind_ref = builder.text(actor.kind.clone());
-            let id_ref = builder.text(actor.id.to_string());
+            let id_ref = builder.uuid(actor.id);
             ors.push(format!(
-                "(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref}::text)"
+                "(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref})"
             ));
         }
         if filter.include_no_assignee {
@@ -318,8 +318,8 @@ pub(crate) fn compile_where(
             .iter()
             .map(|actor| {
                 let kind_ref = builder.text(actor.kind.clone());
-                let id_ref = builder.text(actor.id.to_string());
-                format!("(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref}::text)")
+                let id_ref = builder.uuid(actor.id);
+                format!("(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref})")
             })
             .collect();
         parts.push(format!("({})", ors.join(" OR ")));
@@ -359,26 +359,29 @@ pub(crate) fn compile_where(
 
 pub(crate) fn my_assigned_predicate(builder: &mut QueryBuilder, actor: &TableActor) -> String {
     let kind_ref = builder.text(actor.kind.clone());
-    let id_ref = builder.text(actor.id.to_string());
-    format!("(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref}::text)")
+    let id_ref = builder.uuid(actor.id);
+    format!("(i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref})")
 }
 
 pub(crate) fn my_created_predicate(builder: &mut QueryBuilder, actor: &TableActor) -> String {
     let kind_ref = builder.text(actor.kind.clone());
-    let id_ref = builder.text(actor.id.to_string());
-    format!("(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref}::text)")
+    let id_ref = builder.uuid(actor.id);
+    format!("(i.creator_type = {kind_ref}::text AND i.creator_id = {id_ref})")
 }
 
 /// 上游 `appendIssueTableInvolvedPredicate`：把本人（`user`）拥有的 agent 及其带队的 squad
 /// 也算作“我参与的”。本仓没有 `squad_member` 表，所以只保留 agent 归属与 squad leader 两条支路。
+///
+/// W0-B2（LUM-1387）：`issue.assignee_id` 与 `agent.id` / `squad.id` 对齐上游后都是 `UUID`，
+/// 子查询不再需要 `::text` 投影；`squad.leader_agent_id` → 上游列名 `leader_id`。
 pub(crate) fn my_involved_predicate(builder: &mut QueryBuilder, actor: &TableActor) -> String {
     let owner_ref = builder.uuid(actor.id);
     format!(
         "((i.assignee_type = 'agent' AND i.assignee_id IN (\
-           SELECT a.id::text FROM agent a \
+           SELECT a.id FROM agent a \
             WHERE a.workspace_id = $1 AND a.owner_id = {owner_ref}::uuid)) \
          OR (i.assignee_type = 'squad' AND i.assignee_id IN (\
-           SELECT s.id::text FROM squad s JOIN agent a ON a.id = s.leader_agent_id \
+           SELECT s.id FROM squad s JOIN agent a ON a.id = s.leader_id \
             WHERE s.workspace_id = $1 AND a.workspace_id = $1 AND a.owner_id = {owner_ref}::uuid)))"
     )
 }
@@ -456,16 +459,16 @@ pub(crate) fn group_expression(group: TableGroupSpec) -> String {
 /// 分组的次要排序键（上游 `sortExpression`：默认就是 `group_value`）。
 pub(crate) fn group_sort_expression(group: TableGroupSpec) -> String {
     match group.kind {
-        // 上游用 `p.title`，本仓 `project` 表列名是 `name`。
+        // `project.title`（上游列名；本仓退役的 0001 里叫 `name`）。
         TableGroupKind::Project => format!(
             "CASE WHEN group_value = '{GROUP_VALUE_NO_PROJECT}' THEN '' ELSE LOWER(COALESCE(\
-               (SELECT p.name FROM project p WHERE p.workspace_id = $1 AND p.id = group_value::uuid), '')) END"
+               (SELECT p.title FROM project p WHERE p.workspace_id = $1 AND p.id = group_value::uuid), '')) END"
         ),
         TableGroupKind::Assignee => "LOWER(COALESCE(CASE split_part(group_value, ':', 1) \
              WHEN 'user' THEN (SELECT u.name FROM \"user\" u WHERE u.id = split_part(group_value, ':', 2)::uuid) \
              WHEN 'agent' THEN (SELECT a.name FROM agent a WHERE a.workspace_id = $1 AND a.id = split_part(group_value, ':', 2)::uuid) \
              WHEN 'squad' THEN (SELECT s.name FROM squad s WHERE s.workspace_id = $1 AND s.id = split_part(group_value, ':', 2)::uuid) \
-             WHEN 'autopilot' THEN (SELECT ap.name FROM autopilot ap WHERE ap.workspace_id = $1 AND ap.id = split_part(group_value, ':', 2)::uuid) \
+             WHEN 'autopilot' THEN (SELECT ap.title FROM autopilot ap WHERE ap.workspace_id = $1 AND ap.id = split_part(group_value, ':', 2)::uuid) \
              END, ''))"
             .to_string(),
         _ => "group_value".to_string(),
@@ -542,8 +545,8 @@ pub(crate) fn group_predicate(key: &TableGroupKey, builder: &mut QueryBuilder) -
         }
         TableGroupKey::Assignee(Some(actor)) => {
             let kind_ref = builder.text(actor.kind.clone());
-            let id_ref = builder.text(actor.id.to_string());
-            format!("i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref}::text")
+            let id_ref = builder.uuid(actor.id);
+            format!("i.assignee_type = {kind_ref}::text AND i.assignee_id = {id_ref}")
         }
         TableGroupKey::Project(None) => "i.project_id IS NULL".to_string(),
         TableGroupKey::Project(Some(project_id)) => {

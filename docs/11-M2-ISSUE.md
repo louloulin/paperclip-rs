@@ -149,6 +149,11 @@ PG `23505 → Conflict`、其余 → `RepoError::Db`。**HTTP 层**再翻译：
 | `attachment_ids` | 逐元素 `util.ParseUUID` → 非法 400；合法则把附件挂到新 issue（含归属校验） | **同样逐元素校验 UUID**（400 `invalid attachment_ids`，写库之前），但**不绑定** | 无 `attachment` 表，storage 面归 M5（LUM-1410 登记） |
 | `triage_state` | 可写字段 | 接受但忽略（不落库） | `0001` 列存在但 M2 无 triage 交互面 |
 
+> ⚠️ **W0-B2（LUM-1387）之后**：上表里 `reaction actor_type` / `assignee_type` 两行描述的「本地 `0001`/`0004` 表」已不存在——
+> 运行时集合换成上游 560 + `migrations/compat/` 6。词汇本身不变（本仓仍写 `user`），但现在是 **compat `538/539` 把上游 CHECK 放宽成并集**
+> （`user` 与 `member` 都合法），且 `assignee_id`/`creator_id`/`actor_id` 在上游是 `uuid`（读出仍以 `::text` 别名喂 `String`）。
+> 列名/类型/双写的权威说明见 `docs/26-W0-SCHEMA-SWITCHOVER.md` §5/§6。
+
 ## 6. 未覆盖项 TODO（本切片明确不做）
 
 | 端点 / 能力 | 归属 | 备注 |
