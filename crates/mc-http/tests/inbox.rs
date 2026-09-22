@@ -27,7 +27,7 @@ use http_body_util::BodyExt;
 use mc_core::actor::ActorRegistry;
 use mc_core::Id;
 use mc_db::Db;
-use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
+use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -43,7 +43,7 @@ fn build_state(db: Db) -> Arc<AppState> {
         db,
         RuntimeHandles {
             actors: ActorRegistry::new(),
-            adapters: Arc::new(AdapterRegistryStub::default()),
+            adapters: Arc::new(AdapterRegistry::default()),
         },
         ConfigSnapshot {
             host: "127.0.0.1".into(),

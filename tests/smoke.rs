@@ -185,7 +185,7 @@ async fn workspace_member_http_e2e() {
         db.clone(),
         mc_http::RuntimeHandles {
             actors: ActorRegistry::new(),
-            adapters: std::sync::Arc::new(mc_http::state::AdapterRegistryStub::default()),
+            adapters: std::sync::Arc::new(mc_http::state::AdapterRegistry::default()),
         },
         mc_http::ConfigSnapshot {
             host: "127.0.0.1".into(),

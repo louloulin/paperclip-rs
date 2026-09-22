@@ -17,7 +17,7 @@ use mc_config::Config;
 use mc_core::actor::{spawn_system_actor, ActorKey, ActorRegistry};
 use mc_db::{Db, Migrator};
 use mc_http::apply_default_middleware;
-use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
+use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 
@@ -103,9 +103,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .context("register root actor")?;
 
-    let adapters = Arc::new(AdapterRegistryStub::default());
-    // M0/M1 stub：注册占位 adapter 名（真实 adapter 注册在 M3）。
-    adapters.register("stub-adapter");
+    // M3-2：生产装配注册内置 adapter —— `pi-local`（其余 24 个走 M3-8，白名单见
+    // `mc_runtime::AgentType`）。**只注册、不探测**：`launch` 时才 `exec`，
+    // 所以机器上没装 `pi` 不影响起服务。
+    let adapters = Arc::new(AdapterRegistry::with_builtin_adapters());
 
     let realtime = RealtimeHandle::start(1024);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs"));
@@ -114,7 +115,8 @@ async fn main() -> anyhow::Result<()> {
     // 字段，末尾的 `..ConfigSnapshot::default()` 因此是「空更新」，clippy 的
     // `needless_update` 会响 —— 这是刻意的：M3 切片给 `ConfigSnapshot` 追加字段时，
     // 本处（以及 mc-conformance / tests/*.rs 的 10 处）不再需要改动，
-    // 只需在 `state.rs` 决定新字段的默认值。
+    // 只需在 `state.rs` 决定新字段的默认值（`runtime` 是 M3-2 按 §7.6 接线的那个
+    // 例外：它显式取 `cfg.runtime`，因为「接上真实配置」才是这个字段存在的意义）。
     #[allow(clippy::needless_update)]
     let config = ConfigSnapshot {
         host: cfg.server.host.clone(),
@@ -128,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         verification_code_ttl_secs: cfg.auth.verification_code_ttl_secs,
         send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
         invitation_per_workspace_per_hour: Some(cfg.auth.invitation_per_workspace_per_hour),
+        runtime: cfg.runtime.clone(),
         ..ConfigSnapshot::default()
     };
 
