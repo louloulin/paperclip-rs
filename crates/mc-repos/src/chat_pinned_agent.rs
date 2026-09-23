@@ -73,11 +73,7 @@ impl ChatPinnedAgentRepo {
     ///
     /// 「agent 已不可见 ⇒ 从响应里丢掉」是 handler 侧的过滤（`accessibleAgentIDs`），
     /// SQL 不做联表 —— 本方法同样只读 pin 行，可见性过滤交给 `mc_http` 的 `ChatScope`。
-    pub async fn list(
-        &self,
-        workspace_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Vec<ChatPinnedAgentRow>> {
+    pub async fn list(&self, workspace_id: Uuid, user_id: Uuid) -> Result<Vec<ChatPinnedAgentRow>> {
         sqlx::query_as::<_, ChatPinnedAgentRow>(
             "SELECT * FROM chat_pinned_agent \
              WHERE workspace_id = $1 AND user_id = $2 \

@@ -43,15 +43,18 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 use mc_chat::session::{validate_title, TitleError};
+use mc_core::Id;
 use mc_errors::Error;
-use mc_repos::chat_session::{ChatSessionListRow, ChatSessionRow, CreateSessionOutcome, NewChatSession};
+use mc_repos::chat_session::{
+    ChatSessionListRow, ChatSessionRow, CreateSessionOutcome, NewChatSession,
+};
 
 use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
@@ -60,7 +63,9 @@ use crate::state::AppState;
 pub(super) mod draft_restore;
 pub(super) mod support;
 
-use support::{bad_request, decode_body, not_found, parse_uuid_field, repo_err, ts, ChatScope};
+use support::{
+    bad_request, decode_body, forbidden, not_found, parse_uuid_field, repo_err, ts, ChatScope,
+};
 
 /// chat 会话与 draft-restore 的路由表（`chat/mod.rs::router()` 会 `merge` 它）。
 ///
@@ -78,19 +83,29 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/chat/sessions/:sessionId",
-            get(get_session).patch(update_session).delete(delete_session),
+            get(get_session)
+                .patch(update_session)
+                .delete(delete_session),
         )
         .route(
             "/api/chat/sessions/:sessionId/",
-            get(get_session).patch(update_session).delete(delete_session),
+            get(get_session)
+                .patch(update_session)
+                .delete(delete_session),
         )
         // 形态纪律 2：plain 子路由，只有无尾斜杠形态。
-        .route("/api/chat/sessions/:sessionId/pin", patch(set_session_pinned))
+        .route(
+            "/api/chat/sessions/:sessionId/pin",
+            patch(set_session_pinned),
+        )
         .route(
             "/api/chat/sessions/:sessionId/archive",
             patch(set_session_archived),
         )
-        .route("/api/chat/sessions/:sessionId/read", post(mark_session_read))
+        .route(
+            "/api/chat/sessions/:sessionId/read",
+            post(mark_session_read),
+        )
         .merge(draft_restore::router())
 }
 
@@ -206,14 +221,13 @@ struct CreateChatSessionRequest {
 
 /// 上游 `UpdateChatSessionRequest`：`Title *string` 与 `ProjectID json.RawMessage`。
 ///
-/// `project_id` 用 `JsonValue` 接住：真正读的是 [`decode_body`] 返回的原始字段表
-/// （`json.RawMessage` 在字段**存在**时非 nil，哪怕值是 `null`），见 `update_session`。
+/// 这里**只**声明 `title`：上游的 `project_id` 是 `json.RawMessage`，它对**任意** JSON 都不报
+/// 解码错（包括数字 / 数组），类型与存在性全部在 handler 里按原始字段表判 ⇒ 本结构体声明一个
+/// 强类型字段反而会引入上游没有的 400。多余的键被 serde 默认忽略，正好等价。
 #[derive(Debug, Default, Deserialize)]
 struct UpdateChatSessionRequest {
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
-    project_id: Option<JsonValue>,
 }
 
 /// 上游 `SetChatSessionPinnedRequest` / `SetChatSessionArchivedRequest`：`bool` 字段。
@@ -258,16 +272,15 @@ pub(super) async fn create_session(
     let agent = scope
         .agent
         .repo
-        .get_in_workspace(agent_id, scope.workspace_id())
+        .get_in_workspace(scope.workspace_id(), Id::from(agent_id))
         .await
-        .map_err(|_| not_found("agent"))?
-        .ok_or_else(|| not_found("agent"))?;
+        .map_err(|_| not_found("agent"))?;
     if agent.archived_at.is_some() {
         return Err(bad_request("agent is archived").into());
     }
-    let targets = scope.agent.targets_of(agent_id).await?;
+    let targets = scope.agent.targets_of(Id::from(agent_id)).await?;
     if !scope.agent.can_invoke(&agent, &targets) {
-        return Err(crate::routes::agents::forbidden("you do not have access to this agent").into());
+        return Err(forbidden("you do not have access to this agent").into());
     }
 
     // 上游 `parseOptionalProjectID` + `GetProjectInWorkspace(ChatSessionCreate)`：
@@ -400,9 +413,8 @@ pub(super) async fn update_session(
             }
             Some(parse_uuid_field(trimmed, "project_id")?)
         }
-        // 字段存在但类型不对（数字 / 对象 / 数组 / 布尔）。
-        Some(_) => return Err(bad_request("project_id must be a UUID or null").into()),
-        None => return Err(bad_request("project_id must be a UUID or null").into()),
+        // 字段存在但类型不对（数字 / 对象 / 数组 / 布尔）或字段不存在。
+        Some(_) | None => return Err(bad_request("project_id must be a UUID or null").into()),
     };
 
     let updated = scope
@@ -513,15 +525,14 @@ fn title_error(e: TitleError) -> Error {
     bad_request(e.to_string())
 }
 
-/// 空的原始字段表（测试与 `#[allow(dead_code)]` 之外的调用点共用）。
-#[cfg(test)]
-fn empty_raw() -> JsonMap<String, JsonValue> {
-    JsonMap::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `decode_body` 收 `&Bytes`（handler 从 `axum::body::Bytes` 拿），测试里包一层。
+    fn body(raw: &str) -> Bytes {
+        Bytes::from(raw.to_owned())
+    }
 
     /// 路由表必须能构建：重复注册 / 形态冲突（matchit 的 `InsertError`）会在这里 panic。
     /// `slash_alias_audit.py` 只认「已注册的键」，所以这条测试是形态纪律 1/2 的第一道闸。
@@ -532,7 +543,10 @@ mod tests {
 
     #[test]
     fn title_error_messages_match_upstream() {
-        assert_eq!(title_error(TitleError::Empty).to_string(), "title is required");
+        assert_eq!(
+            title_error(TitleError::Empty).to_string(),
+            "title is required"
+        );
         assert_eq!(
             title_error(TitleError::TooLong).to_string(),
             "title is too long"
@@ -542,42 +556,44 @@ mod tests {
     /// 上游 `SetChatSessionPinnedRequest` 的三种输入：缺失 / `null` / 非布尔。
     #[test]
     fn flag_request_null_and_missing_are_false() {
-        let (req, _raw) = decode_body::<SetChatSessionFlagRequest>(&br#"{}"#).expect("empty ok");
-        assert_eq!(req.pinned.unwrap_or(false), false);
+        let (req, _raw) = decode_body::<SetChatSessionFlagRequest>(&body("{}")).expect("empty ok");
+        assert!(!req.pinned.unwrap_or(false));
 
         let (req, _raw) =
-            decode_body::<SetChatSessionFlagRequest>(&br#"{"pinned":null}"#).expect("null ok");
-        assert_eq!(req.pinned.unwrap_or(false), false);
+            decode_body::<SetChatSessionFlagRequest>(&body(r#"{"pinned":null}"#)).expect("null ok");
+        assert!(!req.pinned.unwrap_or(false));
 
         let (req, _raw) =
-            decode_body::<SetChatSessionFlagRequest>(&br#"{"pinned":true}"#).expect("true ok");
-        assert_eq!(req.pinned.unwrap_or(false), true);
+            decode_body::<SetChatSessionFlagRequest>(&body(r#"{"pinned":true}"#)).expect("true ok");
+        assert!(req.pinned.unwrap_or(false));
 
-        assert!(decode_body::<SetChatSessionFlagRequest>(&br#"{"pinned":"yes"}"#).is_err());
-        assert!(decode_body::<SetChatSessionFlagRequest>(&br#"[]"#).is_err());
+        assert!(decode_body::<SetChatSessionFlagRequest>(&body(r#"{"pinned":"yes"}"#)).is_err());
+        assert!(decode_body::<SetChatSessionFlagRequest>(&body("[]")).is_err());
     }
 
     /// update 的「恰好一个」判据读的是**原始字段表**：`null` 算存在。
     #[test]
     fn update_presence_uses_raw_map() {
-        let (_, raw) = decode_body::<UpdateChatSessionRequest>(&br#"{"title":null}"#).unwrap();
+        let (_, raw) = decode_body::<UpdateChatSessionRequest>(&body(r#"{"title":null}"#)).unwrap();
         assert!(raw.get("title").is_some_and(|v| !v.is_null()));
         assert!(!raw.contains_key("project_id"));
 
-        let (_, raw) = decode_body::<UpdateChatSessionRequest>(&br#"{"project_id":null}"#).unwrap();
+        let (_, raw) =
+            decode_body::<UpdateChatSessionRequest>(&body(r#"{"project_id":null}"#)).unwrap();
         assert!(raw.contains_key("project_id"));
-        assert!(!raw.get("title").is_some_and(|v| !v.is_null()));
+        assert!(raw.get("title").is_none_or(serde_json::Value::is_null));
 
-        let (_, raw) = decode_body::<UpdateChatSessionRequest>(&br#"{}"#).unwrap();
-        assert!(empty_raw().is_empty() && raw.is_empty());
+        let (_, raw) = decode_body::<UpdateChatSessionRequest>(&body("{}")).unwrap();
+        assert!(raw.is_empty());
     }
 
     /// `{"title":5}` / `{"agent_id":5}` 是解码错误（400），不是「当成字符串」。
     #[test]
     fn typed_field_wrong_kind_is_bad_request() {
-        assert!(decode_body::<CreateChatSessionRequest>(&br#"{"title":5}"#).is_err());
-        assert!(decode_body::<CreateChatSessionRequest>(&br#"{"agent_id":5}"#).is_err());
-        let (req, _) = decode_body::<CreateChatSessionRequest>(&br#"{"agent_id":null}"#).unwrap();
+        assert!(decode_body::<CreateChatSessionRequest>(&body(r#"{"title":5}"#)).is_err());
+        assert!(decode_body::<CreateChatSessionRequest>(&body(r#"{"agent_id":5}"#)).is_err());
+        let (req, _) =
+            decode_body::<CreateChatSessionRequest>(&body(r#"{"agent_id":null}"#)).unwrap();
         assert_eq!(req.agent_id.unwrap_or_default(), "");
     }
 }

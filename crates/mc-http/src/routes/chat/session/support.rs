@@ -10,7 +10,6 @@
 //! 「看起来更 Rust」的写法（trim / 更宽的时间格式 / 更宽松的 JSON 解码都会改变状态码）。
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::http::HeaderMap;
@@ -26,7 +25,6 @@ use mc_repos::chat_draft_restore::ChatDraftRestoreRepo;
 use mc_repos::chat_message::ChatMessageRepo;
 use mc_repos::chat_pinned_agent::ChatPinnedAgentRepo;
 use mc_repos::chat_session::{ChatSessionRepo, ChatSessionRow};
-use mc_repos::RepoError;
 
 use crate::routes::agents::AgentScope;
 use crate::routes::auth_user::AuthUser;
@@ -75,19 +73,27 @@ pub(crate) fn cursor_ts(t: DateTime<Utc>) -> String {
     }
 }
 
-/// 上游 `decodeJSONBodyWithRawFields` 的空 body / 形状语义 + 原始字段表。
+/// 请求体 → (DTO, 原始字段表)，对齐上游 `json.NewDecoder(r.Body).Decode(&req)`。
 ///
 /// 与 `routes::agents::crud::decode_body` 是**同款本地副本**（各切片各自持有，见
-/// `docs/42` §4.2「一个文件一个写集」：那条是 M3-5 的文件，本片不改）。返回的
-/// `JsonMap` 是「字段是否存在」与「显式 null」的判定依据 —— 上游 `json.RawMessage`
-/// 在字段存在时非 nil（哪怕值是 `null`），而 `*string` 遇到 `null` 仍是 nil。
+/// `docs/42` §4.2「一个文件一个写集」：那条是 M3-5 的文件，本片不改）。chat 的 6 个写接口
+/// 在上游用的是**同一种**解码器，要复现的语义有三条：
 ///
-/// Go 语义对照：
-/// - 空 body / 非法 JSON / 顶层不是对象 → 400 `invalid request body`；
-/// - 顶层 `null` → 解码成零值结构体（不报错）⇒ 这里返回 `T::default()` + 空表。
+/// 1. **空体是错误**：Go 的 `Decode` 在空体（或只有空白）上报 `io.EOF` ⇒ 400
+///    `invalid request body`。这一条**不能**省：空体若当默认值会退化成 `pin` 接口的
+///    200（而不是上游的 400）。非法 JSON、顶层不是对象（数组 / 数字 / 字符串）同归 400。
+/// 2. **裸 `null` 不是错误**：Go 反序列化 `null` 到结构体是 no-op（零值）⇒ 继续走各自的
+///    分支（`agent_id is required` / `exactly one of …` / 旗标 `false`）。
+/// 3. **原始字段表必须留**：返回的 `JsonMap` 是「字段是否存在」与「显式 `null`」的判定依据
+///    —— 上游 `json.RawMessage` 在字段存在时非 nil（哪怕值是 `null`），而 `*string` 遇到
+///    `null` 仍是 nil。`update_session` 的「恰好一个」判据、`title` 的「非 null 才算存在」
+///    都依赖它。
 pub(crate) fn decode_body<T: DeserializeOwned + Default>(
     body: &Bytes,
 ) -> Result<(T, JsonMap<String, JsonValue>), Error> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Err(bad_request("invalid request body"));
+    }
     let value: JsonValue =
         serde_json::from_slice(body).map_err(|_| bad_request("invalid request body"))?;
     if value.is_null() {

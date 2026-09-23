@@ -2461,6 +2461,7 @@ dependencies = [
  "hyper 1.11.1",
  "mc-auth",
  "mc-authz",
+ "mc-chat",
  "mc-config",
  "mc-core",
  "mc-daemon-proto",

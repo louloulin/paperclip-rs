@@ -349,7 +349,7 @@ impl ChatSessionRepo {
     /// `project` 那把锁同理：project 删除会软清 `chat_session.project_id`，先 `FOR KEY
     /// SHARE` 才能保证不会在删除事务扫过之后再提交一个引用它的事务。
     ///
-    /// 锁顺序固定 workspace → project → chat_session（上游注释点名与 finalizer 不会死锁）。
+    /// 锁顺序固定 workspace → project → `chat_session`（上游注释点名与 finalizer 不会死锁）。
     /// 返回 [`CreateSessionOutcome::WorkspaceNotFound`] / [`CreateSessionOutcome::ProjectNotFound`]
     /// 对应上游的两个 404；其余失败按 `RepoError` 抛出。
     pub async fn create_explicit(&self, new: &NewChatSession) -> Result<CreateSessionOutcome> {
@@ -559,7 +559,7 @@ impl ChatSessionRepo {
     ///
     /// 为什么要锁：project 删除会软清本表的 `project_id`；不先取 `FOR KEY SHARE`，
     /// 一个「写新引用」的事务可能在删除事务扫描过之后再提交，留下一个指向已删
-    /// project 的会话。锁顺序 project → chat_session，与 `create_explicit` 同向。
+    /// project 的会话。锁顺序 project → `chat_session`，与 `create_explicit` 同向。
     /// 返回 `None` = 目标 project 不存在或不属于该 workspace（上游 404）。
     pub async fn update_project_locked(
         &self,
@@ -671,6 +671,7 @@ impl ChatSessionRepo {
     /// 协议靠 `chat_session` 的行锁实现，谁先拿到锁谁赢：
     /// - deleter 先拿到：finalizer 的 `FOR UPDATE` 阻塞，等我们提交后它锁不到行 ⇒ 不再 insert；
     /// - finalizer 先拿到：它的 insert 在我们的剪枝快照之前提交 ⇒ 被这一次剪枝扫走。
+    ///
     /// 单独调用 [`ChatSessionRepo::delete`] 不带事务 ⇒ 首锁在语句结束即释放，协议失效；
     /// 生产路径请用本方法。
     ///
