@@ -41,6 +41,17 @@
 //! 重复注册会让 axum 在 `Router::route` 处 panic）。`not_implemented` 仍为其余
 //! 未实现端点服务。
 //!
+//! **M5-0（LUM-1563）移交**：原先在本文件以 501 stub 注册的 7 个 wakeup 注册键
+//! （`GET|POST /api/issues/:id/wakeups`、`PUT /api/issues/:id/wakeups/:wakeupId`、
+//! `POST …/disable`、`POST …/enable`、`PATCH …/instruction`、`GET /api/issue-wakeups`）
+//! 已**逐字搬进** `wakeups.rs`（前 6 个）与 `super::issue_wakeups`（workspace 级那条），
+//! 本文件**删除**这些注册并在 `router()` 尾部 `.merge(super::wakeups::router())`
+//! （删注册与挂子 router 必须同一个 commit：同 path+method 重复注册会让 axum 在
+//! `Router::route` 处 panic）。搬而不删的理由：门 ⑦ 的 `local` 注册键数要逐字不变
+//! （`docs/44-M5-PLAN.md` §6.1 预测 M5-0 后 292 → 290，只掉 2 个 autopilot 占位），
+//! 且这 7 个键的 handler 名必须仍是 `not_implemented`（`route_parity.py` 的占位正则只认
+//! `\bplaceholder\b`，改名会偷改门禁语义；检测器缺陷登记在 R3，本波不修）。
+//!
 //! 注意（M1-D 实测踩过的坑）：axum 0.7（matchit 0.7）路径参数必须写 `:id`，
 //! `{id}` 会被当字面量段——编译通过但恒 404。
 //!
@@ -56,6 +67,9 @@
 //! - `crud.rs`：单体端点（create / quick-create / get / update / delete / move）
 //! - `extras.rs`：reactions / metadata / properties
 //! - `statuses.rs`：`/api/issue-statuses*` 目录端点
+//! - `wakeups.rs`（M5-0 新增）：`/api/issues/:id/wakeups*` 的 6 条注册（M5-6 实现；
+//!   声明为 `pub(crate)` 而不是 `pub`，既不破本文件的 `pub(crate)` 惯例，又让同片的
+//!   `super::issue_wakeups` 能引用）
 //!
 //! 子模块条目一律 `pub(crate)`；对外面（`routes/mod.rs` 的 `pub mod issues;`、`mount.rs` 的
 //! `super::issues::router()`、`issue_table` 的 `crate::routes::issues::{validation, repo_err,
@@ -71,6 +85,7 @@ mod helpers;
 mod list;
 mod query;
 mod statuses;
+pub(crate) mod wakeups;
 
 use crate::state::AppState;
 use axum::extract::OriginalUri;
@@ -169,24 +184,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/issues/:id/labels", get(not_implemented))
         .route("/api/issues/:id/labels/:labelId", delete(not_implemented))
         .route("/api/issues/:id/quick-actions", get(not_implemented))
-        .route(
-            "/api/issues/:id/wakeups",
-            get(not_implemented).post(not_implemented),
-        )
-        .route("/api/issues/:id/wakeups/:wakeupId", put(not_implemented))
-        .route(
-            "/api/issues/:id/wakeups/:wakeupId/disable",
-            post(not_implemented),
-        )
-        .route(
-            "/api/issues/:id/wakeups/:wakeupId/enable",
-            post(not_implemented),
-        )
-        .route(
-            "/api/issues/:id/wakeups/:wakeupId/instruction",
-            patch(not_implemented),
-        )
-        .route("/api/issue-wakeups", get(not_implemented))
+        // M5-0：`/api/issues/:id/wakeups*` 6 条与 `/api/issue-wakeups` 的 501 注册
+        // 已搬到 `wakeups.rs` / `crate::routes::issue_wakeups`（理由见文件头）。
         // ---- status 目录 ---------------------------------------------------
         .route(
             "/api/issue-statuses",
@@ -210,6 +209,10 @@ pub fn router() -> Router<Arc<AppState>> {
         // `/api/issues/limit-usage` 在独立文件里实现，这里**委托合并**（`mount.rs`
         // 与 `routes/mod.rs` 现有注册点都不动）。清单与理由见 `docs/14-M2-TABLE.md` §6。
         .merge(super::issue_table::router())
+        // M5-0（LUM-1563）：7 个 wakeup 注册键搬出去（6 条在本目录的 `wakeups.rs`、
+        // workspace 级那条在 `crate::routes::issue_wakeups`，后者由 `mount.rs` 的
+        // `mount_slice_autopilot()` 合并）。本文件只保留这一个 merge 点。
+        .merge(wakeups::router())
 }
 
 // ---------------------------------------------------------------------------
