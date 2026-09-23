@@ -3853,3 +3853,73 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
    （私有错误/形状放自己文件；进 `mc-autopilot/src/error.rs` 只准尾部追加）。
 3. M4-INT 交 PR 时按 R13 与 `LUM-1572`/`LUM-1580` 错开合并；⑦ 基线只在集成片刷新（非集成轮不动基线）。
 4. 门禁日志 `tee` 全量；⑦/⑨/⑩ 数字只取当轮日志。
+
+## §38 22:30 cycle（`LUM-1611`）：**一次批入两片** —— #54（M5-6 wakeup）+ #53（M4-INT）⇒ base `015ff2f`；B 波只剩 M5-1
+
+### 38.1 起手读数与一条 checkout 坑
+
+- `df -h /` **5.8G 可用**（起手：M5-6 `18G` + M4-INT `13G` + M5-1 `3.7G` 三个 target 在飞）；base `f6abce0`；GH **0 open PR**；在飞 3 片
+  （M5-1 重派 `01a0ce9b-0ef5`、M5-6 `01a0ce59-6856`、M4-INT `01a0ce9b-6dfe`）。
+- 【**可复用坑**】`multica repo checkout` **不带 `--ref`** 得到的不是集成线：本轮它把 cycle 分支建在 **main 系** `4fc96f3`
+  （pc-* 移植线：`fix(pc-http tests)…`），`git merge-base --is-ancestor 4fc96f3 origin/feat/multica-rs-initial` = **否**。
+  ⇒ 合并/复验前必须显式 `git checkout -B <branch> origin/feat/multica-rs-initial`，否则 diff/门禁全建在错的树上。
+- 本轮另确立：**合并前先看远端有没有该片的分支**，比只看 `gh`/issue 状态更早暴露「片没推」。
+
+### 38.2 判据链读数（两片同批，先预检后合并；每步逐字核对）
+
+| 步骤 | 实测 |
+| --- | --- |
+| 预检 A（base + #54 `495d488`） | tree **`aa6409a`**；staged `23 files, +6072 −126` = PR 自述逐字一致；== M5-6 分支树 `aa6409a`（其 10/10 门禁就是在该树上跑的） |
+| 预检 B（A + #53 `697c091`） | tree **`e6ea783`**；staged `3 files, +187 −3` = PR 自述一致（`docs/49` +177、`docs/fixtures/route-parity-baseline.json` +10、`scripts/route-owners.tsv` −3） |
+| 合并树门禁 | 先 `--with-db` **8/10**（⑥⑧ 因环境红，见 §38.3）⇒ 修权限后 `--only db,schema-drift` **2/2** ⇒ 合计 **10/10**；重跑前后 `HEAD=b3a0898` / tree `e6ea783` / `git status` 空，**同一棵树** |
+| API 合并 | `PUT /pulls/54/merge` 钉 `495d4881` ⇒ `5b4f407`（中间 base 树 = `aa6409a` ✓）；`PUT /pulls/53/merge` 钉 `697c0914` ⇒ **`015ff2f`** |
+| 合并后复核 | 终态 base 树 = **`e6ea783`** == 预检 B 树；`git diff b3a0898 origin/feat/multica-rs-initial` = **0 行** |
+
+- 两片**无文件交集**（#54 全在 `mc-autopilot/wakeup` + `mc-http/routes/issue_wakeups*` + `mc-repos/wakeup` 23 文件；#53 只碰 `docs/49` + ⑦ 基线 + `route-owners.tsv`），所以先 A 后 B 无冲突仲裁。
+- R13 口径落地：`LUM-1476`（#53）本轮**单独成批**合入，不与 `LUM-1572`（M5-INT）/`LUM-1580` 同批；「后合者重刷 ⑦」由**合并树上的 ⑦ 复验**承担（本轮 ⑦ 绿，见 §38.4）。
+
+### 38.3 【环境坑，可直接复用】真库角色缺 `CREATEDB` ⇒ ⑥ e2e 红 + ⑧ 漂移「permission denied to create database」
+
+- 症状：新库/新角色（`multica_lum1611` / `mc_lum1611`）上 `--with-db` 跑出
+  ⑥ `FAIL (migrate=0,e2e=101)`：`mc-http` 两条 auth 用例炸 `db: Connect(PoolTimedOut)` 与 500 `failed to create user`；
+  ⑧ `exit 2`：`CREATE DATABASE "schema_probe_w0b_drift_43217"` **permission denied to create database**。
+- 真因：`mc_lum1611` 的 `rolcreatedb=f`。旁证：老角色 `mc_lum1563` / `mc_lum1566` / `mc_lum1476` 全是 **`rolcreatedb=t`**。
+- 修法：`ALTER ROLE <role> CREATEDB;` + 重建库（⑥ 的 e2e 与 ⑧ 的探针都要建库）⇒ 同树复跑 **2/2 → 10/10**。
+- **白名单重跑口径**：`bash scripts/gates.sh --only db,schema-drift`（**不能**再带 `--with-db`：脚本报 `--only and --with-db are mutually exclusive`）；仍需 `MULTICA_TEST_DATABASE_URL`。
+- 附带发现（非阻塞）：`scripts/gates.sh:266` 漂移失败路径的诊断行**打不出来** —— `printf '-- schema-drift is red (exit %s)…'` 的格式串以 `--` 开头，
+  bash 的 `printf` 把它当选项解析并报 `printf: --: invalid option`（实测 `bash -c "printf '-- x\n'"` 复现）。建议改 `printf '%s\n' '-- …'` 或加前导空格。
+
+### 38.4 合并树 ⑦/⑨/⑩ 读数（只取当轮日志）
+
+- ⑦ `upstream 456 (commit f41fae6b08fb) | local 301 registered | baseline 300`；
+  `implemented 242 real + 2 placeholder = 244/456`、`known_gap 212`、**`unclaimed 0`**、**`regression 0`**、`local_only 11` ⇒ 合并树**无需再刷 ⑦ 基线**。
+- ⑨ conformance：`report matches crates/mc-conformance/report.json`（exit 0）；⑩ file-size exit 0；① fmt / ② build(92s) / ③ clippy(50s) / ④ clippy-test-util(19s) / ⑤ test(35s) 全绿。
+
+### 38.5 磁盘：本轮 5.8G → 22G，规律是「已合并片的 target 第一顺位」
+
+1. 起手 5.8G（三片 target 在飞）；轮内我自己的**冷构建**（新 workdir 无 target）落盘 `13G` ⇒ 一度 4.3G；
+2. **M4-INT run 收口时自清 target**（其 workdir 只剩 `16M`）⇒ 一度回升 17G；
+3. 合并完成后删 **M5-6 已合并的 `18G` target**（PR 已合 + run 终态 `14:35:20` + `readlink /proc/*/cwd` 无进程）⇒ **22G**。
+- 口径确认：**「PR 已合 + run 终态 + 无进程 cwd」三条齐即可删该片 `target/`**；本轮不删工作树/提交（沿用 §34 口径）。
+
+### 38.6 M5-1（`LUM-1564`）在飞状态（本 cycle 唯一未收口项）
+
+- 重派 run `01a0ce9b-0ef5`（14:11:03 起）**活着且在推进**，但**它实际在旧 workdir `lum-1564-334607c0bcb3` 里干活**：
+  `pi` 进程 cwd = 新 workdir `lum-1564-4af818251425`（新 checkout 无 `target/`，停在 main 系），而其 bash 子进程 cwd 全在旧 workdir，
+  复用了那里的 `3.6G` 增量 target（`cargo clippy -p mc-repos --all-targets --locked` 等）。
+- 该 workdir 当刻：分支 `agent/devbox5/334607c0bcb3` 本地已到 **`500bffb`**（比远程 `96ee46d` 多 1 提交），另有
+  `mc-autopilot/src/{cron.rs,cron/tests.rs,dto.rs,quota.rs}` + `mc-http/src/routes/autopilots/{access.rs,dto.rs,list.rs}` 未提交改动。
+- ⇒ **风险点**：它必须把 `500bffb` 之后的提交**推回远程**；下一轮起手第一件事就是 `git ls-remote origin agent/devbox5/334607c0bcb3`
+  看是否前进，没前进就按 §37.2 的「三处判据」再抢救一次。
+
+### 38.7 遗留 / 下一轮起手（交接）
+
+1. **B 波 2/3**：M5-7 ✓、M5-6 ✓（本轮）、**M5-1 在飞**。C 波（`M5-2 ∥ M5-3 ∥ M5-4`）**仍未派** —— `docs/44` §7 第 4 条要求 B 波全合，
+   §4.3 点明 M5-1 交付的 `dto/access/quota` 是 C 波硬前置。切片位 = **1/3**（只剩 M5-1），空位 2 但**无可派项**：
+   M4 已 45/45 implemented（§38.4），M5 其余片全部依赖 M5-1 或 M5-4，M5-5/M5-8 属 D 波。
+2. M5-1 交 PR 时（分支 `agent/devbox5/334607c0bcb3`）走 §34.1 判据链 + **额外加核 `Cargo.lock`**
+   （`mc-http` 新增 `mc-autopilot` path 边，base lock 无该条目 ⇒ 门 ② `--locked` 必红）。
+3. **P0 仍未决**（owner 至今未回，`LUM-1609` 那条 cycle comment 0 回复）：`apps/mc-server` 缺 `mc-scheduler` 依赖边（`docs/48` §7.1）
+   + 门 ⑥ 加 `-p mc-scheduler`（§7.2）。**未获批不动**。
+4. 建真库模板（下一轮照抄，省一次踩坑）：`CREATE ROLE mc_lumXXXX LOGIN **CREATEDB** PASSWORD '…'` + `CREATE DATABASE multica_lumXXXX OWNER …`；
+   口令自拟不落明文；门禁日志 `tee` 全量。
