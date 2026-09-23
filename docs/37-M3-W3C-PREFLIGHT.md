@@ -3996,3 +3996,46 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
    + 门 ⑥ 加 `-p mc-scheduler`（§7.2）。**未获批不动**。
 4. 记录号（`docs/NN`）：`46=M5-1 / 47=M5-6 / 48=M5-7 / 49=M4-INT` 已用 ⇒ **下一个空号 = 50**（C 波落地当刻取空号）。
 5. 下一轮起手三连：`df -h /` → `git ls-remote origin`（三片分支是否前进）→ GH `pulls?state=open`；已合并片的 `target/` 第一顺位回收。
+
+## 40. 00:00 cycle（`LUM-1625`）：C 波 3 片**两片静默零交付** ⇒ WIP 抢救 + 双跑重派（回 3/3）；0 PR 可合，不派 D 波
+
+### 40.1 起手读数
+
+- base head **`e05eeed`**（=`76db7eb` merge #55 M5-1 + §39 docs-only ff）；GH `pulls?state=open` = **0**；`df -h /` = 49G 盘 / 21G 用 / **27G 可用（44%）**。
+- 三片 run（15:16:20Z 起）：`LUM-1567`(M5-2) `01a0ced6-d3c` = **running**；`LUM-1568`(M5-3) `01a0ced6-d42` = `completed`；`LUM-1569`(M5-4) `01a0ced6-d49` = `completed`
+  —— 后两条 `output_bytes=0`、`delivered_comment_ids=[]`（**零交付**，不是「做完了」）。
+- **并发事实**：`LUM-1620`（23:30 cycle）run `01a0cee3-5cef` **仍然活着**（15:30 起），它在 `lum-1613` 的 workdir 里挂了一个 `seq 1 40 … sleep 60` 的轮询壳
+  （匹配三个 run-id 分支 / “15:16 那一分钟的 pi 是否还在”）⇒ 一个 cycle run 靠「等待壳」占了 37 分钟。本 cycle 推 WIP 分支后它才跳出循环。
+
+### 40.2 两片静默零交付的取证（daemon 日志 + session 文件）
+
+| 片 | run | 起→终 | tools | session | 压缩次数 | 末条事件 | 产物 |
+|---|---|---|---|---|---|---|---|
+| M5-3 `LUM-1568` | `01a0ced6-d42` | 15:16:20→**15:43:39** | 176 | `20260923T151623.050162487.jsonl` 2.0MB | **8** | `stopReason="length"`、`output=1` token | 629 行未提交（2 文件） |
+| M5-4 `LUM-1569` | `01a0ced6-d49` | 15:16:20→**15:50:56** | 218 | `20260923T151622.814237021.jsonl` 2.7MB | **14** | `stopReason="length"`、`output=316` 全为 reasoning | **零**（`git status` 空、远端无分支、只有 802M 冷 target） |
+
+- 两片的 `agent_error=""`、`status=completed`：**平台侧看不到失败**，与 §37.2 同一失败模式（长上下文 ⇒ 末轮退化 ⇒ 空输出）。
+  ⇒ **判据（沿用并强化）**：`completed` + `output_bytes=0` + `delivered_comment_ids=[]` + 远端无分支 = 零交付。
+- **新增预测信号**：session **≥2MB / 压缩 ≥8 次**的片，零交付概率实测很高（本轮 M5-3=8 次即死）；
+  同刻 M5-2 已 **14 次压缩 / 4.06MB**且 2480 行 WIP **未推** ⇒ 判定为「下一片高风险」，已另存 `m5-2-wip.diff` 快照（见 40.4）。
+- **处置**：两条 session `mv …jsonl.poisoned`（隔离，重派必须拿不到旧会话）；`--active` 复核确认两 issue 无在飞 run。
+
+### 40.3 WIP 抢救 + 双跑重派（先抢救、后重派）
+
+- **M5-3 抢救**：`crates/mc-autopilot/src/trigger.rs`(+265) + `crates/mc-repos/src/autopilot/trigger.rs`(+378) 落成一个 WIP 提交
+  **`df5e34c`** 并推 `origin/agent/devbox5/045685c28434`（抢救提交**明说未编译通过**，只为不丢行）。
+  内容要点：`TRIGGER_KIND_*` / `Timezone::from_column` / 事件过滤「校验+编码+匹配」三件套；**cron 解析改为调用 M5-1 已落的 `crate::cron::compute_next_run`**（不另写第二份）。
+- **重派**：`multica issue rerun`（§14.3 的正确杠杆）⇒ `LUM-1568` `01a0cf04-a5b5` / `LUM-1569` `01a0cf04-a611`，均 16:06:27 起，**新 workdir**
+  `lum-1568-74837ad1cda9` / `lum-1569-262d8d1d79ef`（分支 `agent/devbox5/<workdir-id>`，故 WIP 必须靠**交接说明**带走，不能指望同分支）。
+- 派发说明（`--description-file` 追加到描述，`--no-start`）：死因取证、WIP 的 cherry-pick 落点、**运行纪律**
+  （先写后读 / 每文件只读一次 `sed -n 'A,Bp'` / **每写完一个文件就 commit+push** / 中途 `cargo check -p <crate>` 收窄）、记录号 **`docs/51`=M5-3、`docs/52`=M5-4**（`50` 归 M5-2）。
+- 重派即恢复 **切片位 3/3**（M5-2 仍在飞 + 两片重派）；cycle 自身不占位（§35.5 口径）。
+
+### 40.4 遗留 / 下一轮起手
+
+1. **M5-2（`LUM-1567`）是当前最大风险点**：14 次压缩 / 4.06MB session，**0 提交、2480 行未推**（8 文件含新测试 `mc-repos/src/autopilot/tests/write.rs`）。
+   本轮已把它 16:07 时刻的 WIP 快照存到本 cycle workdir（`m52-wip-snapshot/m5-2-wip.diff`，2480 行）——**若它零交付，照 40.3 抢救（用最后落盘状态，不是这份快照）再 rerun**。
+2. **D 波（M5-5 `LUM-1570` ∥ M5-8 `LUM-1571`）仍不可派**：`docs/44` §7 要求 C 波全合后再派。两片描述里的派发前体检已写好（M5-5 只差 `routes/webhooks/autopilots.rs::router()`；M5-8 受 **P0 未决** `apps/mc-server` 缺 `mc-scheduler` 边阻塞）。
+3. **0 PR 可合** ⇒ 本轮不跑合并判据链；三片交 PR 后按 §39.3 链执行，且**每步之间重取 head sha**（§39.2 坑）。
+4. 磁盘：27G 可用；三片在飞（1 个 11G 热 target + 2 个 ≈7.4G/片冷建）。**回收第一顺位仍是「run 终态 + 分支已推」的 workdir target**；本 cycle 已清 `lum-1569-018788094fc4`（802M，零产物）。
+5. P0（`apps/mc-server` 依赖边 + 门 ⑥ `-p mc-scheduler`）**仍待 owner**，未获批不动；⑦ 基线仍归 M5-INT（`LUM-1572`）一次性刷，`LUM-1580` 保持 `backlog`（R13）。
