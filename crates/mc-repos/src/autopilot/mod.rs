@@ -64,9 +64,13 @@ pub(crate) const AUTOPILOT_TRIGGER_COLUMNS: &str =
      label, last_fired_at, created_at, updated_at, provider, signing_secret, event_filters, \
      published_by_type, published_by_id, created_by_type, created_by_id";
 
-/// `autopilot_subscriber` 的列清单（4 列）。
+/// `autopilot_subscriber` 的列清单（4 列，**带 `s.` 限定**）。
+///
+/// 上游两条订阅者查询都用 `SELECT s.*`（不会歧义），本地拆成列清单后在 `JOIN member` 的
+/// 上下文里 `user_id` 就成了歧义列（`column reference "user_id" is ambiguous`）——
+/// 上游 JOIN 的 `s.*` 与这里等价，限定不改变输出列名（`FromRow` 按列名匹配）。
 pub(crate) const AUTOPILOT_SUBSCRIBER_COLUMNS: &str =
-    "autopilot_id, user_type, user_id, created_at";
+    "s.autopilot_id, s.user_type, s.user_id, s.created_at";
 
 /// `autopilot_collaborator` 的列清单（5 列）。
 pub(crate) const AUTOPILOT_COLLABORATOR_COLUMNS: &str =
@@ -442,3 +446,6 @@ impl RepoWithDb for AutopilotRepo {
         &self.db
     }
 }
+
+#[cfg(test)]
+mod tests;

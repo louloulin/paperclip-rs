@@ -398,7 +398,10 @@ where
     E: sqlx::PgExecutor<'c>,
 {
     let sql = format!(
-        "SELECT {QUOTA_RESERVATION_COLUMNS} FROM autopilot_quota_reservation r \
+        // 上游就是 `SELECT r.*`（`ListRecoverableAutopilotQuotaReservations`）。这里**不能**用
+        // [`QUOTA_RESERVATION_COLUMNS`]：`autopilot_run` 也有 `id` / `created_at`，展开成不限定
+        // 的列名会 `column reference "id" is ambiguous`（真库用例抓到的）。
+        "SELECT r.* FROM autopilot_quota_reservation r \
            LEFT JOIN autopilot_run ar ON ar.quota_reservation_id = r.id \
           WHERE r.state = 'reserved' \
             AND ((r.created_at < $1 \
