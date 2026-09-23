@@ -53,3 +53,38 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(bar::router())
         .merge(task::router())
 }
+
+/// 剥掉 `mc_errors::Error` 的 `Display` 内部前缀，取回上游 Go 的原文（**仅测试用**）。
+///
+/// `mc-errors` 的 `#[error("validation error: {message}")]` / `#[error("not found: {resource}")]`
+/// 会把前缀带进线上 body 的 `message`，而上游 `writeError` 写的是裸文案；断言上游文案时
+/// 先剥前缀，避免把内部前缀写死进测试（与 `tests/agents/support.rs::error_message`、
+/// `tests/tasks/support.rs` 同款约定）。
+///
+/// 注意 `not found: <resource>` 是本仓对上游 `<resource> not found` 的**已知偏离**
+/// （见 `session.rs` 文件头与 `inbox.rs`）：剥完只剩资源名，所以本文件的 `not found`
+/// 断言写 `"chat session"` 而不是上游的 `"chat session not found"`。
+#[cfg(test)]
+pub(crate) fn upstream_text(text: impl std::fmt::Display) -> String {
+    const PREFIXES: [&str; 12] = [
+        "validation error: ",
+        "not found: ",
+        "conflict: ",
+        "unprocessable entity: ",
+        "forbidden: ",
+        "unauthorized: ",
+        "workspace not found: ",
+        "workspace archived: ",
+        "database error: ",
+        "internal error: ",
+        "io error: ",
+        "upstream error: ",
+    ];
+    let raw = text.to_string();
+    for prefix in PREFIXES {
+        if let Some(rest) = raw.strip_prefix(prefix) {
+            return rest.to_owned();
+        }
+    }
+    raw
+}

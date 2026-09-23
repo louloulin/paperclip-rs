@@ -49,6 +49,9 @@ mc-secrets = { path = "../mc-secrets" }
 mc-feature-flags = { path = "../mc-feature-flags" }
 mc-db = { path = "../mc-db" }
 mc-repos = { path = "../mc-repos" }
+# M4-3（LUM-1474）：chat 面的纯领域规则（标题校验/游标分页/置顶容量/草稿消费语义）。
+# 本 crate 此前零依赖者；切片只新增这一条依赖边（非顶层 API 变更）。
+mc-chat = { path = "../mc-chat" }
 mc-openapi = { path = "../mc-openapi" }
 # M3-7（LUM-1438）：daemon 面需要
 # - `mc-daemon-proto`：ws 帧 / RPC / 心跳 ack 的 wire 类型（LUM-1439 已交付）；

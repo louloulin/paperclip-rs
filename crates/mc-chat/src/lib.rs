@@ -41,3 +41,17 @@
 //!   是带斜杠形态；`/api/chat/pending-tasks`、`/api/projects/search` 是**无**斜杠形态 ——
 //!   逐字照抄上游，不要"顺手"统一。
 //! - 路径参数一律写 `:id`（matchit 0.7 把 `{id}` 当字面量段：编译过、恒 404）。
+//!
+//! # 已落地（M4-3 / LUM-1474）
+//!
+//! 下表前四个模块由 M4-3 实现，都是**纯规则**（0 I/O、0 SQL）：
+//! 标题校验 / 会话状态 / pin-已读语义（[`session`]）、游标分页与可见性（[`message`]）、
+//! 快捷栏容量与顺序（[`pinned`]）、草稿幂等消费（[`draft`]）。SQL 在 `mc-repos/src/chat_*.rs`，
+//! HTTP 在 `mc-http/src/routes/chat/*.rs`。
+//!
+//! `task` / `history` / `quick_action` 三个模块属于 **M4-4**，本切片不建。
+
+pub mod draft;
+pub mod message;
+pub mod pinned;
+pub mod session;
