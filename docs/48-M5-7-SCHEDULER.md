@@ -6,6 +6,9 @@
 「可独立验收」），所以验收面全部在**内核 + 真库**上，⑦ 路由读数**零变化**（§6）。
 
 - **base**：`feat/multica-rs-initial` @ `e75aca5`
+- **记录号**：按 `docs/37` §36.5 的表分配（`46 = M5-1`、`47 = M5-6`、**`48 = M5-7`**）⇒ 本文件是 `docs/48`，
+  代码里 4 处引用已同步（`mc-scheduler/src/lib.rs:3,57`、`tests/lease_db.rs:19`、`mc-repos/src/scheduler.rs:239`）。
+  若 cycle 在合并时改按「先合者占 46」执行，改动只是本文件的一次 `git mv` + 这 4 处引用。
 - **分支**：`agent/devbox5/e6b28b1a26b1`
 - **提交**：`b4367e3`（仓储）→ `33f6a0e`（内核）→ `27db0e4`（测试 + `connect`）→ `f61a364`（fmt 收口）
 - **写集**：10 文件 / +3,243 −8；**未动**任何 `Cargo.toml` / `Cargo.lock` / `scripts/**` /
@@ -199,7 +202,7 @@ overall: PASS — 10/10 gate(s) green in 317s
 | ⑩ file-size | `file_size_check.py --quiet` | PASS（单片最大 646 行 < 800） |
 
 **交叉核验**：base `e75aca5` 那一轮 cycle（不含本片）的同两门读数是 ⑤ `1178/0/99`、⑥ `217/0`；
-本片分支（`f61a364`）跑出来的是 ⑤ `1192/0/110` 与 ⑥ `221/0` —— **passed 差 +14 / +4**（正好等于本片
+本片分支（代码提交 `f61a364`；其后只有 docs / 注释级改动）跑出来的是 ⑤ `1192/0/110` 与 ⑥ `221/0` —— **passed 差 +14 / +4**（正好等于本片
 `tests/lease.rs` 14 例与 `tests/scheduler_lease_db.rs` 4 例），**ignored 差 +11 = 7 + 4**（无 DB URL 时
 不跑的 7 条内核真库用例 + 4 条仓储真库用例）。两道差值都逐数对上了 ⇒ 本片的读数不是「抳一下多几个」。
 ⑦ 读数**零变化**（0 路由片，预期如此）。

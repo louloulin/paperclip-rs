@@ -16,7 +16,7 @@
 //! * 跑完的审计行**不删**：`mc-scheduler` 没有 `sqlx` 依赖，写不了裸 SQL（这边不为了清理
 //!   去加依赖边）。仓储层的用例在 `mc-repos/tests/scheduler_lease_db.rs`，那边有 sqlx、会清理。
 //! * 本文件是**手工**跑的门禁（`scripts/gates.sh` 的 ⑥ 只覆盖 `mc-repos` / `mc-http`），
-//!   见 `docs/46` §6 的读数与 §7 的待办。
+//!   见 `docs/48` §6 的读数与 §7 的待办。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

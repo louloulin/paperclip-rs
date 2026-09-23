@@ -1,6 +1,6 @@
 //! `mc-scheduler`：cron 调度**租约内核**（M5-7 的内核 + M5-8 的两个 job）。
 //!
-//! **状态：M5-7 已落地**（`LUM-1566`，`docs/46-M5-7-SCHEDULER.md`）—— 内核 / 仓储 /
+//! **状态：M5-7 已落地**（`LUM-1566`，`docs/48-M5-7-SCHEDULER.md`）—— 内核 / 仓储 /
 //! 集成测试 / 门禁全绿；**注册表仍为空**（`jobs::register_all` 是空实现，M5-8 往里加
 //! autopilot 与 `issue_wakeup`）⇒ 本 crate 现在能「空转且独立验收」。
 //!
@@ -54,7 +54,7 @@
 //! - 不引 `cron` crate（cron 解析在 `mc-autopilot/src/trigger.rs`，见其 `lib.rs` 的选型记录）
 //! - 不新增迁移（`sys_cron_executions` 已存在）
 //! - M5-7 里**没有** `main.rs` 的 spawn 代码：`apps/mc-server/Cargo.toml` 还没有
-//!   `mc-scheduler` 依赖边，而本切片不改 manifest（见 `docs/46` §7 的待办与现成代码段）
+//!   `mc-scheduler` 依赖边，而本切片不改 manifest（见 `docs/48` §7 的待办与现成代码段）
 
 pub mod db_ops;
 pub mod error;

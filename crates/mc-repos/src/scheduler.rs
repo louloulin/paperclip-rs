@@ -236,7 +236,7 @@ impl SchedulerRepo {
     ///
     /// `main.rs` 里已经有 `Db` 时应走 [`SchedulerRepo::new`]（复用同一个池）；本入口是给
     /// 「手上只有连接串」的调用方 —— 尤其是**跨 crate 的内核测试**：`mc-scheduler` 看不到
-    /// `mc-db`，有这个入口就不用为一个测试加依赖边（见 `docs/46` §7）。
+    /// `mc-db`，有这个入口就不用为一个测试加依赖边（见 `docs/48` §7）。
     pub async fn connect(url: &str, max_connections: u32, min_connections: u32) -> Result<Self> {
         let db = Db::connect(url, max_connections, min_connections)
             .await
