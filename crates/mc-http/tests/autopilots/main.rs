@@ -13,10 +13,17 @@
 //! - `autopilots/auth.rs`：鉴权与可见性（401 / 400 / 404 三档）
 //! - `autopilots/cron.rs`：`cron-preview`（含扁平错误体与 `Z` 结尾的秒精度）
 //! - `autopilots/usage.rs`：`usage` 的 off 形态 + 装 stub 平面后的 observe 形态
+//! - `autopilots/triggers.rs`：trigger 写面五条路由的**路由形态 / 鉴权分层**（M5-3 / LUM-1568；
+//!   也是本 target 写面共享工具的宿主）
+//! - `autopilots/trigger_crud.rs`：trigger 写面**数据面**（#10 创建 / #11 更新 / #12 删除）
+//! - `autopilots/credentials.rs`：trigger **凭据面**（#13 轮换 token / #14 签名密钥，只写不回显）
 #![cfg(feature = "test-util")]
 
 mod auth;
+mod credentials;
 mod cron;
 mod read;
 mod support;
+mod trigger_crud;
+mod triggers;
 mod usage;

@@ -343,9 +343,13 @@ async fn create_autopilot_trigger(
     // 先前的校验已经把 kind 收敛到 `schedule | webhook` 两个值 ⇒ 这里只需二分。
     let row = if req.kind == TRIGGER_KIND_SCHEDULE {
         let cron_expr = req.cron_expression.as_deref().unwrap_or_default();
-        let tz_name = req.timezone.as_deref().filter(|raw| !raw.is_empty());
+        // 上游 `ptrToText(req.Timezone)`：**缺省是 `""` 而不是 NULL** ⇒ schedule 分支永远写一个
+        // 非 NULL 的字符串。这个「`''` vs NULL」在 wire 上**可见**：schedule 创建后 `timezone`
+        // 回 `""`，而 webhook 分支（不绑该列）回 `null`。读取侧两者都按 UTC 解包
+        // （`Timezone::from_column`）⇒ 行为等价，只有响应形状不同。
+        let tz_text = req.timezone.as_deref().unwrap_or_default();
         let timezone =
-            Timezone::from_column(tz_name).map_err(|err| bad_request(err.to_string()))?;
+            Timezone::from_column(Some(tz_text)).map_err(|err| bad_request(err.to_string()))?;
         let next_run_at =
             next_run_at_for(cron_expr, &timezone).map_err(|err| bad_request(err.to_string()))?;
         let new = NewTrigger {
@@ -354,7 +358,7 @@ async fn create_autopilot_trigger(
             // 新触发器恒启用（上游 `Enabled: true`，请求体里的 enabled 被忽略）。
             enabled: true,
             cron_expression: Some(cron_expr),
-            timezone: tz_name,
+            timezone: Some(tz_text),
             next_run_at,
             webhook_token: None,
             label: req.label.as_deref(),
