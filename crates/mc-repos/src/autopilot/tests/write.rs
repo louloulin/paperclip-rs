@@ -196,10 +196,13 @@ async fn update_patch_semantics_are_per_column() {
     let before = new_autopilot(&mut conn, &seeded, ws).await;
     let project_id = seed_project(fixture.db.pool(), ws).await;
     // 先把两个直赋值列填上非空值，才能观察「不传 = 清空」。
+    // 直赋值列**没有** COALESCE：不传即清空，所以这里两列都必须显式带上值
+    // （只带 `project_id` 会把 `issue_title_template` 一起写成 NULL）。
     let filled = update(
         &mut conn,
         &UpdateAutopilot {
             id: before.id,
+            issue_title_template: Some("{{date}}".into()),
             project_id: Some(project_id),
             ..UpdateAutopilot::default()
         },
