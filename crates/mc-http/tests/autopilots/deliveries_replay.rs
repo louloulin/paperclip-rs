@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::deliveries::{seed_delivery, DeliverySpec};
+use super::deliveries::{seed_delivery, unique_webhook_token, DeliverySpec};
 use super::support::{
     app_with_db, call, cleanup, connect, seed_autopilot, seed_schedule_trigger,
     seed_webhook_trigger, seed_workspace,
@@ -38,7 +38,14 @@ async fn replay_gate_ladder_matches_upstream_order() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_ladder", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_ladder"),
+        None,
+        None,
+    )
+    .await;
     // 停用的 schedule 触发器专供「trigger is disabled」那一档（webhook 触发器默认启用）。
     let disabled = seed_schedule_trigger(&pool, autopilot, "0 9 * * *", "1 hour").await;
     sqlx::query("UPDATE autopilot_trigger SET enabled = false WHERE id = $1")
@@ -92,7 +99,14 @@ async fn replay_gate_ladder_matches_upstream_order() {
 
     // ③ autopilot 不是 active → 400。
     let paused = seed_autopilot(&pool, ws, "paused", "member", owner).await;
-    let paused_trigger = seed_webhook_trigger(&pool, paused, "awt_paused", None, None).await;
+    let paused_trigger = seed_webhook_trigger(
+        &pool,
+        paused,
+        &unique_webhook_token("awt_paused"),
+        None,
+        None,
+    )
+    .await;
     let paused_delivery = seed_delivery(
         &pool,
         ws,
@@ -186,7 +200,14 @@ async fn replay_is_202_and_idempotent_per_key() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_replay", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_replay"),
+        None,
+        None,
+    )
+    .await;
     let original = seed_delivery(
         &pool,
         ws,

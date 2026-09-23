@@ -63,6 +63,17 @@ impl<'a> DeliverySpec<'a> {
     }
 }
 
+/// 每个用例一个**唯一** webhook token。
+///
+/// `idx_autopilot_trigger_webhook_token` 是**全局**唯一索引（`WHERE kind = 'webhook' AND
+/// webhook_token IS NOT NULL`，不是按工作区收窄），而门 ⑥ 的 e2e 是**并发**跑的
+/// （`cargo test … -- --ignored`，没有 `--test-threads=1`）⇒ 同一个 binary 里两个用例用同一个
+/// 固定 token 会互撞（实测 `23505 … Key (webhook_token)=(awt_e2e) already exists`）。
+/// `pub(crate)`：`deliveries_replay.rs` 同样要用。
+pub(crate) fn unique_webhook_token(stem: &str) -> String {
+    format!("{stem}_{}", Uuid::new_v4().simple())
+}
+
 /// 铺一条 `webhook_delivery` 行（`created_at` 用 SQL 相对时间，排序用例要用）。
 ///
 /// `pub(crate)`：同 [`DeliverySpec`]（`deliveries_replay.rs` 复用）。
@@ -108,7 +119,14 @@ async fn missing_user_header_is_401_on_every_delivery_route() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
     let delivery = seed_delivery(
         &pool,
         ws,
@@ -141,7 +159,14 @@ async fn bad_workspace_header_is_400_on_every_delivery_route() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
     let delivery = seed_delivery(
         &pool,
         ws,
@@ -179,7 +204,14 @@ async fn method_set_and_path_form_are_exact() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
     let delivery = seed_delivery(
         &pool,
         ws,
@@ -238,7 +270,14 @@ async fn reads_are_member_wide_and_replay_needs_write_permission() {
     let plain_member = seed_user(&pool, ws, "member").await;
     let outsider = seed_outsider(&pool).await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
     let delivery = seed_delivery(
         &pool,
         ws,
@@ -317,6 +356,7 @@ async fn reads_are_member_wide_and_replay_needs_write_permission() {
 }
 
 /// 列表：`created_at DESC`、`total` = 本页条数、slim 三字段**整个缺席**、空列表是 `[]`。
+#[allow(clippy::too_many_lines)] // 101 行：一条链路要依次验排序、分页上限、缺席字段与空列表
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn list_is_slim_ordered_and_omits_the_detail_fields() {
@@ -328,7 +368,14 @@ async fn list_is_slim_ordered_and_omits_the_detail_fields() {
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let empty = seed_autopilot(&pool, ws, "active", "member", owner).await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
 
     let oldest = seed_delivery(
         &pool,
@@ -435,7 +482,14 @@ async fn get_returns_the_detail_projection_and_honours_paging() {
     let app = app_with_db(db);
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let autopilot = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let trigger = seed_webhook_trigger(&pool, autopilot, "awt_e2e", None, None).await;
+    let trigger = seed_webhook_trigger(
+        &pool,
+        autopilot,
+        &unique_webhook_token("awt_e2e"),
+        None,
+        None,
+    )
+    .await;
     let older = seed_delivery(
         &pool,
         ws,
@@ -518,7 +572,14 @@ async fn delivery_from_another_autopilot_is_not_found() {
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let mine = seed_autopilot(&pool, ws, "active", "member", owner).await;
     let theirs = seed_autopilot(&pool, ws, "active", "member", owner).await;
-    let their_trigger = seed_webhook_trigger(&pool, theirs, "awt_foreign", None, None).await;
+    let their_trigger = seed_webhook_trigger(
+        &pool,
+        theirs,
+        &unique_webhook_token("awt_foreign"),
+        None,
+        None,
+    )
+    .await;
     let foreign = seed_delivery(
         &pool,
         ws,
