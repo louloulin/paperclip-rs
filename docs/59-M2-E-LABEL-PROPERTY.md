@@ -14,7 +14,12 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
   `server/pkg/db/queries/issue_label.sql`、`.../issue_property.sql`、
   `server/cmd/server/router.go:2028-2050`（两块目录）+ `:181-185`（issue 侧 labels）。
 - **基线**：`origin/feat/multica-rs-initial` @ **`8d33080`**（合并 `#64` 之后的 docs-only 直推）。
-  本分支从 `8d33080` 起。
+  开发期间 base 前移到 **`0bcf879`**（= 合并 **PR #65 / M6-0 anchor** + docs 直推，共 9 个提交）
+  ⇒ 本分支已把它 **merge 进来**（`24ead09`）。**唯一冲突**在
+  `crates/mc-http/src/routes/mod.rs`：双方都在 `pub mod webhooks;` 之后追加了各自的脚手架块
+  （anchor 的 `plugin_bridge/plugins/skills/surfaces/v1` vs 本片的 `labels/properties`）
+  ⇒ 保留**双方**即可；`mount.rs` 与 `mc-repos/src/lib.rs` git 自动合入、两边的
+  `mount_slice_*()` 与 `pub mod` 都在。合并树门禁 **10/10 green（284s，冷）**。
 - **无新依赖、无新迁移**（见 §2）：`Cargo.toml` / `Cargo.lock` / `migrations/**` 一行未动。
 
 ## 0. 交付物
@@ -39,12 +44,15 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
 | `crates/mc-http/tests/issues/reactions.rs` | +7 / −16 | properties 块改断言（D18） |
 
 合计 **16 文件 +4249 / −39**（`git diff --numstat 8d33080 -- crates`）。
+含文档后 vs 新 base（`origin/feat/multica-rs-initial...HEAD`）为 **19 文件 +4604 / −45**
+（差量全部在 `docs/`：`59` 新增 + `10`/`11` 修正）。
 
 **共享文件只做「插入新行」**（`LUM-1665` M6-0 anchor 同时写 `mount.rs` / `routes/mod.rs` /
 `mc-repos/src/lib.rs` / `docs/fixtures/*`）：本片对这四个文件**没有修改任何已有行**，只在
 `mount_slice_subscriber()` 之后、`pub mod webhooks;` 之后、`pub mod issue_table;` /
 `pub mod project_resource;` 之后**各插入若干新行**（`git diff` 里只有 `+`，无 `−`）。
 两片合并顺序 = anchor 先、本片后；万一 git 报冲突，**保留双方的新增行**即可。
+（**已实测**：anchor 先合入 base 后本片 merge 只撞中 `routes/mod.rs` 一处，按此方式解决。）
 `issues/mod.rs` / `issues/dto.rs` / `issues/extras.rs` 不在 anchor 写集内 ⇒ 自由编辑。
 
 ## 1. 路由与注册键
@@ -97,6 +105,20 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
   （原来挂 `owners.M2-A`，M2-A 14 → 13）——即 M2-A 遗留的那条 labels 缺口也一并闭环。
 - `known_gap 191 → 181`（−10），`regressions 0`、`unclaimed 0` 不变。
 - 顺带确认：本片上界内**没有**新增 `local_only` 路由（`/api/labels` 等全部是上游已有路径）。
+
+**合并 M6-0 anchor（base → `0bcf879`）后的复测（权威读数）**：
+
+```
+upstream 456 | local 344 registered | baseline 325 | slash_aliases 62
+implemented 273 real + 0 placeholder = 273/456 | known_gap 183 | unclaimed 0 | regression 0
+local_only 9 (placeholder 1) | owners: M6 57 / M9 33 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5
+→ OK: every upstream route is either implemented or owned
+```
+
+与 `docs/57` §6.1 的 anchor 后预测（`local 325 / implemented 263 real + 0 placeholder /
+known_gap 193 / owners.M6 57 / local_only 9`）**逐项相加对齐**：`325 + 19 = 344`、
+`263 + 10 = 273`、`193 − 10 = 183`；`owners.M2-E` 条目消失、`owners.M2-A 14 → 13`。
+注：`baseline 325` 是 anchor 写下的快照，**不由切片重写**，只用来卡回归（本片在其上**加**键）。
 
 ## 2. 数据模型与迁移（为什么零迁移）
 
@@ -318,10 +340,11 @@ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1370_dburl)" \
    于是被算进 `implemented_real`。本片闭环的 3 条 labels 路由正是这类桩，等于「桩变真实现」
    但读数上 `implemented_real` 的增量和 `placeholder` 的减量**都不体现**。已按 `docs/44` §R3
    登记，不在本片修复（改脚本属 `LUM-1580`）。
-3. **M6-0（`LUM-1665`）合并顺序**：anchor 先、本片后。本片对 `mount.rs` / `routes/mod.rs` /
-   `mc-repos/src/lib.rs` 只有**新增行**（`git diff` 无 `−` 行，插入点见 §0 注），
+3. **M6-0（`LUM-1665`）已合入 base（`0bcf879`，PR #65）**，本片已把它 merge 进来并解掉
+   唯一冲突（`routes/mod.rs` 的双方向追加块，见头部「基线」段）。本片对 `mount.rs` /
+   `routes/mod.rs` / `mc-repos/src/lib.rs` 只有**新增行**（`git diff` 无 `−` 行，插入点见 §0 注），
    `docs/fixtures/route-parity-baseline.json` 与 `slash-alias-allowlist.tsv` 一行未改
-   （`baseline_routes` 仍是 329，anchor 会整份重写它）。
+   （`baseline 325` 仍由 anchor 写下的快照决定）。
 4. **M6 的 skill 面可以直接复用**：`LabelRepo`（`resource_type = "skill"`）与 `PropertyRepo`
    的价值在 M6-2（skill 读写）会再遇到；`/api/skills/{id}/labels` 那 3 条只需在
    `issues/mod.rs` 之外新开一个 slice router。
