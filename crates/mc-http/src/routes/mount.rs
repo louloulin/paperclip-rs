@@ -53,12 +53,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/plugins",
             get(health::placeholder).post(health::placeholder),
         )
-        // TODO(LUM-1563 第 2 笔提交): 删掉下面这条 M0 占位（它由下一笔提交连同 ⑦ 基线刷新 /
-        // allowlist 删行一起预删，理由见文件末尾 M5 anchor 段落）。
-        .route(
-            "/api/autopilots",
-            get(health::placeholder).post(health::placeholder),
-        )
         .route("/api/feature-flags", get(health::placeholder))
         // ----- M1 切片占位（sub-issue A/B/C 在 mount_slice_* 里追加真实 router） -----
         .merge(mount_slice_workspace_member(state.clone()))
