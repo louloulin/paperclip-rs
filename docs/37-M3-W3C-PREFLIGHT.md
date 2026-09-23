@@ -1865,3 +1865,131 @@ python3 -c "import json;print(json.load(open('crates/mc-conformance/report.json'
 - **没派发/晋升**任何 backlog 片。
 - **没做 `LUM-1370`**（M2-E label/property）：它与本片相交 `issues/mod.rs`，`LUM-1458` 落地后即可派。
   本片只把 `comments/mod.rs` 拆了（831→728），`issues/mod.rs` 仍只有 **234 行**，离 ⑩ 的 800 还很远。
+## 22. 13:30 cycle 落地记录（LUM-1501）—— 合并 #41（尾斜杠 9 键）+ #40（M3-8 批 3）⇒ base `4322e2b`，合并树真库全门 **10/10 绿（253s）**；派发 M4-0 anchor + M4-0b（2/3 并发位）
+
+### 22.0 一句话
+
+上一 cycle（§20）派出的 `LUM-1458`（#41）与 08:00 cycle 派出的 `LUM-1443`（#40）都已 `in_review` 且
+PR 在开 ⇒ 本轮**回收两个 PR**（合并树真库全门一次跑到绿），再把空出的并发位派给 **M4 波的前两片**：
+`LUM-1470`（M4-0 anchor）+ `LUM-1471`（M4-0b 抽取器 I4）。**M3 面只剩 `LUM-1440`（execenv）**。
+
+### 22.1 合并判据：**#41 可快进、#40 不可**（两个 PR 的形态不同，不能一刀切）
+
+```bash
+git fetch origin 'refs/pull/41/head:pr41' 'refs/pull/40/head:pr40'
+git merge-base --is-ancestor origin/feat/multica-rs-initial pr41; echo $?   # 0  ⇒ 57f2bb0 是 pr41 的祖先
+git merge-base --is-ancestor origin/feat/multica-rs-initial pr40; echo $?   # 1  ⇒ 不是
+git merge-base origin/feat/multica-rs-initial pr40 | cut -c1-8              # 2a51a46（= #39 的 merge）
+git merge-tree --write-tree origin/feat/multica-rs-initial pr41 | head -1   # cd98783f… exit 0
+git merge-tree --write-tree origin/feat/multica-rs-initial pr40 | head -1   # 9717deea… exit 0
+```
+
+- `#41` 的分支自己在 `cd47704` 里 merge 过 base（§21 的章节改号就是那次），**含 base** ⇒ 快进可推；
+- `#40` 的起点是 `2a51a46`（`#39` / M3-7 的 merge），落后 base 一个 merge（`57f2bb0`，纯 docs）⇒ 不是快进。
+- 两者 `merge-tree` 都 **exit 0 / 0 冲突**，但仍按 §20.1 的纪律走**真 merge**（与 `#31`–`#39` 形态一致）：
+
+```bash
+git checkout -b tmp/merge1501 origin/feat/multica-rs-initial        # 57f2bb0
+git merge --no-ff pr41   # → 8e5f4d4  merge(#41): 尾斜杠 9 键收口 + comments.rs 按 ⑩ 拆分（LUM-1458）
+git merge --no-ff pr40   # → 4322e2b  merge(#40): M3-8 批 3 —— 9 个适配器 + 25 项协议族收口（LUM-1443）
+```
+
+两个 merge 都**零冲突**（写集本就不相交：`mc-http` vs `mc-runtime`），没有手工解冲突。
+
+### 22.2 合并树 `4322e2b` 真库全门：**10/10 绿（253s）**
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH" CARGO_INCREMENTAL=0
+export MULTICA_TEST_DATABASE_URL='postgres://mc_lum1501:***@127.0.0.1:5432/multica_lum1501'
+bash scripts/gates.sh --with-db        # overall: PASS — 10/10 gate(s) green in 253s
+```
+
+| 门 | 退出码 | 时间 | 说明 |
+| --- | ---: | ---: | --- |
+| ① fmt ② build(`--all-targets --locked`) ③ clippy ④ clippy-test-util ⑤ test | 0 | 64+39+14+17s | 冷构建（本 worktree 首跑） |
+| ⑥ db（migrate + e2e） / ⑧ schema-drift | 0 | 72s / 27s | 真库：新建 `mc_lum1501` / `multica_lum1501`（角色带 `CREATEDB`，⑧ 的 scratch 库名自带 PID） |
+| ⑦ route-parity（两条命令） | 0 | — | 见下 |
+| ⑨ conformance（`--no-db --check`） | 0 | 20s | 快照**未漂移** |
+| ⑩ file-size | 0 | — | `OK: 0 violation(s)` |
+
+⑦ 实测（合并树）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 248 registered | baseline 248
+implemented  196 real +  10 placeholder =  206 / 456   known_gap  250   unclaimed    0   regression   0   local_only   11
+gaps by owner: M6=55  M4=39  M9=33  M7=24  M8=24  M5=20  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
+```
+
+第二条：`0 defect(s), 0 warning(s); 10 allowlisted` —— `#41` 把 19 行欠账砍到 10 行（剩下的
+`/api/{chat/sessions,projects,squads}` × GET+POST + `/api/{autopilots,skills}` × 2 = **全是 M0 占位**，
+`M4`×6 / `M5`×2 / `M6`×2）。
+
+**与 §20.2 的对账**：`local 239 → 248`（`#41` 的 9 键）、`implemented 206 → 206`（9 键是**别名形态**，
+⑥ 的 `implemented` 口径把两形态折叠成一条 ⇒ 不变）、`known_gap 250 → 250`、`baseline 195 → 248`
+（`#41` 自己刷的，见 §21.3 的「基线是锁，不刷等于没上锁」）。`#40`（M3-8 批 3）0 路由 ⇒ 计数逐字不动。
+
+⑨ 实测：`fixtures 58 / pass 5 / mismatch 1 / unmounted 5 / unevaluable 47`，契约等价率 **8.62%**
+—— **与 §19.5/§20.2 逐字相同**（两个 PR 一行 fixture 都没动）。
+
+### 22.3 派发：并发位 2/3（本 cycle 占 1）⇒ 只派两片，且是**零冲突**的那两片
+
+```bash
+multica daemon status --output json | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['active_task_count'],d['running_task_count'])"
+#   → 1 1（只有本 cycle 自己；#40/#41 的 run 均已终态）
+```
+
+| 片 | 前置 | 写集 | 为什么现在派 |
+| --- | --- | --- | --- |
+| `LUM-1470`（M4-0 anchor） | ✅ M3-7 已合（§20.1）+ ✅ `LUM-1458` 已交付并合入（§22.1） | `crates/mc-{chat,project,squad}/**`、`mc-repos/src/lib.rs`、`routes/{projects.rs,squads.rs,chat/**}`、`routes/mod.rs`、`mount.rs`、`Cargo.lock`、`slash-alias-allowlist.tsv`、`route-parity-baseline.json` | 三个 M4 切片的**唯一前置**；它不落地，M4-1/2/3 会在 `mount.rs` + 基线 + 快照上三方冲突 |
+| `LUM-1471`（M4-0b 规则 I4） | 无 | `scripts/extract_upstream_fixtures.py`（⑩ 零余量 ⇒ 必须抽新模块）、`contracts/golden/**`、`docs/fixtures/handler-routes.tsv`、`crates/mc-conformance/report.json` | 与 anchor 的**唯一共享文件**是 `report.json`，而 anchor 不动任何 fixture ⇒ ⑨ 快照重生成后与 base **逐字节相同**（本 cycle 的 ⑨ 门实测「report matches」），两个 PR 各改各的，不会 3-way 冲突 |
+
+**第三位留给 15:00 cycle 的 `LUM-1472/1473/1474`**（M4-1/2/3 三切片）：它们都要等 anchor **合入 base**
+之后才能开（crate / repos 模块 / 路由文件 / `mount.rs` 挂载点都还是 anchor 现建的）。**若 15:00 时 anchor
+还没合**，就派 `LUM-1440`（execenv，与 anchor 只共享 `Cargo.lock`，且那时 anchor 已落地 ⇒ 连这一处也不撞）。
+
+### 22.4 ⑦ 预测重算（base 从 195 变 248 之后，docs/42 §3.3 的旧算术要作废）
+
+| 阶段 | registered | implemented | known_gap |
+| --- | ---: | ---: | ---: |
+| 本 cycle 合并树 `4322e2b`（实测） | 248 | 206（196 real + 10 placeholder） | 250 |
+| M4-0 anchor 落地后（删 6 占位 + `--write-baseline`） | **242** | **200**（196 real + 4 placeholder） | **256** |
+| M4 全落（+45 条真实路由） | **287** | **245**（241 real + 4 placeholder） | **211** |
+
+> 与 `docs/42` §3.3 的旧表（189/156/300 → 234/201/255）差 53 ⇒ **以本表为准**：`LUM-1476`（M4-INT）
+> 的「刷基线 189→234」应读作 **「242→287」**（anchor 自己会把 248 刷成 242）。算术自检：
+> `implemented + known_gap = 456` 三行都成立。
+
+### 22.5 新登记的 follow-up：`M3-7-fu`（ws 收口 3 项，backlog，**不**占并发位）
+
+本 cycle 顺带把三条已记录但**没有 issue 承载**的 ws 缺口登记成一片 backlog（`docs/39` §4.8、
+`docs/32` 偏离表），因为 **M4-4 依赖其中的「用户面进度广播」**（`chat:done` / task-queued）：
+
+1. `/api/daemon/ws` 不解析上游的 `?runtime_id=` / `?runtime_ids=` 收窄（`lifecycle::ws` 只从 daemon token
+   派生全集：`repo.runtime_ids_for_daemon(...)`）⇒ 缺显式收窄与 `runtime not found` 404；
+2. `routes/daemon/mod.rs::install_ws_handlers` **是死代码**（全仓 grep 只有定义，真实调用点是
+   `lifecycle::ws` 里的 `ws::install(&state)`）⇒ 要么接线要么删；
+3. 用户面进度事件通道缺失：hub 现有 `notify_task_available` / `notify_runtime_*` / `notify_pending_work`
+   都是 **daemon 面**，没有面向用户连接的 `agent:status` / `chat:done` 广播（`agents/env.rs`、
+   `daemon/tasks.rs` 的注释里已各自标了这条缺口）。
+
+### 22.6 本 cycle 没做（边界）
+
+- **没动源码**：合并是把 `pr41` / `pr40` 原样合入（真 merge、零冲突），没有改一行代码。
+- **没刷 ⑦ 基线 / ⑨ 快照**：`#41` 已自行刷到 248，本 cycle 的 `local 248 == baseline 248` 是**已上锁**的状态；
+  ⑨ 逐字未变 ⇒ 都不需要动（下一位刷基线的只能是 anchor 与 M4-INT）。
+- **没把 `LUM-1458` / `LUM-1443` 置 `done`**：交付的子 issue 停在 `in_review`，`done` 由人拍。
+- **没派第三片**：`active_task_count=1` ⇒ 上限 3 只允许再派 2（§22.3），不是「有空位不派」。
+- **没碰 `migrations/`**：`#40`/`#41` 都不含迁移，⑧ 绿即证。
+
+### 22.7 复算命令（§22.0–§22.6 逐条可重跑）
+
+```bash
+git log --oneline -3 origin/feat/multica-rs-initial          # 4322e2b / 8e5f4d4 / cd47704
+git merge-base --is-ancestor 57f2bb0 pr41; echo $?           # 0（#41 可快进）
+git merge-base --is-ancestor 57f2bb0 pr40; echo $?           # 1（#40 不可）
+python3 scripts/route_parity.py | head -2                    # local 248 / baseline 248
+python3 scripts/slash_alias_audit.py --quiet; echo $?        # 0（0 defect / 10 allowlisted）
+python3 -c "import json;print(json.load(open('crates/mc-conformance/report.json'))['totals'])"
+                                                             # 58/5/1/5/47
+grep -rn "install_ws_handlers" --include=*.rs crates apps    # 只有定义（死代码，§22.5）
+```
