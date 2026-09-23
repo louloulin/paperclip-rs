@@ -345,6 +345,7 @@ mod db_tests {
 
     #[tokio::test]
     #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    #[allow(clippy::too_many_lines)] // 端到端：建/列/计数/改/删按上游语义平铺，拆开反而难看
     async fn db_create_list_count_update_delete() {
         let (db, ws) = fixture!();
         let repo = ProjectResourceRepo::new(db.clone());

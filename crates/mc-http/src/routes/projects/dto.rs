@@ -192,7 +192,9 @@ pub(crate) struct CreateProjectResourcePayload {
 
 /// 上游 `UpdateProjectRequest`。`title` / `status` / `priority` 是 `*string`：
 /// **缺失或 `null` 都算「不动」**（走 SQL 的 `COALESCE`），因此这里保持 `Option<String>`。
-/// 其余字段按 `rawFields` 的 key 存在性区分，故用 `Option<Option<T>>`。
+/// 其余字段按 `rawFields` 的 key 存在性区分，故用 `Option<Option<T>>`（三态是上游口径，
+/// 豁免 `clippy::option_option`；同 `agents/dto/input.rs` 的做法）。
+#[allow(clippy::option_option)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct UpdateProjectRequest {
     pub title: Option<String>,
@@ -233,6 +235,7 @@ pub(crate) struct CreateProjectResourceRequest {
 /// （要区分「键缺失」与「键为 null」，且逐字段的 400 文案与上游逐字一致），所以本结构
 /// 只作线上形状的文档与后续切片复用点，当前不在编译期被构造。
 #[allow(dead_code)]
+#[allow(clippy::option_option)] // `label` / `position` 的上游三态（缺失 / null / 值）
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct UpdateProjectResourceRequest {
     pub resource_ref: Option<JsonValue>,

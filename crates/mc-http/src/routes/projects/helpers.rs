@@ -108,8 +108,7 @@ pub(crate) fn project_write_err(err: WriteError, action: &str) -> Error {
 /// 资源子集合的写错误口径（上游只特判唯一违反，其余含 CHECK 都是 500）。
 pub(crate) fn resource_write_err(err: WriteError, action: &str, unique: &str) -> Error {
     match err {
-        WriteError::UniqueViolation => conflict(unique),
-        WriteError::ResourceConflict { .. } => conflict(unique),
+        WriteError::UniqueViolation | WriteError::ResourceConflict { .. } => conflict(unique),
         WriteError::Repo(RepoError::NotFound) => not_found("project resource"),
         other => {
             tracing::error!(error = %other, action, "project resource write failed");
@@ -248,12 +247,12 @@ pub(crate) async fn issue_stats_map(
         .issue_stats(workspace_id, project_ids, &keys)
         .await
     {
-        Ok(stats) => {
+        Ok(rows) => {
             for ProjectIssueStats {
                 project_id,
                 total_count,
                 done_count,
-            } in stats
+            } in rows
             {
                 map.insert(project_id, (total_count, done_count));
             }
@@ -306,7 +305,8 @@ pub(crate) async fn workspace_runtimes(
 ///
 /// 上游用 `map[string]json.RawMessage` 的 key 存在性区分「缺失 / 显式 null」；serde 里
 /// 要 `Option<Option<T>>` 才有第三态（与 `issues::helpers::double_option` 同款，
-/// 那边是 `pub(crate)` 未导出，故此处自带一份）。
+/// 那边是 `pub(crate)` 未导出，故此处自带一份）。三态本身是上游口径，故豁免该 pedantic 门。
+#[allow(clippy::option_option)]
 pub(crate) fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,

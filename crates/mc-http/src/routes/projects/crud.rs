@@ -79,8 +79,8 @@ impl ListProjectsQuery {
     }
 
     /// 上游 `r.URL.Query().Get(...) != ""`：空串等于不传。
-    fn filter(raw: &Option<String>) -> Option<&str> {
-        raw.as_deref().filter(|value| !value.is_empty())
+    fn filter(raw: Option<&String>) -> Option<&str> {
+        raw.map(String::as_str).filter(|value| !value.is_empty())
     }
 }
 
@@ -101,21 +101,22 @@ pub(crate) async fn list_projects(
     let rows = project_repo(&state)
         .list(
             workspace_id,
-            ListProjectsQuery::filter(&query.status),
-            ListProjectsQuery::filter(&query.priority),
+            ListProjectsQuery::filter(query.status.as_ref()),
+            ListProjectsQuery::filter(query.priority.as_ref()),
         )
         .await
         .map_err(repo_err)?;
 
     let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
-    let stats = issue_stats_map(&state, workspace_id, &ids).await;
+    // 局部 binding 不能叫 `stats`：与 `State(state)` 参数触发 `clippy::similar_names`。
+    let issue_stats = issue_stats_map(&state, workspace_id, &ids).await;
     let counts = resource_count_map(&state, &ids).await;
 
     let projects: Vec<ProjectResponse> = rows
         .iter()
         .map(|row| {
             let mut resp = ProjectResponse::from_row(row);
-            if let Some((total, done)) = stats.get(&row.id) {
+            if let Some((total, done)) = issue_stats.get(&row.id) {
                 resp.issue_count = *total;
                 resp.done_count = *done;
             }

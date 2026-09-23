@@ -149,6 +149,9 @@ pub(crate) fn validate_git_ref(git_ref: &str) -> Result<(), Error> {
     {
         return Err(validation("ref is not a valid branch, tag, or commit"));
     }
+    // 上游是 `strings.HasSuffix(segment, ".lock")`：**大小写敏感**（`main.LOCK` 合法），
+    // 所以不能换成 `Path::extension().eq_ignore_ascii_case`。
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     for segment in git_ref.split('/') {
         if segment.starts_with('.') || segment.ends_with(".lock") {
             return Err(validation("ref is not a valid branch, tag, or commit"));
@@ -418,36 +421,55 @@ fn read_runtime_cli_version(metadata: &JsonValue) -> String {
 mod tests {
     use super::*;
 
+    /// 上游 `TestIsValidGitRepoURL` 的夹具表（`project_resource_test.go:213-248`）逐字移植。
+    ///
+    /// 这张表就是本函数的 oracle：别按「看着不像 URL」自行加严。两个容易踩的点：
+    /// 空格规则只对 scp 分支生效（带 scheme 的形态交给 `url.Parse`），以及 `@` 判定看的是
+    /// `strings.Index` 的**第一处**（故 `github.com:org/repo@branch` 被拒，而 path 里更靠后的
+    /// `@` 不参与判定，见下一个用例）。
     #[test]
-    fn git_url_accepts_https_ssh_and_scp_forms() {
-        for ok in [
-            "https://github.com/louloulin/paperclip-rs",
-            "https://github.com/louloulin/paperclip-rs.git",
-            "http://example.com/x",
-            "ssh://git@github.com/louloulin/paperclip-rs.git",
-            "git://github.com/x/y.git",
-            "git@github.com:louloulin/paperclip-rs.git",
-            "github.com:owner/repo.git",
-        ] {
+    fn git_url_matches_the_upstream_fixture_table() {
+        let good = [
+            "https://github.com/multica-ai/multica",
+            "https://github.com/multica-ai/multica.git",
+            "http://github.example.com/x/y",
+            "ssh://git@github.com/multica-ai/multica.git",
+            "ssh://git@github.com:22/multica-ai/multica.git",
+            "git@github.com:multica-ai/multica.git",
+            "git@gitlab.example.com:group/sub/repo.git",
+        ];
+        for ok in good {
             assert!(is_valid_git_repo_url(ok), "should accept {ok}");
+        }
+
+        let bad = [
+            "",
+            "not-a-url",
+            "github.com/multica-ai/multica", // 无 scheme，也无 scp 冒号
+            "https://",                      // 空 host
+            "git@github.com",                // 缺 `:path`
+            "git@:foo/bar",                  // 缺 host
+            "git@github.com:",               // 缺 path
+            "ftp://example.com/repo",        // scheme 不在白名单
+            "file:///tmp/repo",              // 同上
+            "some random text with spaces",
+            "github.com:org/repo@branch", // ':' 之后的 '@' 属于 path，不是 user
+            "foo:bar@baz",
+            ":foo/bar", // 前导 ':' 无 host
+        ];
+        for bad in bad {
+            assert!(!is_valid_git_repo_url(bad), "should reject {bad}");
         }
     }
 
+    /// 上游夹具表没覆盖、但可按 Go 语义逐字推定的两条（`git://` 与 path 里再出现的 `@`）。
     #[test]
-    fn git_url_rejects_garbage() {
-        for bad in [
-            "not-a-url",
-            "",
-            "https://",
-            "ftp://github.com/x/y",
-            "git@github.com",
-            ":owner/repo",
-            "git@github.com:",
-            "git@github.com:owner/repo:extra@x",
-            "https://github.com/a b",
-        ] {
-            assert!(!is_valid_git_repo_url(bad), "should reject {bad}");
-        }
+    fn git_url_beyond_the_upstream_table() {
+        // `git` 在白名单里，只是上游夹具表没列。
+        assert!(is_valid_git_repo_url("git://github.com/x/y.git"));
+        // `strings.Index(s, "@")` 取第一处（此处 index 3，早于第一个 `:`）⇒ 仍按 user 分隔符处理，
+        // path 尾部的 `:extra@x` 不改变裁决。
+        assert!(is_valid_git_repo_url("git@github.com:owner/repo:extra@x"));
     }
 
     #[test]

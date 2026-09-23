@@ -117,12 +117,13 @@ pub(crate) async fn search_projects(
     };
 
     let ids: Vec<Uuid> = hits.iter().map(|hit| hit.project.id).collect();
-    let stats = issue_stats_map(&state, workspace_id, &ids).await;
+    // 局部 binding 不能叫 `stats`：与 `State(state)` 参数触发 `clippy::similar_names`。
+    let issue_stats = issue_stats_map(&state, workspace_id, &ids).await;
     let counts = resource_count_map(&state, &ids).await;
 
     let projects: Vec<SearchProjectResponse> = hits
         .into_iter()
-        .map(|hit| decorate(hit, &needle, &stats, &counts))
+        .map(|hit| decorate(hit, &needle, &issue_stats, &counts))
         .collect();
     Ok(Json(SearchProjectsResponse { projects }).into_response())
 }
@@ -131,7 +132,7 @@ pub(crate) async fn search_projects(
 fn decorate(
     hit: ProjectSearchHit,
     needle: &str,
-    stats: &std::collections::HashMap<Uuid, (i64, i64)>,
+    issue_stats: &std::collections::HashMap<Uuid, (i64, i64)>,
     counts: &std::collections::HashMap<Uuid, i64>,
 ) -> SearchProjectResponse {
     let ProjectSearchHit {
@@ -139,7 +140,7 @@ fn decorate(
         match_source,
     } = hit;
     let mut resp = ProjectResponse::from_row(&project);
-    if let Some((total, done)) = stats.get(&project.id) {
+    if let Some((total, done)) = issue_stats.get(&project.id) {
         resp.issue_count = *total;
         resp.done_count = *done;
     }
