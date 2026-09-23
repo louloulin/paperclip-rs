@@ -3145,3 +3145,85 @@ multica daemon status --output json                            # active 3 / runn
    `git checkout -B <branch> origin/feat/multica-rs-initial`（本 cycle 差点在 main 上跑门禁）。
 3. **磁盘账要算「自己那两轮门禁」**：空 workdir 跑一次 `--with-db` 就永久留下 ~7.4G；`df` 起手 11G 看着够，
    一轮门禁 + 两片冷构建启动就掉到 2.5G。**派发前量磁盘（<12G 不派）**，不要等 `No space left on device` 再把编译错误当成代码问题。
+
+## 30. 18:30 cycle 落地记录（`LUM-1556`）—— 合并 `#47`（M3-8-p0 execenv 内核）⇒ base `abb208e`；合并树真库 **10/10**；`LUM-1506` 静默死亡取证 + 带闸门重派；新派 M5 计划片 `LUM-1561`
+
+### 30.1 起手状态（本轮实测，不沿用上一轮自述）
+
+| 项 | 读数 |
+| --- | --- |
+| base | `850fc27`（本地分支 `agent/devbox5/lum-1556` 跟踪 `origin/feat/multica-rs-initial`） |
+| open PR | **1**：`#47`（`feat/multica-rs-m3c-execenv` → `feat/multica-rs-initial`，head `81668c77`，**8 文件 +1021/−2**，非 draft，`mergeable: clean`） |
+| `in_progress` | `LUM-1506`（ws 收口，M4-4 前置） |
+| `in_review` | `LUM-1440`（execenv）+ 上轮各片（`LUM-1545/1541/1537/1471/1474/1473…`） |
+| `backlog` | `LUM-1476`（M4-INT）/ `LUM-1475`（M4-4）/ `LUM-1370`（M2-E） |
+| 磁盘 | 49G 总，约 29–30G 可用（≥ 派发门槛 12G） |
+
+### 30.2 `#47` 合并：四条证据（`docs/37` §27 的模板）
+
+1. **PR 事实**：`head 81668c77` / base `feat/multica-rs-initial`，`mergeable: clean`，非 draft。
+2. **本地预检**：`m47-precheck` = base `850fc27` + `git merge --no-ff --no-commit 81668c77`
+   （合并身份 `linchong <729883852@qq.com>`，与 base 上既有合并提交保持一致）；
+   `git diff --cached --stat` 与 PR 的 **+1021/−2 / 8 文件**逐行相同。
+3. **合并树真库门禁**：`bash scripts/gates.sh --with-db --db-url …multica_lum1556` ⇒ **10/10 PASS，298s**
+   （① 1s / ② 70s / ③ 41s / ④ 16s / ⑤ 28s / ⑥ 86s `migrate=0,e2e=0` / ⑧ 25s / ⑦ 0s / ⑨ 31s / ⑩ 0s）。
+4. **API 合并 + 树等价复验**：`PUT /pulls/47/merge`（`merge_method=merge`，
+   标题 `merge(#47): M3-8-p0 execenv 执行环境内核（LUM-1440）`）⇒ `merged: true`，合并提交 **`abb208e`**（`parents=850fc27 81668c7`）；
+   `git fetch` 后在**同一棵预检工作树**上 `git diff origin/feat/multica-rs-initial` **为空** ⇒ 门禁测过的树与新 base **字节等价**。
+   合并后 `open PR = []`。
+
+### 30.3 `LUM-1506` 的「静默死亡」取证与带闸门重派
+
+- 死运行事实（读 session 日志，非推测）：`10:09:54Z → 10:28:28Z`，**317k input token / 122 assistant turn / 3 次 compaction**，
+  终止于 `stopReason: "length"`（最后一条 assistant 消息退化成单字符 thinking）；**0 commit / 0 分支 / 0 注释 / 0 PR**，workdir 零产物。
+- 诊断：**环境无错**，是**上游勘察无界**——预算烧在反复通读 `/tmp/ups_multica` 的 Go 源码上，直到上下文耗尽。
+- 处置：不改上游事实，改为**在 issue 描述追加「执行提示」**（`revision 6`）+ `multica issue rerun`，6 条硬性执行顺序：
+  ① 前 15 分钟必须开始写码、上游只允许**定点** `sed -n` 读（本片需核的上游点**最多 4 处**）；
+  ② 先落最小可编译增量并按块 `cargo check -p mc-ws -p mc-http`；③ `/tmp/ups_multica` **只读**；
+  ④ 交付口径不变（10/10 + PR 到 `feat/multica-rs-initial` + `in_review`）；⑤ base 已前进（起手先 `git fetch` 并建在最新 head）；
+  ⑥ **降级闸门**：开工 20 分钟仍零文件落盘 ⇒ 只交「query 收窄 + `install_ws_handlers` 收口」两件并开 PR，
+  用户面广播留给 M4-4（`docs/42` §7.4 R3 的降级预案）。
+- 依据：`docs/37` §24/§26 的同类处置（死运行取证 → 重派时收紧上游勘察面）＋本轮**新增量化口径**：**单切片 ≤ 3.5k 上游非测试行**。
+
+### 30.4 本轮新派：`LUM-1561`（M5 计划片，docs-only）
+
+- 动机：M4 只剩 `LUM-1475` + `LUM-1476` 两片，**收口后没有排好队的下一波** ⇒ 提前把 M5（W5 自动化）切成可派发切片，空位不再被 planning 占用。
+- 上游面实测（`docs/fixtures/upstream-routes.tsv`，commit `f41fae6b08fb`）：**owner=M5 共 29 条**
+  （`/api/autopilots*` **20** + `/api/issues/{id}/wakeups*` **6** + `/api/webhooks/autopilots/{token}` 1 + `/api/issue-wakeups` 与 `/api/issue-wakeup-summaries` 2）。
+- 上游代码面（clone `90e0bdf`，非测试行）：`handler/autopilot.go` **2,469** + `handler/autopilot_webhook.go` **1,010** + `internal/scheduler/**` **2,094** ⇒ ≈ **5.6k 行**。
+- 本仓现状：仅 `mc-core/src/autopilot.rs`（**85** 行）+ `mc-core/src/wakeup.rs`（**72** 行）两个**类型桩**；**0 repo / 0 路由 / 0 scheduler**
+  （`grep -rl 'autopilot\|wakeup' crates/ --include=*.rs` = 55 文件，绝大多数是 `mc-task` 的 retry/lease 等**无关命中**，别当已实现）。
+- 交付物：`docs/44-M5-PLAN.md`（≤900 行，照 `docs/42` 结构：上游测绘 / 落点判据 / 写集与串行 / 切片表 / anchor / ⑦⑨ 预期读数 / 风险）
+  + `docs/fixtures/m5-declared-routes.tsv`（喂 `python3 scripts/slash_alias_audit.py --declared …`）
+  + **backlog** 子任务（**不置 `todo`**，并发位由编排 cycle 统一控制）；禁止碰 `crates/**`、`Cargo.*`、`migrations/**`。
+- ⑨ 素材现状：`contracts/golden/autopilots/` 已有 **8** 个 fixture（`001-TestListAutopilots-DerivedFields-L77.json` … `008-TestUpdateAutopilotRejectsMalformedID-L1675.json`）。
+- 并发账：本轮 **3/3** = 本 cycle（`LUM-1556`）+ `LUM-1506`（重派）+ `LUM-1561`。**不派 `LUM-1475`**（仍等 `LUM-1506` 合入，`docs/42` §7.4 / §28.6）。
+
+### 30.5 新 base `abb208e` 的三门读数（本轮实测）
+
+```
+$ python3 scripts/route_parity.py
+upstream 456 (commit f41fae6b08fb) | local 292 registered | baseline 242
+implemented  231 real +   4 placeholder =  235 / 456   known_gap  221   unclaimed    0   regression   0   local_only   11
+gaps by owner: M6=55  M9=33  M7=24  M8=24  M5=20  M3+=16  M2-A=14  M3=11  M4=10  M2-E=9  M10=5
+
+$ bash scripts/gates.sh          # 8/8，35s
+=== [⑨] gate conformance ===
+golden: contracts/golden  fixtures: 365
+  pass 5  mismatch 23  unmounted 31  placeholder 0  unevaluable 306
+  契约等价率 = 5/365 = 1.4%
+  已接入路由等价率 = 5/28 = 17.9%
+  离线可判定（anonymous）= 5/59 pass
+```
+
+- `M4=10` **未变**：execenv 是 **0 路由**切片（`local 292` 与合并前一致），它的价值在 M4-4 的**前置地基**（`LUM-1506` 依赖它）。
+- `LUM-1472/1473/1474/1471` 保持 `in_review`（PR 已合，`done` 留给人工）。
+
+### 30.6 纪律与流程偏离
+
+- **坑（本轮踩到）**：后台门禁命令写成 `… 2>&1 | tail -60` ⇒ 日志文件里**只剩尾部 60 行**，⑦/⑨ 读数被截断，只能重跑一遍补齐。
+  **口径：门禁日志必须原样留档**——`... 2>&1 | tee <log>`（要 tail 也只用来显示），**不要**只留 tail。
+- **口径新增**：**单片 ≤ 3.5k 上游非测试行**（依据 §30.3 的死因；M5 切片表按此切）。
+- **口径复核**：合并提交信息里的数字**必须**取自**当轮** gate 日志（§29.4 的更正继续有效）。
+- **流程偏离**：无破坏性操作——本轮只做了 `git checkout -B`（丢弃 `m47-precheck` 的未提交合并索引）与文档追加；
+  未删任何 `target/`（磁盘 29G+ 可用，未触碰门槛）。
