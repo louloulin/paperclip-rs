@@ -20,7 +20,7 @@
 | `crates/mc-autopilot/src/credential.rs` | 150（+141/−0） | `normalize_signing_secret`（三态 + 16 字节下限）、`redact_log_line`（→ `mc_telemetry::redact_log`）、`contains_credential` |
 | `crates/mc-http/tests/autopilots/triggers.rs` | 397 | 路由形态 / 鉴权分层 / 共享工具宿主（`pub(crate)`） |
 | `crates/mc-http/tests/autopilots/trigger_crud.rs` | 510 | 数据面：校验顺序、三态、`next_run_at` 直赋值保护、token 铸造 |
-| `crates/mc-http/tests/autopilots/credentials.rs` | 175 | 凭据面：轮换只对 webhook、secret 只写不回显 |
+| `crates/mc-http/tests/autopilots/credentials.rs` | 243 | 凭据面：轮换只对 webhook、secret 只写不回显（响应体 + **捕获 `tracing` 输出**两路断言） |
 | `crates/mc-http/tests/autopilots/main.rs` | +7 | 三行 `mod`（拆文件见 §6.1） |
 
 合计 10 文件 **+2909 / −20**。写面 e2e 15 例（全部 `--ignored`，需真 PG）+ 纯函数单测随各自文件。
@@ -136,6 +136,12 @@ rotate `200` · set-signing-secret `200`。
 - ⚠️ `redact_str` 只认 `key=value` / `"key": "value"` / `key: value` 三种形状，
   **裸值不会被抹**（`redact_log_line` 的文档里有两个单测钉住这个已知限制）。
   因此「不要把凭据值放进日志」仍是调用方的责任，redaction 只是兜底。
+- **e2e 会真的去捕 `tracing` 输出**（`DoD` 的第二半）：`credentials.rs` 里用 `tracing` 自带的
+  `Subscriber` + `subscriber::set_default` 写了个 ~40 行的线程级捕获器（`#[tokio::test]` 默认
+  `current_thread`，handler 与测试同线程），断言「捕到的行里既没有新 token 也没有旧 token」/
+  「没有 `signing_secret` 本体」，并用 `action=rotate` / `action=set-signing-secret` 做**阳性对照**
+  （否则「什么都没捕到」会被误判成通过）。**没有**因此把 `tracing-subscriber` 加进 `mc-http`
+  的依赖表：C 波禁改 `Cargo.lock`，而多一条依赖边就要重写 lock。
 
 ## 4. 权限链
 
@@ -195,7 +201,7 @@ rotate `200` · set-signing-secret `200`。
 15 例覆盖：五条路由的 401/400/405、单形态拒尾斜杠、404/403 分层、跨 autopilot 的 trigger 404、
 非 UUID 路径参数的上游顺序、create 校验顺序、schedule 的 `next_run_at` 与 `timezone` 形状、
 webhook 的 token 铸造与 `webhook_path`、PATCH 三态与未触及列、DELETE 双形态、轮换只对 webhook、
-secret 只写不回显。
+secret 只写不回显（响应体 + 日志两路，见 §3）。
 
 ### 6.2 门禁证据（本片 HEAD）
 

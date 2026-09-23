@@ -6,11 +6,69 @@
 
 use serde_json::json;
 
+use std::fmt;
+use std::sync::{Arc, Mutex};
+
 use super::support::{
     app_with_db, call, cleanup, connect, seed_autopilot, seed_schedule_trigger,
     seed_webhook_trigger, seed_workspace,
 };
 use super::triggers::upstream_message;
+
+/// 捕获本线程发往 `tracing` 的事件字段 —— `DoD` 要求的「日志不含完整凭据」断言。
+///
+/// 只依赖 `tracing` 自身（`tracing::Subscriber` + `subscriber::set_default`）：C 波禁改
+/// `Cargo.lock`（门禁全带 `--locked`），不能为了这一条断言把 `tracing-subscriber` 加进
+/// `mc-http` 的依赖表。`#[tokio::test]` 默认是 `current_thread` 运行时 ⇒ handler 与测试同线程，
+/// 线程级 dispatcher 收得到它发出的 `info!` 行。
+#[derive(Clone, Default)]
+struct LogCapture(Arc<Mutex<Vec<String>>>);
+
+impl LogCapture {
+    fn text(&self) -> String {
+        self.0.lock().expect("log capture lock").join("\n")
+    }
+}
+
+/// 把事件字段拼成 `field=value`（`%value` 走 `record_debug`，`&str` 走 `record_str`）。
+struct FieldSink(Arc<Mutex<Vec<String>>>);
+
+impl tracing::field::Visit for FieldSink {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        if let Ok(mut lines) = self.0.lock() {
+            lines.push(format!("{field}={value:?}"));
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if let Ok(mut lines) = self.0.lock() {
+            lines.push(format!("{field}={value}"));
+        }
+    }
+}
+
+impl tracing::Subscriber for LogCapture {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        event.record(&mut FieldSink(Arc::clone(&self.0)));
+    }
+}
+
 /// 轮换：只对 webhook 有效，换出来的 token 与旧的不同且**立刻**可查。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
@@ -25,25 +83,40 @@ async fn rotate_replaces_the_webhook_token_only_for_webhooks() {
     let hook = seed_webhook_trigger(&pool, autopilot, "awt_old", None, None).await;
     let schedule = seed_schedule_trigger(&pool, autopilot, "0 9 * * *", "1 hour").await;
 
-    let (status, body) = call(
-        &app,
-        "POST",
-        &format!("/api/autopilots/{autopilot}/triggers/{hook}/rotate-webhook-token"),
-        ws,
-        owner,
-        None,
-    )
-    .await;
-    assert_eq!(status, 200, "{body}");
-    let token = body["webhook_token"]
-        .as_str()
-        .expect("轮换后必须回新 token");
-    assert_ne!(token, "awt_old");
-    assert_eq!(token.len(), 47, "{token}");
-    assert_eq!(
-        body["webhook_path"],
-        format!("/api/webhooks/autopilots/{token}")
-    );
+    // 日志面：整条轮换路径上不得出现新 token（也不得出现被替换掉的旧 token）。
+    let capture = LogCapture::default();
+    let token = {
+        let guard = tracing::subscriber::set_default(capture.clone());
+        let (status, body) = call(
+            &app,
+            "POST",
+            &format!("/api/autopilots/{autopilot}/triggers/{hook}/rotate-webhook-token"),
+            ws,
+            owner,
+            None,
+        )
+        .await;
+        drop(guard);
+        assert_eq!(status, 200, "{body}");
+        let token = body["webhook_token"]
+            .as_str()
+            .expect("轮换后必须回新 token")
+            .to_owned();
+        assert_ne!(token, "awt_old");
+        assert_eq!(token.len(), 47, "{token}");
+        assert_eq!(
+            body["webhook_path"],
+            format!("/api/webhooks/autopilots/{token}")
+        );
+        let logged = capture.text();
+        assert!(
+            logged.contains("action=rotate"),
+            "没捕获到轮换日志: {logged}"
+        );
+        assert!(!logged.contains(&token), "日志泄露了新 token: {logged}");
+        assert!(!logged.contains("awt_old"), "日志泄露了旧 token: {logged}");
+        token
+    };
     let stored: String =
         sqlx::query_scalar("SELECT webhook_token FROM autopilot_trigger WHERE id = $1")
             .bind(hook)
@@ -84,6 +157,8 @@ async fn signing_secret_is_write_only_and_validated() {
     let uri = format!("/api/autopilots/{autopilot}/triggers/{hook}/signing-secret");
     let secret = "itest-signing-secret-abcd";
 
+    let capture = LogCapture::default();
+    let guard = tracing::subscriber::set_default(capture.clone());
     let (status, body) = call(
         &app,
         "PUT",
@@ -93,12 +168,23 @@ async fn signing_secret_is_write_only_and_validated() {
         Some(json!({"signing_secret": secret})),
     )
     .await;
+    drop(guard);
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["has_signing_secret"], json!(true));
     assert_eq!(body["signing_secret_hint"], "abcd", "只有末 4 位");
     // 凭据断言：整份响应体里**不得**出现密钥本体。
     let raw = body.to_string();
     assert!(!raw.contains(secret), "响应体泄露了 signing_secret: {raw}");
+    // 日志面（本片 `DoD` 的第二半）：捕获到的 `tracing` 行里同样不得出现密钥本体。
+    let logged = capture.text();
+    assert!(
+        logged.contains("action=set-signing-secret"),
+        "没捕获到写入日志: {logged}"
+    );
+    assert!(
+        !logged.contains(secret),
+        "日志泄露了 signing_secret: {logged}"
+    );
 
     // 存的是 trim 后的原值（`redact` 只作用在日志/响应，不作用在库里）。
     let stored: Option<String> =
