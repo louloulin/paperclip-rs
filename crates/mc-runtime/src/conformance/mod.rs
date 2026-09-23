@@ -86,6 +86,14 @@ pub trait TestableAdapter: RuntimeAdapter + Sized {
 
     /// 套件要回放的事件流与期望值。
     fn conformance_script() -> ConformanceScript;
+
+    /// 覆盖"怎么推假 CLI 回放"（默认按 [`ProtocolFamily`] 猜，见 [`LivePlan`]）。
+    ///
+    /// 只有协议族不足以描述传输形态的 adapter 才需要实现（例如 `dsh`：协议族是
+    /// `JsonLine`，但 stdin 常开、帧由 outbox 驱动）。
+    fn conformance_live_plan() -> Option<LivePlan> {
+        None
+    }
 }
 
 fn build<A: TestableAdapter>(fake: &FakeCli) -> A {
@@ -100,27 +108,39 @@ fn protocol_of<A: TestableAdapter>() -> ProtocolFamily {
 
 /// 长连接 stdin（JSON-RPC 类）协议的假 CLI 回放计划。
 ///
-/// 三个变体对应三种"谁在推着回放往前走"：
+/// 四个变体对应四种"谁在推着回放往前走"：
 ///
 /// * `Eof`：普通前台协议，`cat > stdin.txt` 读到 EOF 就放（prompt 写完即关 stdin）；
 /// * `Gate`：单闸门协议，先确认 adapter 已把第一帧写进 stdin 再一次性回放，退出前
 ///   再等带 prompt 的那一帧落盘（见 [`FakeCli::live_replaying`]）；
-/// * `Frames`：固定帧 id 的请求/应答协议，一帧一帧推（见 [`FakeCli::live_scripted`]）。
+/// * `Frames`：固定帧 id 的请求/应答协议，一帧一帧推（见 [`FakeCli::live_scripted`]）；
+/// * `GateOnce`：长连接但**客户端只发一帧**的协议（`dsh`）：等那一帧落盘再整段回放，
+///   不做第二道退出门（后面根本没有第二帧可等）。
 ///
 /// 挂错计划的后果都是**挂死**而不是误判：长连接协议若用 `Eof`，双方的"等对方先说话"
 /// 会一直顶到 run 超时（这是本片修掉的真实故障）；`Frames` 若整段一次性回放，
 /// 相位不对的应答被解码器丢掉，流永远起不来。
-enum LivePlan {
+pub enum LivePlan {
     /// 靠 stdin EOF 推进。
     Eof,
     /// `(回放前要等到的子串, 退出前要等到的子串)`。
     Gate(&'static str, &'static str),
     /// `(客户端帧里的子串, 该帧到达后回放的文本)`。
     Frames(Vec<(String, String)>),
+    /// 等这一帧落盘 → 整段回放 → 0 退出（单帧长连接协议）。
+    GateOnce(&'static str),
 }
 
 /// 按协议族挑回放计划。
+///
+/// adapter 可以先用 [`TestableAdapter::conformance_live_plan`] 覆盖：协议族
+/// （[`ProtocolFamily`]）不足以确定回放方式 —— `dsh` 的协议族是 `JsonLine`，
+/// 但它是**长连接**（stdin 常开、帧由解码器 outbox 驱动），套件默认的 `Eof`
+/// 会与它互等。
 fn live_plan<A: TestableAdapter>(script: &ConformanceScript) -> LivePlan {
+    if let Some(plan) = A::conformance_live_plan() {
+        return plan;
+    }
     match protocol_of::<A>() {
         ProtocolFamily::AppServer => LivePlan::Gate("thread/start", "turn/start"),
         ProtocolFamily::Acp => LivePlan::Frames(response_frame_groups(&script.success_stdout)),
@@ -129,15 +149,18 @@ fn live_plan<A: TestableAdapter>(script: &ConformanceScript) -> LivePlan {
 }
 
 /// 请求/应答协议的"逐帧回放"分帧：把回放文本按**应答帧**切成组，组 k 的触发条件是
-/// 客户端帧里出现 `"id":k`。
+/// 客户端帧里出现 `"id":k,`。
 ///
 /// 依据（`acp_core::client` 的固定帧 id 约定，见 `docs/33` §6.3）：
 ///
-/// 1. 客户端帧是 `serde_json` 紧凑序列化 ⇒ 帧里一定有 `"id":<n>` 子串，而本 crate
-///    的 id 是固定序号（`ID_INITIALIZE`..`ID_PROMPT`），与应答 id 一一对应；
-/// 2. 应答是"带 `id` 且带 `result`/`error` 的对象"，通知是"带 `method`、不带 `id`
+/// 1. 客户端帧是 `serde_json` 紧凑序列化 ⇒ 帧里一定有 `"id":<n>,` 子串，而本 crate
+///    的 id 是固定序号（`ID_INITIALIZE`..`ID_PROMPT`，以及固定配置链的 `50+i`），
+///    与应答 id 一一对应；
+/// 2. **尾逗号不是装饰**：`"id":5` 是 `"id":50` 的前缀，不加逗号的话"等第 5 帧"
+///    会被第 50 帧推走（dim 的配置链恰好同时出现 5 与 50）；
+/// 3. 应答是"带 `id` 且带 `result`/`error` 的对象"，通知是"带 `method`、不带 `id`
 ///    的对象" ⇒ 按应答切组即可；
-/// 3. 组内的非应答行（正文通知）留在**它前面**那个组里。
+/// 4. 组内的非应答行（正文通知）留在**它前面**那个组里。
 ///    [`crate::adapters::acp_core::conformance_success_stdout`] 正是把
 ///    `session/update` 通知写在 `session/prompt` 应答**之前**的，因此这条通知随
 ///    `session` 组先落地 —— 取消用例拿到第一个正文事件时，会话 id 已经就位，
@@ -158,7 +181,7 @@ pub fn response_frame_groups(transcript: &str) -> Vec<(String, String)> {
                 let mut payload = std::mem::take(&mut prefix);
                 payload.push_str(line);
                 payload.push('\n');
-                groups.push((format!("\"id\":{id}"), payload));
+                groups.push((format!("\"id\":{id},"), payload));
             }
             None => {
                 if let Some(last) = groups.last_mut() {
@@ -198,6 +221,7 @@ fn success_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
         LivePlan::Gate(after, until) => {
             FakeCli::live_replaying(&script.success_stdout, after, until)
         }
+        LivePlan::GateOnce(after) => FakeCli::live_gated(&script.success_stdout, after),
         LivePlan::Frames(frames) => FakeCli::live_scripted(&frames, "exit 0\n"),
     }
 }
@@ -206,7 +230,7 @@ fn success_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
 fn failing_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
     match live_plan::<A>(script) {
         LivePlan::Eof => FakeCli::failing(&script.success_stdout, 3, &script.expected_error),
-        LivePlan::Gate(after, _) => {
+        LivePlan::Gate(after, _) | LivePlan::GateOnce(after) => {
             FakeCli::live_failing(&script.success_stdout, 3, &script.expected_error, after)
         }
         LivePlan::Frames(mut frames) => {
@@ -220,7 +244,7 @@ fn failing_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
 fn cancelling_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
     match live_plan::<A>(script) {
         LivePlan::Eof => FakeCli::replaying_then_sleeping(&script.success_stdout, 30),
-        LivePlan::Gate(after, _) => {
+        LivePlan::Gate(after, _) | LivePlan::GateOnce(after) => {
             FakeCli::live_replaying_then_sleeping(&script.success_stdout, 30, after)
         }
         LivePlan::Frames(mut frames) => {
@@ -640,7 +664,7 @@ mod harness_tests {
                 .iter()
                 .map(|(gate, _)| gate.as_str())
                 .collect::<Vec<_>>(),
-            vec!["\"id\":1", "\"id\":3", "\"id\":6"],
+            vec!["\"id\":1,", "\"id\":3,", "\"id\":6,"],
             "闸门必须直接取自应答 id（客户端请求用同一批固定序号）"
         );
         assert!(

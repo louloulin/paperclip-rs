@@ -173,11 +173,14 @@ impl AgentType {
     /// - M3-8 批 2 判定的 2 项：`antigravity` 是 `agy … --output-format stream-json`
     ///   ⇒ `StreamJson`；`grok` 是 `grok agent stdio` 的 ACP 传输（`initialize` /
     ///   `session/new` / `session/prompt` 帧，上游 `grok.go` 用 ACP 客户端）⇒ `Acp`；
-    /// - 剩下 2 项（`openclaw` / `dsh`）**刻意留 `Opaque`**：header 只给到命令名，
-    ///   没有可判的协议证据，等批 3 落地时再定。
+    /// - M3-8 批 3 判定的最后 2 项：`openclaw`（`agent --json` 的 `payloads` blob /
+    ///   NDJSON 事件，上游 `openclaw.go`）与 `dsh`（`--stdio` 上的 `dshFrame`
+    ///   `{v,type,request_id,…}` JSON 行，上游 `dsh.go`）都是“每行一个 JSON 对象”
+    ///   ⇒ `JsonLine`。
     ///
-    /// `Opaque` 是“未归类”，不是“没有协议”。一致性套件会断言每个已实现 adapter 的
-    /// `capabilities().protocol != Opaque`，所以拿它当“占位”不可能滑过去。
+    /// 至此 25 项**全部归类**，`Opaque` 计数归零（`docs/33` §10 的收口口径）。
+    /// `Opaque` 是“未归类”，不是“没有协议”；一致性套件会断言每个已实现 adapter
+    /// 的 `capabilities().protocol != Opaque`，所以拿它当“占位”不可能滑过去。
     pub fn protocol_family(self) -> ProtocolFamily {
         match self {
             Self::Claude | Self::Codebuddy | Self::Cursor | Self::Qwen | Self::Antigravity => {
@@ -196,10 +199,13 @@ impl AgentType {
             | Self::Mcode
             | Self::Dim
             | Self::Zeroclaw => ProtocolFamily::Acp,
-            Self::Copilot | Self::Opencode | Self::Codearts | Self::Deveco | Self::Pi => {
-                ProtocolFamily::JsonLine
-            }
-            Self::Openclaw | Self::Dsh => ProtocolFamily::Opaque,
+            Self::Copilot
+            | Self::Opencode
+            | Self::Codearts
+            | Self::Deveco
+            | Self::Pi
+            | Self::Openclaw
+            | Self::Dsh => ProtocolFamily::JsonLine,
         }
     }
 
@@ -359,8 +365,8 @@ mod tests {
                 P::Opaque => opaque += 1,
             }
         }
-        // 分布本身就是“哪些还没判定”的证据：`Opaque` 只剩批 3 那 2 项。
-        assert_eq!((acp, stream, jsonl, app, opaque), (12, 5, 5, 1, 2));
+        // 分布本身就是“哪些还没判定”的证据：到批 3 为止 `Opaque` 已经清空。
+        assert_eq!((acp, stream, jsonl, app, opaque), (12, 5, 7, 1, 0));
         assert_eq!(acp + stream + jsonl + app + opaque, 25);
 
         // 逐项抽样：批 1 实现的 7 项 + 批 2 实现的 8 项 + pi 都要跟各自 adapter
@@ -407,10 +413,33 @@ mod tests {
         }
         assert_eq!(AgentType::Cursor.protocol_family(), P::StreamJson);
         assert_eq!(AgentType::Antigravity.protocol_family(), P::StreamJson);
-        // 尚未落地的 2 项（批 3）：留 `Opaque` 是刻意的（不要顺手猜一个）。
-        for kind in [AgentType::Openclaw, AgentType::Dsh] {
-            assert_eq!(kind.protocol_family(), P::Opaque, "{kind}");
+        // 批 3 的 6 个 ACP 项（qwen 算在批 3 但归 `StreamJson`）。
+        for kind in [
+            AgentType::QwenPaw,
+            AgentType::Hermes,
+            AgentType::Reasonix,
+            AgentType::Dim,
+            AgentType::Mcode,
+            AgentType::Zeroclaw,
+        ] {
+            assert_eq!(
+                kind.protocol_family(),
+                P::Acp,
+                "{kind} 已在 M3-8 批 3 落地为 ACP"
+            );
         }
+        assert_eq!(AgentType::Qwen.protocol_family(), P::StreamJson);
+        // 自定义 JSON 线协议的 2 项（本片判定，不再留 `Opaque`）。
+        for kind in [AgentType::Openclaw, AgentType::Dsh] {
+            assert_eq!(kind.protocol_family(), P::JsonLine, "{kind}");
+        }
+        // 收口：25 项没有一个是“未归类”。
+        assert!(
+            AgentType::ALL
+                .iter()
+                .all(|kind| kind.protocol_family() != P::Opaque),
+            "M3-8 收口后不该还有 Opaque"
+        );
     }
 
     #[test]

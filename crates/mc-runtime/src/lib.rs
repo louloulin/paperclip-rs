@@ -59,7 +59,8 @@ pub use adapter::{
 };
 pub use adapters::{
     builtin_adapters, Antigravity, Claude, Codearts, Codebuddy, Codex, Copilot, Cursor, Deveco,
-    Grok, Kimi, Kiro, Opencode, PiDecoder, PiLocal, PiLocalConfig, Qoder, QoderCliCn, TraeCli,
+    Dim, Dsh, Grok, Hermes, Kimi, Kiro, Mcode, Openclaw, Opencode, PiDecoder, PiLocal,
+    PiLocalConfig, Qoder, QoderCliCn, Qwen, Qwenpaw, Reasonix, TraeCli, Zeroclaw,
 };
 pub use catalog::{AgentType, UnknownAgentType};
 #[cfg(unix)]
@@ -91,9 +92,11 @@ mod tests {
     }
 
     #[test]
-    fn builtin_registry_covers_m3_8_batch1_and_batch2() {
-        // 批 1 / 批 2 交付面：7 + 8 项新 adapter + pi，且每项的协议族与 `catalog`
-        // 的映射一致（两处独立声明同一事实，所以要对得上，而不是“差不多”）。
+    fn builtin_registry_covers_every_m3_8_batch() {
+        // M3-8 的整体交付面：批 1 的 7 项 + 批 2 的 8 项 + 批 3 的 9 项 + pi，
+        // 每项的协议族与 `catalog` 的映射一致（两处独立声明同一事实，所以要对得上，
+        // 而不是“差不多”）。把批 3 也列进来，是因为批 3 的收口口径就是
+        // “ `AgentType::ALL` 全员都有 adapter ”。
         let registry = AdapterRegistry::with_builtin_adapters();
         let batches = [
             // 批 1。
@@ -104,7 +107,7 @@ mod tests {
             AgentType::Opencode,
             AgentType::Codearts,
             AgentType::Deveco,
-            // 批 2（本片）。
+            // 批 2。
             AgentType::Cursor,
             AgentType::Kimi,
             AgentType::Kiro,
@@ -113,6 +116,16 @@ mod tests {
             AgentType::QoderCliCn,
             AgentType::TraeCli,
             AgentType::Grok,
+            // 批 3（本片）。
+            AgentType::Openclaw,
+            AgentType::Hermes,
+            AgentType::Reasonix,
+            AgentType::Dsh,
+            AgentType::Qwen,
+            AgentType::QwenPaw,
+            AgentType::Mcode,
+            AgentType::Dim,
+            AgentType::Zeroclaw,
         ];
         for kind in batches {
             let adapter = registry
@@ -135,6 +148,11 @@ mod tests {
             // （如 `antigravity`，上游同款）会把解析不了的行当正文回显。
             let _ = adapter.decoder().push_line("not json");
         }
-        assert_eq!(registry.len(), 16);
+        assert_eq!(registry.len(), 25);
+        assert_eq!(
+            registry.len(),
+            AgentType::ALL.len(),
+            "M3-8 收口：白名单里不该还有没实现的类型"
+        );
     }
 }

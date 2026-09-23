@@ -32,7 +32,8 @@
 use std::path::Path;
 
 use super::acp_core::{
-    AcpAuth, AcpFlavor, AcpPromptFields, AcpProvider, AcpResume, AcpToolAliases,
+    AcpAuth, AcpFlavor, AcpModelSelection, AcpPromptFields, AcpProvider, AcpResume,
+    AcpResumeParams, AcpToolAliases,
 };
 use super::cli_core::args::{filter_extra_args, ArgPolicy, ArgValueMode};
 use super::cli_core::CliCoreConfig;
@@ -105,6 +106,11 @@ pub static FLAVOR: AcpFlavor = AcpFlavor {
     // 思考等级走 argv 的 `--effort`，不占 ACP 的 config 通道。
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kimi,
+
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// 组装 argv（上游 `grok.go` L136 起）。

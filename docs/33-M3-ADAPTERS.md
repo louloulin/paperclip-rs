@@ -24,28 +24,28 @@
 | 5 | `Opencode` | `opencode` | `opencode run (json)` | `JsonLine` | 批 1 实测：NDJSON（`type`/`sessionID`/`part`） | **批 1 已交付** |
 | 6 | `Codearts` | `codearts` | `codearts run (json)` | `JsonLine` | 同 opencode（派生 CLI，schema 逐字段相同） | **批 1 已交付** |
 | 7 | `Deveco` | `deveco` | `deveco run (json)` | `JsonLine` | 同 opencode | **批 1 已交付** |
-| 8 | `Openclaw` | `openclaw` | `openclaw agent (json)` | `Opaque` | **待批 2/3 定**（`(json)` 只是输出开关，未证实是逐行 JSON） | 待定 |
-| 9 | `Hermes` | `hermes` | `hermes acp` | `Acp` | 冻结规则 | 待批 3 |
+| 8 | `Openclaw` | `openclaw` | `openclaw agent (json)` | `JsonLine` | **批 3 实测**：`buildOpenclawArgs`（`openclaw.go` L214）固定 `agent --local --json`，`processOutput`（L400）把 stdout **逐行** trim 后按 `type` 分派（`text`/`tool_use`/`tool_result`/`error`/`lifecycle`/`step_*`），另有 `parseWholeBufferOpenclawResult`（L525）把"整段其实是一个结果 blob"的形态捞回来（`payloads` + `meta.agentMeta`）⇒ 是逐行 JSON（`(json)` 就是那个 `--json` 开关） | **批 3 已交付** |
+| 9 | `Hermes` | `hermes` | `hermes acp` | `Acp` | **批 3 实测**：`hermesCLIArgsFrom`（`hermes.go` L147）= `["acp"] ++ filtered`；批 2 抽出的 `acp_core` 客户端状态机本来就取自 `hermesClient`（`hermes.go` L218 起），所以这一项的"依据"就是共享核本身 | **批 3 已交付** |
 | 10 | `Pi` | `pi` | `pi (json mode)` | `JsonLine` | M3-2 已落地（`pi -p --mode json`） | 已完成（批 1 回归确认） |
 | 11 | `Cursor` | `cursor` | `cursor-agent (stream-json)` | `StreamJson` | 批 2 实测：`buildCursorArgs`（`cursor.go` L1036）+ `cursorStreamEvent`（L833）—— stdout 逐行 trim 后解析（`normalizeCursorStreamLine` L979），prompt 走 stdin 且写完**关掉**（`closeStdin()` L64） | **批 2 已交付** |
 | 12 | `Kimi` | `kimi` | `kimi acp` | `Acp` | 批 2 实测：`kimiArgs = ["acp"]`（`kimi.go` L67）；握手帧由 `acp_core` 共用（initialize → session/new → session/prompt） | **批 2 已交付** |
-| 13 | `Reasonix` | `reasonix` | `reasonix acp` | `Acp` | 冻结规则 | 待批 3 |
-| 14 | `Dsh` | `dsh` | `dsh --profile multica (stdio)` | `Opaque` | **待批 2/3 定**（`(stdio)` 没说是 ACP 还是自有 JSON） | 待定 |
+| 13 | `Reasonix` | `reasonix` | `reasonix acp` | `Acp` | **批 3 实测**：`reasonixACPLaunchArgs`（`reasonix.go` L36）= `["acp","--profile","balanced","--planner","auto","--sandbox-network","auto","--sandbox-bash","auto","--workspace-only"]`；模型走 `session/set_model`、恢复走 `session/resume{cwd,sessionId,mcpServers}` ⇒ 标准 ACP 帧 | **批 3 已交付** |
+| 14 | `Dsh` | `dsh` | `dsh --profile multica (stdio)` | `JsonLine` | **批 3 实测**：`dshLaunchArgs()`（`dsh.go` L119）= `["--profile","multica","--stdio"]`；`handleDshFrame`（L376）按 `v`/`type`/`request_id` 解**逐行** JSON（`ready`/`session`/`text`/`thinking`/`tool_call`/`tool_result`/`usage`/`result`），协议版本常量 `DshProtocolVersion = 1` ⇒ **自有版本化 JSONL**，不是 ACP（无 `initialize`/`session/new` 这类 JSON-RPC 方法） | **批 3 已交付** |
 | 15 | `Kiro` | `kiro` | `kiro-cli acp` | `Acp` | 批 2 实测：`kiroArgs = ["acp","--trust-all-tools"]`（`kiro.go` L64）；可执行名是 `kiro-cli` 而**不是** `kiro` | **批 2 已交付** |
 | 16 | `Antigravity` | `antigravity` | `agy -p (non-interactive)` | `StreamJson` | 批 2 定族：argv 里硬编码 `--output-format stream-json`（`buildAntigravityArgs` `antigravity.go` L658-662），并按 `antigravityStreamEvent`（L68）逐行解 `event`/`step_update`/`result` ⇒ 是**逐行 JSON**，不是「单次问答的纯文本」 | **批 2 已交付** |
 | 17 | `Qoder` | `qoder` | `qodercli --acp` | `Acp` | 批 2 实测：`qoderArgs = ["--yolo","--acp"]`（`qoder.go` L100） | **批 2 已交付** |
 | 18 | `QoderCliCn` | `qoderclicn` | `qoderclicn --acp` | `Acp` | 批 2 实测：与 qoder 走**同一段 argv 构造**，只换 `defaultExecutable`（`qoder.go` L36/L80）⇒ 两个不同 CLI、同一份 ACP 面（`qoder_family.rs` 共用） | **批 2 已交付** |
 | 19 | `TraeCli` | `traecli` | `traecli acp serve` | `Acp` | 批 2 实测：`traecliArgs = ["acp","serve","--yolo"]`（`traecli.go` L110） | **批 2 已交付** |
 | 20 | `Grok` | `grok` | `grok agent stdio` | `Acp` | 批 2 定族：`grok --no-auto-update agent --always-approve [--effort L] stdio`（`grok.go` L139-144），`stdio` 子命令就是 ACP transport；`selectGrokAuthMethod`（L552）+ `session/load` + `authenticate` ⇒ 标准 ACP 帧 | **批 2 已交付** |
-| 21 | `Qwen` | `qwen` | `qwen -p (stream-json)` | `StreamJson` | 冻结规则 | 待批 3 |
-| 22 | `QwenPaw` | `qwenpaw` | `qwenpaw acp` | `Acp` | 冻结规则 | 待批 3 |
-| 23 | `Mcode` | `mcode` | `mcode acp` | `Acp` | 冻结规则 | 待批 3 |
-| 24 | `Dim` | `dim` | `dim acp` | `Acp` | 冻结规则 | 待批 3 |
-| 25 | `Zeroclaw` | `zeroclaw` | `zeroclaw acp` | `Acp` | 冻结规则 | 待批 3 |
+| 21 | `Qwen` | `qwen` | `qwen -p (stream-json)` | `StreamJson` | **批 3 实测**：`buildQwenArgs`（`qwen.go` L66）硬编码 `--output-format stream-json`，事件形态与 claude 同族（`handleQwenEvent`）；prompt **走 stdin**，`-p` 只是上游 `launchHeaders` 的展示串（`qwen.go` 的 #6082 注释说明为何不把 prompt 放进 argv）⇒ 族是 `StreamJson`，与 header 上的 `-p` 无关 | **批 3 已交付** |
+| 22 | `QwenPaw` | `qwenpaw` | `qwenpaw acp` | `Acp` | **批 3 实测**：argv `["acp"] ++ ExtraArgs ++ CustomArgs`（`qwenpaw.go` L77）；会话帧带 `_meta["qwenpaw.coding_project_dir"]`；`session/load` 恢复；**不发** `set_model`（那会改写用户共享的 agent 配置） | **批 3 已交付** |
+| 23 | `Mcode` | `mcode` | `mcode acp` | `Acp` | **批 3 实测**：argv `["acp"] ++ ExtraArgs ++ CustomArgs`（`mcode.go` L92，`acp` 子命令本身无选项）；当前 ACP 面声明 `loadSession:false`；**不发** `set_model`（模型由 MiniMax Code 自己管） | **批 3 已交付** |
+| 24 | `Dim` | `dim` | `dim acp` | `Acp` | **批 3 实测**：argv `["acp"] ++ filtered`（`dim.go` L192）；建/恢复会话后**必须**补两条固定配置（`permission=full-access` → `mode=agent`，否则写文件/起进程被静默拒绝）；`session/load` 恢复；`set_model` 致命 | **批 3 已交付** |
+| 25 | `Zeroclaw` | `zeroclaw` | `zeroclaw acp` | `Acp` | **批 3 实测**：argv `["acp"] ++ filtered`（`zeroclaw.go` L250）；`session/resume` **只带 `{sessionId}`**（三个会话处理器都不读 `params.mcpServers`）；**不发** `set_model`（模型属于 agent profile） | **批 3 已交付** |
 
-直方图（**批 2 后**）：**`Acp` 12 + `StreamJson` 5 + `JsonLine` 5 + `AppServer` 1 + `Opaque` 2 = 25**
+直方图（**批 3 后 = 收口状态**）：**`Acp` 12 + `StreamJson` 5 + `JsonLine` 7 + `AppServer` 1 + `Opaque` 0 = 25**
 （批 2 把 `Antigravity` 由 `Opaque` 定为 `StreamJson`、`Grok` 由 `Opaque` 定为 `Acp`；
-剩下的 `Opaque` 只有 `Openclaw` 与 `Dsh` 两个批 3 项）。
+批 3 把 `Openclaw` 与 `Dsh` 两个最后待定的定为 `JsonLine`，**`Opaque` 归零**，25 项全部归类）。
 `catalog.rs` 的测试 `protocol_family_covers_all_25_with_a_documented_split` 把这份直方图**钉死**：
 批 2/3 每定族一项，就要同步改那个断言与本表（直方图变了而测试没变 = 门禁红）。
 
@@ -544,3 +544,315 @@ GATE_CONFORMANCE_EXIT=0      GATE_FILE_SIZE_EXIT=0
 - 不改 `docs/fixtures/route-parity-baseline.json`、不改 `crates/mc-conformance/report.json`。
 - antigravity 的 `--log-file` 四件事（会话 id 抢救 / 超时嗅探 / provider 错误嗅探 / 空 stdout 抢修）
   明确留作缺口，未做 —— 已在 §10.5 与 `antigravity/stream.rs` 顶部逐条登记。
+
+## 11. 批 3 落地记录（`LUM-1443`）—— 兼 M3-8 收口
+
+批 3 = 本文件 §1 表的第 **8 / 9 / 13 / 14 / 21–25** 行，共 9 项：`openclaw` / `hermes` /
+`reasonix` / `dsh` / `qwen` / `qwenpaw` / `mcode` / `dim` / `zeroclaw`。
+全部新增适配器 + 把 `AgentType::ALL` 的 25 项**逐个归类**（`Opaque` 归零），M3-8 到此收口。
+
+### 11.1 交付物
+
+新增文件（行数为交付时实测）：
+
+| 文件 | 行数 | 职责 |
+| --- | ---: | --- |
+| `src/adapters/qwen/mod.rs` | 256 | qwen argv（`--output-format stream-json`，prompt 走 stdin）+ 复用 `claude_family` 的 `Qwen` flavor |
+| `src/adapters/openclaw/mod.rs` | 373 | openclaw argv（`agent --local --json --session-id … --message <prompt>`）+ spec |
+| `src/adapters/openclaw/decode.rs` | 758 | openclaw 的**逐行 JSON** 解码器 + 整段结果 blob 快路径 + raw 兜底 |
+| `src/adapters/dsh/mod.rs` | 220 | dsh 启动 argv（`--profile multica --stdio`，`extra_args` 整段丢弃）+ spec |
+| `src/adapters/dsh/decode.rs` | 584 | dsh 的**版本化 JSONL** 解码器（`v` / `type` / `request_id` 三档过滤） |
+| `src/adapters/qwenpaw/mod.rs` | 203 | qwenpaw flavor（`session/load`、`_meta` 走 Coding Mode、无 `set_model`） |
+| `src/adapters/hermes/mod.rs` | 199 | hermes flavor（`session/resume`、模型进 `session/new`、effort=thought_level） |
+| `src/adapters/reasonix/mod.rs` | 246 | reasonix argv（沙箱钉死串）+ flavor（`set_model` 致命、effort=effort） |
+| `src/adapters/dim/mod.rs` | 205 | dim flavor（**固定配置链** `permission=full-access`→`mode=agent`、`session/load`） |
+| `src/adapters/mcode/mod.rs` | 183 | mcode flavor（`session/load`、无 `set_model`、无 effort） |
+| `src/adapters/zeroclaw/mod.rs` | 210 | zeroclaw flavor（resume 只带 `sessionId`、无 `set_model`） |
+| `tests/cli_adapters/batch3.rs` | 267 | 批 3 的 **4 条**跨 adapter 集成测试（另见 §11.6 的拆文件说明） |
+
+改动的既有文件（都在写集内；括号里是批 2 后的行数增量）：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/adapters/acp_core/mod.rs` | 416（+108）：`AcpFlavor` 由 6 个字段扩到 **11 个**（新增 `model_selection` / `session_meta_key` / `session_configs` / `resume_params`）；新增 `ID_SESSION_CONFIG_BASE = 50` 与 `id_session_config(i)`；`AcpModelSelection` / `AcpResumeParams` 两个枚举 |
+| `src/adapters/acp_core/client.rs` | 703（+97）：配置链状态机（`AwaitSetConfig` + `is_in_flight_config(id)`）、`set_model` 闸门、resume params 形状、会话帧 `_meta`、`Unsupported` 强制清空模型 |
+| `src/adapters/acp_core/tests.rs` | 740（+12）：flavor 表的覆盖断言由 6 家扩到 **12 家**（不新增测试名） |
+| `src/adapters/claude_family.rs` | 612（+238）：新增 `ClaudeStreamFlavor`（`Claude` / `Qwen`）与 qwen 的 5 条分歧；顺手修掉 `set_usage_map` 空表缺陷（§11.5.5） |
+| `src/adapters/mod.rs` | 139（+33）：登记 9 个新模块 + `pub use` 9 个类型；`builtin_adapters()` 由 16 项扩到 **25 项**（仍是上游白名单顺序） |
+| `src/catalog.rs` | 467（+29）：`Openclaw` / `Dsh` 定成 `JsonLine`（`Opaque` 分支删除）；直方图改 `(12, 5, 7, 1, 0)`；新增 6 个 ACP 项 + qwen + openclaw/dsh 的逐项抽样断言与**收口断言** |
+| `src/registry.rs` | 281（+?）：文档改成"白名单全部 25 项"；新增/重写 `builtin_registry_covers_every_whitelisted_kind_without_probing`（名字 == `AgentType::ALL`、长度 25、逐项 `caps.protocol == kind.protocol_family()`） |
+| `src/lib.rs` | 158：re-export 全部 25 个 adapter 类型；覆盖测试改名成 `builtin_registry_covers_every_m3_8_batch` 并断言 `len() == 25 == AgentType::ALL.len()` |
+| `src/conformance/mod.rs` | 748（+24）：`LivePlan` 转 `pub` + 新增 `GateOnce`；`TestableAdapter::conformance_live_plan()`；`response_frame_groups` 的闸门子串补上尾逗号 |
+| `src/conformance/fake_cli.rs` | 292（+11）：新增 `FakeCli::live_gated` |
+| `tests/cli_adapters.rs` → `tests/cli_adapters/main.rs` | 729：拆成目录模块（见 §11.6）；`--parent` 结构不变，新增 `mod batch3;` |
+| `docs/33-M3-ADAPTERS.md` | 本文件（§1 两行族改判 + 直方图 + 本 §11） |
+
+### 11.2 逐 provider 契约（argv / 传输 / 解码 / 屏蔽表）
+
+| provider | argv 骨架 | 传输 | 解码器 | `BLOCKED`（要点） | 上游出处 |
+| --- | --- | --- | --- | --- | --- |
+| `qwen` | `--output-format stream-json ++extra`（**不加 `-p`**） | `StdinText` | `claude_family`（`Qwen` flavor） | 19 项（prompt / 流协议 / 模型 / 会话 / 权限 / 核心工具 六类，见模块内 `BLOCKED` 表） | `qwen.go` L66 / L29 |
+| `openclaw` | `agent --local --json --session-id <id> [--timeout N] [--agent M] ++extra --message <prompt>` | `Argv`（stdin = null） | `openclaw::decode::OpenclawDecoder` | `--local` `--json` `--session-id` `--message` `--model` `--system-prompt` | `openclaw.go` L214 / L28 |
+| `dsh` | `--profile multica --stdio`（**`extra_args` 全丢**） | `JsonRpc`（长连接） | `dsh::decode::DshDecoder` | 无（argv 常量，不经过过滤） | `dsh.go` L119 |
+| `qwenpaw` | `acp ++extra` | `JsonRpc` | `acp_core::AcpDecoder` | `acp`（standalone）+ `--workspace`（with value） | `qwenpaw.go` L77 / L18 |
+| `hermes` | `acp ++extra` | 同上 | 同上 | `acp` | `hermes.go` L147 / L37 |
+| `reasonix` | `acp --profile balanced --planner auto --sandbox-network auto --sandbox-bash auto --workspace-only ++extra` | 同上 | 同上 | `acp` + 那 8 个策略开关（**含各自的取值 token**） | `reasonix.go` L36 / L17 |
+| `dim` | `acp ++extra` | 同上 | 同上 | `acp` + `login` 一族 | `dim.go` L192 / L21 |
+| `mcode` | `acp ++extra` | 同上 | 同上 | `acp` `login` `-h` `--help` `--region` | `mcode.go` L92 / L19 |
+| `zeroclaw` | `acp ++extra` | 同上 | 同上 | `acp` `--help` `-h` `login` `auth` `--login` `--auth`（standalone）+ `--agent` `--agent-alias`（with value） | `zeroclaw.go` L250 / L29 |
+
+**传输面两条与批 1/2 不同的形态**（这两项决定了 `cli_core` 的哪一支被激活）：
+
+- `openclaw` 是 `Argv` ⇒ `cli_core::run` 给子进程的 stdin 接 `Stdio::null()`，prompt 只可能在
+  `--message` 后面（集成测试断言 `recorded_stdin()` 为空、`argv` 的最后两个 token 是
+  `--message` + prompt）。
+- `dsh` 是 `JsonRpc` ⇒ stdin 全程常开，`execute` 帧在 spawn 后立刻写、`cancel` 帧在取消时补发
+  （`CliRun` 的 outbox 只在 `JsonRpc` 下才建）；集成测试断言 `recorded_stdin()` 里能看到
+  `"type":"execute"`。
+
+### 11.3 6 个新 ACP flavor 的差异表
+
+`AcpFlavor` 从 6 个字段涨到 **11 个**（批 2 的 5 列 + 本批新增 4 列 + `kind`/`label` 元数据），
+6 家新 provider 的差别仍然**全部**落在这张静态表里：
+
+| provider | `resume` | `model_selection` | `session_meta_key` | `session_configs` | `thinking_config` | `resume_params` | `tool_aliases` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `qwenpaw` | `session/load` | **`Unsupported`** | **`"qwenpaw.coding_project_dir"`** | 无 | 无 | `SessionAndCwd` | `Kimi` |
+| `hermes` | `session/resume` | **`SessionParam`** | 无 | 无 | `"thought_level"` | `SessionAndCwd` | `Kimi` |
+| `reasonix` | `session/resume` | `SetModel` | 无 | 无 | `"effort"` | `SessionAndCwd` | `Kimi` |
+| `dim` | `session/load` | `SetModel` | 无 | **`[("permission","full-access"),("mode","agent")]`** | `"thought_level"` | `SessionAndCwd` | `Kimi` |
+| `mcode` | `session/load` | **`Unsupported`** | 无 | 无 | 无 | `SessionAndCwd` | `Kimi` |
+| `zeroclaw` | `session/resume` | **`Unsupported`** | 无 | 无 | 无 | **`SessionOnly`** | `Kimi` |
+
+四列各自的"只有一家有值"：
+
+- `session_meta_key` **只有 qwenpaw**：`session/new` / `session/load` 的 params 里带
+  `_meta["qwenpaw.coding_project_dir"] = cwd`，**且只在 `cwd != "."` 时才带**（上游同款门），
+  不带就落在非 Coding Mode 里。
+- `session_configs` **只有 dim**：建完会话**必须**先下发 `permission=full-access` → `mode=agent`，
+  再 `set_model`，最后 effort；**新建与恢复都要重下发**（恢复不继承），链上任一步失败**致命**。
+- `thinking_config`：`hermes` / `dim` = `"thought_level"`、`reasonix` = `"effort"`（批 2 的 kimi 是
+  `"thinking"`）；失败**只告警**（与 dim 的配置链相反）。
+- `resume_params`：只有 `zeroclaw` 是 `SessionOnly`（上游三个会话处理器都不读 `mcpServers`）。
+
+**ACP 配置链的帧 id 方案**（批 3 新引入）：`session/set_config_option` 是**可重复**的方法，
+批 2 的固定帧 id 表（`initialize=1` … `set_config=5`、`prompt=6`）表达不了"两条配置"。本片把它
+扩成**区间**：`ID_SESSION_CONFIG_BASE = 50`，第 i 条配置用 `50 + i`，解码器按
+`Phase::AwaitSetConfig && is_in_flight_config(id)` 分派 ⇒ 批 2 的单条 `set_config` id 语义**未变**
+（kimi 仍然发 `5`），只有 dim 发 `50` / `51`。
+
+> 一个实测踩到的坑：`response_frame_groups` 原先用 `"id":{id}` 做闸门子串匹配，`"id":5` 会**前缀
+> 命中** `"id":50` ⇒ dim 的两条配置帧会错位。修法是闸门带上**尾逗号**（`"id":{id},`）。这条对
+> 任何新增 id ≥ 10 的帧都是必修的，后来者注意。
+
+### 11.4 共享核的两处扩展
+
+1. **ACP 核**：`model_selection` 为 `Unsupported` 时**不发** `session/set_model` 并把内部模型清空
+   （用量归属回落到 provider label）；`SessionParam` 时把模型塞进 `session/new` 的 params 且
+   从不发 `set_model`；`session_configs` 走上述 50+i 链。批 2 的 kimi/kiro/qoder/qoderclicn/
+   traecli/grok 与 `pi_local` 一行未动。
+2. **`claude_family` 的 flavor 化**：批 1 的 `ClaudeStreamDecoder` 参数化成
+   `for_flavor(ClaudeStreamFlavor::{Claude, Qwen}, fallback_model)`（+ `with_resume(bool)`）。
+   qwen 的 5 条分歧：① `error` 事件类型 ⇒ **终态失败**；② 会话续跑时 `result` 里的 usage 是
+   **会话累计**（不是本轮增量）⇒ 续跑时**跳过** `result` 用量；③ assistant 用量要把
+   `cache_read` 从 `input` 里**减掉**（claude 不减）；④ `result.subtype` 为 `error`/`failed` ⇒ 失败；
+   ⑤ 累加用量前要求 `message.model` 非空。`Claude` flavor 走的是批 1 原路径（行为不变，除
+   §11.5.5 那一处修正）。
+
+### 11.5 刻意偏离 / 简化
+
+#### 11.5.1 ACP 六家
+
+- **`qwenpaw`**：`--workspace` 既不注入也**不可注入**（`LaunchRequest` 没有 per-task workspace
+  字段，用 `cwd` 冒充会指向错误目录 —— 属 skills/execenv 切片）；不做 v2.0.1 版本闸门；
+  不解析 v2.1.0 才有的 `session/new.models` 目录；不发 `set_model`（那会改写用户共享的
+  agent 配置）。
+- **`hermes`**：不做 `StripHermesProfileSelectors` —— 那套剥离逻辑的前提是 daemon 建了
+  per-task overlay（`HERMES_HOME`），本片没有 overlay ⇒ `-p` / `--profile` 按普通参数透传
+  （与上游"无 overlay 时保持原行为"一致）；会话恢复被拒的分类（`ResumeRejected`）留给 M4；
+  effort 用静态 `configId` 而非上游的发现式查找（同批 2 取舍）。**副作用**：`--profile <id>`
+  这种空格分隔形态会被 crate 级的位置参数守卫剔除，只有 `--profile=<id>` 能活下来（测试里
+  固定了这条）。
+- **`reasonix`**：不做 `streamingCurrentTurn`（历史回放）开关 —— 解码器按相位收事件，
+  resume 后的整段重播发生在 `session/prompt` 之前、会被相位丢掉，故不需要；权限收窄
+  （`selectReasonixPermissionOption` / protected decision / 提问阻塞）与 lease 冲突分类留给 M4。
+- **`dim`**：不做 ≥ 0.3.10 版本闸门（老版本跨进程 `session/load` 必失败，本 crate 只做一次
+  load、失败即失败）；不做 `session/load` 的"锁未释放就重试"；不做 `session/close` 的
+  best-effort 收尾（本 crate 的会话生命周期与进程一致）。
+- **`mcode`**：不做 `agentCapabilities.loadSession` 能力闸门 —— **照样发 `session/load`**，
+  让对端的错误走通用 `AgentError` 通道；不发 `set_model`；`mcodeReaderDrainGrace` /
+  `mcodeSessionStartupReadyDelay` / `mcodeSessionStartupExited` 长诊断都不搬（前者属 M3-3 看门狗，
+  后者与批 1 的"进程级失败统一归因"口径一致）。
+- **`zeroclaw`**：resume 只带 `sessionId`；不发 `set_model`；`--agent` / `--agent-alias` **只挡不搬**
+  （本 crate 的 flavor 没有"会话参数"这一档）⇒ 依赖 `[acp].default_agent` 或"恰好一个 agent"
+  的自动选择，否则对端以 `-32602` 失败；不做 ≥ 0.8.0 版本闸门与
+  `initialize.sessionCapabilities.resume` 能力闸门；`choice-N` 旧版问答桥不搬。
+
+#### 11.5.2 `qwen`
+
+`-p` / `--prompt` 在封锁表里且**本 adapter 自己也不加**：prompt 走 stdin 的纯文本
+（`qwen.go` 的 #6082 注释：把受用户影响的正文放进命令行在 Windows 上过不了 PowerShell 的参数
+重序列化，cursor-agent 在 #5649 踩过同一个坑）。白名单里的启动骨架 `qwen -p (stream-json)`
+是上游 `launchHeaders` 的**原样投影（历史展示串）**，不代表这里真的传了 `-p` —— §1 表的"依据"
+一栏里对这句话有专门说明。正文口径同批 1：`RunOutcome::output` = 所有 `Text` 事件拼接，
+而不是上游 `finalizeStreamResult` 的"最后一个 `result` 的正文"。
+
+#### 11.5.3 `openclaw`（6 条，模块文档逐条登记）
+
+1. **没有 gateway 模式**：上游按 `opts.OpenclawMode != "gateway"` 决定加不加 `--local`；
+   本 crate 恒为本机模式 ⇒ 恒有 `--local`（且在封锁表里）。
+2. **没有 `SystemPrompt`**：上游把 `SystemPrompt + "\n\n" + prompt` 拼进 `--message`；
+   `LaunchRequest` 没有系统提示字段（M4 口径）。
+3. **`--timeout` 来自 `LaunchRequest::timeout`**（秒；`None` ⇒ 不加，交给 openclaw 默认值）。
+4. **没有最低版本闸门**：上游 `checkOpenclawVersion` 挡掉 `< 2026.5.5`（那些版本把 `--json`
+   输出写到 stderr）。本 crate 只有 `probe_version()` 的 semver 解析，没有"探测值 → 拒绝启动"这条通路。
+5. **没有 idle-grace 提前收尾**：上游 `readOpenclawStdout` 在"buffer 已成完整结果 且 stdout 静默
+   ≥2s"时提前收尾并 kill 掉那个"交完结果却不退出"的进程；本 crate 以 stdout EOF / 超时 / 取消
+   收尾 ⇒ 这类进程会一直等到 `LaunchRequest::timeout`。**这是本片已知缺口**。
+6. `extra_args` 过滤多一条 `--system-prompt`（在封锁表里），外加 crate 统一的位置参数 / `@文件` 剔除。
+
+解码面另有一处**刻意的宽容**：结果 blob 的识别要求 `payloads` 存在（`[]` 也算）**或**
+`meta.durationMs != 0`，`meta.agentMeta.{sessionId,model,usage}` 三件套可选；用量字段按
+"第一个非零值胜出"取，键集是上游的**超集**（多认几种拼写）。
+
+#### 11.5.4 `dsh`（7 条，`dsh/decode.rs` 模块文档逐条登记）
+
+最特别的一条：**`extra_args` 整段丢弃**。上游 `dshLaunchArgs()` 是写死的
+`--profile multica --stdio`，`opts.CustomArgs` 根本不进 argv；本 crate 忠实照做（集成测试
+`dsh_speaks_its_versioned_jsonl_protocol_and_ignores_extra_args` 断言塞进去的
+`--model` / `--verbose` / `--` 一个都不出现在 argv 里）。理由：dsh 的启动参数改动会直接改掉
+协议形态（例如换 profile），"过滤危险参数"这种半吊子做法仍会放过形态改动。
+
+其余：不做 `--list-models` 的模型目录发现（模型目录是 `catalog` 的静态表，属 M3-2）；
+不做 `cmd.WaitDelay` 的等价实现；`mcp_servers` **恒为 `[]`**；非 `completed` 的 `result.status`
+按 `note_error("{code}: {message}")` 归因；正文口径同上（所有 `Text` 事件拼接，`result.output` 不采纳）；
+`resume_rejected` 不解析；模型串没有 `/` 时发 `{"id": <raw>}` 而不 fail-fast。
+
+#### 11.5.5 顺手修掉的一处批 1 潜在缺陷（共享路径，**请 reviewer 注意**）
+
+写 qwen 集成测试时发现 `claude_family` 的 `handle_result` 把"`result` 事件没给用量"当成了
+"用量为 0"：`result_usage(...)` 返回**空表**时会把解码器状态里的用量表**整个清空**
+（`CliSummary::usage` 于是变成全 0），而模块文档写的是"空表 ⇒ 保留 assistant 的增量"。两者矛盾。
+
+修法（两行，`claude_family.rs`）：`handle_claude_result` 与 `handle_qwen_result` 都改成
+`if !usage.is_empty() { … set_usage_map(usage) … }`，与文档口径对齐；新增回归用例
+`a_result_without_any_usage_keeps_the_assistant_increments`（修前必挂）。
+
+**影响面**：这是**批 1 的 claude 路径也走的**共享函数 ⇒ `claude` 的行为随之变化（"result 无用量"
+时不再把已有增量清零）。判定为**缺陷修正**而不是行为变更：`set_usage_map` 没有空表守卫这件事
+本身就与文档冲突，且"result 不带用量"在真实 CLI 里是常见形态（例如上游只在最后一次 result 带
+累计值）。如果 reviewer 认为这超出本片范围，可以把它单独切成一个 follow-up —— 但**不建议回退**：
+回退等于让测试与文档一起说谎。
+
+### 11.6 测试与门禁证据
+
+```
+cargo test -p mc-runtime
+  lib                       480 passed / 0 failed / 0 ignored
+  tests/cli_adapters        18 passed / 0 failed  （批 1/2 的 14 条 + 批 3 新增 4 条）
+  tests/pi_local_e2e         7 passed / 0 failed
+  doc-tests                  0 passed / 2 ignored（原有）
+```
+
+lib 的 480 条里按**测试名归属**批 3 的 = **123 条**：9 个新 provider 模块
+（openclaw 27 / dsh 21 / dim 11 / hermes 11 / qwen 11 / qwenpaw 11 / zeroclaw 11 / mcode 10 /
+reasonix 10），其中含一致性套件 **9 × 8 = 72 条**；另有 `claude_family` 的 **4 条**
+（qwen flavor 分歧 + §11.5.5 的回归用例）与 `acp_core` 的 flavor 覆盖（**不新增测试名**，
+扩的是同一批断言）。`tests/cli_adapters` 的 18 条里批 3 占 4 条：
+
+| 用例 | 断言的东西 |
+| --- | --- |
+| `batch3_acp_family_speaks_the_shared_handshake_frame_by_frame` | 6 家 ACP 逐帧握手（initialize → session → set_model/set_config → prompt），**不经过 `--model` argv** |
+| `qwen_speaks_stream_json_with_the_prompt_as_plain_stdin_text` | prompt 只在 stdin、argv 里没有 `-p`（按 token 判，不是子串） |
+| `openclaw_passes_the_prompt_on_argv_and_reads_the_result_blob` | `--message` 尾随 prompt、stdin 为空、整段 result blob 能解 |
+| `dsh_speaks_its_versioned_jsonl_protocol_and_ignores_extra_args` | `execute` 帧上了 stdin、`extra_args` 一个都没进 argv |
+
+**`#[ignore]` 约定不变**：批 3 同样**没有新增任何 `#[ignore]`** —— 9 个 provider 全部跑在
+`FakeCli` 生成的假 CLI 上，机器上不需要装这 9 个 CLI；`mc-runtime` 的 2 条 ignored 仍是原有
+doc-test。
+
+**门禁**（`bash scripts/gates.sh`，不带 `--with-db`，0 库依赖）：
+
+```
+①  fmt                    0     1s  PASS
+②  build                  0    96s  PASS
+③  clippy                 0    23s  PASS
+④  clippy-test-util       0    24s  PASS
+⑤  test                   0    32s  PASS
+⑦  route-parity           0     0s  PASS
+⑨  conformance            0    39s  PASS
+⑩  file-size              0     0s  PASS
+overall: PASS — 8/8 gate(s) green in 215s
+（⑤ 工作区合计 1001 passed / 0 failed / 87 ignored（87 是需要真库的用例；本机未跑 --with-db））
+```
+
+- **③ clippy 本轮修掉 20 处**（`-D warnings` 全工作区过）：or-pattern 嵌套、`clone_into`、
+  文档反引号、`LivePlan` 两个 match 臂合并、`#[allow(clippy::cast_possible_wrap)]`
+  （帧 id 是 JSON f64 转 usize，先例同批 2 的 `cast_possible_truncation`）、
+  `#[allow(clippy::struct_excessive_bools)]`（dsh 解码器的相位布尔）、以及
+  `cargo clippy --fix` 清掉的 19 处 `needless_borrow`。
+- **⑦ 与本片无关（0 路由）**：`git diff` 里没有任何路由注册、没有 `docs/fixtures/**` 改动。
+  实测 `upstream 456 | local 195 registered | baseline 195`、`implemented 152 real + 10 placeholder
+  = 162 / 456`、`known_gap 294`、`regression 0`、`local_only 11`；斜杠别名审计
+  `0 defect / 19 allowlisted`（`--no-allowlist` 下 19 defect，全是既有登记债务）。
+- **⑨ 无漂移**：`report matches crates/mc-conformance/report.json` —— `report.json` 与
+  `docs/fixtures/route-parity-baseline.json` 本片**一字未动**。
+- **⑩ 本片再拆了一处文件**：`tests/cli_adapters.rs` 因批 3 用例长到 900+ 行触红 ⇒ 拆成
+  `tests/cli_adapters/{main.rs 729, batch3.rs 267}`（Cargo 里仍是**一个**测试目标 `cli_adapters`，
+  18 条用例不变；`batch3.rs` 用 `use crate::{ACP_FAMILY_B3, adapter_for};` 复用根模块的私有辅助）。
+  本批最大新文件 = `openclaw/decode.rs` **758 行 < 800**（其次 `dsh/decode.rs` 584）。
+
+### 11.7 M3-8 收口结论（25/25）
+
+**口径**：M3-8 的验收线是"`AgentType::ALL` 的 25 项每一项都有适配器，且每一项都有**确定的**
+协议族"。批 3 之后：
+
+1. **适配器覆盖**：`builtin_adapters()` 返回 **25** 项，顺序与上游白名单
+   （`AgentType::ALL`）**逐项相同**；断言落在三处：
+   `src/lib.rs::builtin_registry_covers_every_m3_8_batch`（`len() == 25 == AgentType::ALL.len()`）、
+   `src/registry.rs::builtin_registry_covers_every_whitelisted_kind_without_probing`
+   （`names() == AgentType::ALL.map(as_str)`，且逐项 `caps.protocol == kind.protocol_family()`
+   且 `!= Opaque`）、`tests/cli_adapters/main.rs::registry_exposes_every_whitelisted_kind_in_whitelist_order`。
+2. **族覆盖**：`catalog::protocol_family()` **没有 `Opaque` 分支**（编译期就没了），
+   收口断言 `AgentType::ALL.iter().all(|k| k.protocol_family() != ProtocolFamily::Opaque)`
+   落在 `src/catalog.rs::protocol_family_covers_all_25_with_a_documented_split`；
+   直方图 `(Acp 12, StreamJson 5, JsonLine 7, AppServer 1, Opaque 0)`。
+3. **协议族全表**（本节即"25 项映射表"的收口版本）：
+
+| 族 | 项数 | 成员 |
+| --- | ---: | --- |
+| `Acp` | 12 | kimi, kiro, qoder, qoderclicn, traecli, grok（批 2）+ qwenpaw, hermes, reasonix, dim, mcode, zeroclaw（批 3） |
+| `StreamJson` | 5 | claude, codebuddy, cursor, antigravity, qwen |
+| `JsonLine` | 7 | codex, copilot, opencode, codearts, deveco, **openclaw**, **dsh** |
+| `AppServer` | 1 | pi（`pi_local`） |
+| `Opaque` | **0** | —— |
+
+4. **一致性套件**：25 项里除 `pi`（走 `pi_local_e2e` 的 7 条真路径 e2e）外，**24 项**都挂了
+   `crate::adapter_conformance!(X)` = 8 条，共 **192 条**一致性用例；每个 adapter 的
+   `capabilities()` 都被断言"自洽"（`protocol != Opaque`、`thinking ⇒ streaming`、
+   `tool_events ⇒ streaming`、`version_probe`）。
+
+**仍然登记在册的缺口**（本片**不做**，不属于 M3-8 验收线，逐条记在这里以免丢失）：
+
+| 缺口 | 归属 |
+| --- | --- |
+| `qwenpaw` 的 `--workspace <per-task dir>`（skill 隔离） | skills / `LUM-1440`（execenv） |
+| `hermes` 的 profile overlay 与 `StripHermesProfileSelectors` | `HERMES_HOME` / execenv 切片 |
+| 会话恢复被拒（`ResumeRejected`）的分类与重试（dim / mcode / zeroclaw / hermes 都要） | M4 重试编排（`docs/33` §6.2） |
+| `dim` 的 ≥0.3.10 版本闸门、`session/load` 锁重试 | M4 重试编排 |
+| `openclaw` 的 idle-grace 提前收尾、`< 2026.5.5` 版本闸门 | M3-3 看门狗 / M4 |
+| `zeroclaw` 的 `agentAlias` 搬运与 `choice-N` 问答桥 | 后续 slice（需要 flavor 支持"会话参数"） |
+| `reasonix` 的权限收窄 / protected decision / 提问阻塞 | M4 |
+| `mcode` / `zeroclaw` 的 `sessionCapabilities` 能力闸门 | M4（当前"照发、失败即失败"） |
+| 各家 `*ReaderDrainGrace` / `*StartupReadyDelay` 计时 | M3-3 看门狗 |
+| `dsh` 的 `--list-models` 模型目录发现 | M3-2 模型目录（当前是静态 `catalog`） |
+
+### 11.8 本片没做什么（边界）
+
+- 不做 `execenv`（`LUM-1440`）、不做 daemon 面（M3-7）。
+- 不为 adapter 新增路由、不落库、不改迁移、不改 `Cargo.lock`（无依赖 delta）。
+- 不改 M3-2 的协议契约：`adapter.rs` 的 `ProtocolFamily` **没有新增变体**、
+  `RuntimeAdapter` / `EventDecoder` 的方法签名**一字未改**；`AcpFlavor` 的扩展是
+  `acp_core` **内部**的（批 2 的 6 家与 `pi_local` 零改动）。
+- 不改 `docs/fixtures/route-parity-baseline.json`、不改 `crates/mc-conformance/report.json`。
+- 不改 `docs/16` 的协议冻结常量、不改 `docs/15` §6 的名单（批 3 这 9 项本来就是名单成员）。
