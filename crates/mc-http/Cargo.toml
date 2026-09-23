@@ -54,6 +54,10 @@ mc-repos = { path = "../mc-repos" }
 mc-chat = { path = "../mc-chat" }
 # M5-6（LUM-1565）：wakeup 服务面（`mc_autopilot::wakeup::service`）。本片只新增这一条依赖边；
 # `Cargo.lock` 无需变更（`mc-autopilot` 已是 workspace 成员）。M5 后续切片共用同一条边。
+# M5-1（LUM-1564）因同一原因也走这条边：`mc_autopilot::cron`（`GET /api/autopilots/cron-preview`
+# 的唯一解析点）与 `mc_autopilot::quota`（`GET /api/autopilots/usage` 的 entitlement 面）。
+# 方向无环：mc-autopilot 只依赖 mc-core / mc-realtime / mc-repos / mc-telemetry。
+# 记录见 `docs/46-M5-1-READ-FACE.md`。
 mc-autopilot = { path = "../mc-autopilot" }
 mc-openapi = { path = "../mc-openapi" }
 # M3-7（LUM-1438）：daemon 面需要
