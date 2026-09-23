@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "cloud_subscriptions/TestCreateCloudWorkspaceSubscriptionCheckoutInjectsAuthoritativeWorkspaceAndEmail@server/internal/handler/cloud_billing_test.go:389#1",
+  "method": "POST",
+  "path": "/api/cloud-subscriptions/checkout-sessions",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json",
+    "Idempotency-Key": "checkout-header-1"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "workspace_id": "00000000-0000-0000-0000-000000000001",
+    "interval": "year",
+    "idempotency_key": "checkout-request-1",
+    "customer_email": "attacker@example.com"
+  },
+  "expect": {
+    "status": 201,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/cloud_billing_test.go",
+    "line": 389,
+    "test": "TestCreateCloudWorkspaceSubscriptionCheckoutInjectsAuthoritativeWorkspaceAndEmail",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (CreateCloudWorkspaceSubscriptionCheckout); replayed here against the router, which also applies its middleware",
+      "status read from the `w.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

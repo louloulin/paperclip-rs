@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "workspaces/TestUpdateWorkspace_RejectsInvalidIssuePrefix@server/internal/handler/workspace_test.go:1508#35",
+  "method": "PATCH",
+  "path": "/api/workspaces/{id}",
+  "path_params": {
+    "id": "$testWorkspaceID"
+  },
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "issue_prefix": "前端团队前端团队前端"
+  },
+  "expect": {
+    "status": 400,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/workspace_test.go",
+    "line": 1508,
+    "test": "TestUpdateWorkspace_RejectsInvalidIssuePrefix",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

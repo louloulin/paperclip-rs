@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "working_agents/TestIssueTableWorkingIssueProjectionMatchesTaskIssuesNotAssignees@server/internal/handler/issue_table_query_test.go:347#1",
+  "method": "GET",
+  "path": "/api/working-agents",
+  "path_params": {},
+  "query": {
+    "type": "issue"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/issue_table_query_test.go",
+    "line": 347,
+    "test": "TestIssueTableWorkingIssueProjectionMatchesTaskIssuesNotAssignees",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (ListWorkspaceWorkingAgents); replayed here against the router, which also applies its middleware",
+      "status read from the `workingRecorder.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

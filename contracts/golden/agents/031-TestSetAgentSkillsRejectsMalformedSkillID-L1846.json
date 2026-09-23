@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestSetAgentSkillsRejectsMalformedSkillID@server/internal/handler/handler_test.go:1846#31",
+  "method": "PUT",
+  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1/skills",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "skill_ids": [
+      "not-a-uuid"
+    ]
+  },
+  "expect": {
+    "status": 400,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/handler_test.go",
+    "line": 1846,
+    "test": "TestSetAgentSkillsRejectsMalformedSkillID",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

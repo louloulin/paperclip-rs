@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "attachments/TestCommentSourceContextLifecycle@server/internal/handler/source_context_integration_test.go:480#1",
+  "method": "DELETE",
+  "path": "/api/attachments/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 404,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/source_context_integration_test.go",
+    "line": 480,
+    "test": "TestCommentSourceContextLifecycle",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (DeleteAttachment); replayed here against the router, which also applies its middleware",
+      "status read from the `deleteCloneRecorder.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "daemon/TestGetDaemonWorkspaceRepos_WithDaemonToken_WorkspaceMismatch@server/internal/handler/daemon_test.go:1586#10",
+  "method": "GET",
+  "path": "/api/daemon/workspaces/{workspaceId}/repos",
+  "path_params": {
+    "workspaceId": "$testWorkspaceID"
+  },
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 404,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/daemon_test.go",
+    "line": 1586,
+    "test": "TestGetDaemonWorkspaceRepos_WithDaemonToken_WorkspaceMismatch",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

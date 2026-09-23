@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "issues/TestIssueActorPropertyValues@server/internal/handler/property_test.go:1070#100",
+  "method": "GET",
+  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/property_test.go",
+    "line": 1070,
+    "test": "TestIssueActorPropertyValues",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (GetIssue); replayed here against the router, which also applies its middleware",
+      "status read from the `wget.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestAgentsThroughRouter@server/cmd/server/integration_test.go:650#4",
+  "method": "PUT",
+  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "status": "idle"
+  },
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/cmd/server/integration_test.go",
+    "line": 650,
+    "test": "TestAgentsThroughRouter",
+    "site": "authRequest",
+    "via": "router",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [],
+    "bindings": {
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

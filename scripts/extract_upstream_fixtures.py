@@ -63,6 +63,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import extract_i4_direct_handler as i4
+
 SCHEMA_VERSION = 1
 
 # `internal/handler` is what the issue names; `cmd/server` is added because it is
@@ -122,7 +124,7 @@ SKIP_REASONS = (
     "value_unresolved",
     "helper_not_followed",
     "request_var_unresolved",
-)
+) + i4.ADDED_SKIP_REASONS
 
 SITE_PATTERNS = (
     (r"testutil\.Call\s*\(", "testutil.Call"),
@@ -723,6 +725,8 @@ class Interpreter:
         pieces: list[str] = []
         markers: dict[str, Value] = {}
         for p in parts:
+            # Masking turns a literal piece blank; trimming lets recursion see it.
+            p = i4.trim_span(self.sources[file][1], p)
             ptext = self.text(file, p)
             if not ptext:
                 return None
@@ -735,7 +739,12 @@ class Interpreter:
                 markers.update(sub["markers"])
                 continue
             val = self.resolve_scalar(file, p, ctx, depth + 1)
-            if val is None or val.kind != "symbol":
+            if val is None:
+                return None
+            if val.kind == "literal" and isinstance(val.value, str):
+                pieces.append(val.value)  # a named constant inlines like a literal
+                continue
+            if val.kind != "symbol":
                 return None
             mark = f"{MARK}{len(markers)}{MARK}"
             markers[mark] = val
@@ -781,6 +790,8 @@ class Interpreter:
 
     def resolve_call(self, file: str, span: tuple[int, int], name: str, ctx: WalkCtx, depth: int) -> Optional[ReqState]:
         masked = self.sources[file][1]
+        # `split_args` keeps whitespace that `text()` strips, which would misplace `(`.
+        span = i4.trim_span(masked, span)
         open_idx = span[0] + self.text(file, span).index("(")
         args = split_args(masked, open_idx + 1, matching(masked, open_idx) - 1)
 
@@ -890,7 +901,10 @@ class Interpreter:
         if depth > 4:
             return None
         masked = self.sources[file][1]
-        final = walk(file, masked, self, body, ctx)[-1][1]
+        checkpoints = walk(file, masked, self, body, ctx)
+        final = checkpoints[-1][1] if checkpoints else None
+        if final is None:
+            return None
         for m in reversed(list(re.finditer(r"(?m)^\s*return\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", masked[body[0] : body[1]]))):
             name = m.group(1)
             if name in final.env:
@@ -899,7 +913,7 @@ class Interpreter:
                 got = self.resolve_request(file, final.defs[name], final, depth + 1)
                 if got is not None:
                     return got
-        return None
+        return i4.transparent_return(globals(), self, file, body, final, depth)
 
 
 def walk(
@@ -988,6 +1002,8 @@ def apply_statement(file: str, interp: Interpreter, span: tuple[int, int], text:
     if not rhs_text:
         return
     rhs = (span[0] + text.index(rhs_text), span[0] + text.index(rhs_text) + len(rhs_text))
+    # Resolve first: Go evaluates the right-hand side before rebinding `name`.
+    st = interp.resolve_request(file, rhs, ctx)
     ctx.env.pop(name, None)
     ctx.defs.pop(name, None)
     multi = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*:=", text)
@@ -1010,13 +1026,11 @@ def apply_statement(file: str, interp: Interpreter, span: tuple[int, int], text:
             if args:
                 ctx.marshal[first] = args[0]
             return
-        st = interp.resolve_request(file, rhs, ctx)
         if st is not None:
             ctx.env[first] = st
         else:
             ctx.defs[first] = rhs
         return
-    st = interp.resolve_request(file, rhs, ctx)
     if st is not None:
         ctx.env[name] = st
         return
@@ -1251,6 +1265,7 @@ class Extractor:
     def run(self) -> None:
         for rel in sorted(self.test_files):
             self.extract_file(rel)
+        i4.run(self, globals())  # rule I4: direct-handler calls, docs/42 §6.3
 
     def extract_file(self, rel: str) -> None:
         src, masked, _lits = self.sources[rel]
@@ -1612,22 +1627,7 @@ def build_stats(ex: Extractor) -> dict[str, Any]:
             "offline_decidable": offline,
             "with_json_subset": with_subset,
         },
-        "scope": {
-            "in_scope": [
-                "testutil.Call(t, handler, request)",
-                "authRequest(t, method, path, body)",
-                "http.Get(url)",
-                "http.NewRequest(method, url, body)",
-            ],
-            "not_extracted": {
-                "description": (
-                    "handler-direct calls that pass an httptest.ResponseRecorder and read "
-                    "w.Code, e.g. testHandler.CreateIssue(w, req); upstream bypasses its own "
-                    "router there, so a replayed status would differ for test-level reasons"
-                ),
-                "recorder_constructions": ex.recorder_sites,
-            },
-        },
+        "scope": i4.scope(ex),
         "skipped": {"total": len(ex.skips), "by_reason": order(by_reason)},
         "extraction_rate": {
             "extracted_sites": extracted_sites,
@@ -1749,7 +1749,7 @@ def emit(ex: Extractor, out_dir: str, commit: str, commit_date: str, scan: tuple
             "upstream_repo https://github.com/louloulin/multica\n"
             "upstream_commit %s\n"
             "upstream_date %s\n"
-            "extractor scripts/extract_upstream_fixtures.py\n"
+            "extractor scripts/extract_upstream_fixtures.py + scripts/extract_i4_direct_handler.py\n"
             "schema_version %d\n"
             "scan_dirs %s\n" % (commit, commit_date, SCHEMA_VERSION, " ".join(scan))
         )

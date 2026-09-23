@@ -3,6 +3,6 @@
 upstream_repo https://github.com/louloulin/multica
 upstream_commit 90e0bdf830436b3981b32a7017e1c18d41c7cdea
 upstream_date 2026-09-22T16:44:14+08:00
-extractor scripts/extract_upstream_fixtures.py
+extractor scripts/extract_upstream_fixtures.py + scripts/extract_i4_direct_handler.py
 schema_version 1
 scan_dirs server/internal/handler server/cmd/server

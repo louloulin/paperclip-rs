@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestArchiveRestoreAgent_PreservesSkillsInResponse@server/internal/handler/agent_test.go:1548#26",
+  "method": "POST",
+  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1/archive",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/agent_test.go",
+    "line": 1548,
+    "test": "TestArchiveRestoreAgent_PreservesSkillsInResponse",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (ArchiveAgent); replayed here against the router, which also applies its middleware",
+      "status read from the `archiveW.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

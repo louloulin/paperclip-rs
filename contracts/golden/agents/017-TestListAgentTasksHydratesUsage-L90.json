@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestListAgentTasksHydratesUsage@server/internal/handler/agent_task_usage_response_test.go:90#17",
+  "method": "GET",
+  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1/tasks",
+  "path_params": {},
+  "query": {
+    "include_usage": "true"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/agent_task_usage_response_test.go",
+    "line": 90,
+    "test": "TestListAgentTasksHydratesUsage",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

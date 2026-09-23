@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "comments/TestRemoveReactionOnTombstoneIsNotFound@server/internal/handler/comment_delete_test.go:472#1",
+  "method": "DELETE",
+  "path": "/api/comments/a runtime that this profile does not provide/reactions",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "emoji": "👍"
+  },
+  "expect": {
+    "status": 404,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/comment_delete_test.go",
+    "line": 472,
+    "test": "TestRemoveReactionOnTombstoneIsNotFound",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

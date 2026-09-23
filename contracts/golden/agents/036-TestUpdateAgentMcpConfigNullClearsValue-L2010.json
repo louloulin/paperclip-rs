@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestUpdateAgentMcpConfigNullClearsValue@server/internal/handler/handler_test.go:2010#36",
+  "method": "PUT",
+  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "mcp_config": null
+  },
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/handler_test.go",
+    "line": 2010,
+    "test": "TestUpdateAgentMcpConfigNullClearsValue",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

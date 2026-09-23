@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "issues/TestCreateIssueRejectsNonexistentAgentAssignee@server/internal/handler/handler_test.go:1384#39",
+  "method": "POST",
+  "path": "/api/issues",
+  "path_params": {},
+  "query": {
+    "workspace_id": "$testWorkspaceID"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "title": "Ghost agent assignee",
+    "assignee_type": "agent",
+    "assignee_id": "00000000-0000-0000-0000-000000000000"
+  },
+  "expect": {
+    "status": 400,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/handler_test.go",
+    "line": 1384,
+    "test": "TestCreateIssueRejectsNonexistentAgentAssignee",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "issues/TestCancelTask_SameIssue_Succeeds@server/internal/handler/daemon_test.go:1452#13",
+  "method": "POST",
+  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/cancel",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/daemon_test.go",
+    "line": 1452,
+    "test": "TestCancelTask_SameIssue_Succeeds",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}
