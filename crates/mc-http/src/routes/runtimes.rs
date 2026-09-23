@@ -1,23 +1,116 @@
-//! M3 anchor scaffold（LUM-1406）：runtimes / runtime-profile 台账切片 —— **空 router 占位**。
+//! `/api/runtimes*` + `/api/workspaces/:id/runtime-profiles*`（M3-4 / LUM-1427，15 条）。
 //!
-//! 由 M3-4（`feat/multica-rs-m3b-runtime-profiles`）填充真实 handler，覆盖 docs/15 §1.1 的
-//! 6 条 runtime-profile 路由 + §1.2 的 9 条 runtimes 台账路由；§1.2 剩下的 8 条异步往返
-//! （`update` / `models` / `local-skills`）归 M3-7。本文件已由
-//! `mount.rs::mount_slice_runtime()` 接好，切片只需在此实现 `router()`。
+//! 上游 handler 在 `server/internal/handler/runtime.go`（台账 / 用量 / 删除）、
+//! `runtime_profile.go`（自定义 runtime profile）与 `service/runtime_teardown.go`
+//! （拆除事务）；SQL 在 `server/pkg/db/queries/{runtime,runtime_profile,runtime_usage}.sql`。
+//! 路由与门禁见 `server/cmd/server/router.go`：`/api/runtimes` L2266-2293，
+//! `/api/workspaces/{id}/runtime-profiles` L1680-1681（member）+ L1717-1720（owner/admin）。
 //!
-//! 切片合并时要做的两件事（不在本片范围）：
-//! 1. **删除** `mount.rs` 里 M0 的 `/api/runtimes` 占位（`get().post()` 整块；
-//!    上游只有 `GET /api/runtimes/`，`POST` 无对应物，docs/15 §9.6.6）；
-//! 2. 删除占位会让 `route_parity.py` 报 2 条 regression —— 切片**不跑**
-//!    `--write-baseline`，由 M3 集成 cycle 统一刷新（docs/15 §7.3）。
+//! 本切片**只做同步台账面**：运行时实例的读 / 改名 / 改可见性 / 删除 + profile 台账
+//! CRUD + 四个用量聚合。8 条异步往返（`update` / `models` / `local-skills*`）属于
+//! M3-7（W3c），这里**不注册**。
 //!
-//! 注意（M1-D 实测踩过的坑）：axum 0.7（matchit 0.7）路径参数必须写 `:id`，不写 `{id}`。
+//! ## 鉴权
+//!
+//! 沿用 M1/M2 的 dev-mode 约定：当前用户来自 `X-Multica-User-Id`（[`AuthUser`]），
+//! workspace 来自 `X-Workspace-ID` header 或 `?workspace_id=`。**不用**
+//! `middleware::authn` 的 `require_*` 守卫 —— 那套走 `x-multica-session` / cookie，
+//! 与本仓既有测试约定分叉（见 `docs/39-M3-4-RUNTIME-PROFILES.md` §2）。
+//!
+//! 状态码语义与上游一致：未认证 **401**、非成员 **404**（不暴露资源是否存在）、
+//! 角色不足 **403**、profile 重名 **409**、活跃 agent 挡删除 **409**。
+//!
+//! ## 与上游的偏离
+//!
+//! 完整清单（含逐条理由）见 `docs/39-M3-4-RUNTIME-PROFILES.md` §4。要点：
+//! 标准错误体是本仓的嵌套 `{"error":{"code","message"}}`（上游扁平 `{"error":"msg"}`），
+//! 只有前端要按 `code` 分支的那几个 409 用扁平体；`runtime_id` / `profile id` 非法时
+//! 本地回 400 `"<field> must be a uuid"`；`Json<T>` 提取器对类型不符回 422（上游 400）。
+//!
+//! ## 尾斜杠
+//!
+//! 上游是 chi 的 `Route("/api/runtimes") + Get("/")`，客户端两种写法都能命中。
+//! matchit 0.7 把尾斜杠当**有效段**（`/x` 与 `/x/` 是两条不同路由，注册两条不会
+//! panic），所以这里对 `/api/runtimes` 与 `/api/runtimes/:runtimeId` 的
+//! PATCH/DELETE 各注册两条（`inbox.rs` 同款处理）。
+//!
+//! 文件布局（R7：单文件 800 行硬上限，`scripts/file_size_check.py` + 门 ⑩）：
+//! - `runtimes.rs`（本文件）：模块文档 + `router()`
+//! - `access.rs`：成员/角色校验、runtime 载入、错误与时间格式化
+//! - `protocol.rs`：`protocol_family` / `runtime_type` / `launch_header` 派生
+//! - `dto.rs`：响应 DTO + 请求体
+//! - `refusals.rs`：三类 409 拒绝体（活跃 agent / 计划漂移 / profile 实例）
+//! - `profiles.rs`：6 条 profile 路由
+//! - `ledger.rs`：4 条台账路由（list / patch / delete / unbind）
+//! - `usage.rs`：4 条用量路由（含 `days` 窗口与时区解析）
+#![allow(clippy::option_option)]
+
+mod access;
+mod dto;
+mod ledger;
+mod profiles;
+mod protocol;
+mod refusals;
+mod usage;
+
+use axum::routing::{get, patch, post};
 use axum::Router;
 use std::sync::Arc;
 
 use crate::state::AppState;
 
-/// 空切片：scaffold 占位，等对应 M3 切片填入真实路由。
+/// `/api/runtimes*` + `/api/workspaces/:id/runtime-profiles*`（15 条上游路由）。
+///
+/// 注意：axum 0.7（matchit 0.7）路径参数写 `:id`；`{id}` 会被当字面量段，编译通过但恒 404。
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        // ---- 自定义 runtime profile（workspace 作用域，id 是 workspace） ----
+        .route(
+            "/api/workspaces/:id/runtime-profiles",
+            get(profiles::list_profiles).post(profiles::create_profile),
+        )
+        .route(
+            "/api/workspaces/:id/runtime-profiles/:profileId",
+            get(profiles::get_profile)
+                .patch(profiles::update_profile)
+                .put(profiles::update_profile)
+                .delete(profiles::delete_profile),
+        )
+        // ---- 运行时台账 ----
+        .route("/api/runtimes", get(ledger::list_runtimes))
+        .route("/api/runtimes/", get(ledger::list_runtimes))
+        .route(
+            "/api/runtimes/:runtimeId",
+            patch(ledger::update_runtime).delete(ledger::delete_runtime),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/",
+            patch(ledger::update_runtime).delete(ledger::delete_runtime),
+        )
+        // ---- 用量 / 活动 ----
+        .route(
+            "/api/runtimes/:runtimeId/usage",
+            get(usage::get_runtime_usage),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/usage/by-agent",
+            get(usage::get_runtime_usage_by_agent),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/usage/by-hour",
+            get(usage::get_runtime_usage_by_hour),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/activity",
+            get(usage::get_runtime_activity),
+        )
+        // ---- 确认删除（cascade）；archive-* 是装过的旧客户端走的遗留路径，同一 handler ----
+        .route(
+            "/api/runtimes/:runtimeId/unbind-agents-and-delete",
+            post(ledger::unbind_agents_and_delete),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/archive-agents-and-delete",
+            post(ledger::unbind_agents_and_delete),
+        )
 }
