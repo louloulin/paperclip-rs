@@ -30,3 +30,12 @@
 //!   `migrations/upstream/`（`docs/42` §2）。
 //! - **不引入本仓自造列**。
 //! - 路径参数一律写 `:id`（matchit 0.7 把 `{id}` 当字面量段：编译过、恒 404）。
+//!
+//! # M4-2 填充（LUM-1473）
+//!
+//! 本 crate 只放了**纯领域逻辑**：[`status`]（member presence 派生，上游 `squad.go`
+//! L591–L653 的 `deriveRuntimeAvailability` / `deriveSquadMemberStatus`）。SQL 与 HTTP 形状
+//! 分别在 `mc_repos::squad` 与 `mc_http::routes::squads`；本 crate 不碰 DB、不碰 axum，
+//! 因此那两段的全部分支可以用单元测试穷举（3×3×2），不必起库。
+
+pub mod status;
