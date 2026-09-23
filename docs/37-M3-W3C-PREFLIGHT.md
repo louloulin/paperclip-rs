@@ -2168,3 +2168,145 @@ gaps by owner: M6=55  M4=45  M9=33  M7=24  M8=24  M5=20  M3+=16  M2-A=14  M3=11 
 它已经产过 `i4-out/**` fixture，issue 仍是 `todo`）
 ⇒ 真正在跑的是 `LUM-1472` + `LUM-1474` + 本 cycle = **3/3 满位**，所以只派这两片；
 `LUM-1473`（M4-2 squad）与 `LUM-1471` 的重试留给 15:00 cycle（那时 `LUM-1470`/本 cycle 都已退出，至少能开一片）。
+
+## 24. 14:30 cycle 落地记录（`LUM-1516`）—— 无 open PR、并发位只剩 1 ⇒ 重派 `LUM-1474`（LPT），并给它的上一 attempt「静默死亡」取证；base 三门复验
+
+### 24.0 一句话
+
+base `7401ee7` 上 **0 个 open PR**、**0 例行外改动**（三行门禁表见 §24.1）；并发位实测只剩 **1**（本 cycle + `LUM-1472` = 2/3），
+按 **LPT（最长片优先）**把它给了 M4-3（15 条）而不是 M4-2（10 条）；本轮的主要产出是**把 `LUM-1474` 上一 attempt
+「记 completed、产出为零」的静默死亡查清并落成可复核的判据**（§24.3），以及实测出**重派会续用同一 session/workdir**
+这一条对后续所有 cycle 都有用的机制事实（§24.4）。
+
+### 24.1 起手实测（base `7401ee7`；GitHub `/pulls?state=open` = **0**）
+
+```bash
+bash scripts/gates.sh --only route-parity,file-size,conformance   # 3/3 PASS（1s / 0s / 54s）
+```
+
+| 门 | exit | 耗时 | 读数 |
+| --- | --- | --- | --- |
+| ⑦ route-parity | 0 | 1s | 见下方代码块 |
+| ⑩ file-size | 0 | 0s | 本 cycle 未新增代码文件 |
+| ⑨ conformance | 0 | 54s | `report matches crates/mc-conformance/report.json`（快照未漂移） |
+
+```
+upstream 456 (commit f41fae6b08fb) | local 242 registered | baseline 242
+implemented  196 real +   4 placeholder =  200 / 456   known_gap  256   unclaimed    0   regression   0   local_only   11
+  ⑦ 第二条：=> 0 defect(s) from findings, 0 warning(s); 4 allowlisted (known debt, see docs/37 §15.3)
+```
+
+逐字与 §23.8 的合并树读数相同（本地 242 / baseline 242 / 196+4 / known_gap 256 / regression 0），
+**不跑 ⑥/⑧ 的依据**（同 §23.1）：`git diff --stat fd3c81c 7401ee7` ⇒ **只有 `docs/37` 一个文件 +38 行**
+（`e55ac90` + `7401ee7` 两个 docs-only commit），而 `fd3c81c` 已跑过 `--with-db` **10/10**。
+
+### 24.2 并发位账（`06:39Z` 实测）与「只派 1 片」的取舍
+
+```bash
+multica daemon status --output json   # running_task_count=2, resource_wait_task_count=0
+grep -a "task=01a0ccea-4f85-7abd-a441-a2728e008efe" ~/.multica/daemon.log | tail -1   # 06:38:41Z 仍在工具调用
+```
+
+- 真在跑：本 cycle（`01a0ccf4-…4377ffeec157`）+ `LUM-1472`（`01a0ccea-…a2728e008efe`）= **2/3**；
+- 已退出：`LUM-1507`（`06:20:12Z` `completed`）、`LUM-1474` 上一 attempt（`06:27:16Z` 记 `completed`，但见 §24.3）、
+  `LUM-1471` 最新 attempt（`06:16:39Z` `failed`，并发限制——**基础设施**，§23.8）；
+- ⇒ **只剩 1 个位**，只能派 1 片。
+
+**选法：LPT（Longest Processing Time first）**——M4-3 chat 读面 **15 条** > M4-2 squad **10 条** > M4-0b 抽取器（0 条路由，纯工具面），
+长片先动以缩短 M4 波次的 makespan ⇒ 重派 **`LUM-1474`（M4-3）**。`LUM-1473`（M4-2）与 `LUM-1471` 重试仍留队列（§24.6 排位）。
+
+### 24.3 `LUM-1474` 上一 attempt「静默死亡」取证（本 cycle 的主要产出）
+
+**现象**：run `01a0ccea-4fec-792b-8efe-68db42a17c32` 被 daemon 记为**成功**，但产出为零 ——
+workdir checkout 干净（`git status --short` 只有 `dbenv.sh` / `dbpw.txt` 两个临时文件，**0 commit**）、issue 无评论、
+远端**没有** `agent/devbox5/68db42a17c32` 分支。
+
+**取证（两条独立证据都指向「provider 空回复」）**：
+
+```bash
+grep -a "task=01a0ccea-4fec-792b-8efe-68db42a17c32" ~/.multica/daemon.log | tail -3
+# 06:27:16.581 INF task phase recorded … task_phase=turn_completed phase_elapsed_ms=520590
+# 06:27:16.581 INF agent finished … status=completed duration=8m53s tools=82
+# 06:27:16.581 DBG agent result detail … status=completed output_bytes=0 agent_error="" models_with_usage=1
+```
+
+session `~/.multica/pi-sessions/20260923T061824.353921136.jsonl` 的**末条 assistant 只有 `thinking`**：
+既无 `text` 也无 `toolCall`、`stopReason=stop`、`usage.totalTokens=0` ⇒ harness 判「turn 自然结束」⇒ run 退出、
+daemon 视为 `completed`（`agent_error=""`）⇒ **永远不会自动重试、也不会有失败告警**。这是「静默死亡」的完整机制。
+
+**同类空消息的今日全量盘点**（判据 = assistant 消息里既无 `text` 也无 `toolCall`；扫 `~/.multica/pi-sessions/*.jsonl`）：
+
+| 类 | 条数 | `stopReason` | daemon 侧表现 | 例子 |
+| --- | --- | --- | --- | --- |
+| provider 错误 | 16 | `error`（`totalTokens=0`） | `failed`/`blocked`，**会**重试 | `03:42` 那一簇；`06:15:50` 并发限制（`LUM-1471`） |
+| 长度截断 | 2 | `length`（`totalTokens≈124.4k`） | 同上 | `01:51:49`、`03:25:15` |
+| **空回复** | **1** | `stop`（`totalTokens=0`） | **`completed`（静默）** | `06:26:47` = 本片 |
+
+⇒ 今天只有 **1** 例空回复（低频 flake），但它恰恰是**唯一没有失败信号**的一类。
+**编排侧动作（从本 cycle 起纳入每轮体检）**：对「daemon 记 `completed` 但 `output_bytes=0`」的 run，
+再查 `issue 有无评论 / 远端有无分支`；两者都空 ⇒ 按静默死亡处理（重派），**不要**读成「本片无需改动」。
+查法：`grep -a "task=<id>" ~/.multica/daemon.log | tail -3` + `git ls-remote origin 'refs/heads/agent/devbox5/*'`。
+
+### 24.4 重派机制与「会话续跑」实测（对后续所有重派都成立）
+
+```bash
+multica issue assign 01a0cbbd-aa27-7a9e-b9f5-72d8b979a849 --to-id 3c6087f9-…   # 用同一位 agent：**不触发**（指派没变化）
+multica issue status 01a0cbbd-aa27-7a9e-b9f5-72d8b979a849 backlog --no-start
+multica issue status 01a0cbbd-aa27-7a9e-b9f5-72d8b979a849 todo                # ⇒ 触发（06:44:02Z 新 task 01a0cd01-cc41-…）
+```
+
+- **`assign` 到同一位 agent 是 no-op**（执行后 20s 内 daemon 无新 `task received`）；**`backlog → todo` 才会开跑**。
+- **关键机制**：daemon 在 `resume_reachable=true` 时**续用同一 session 与同一 workdir/分支**——
+  `06:44:02.403 INF resuming session … 20260923T061824.353921136.jsonl`、`resume_session=true`、
+  workdir 仍是 `lum-1474-68db42a17c32`、分支仍是 `agent/devbox5/68db42a17c32`。
+  ⇒ 「重派 = 9 分钟侦察白费」的假设（本 cycle 起手时写进 `LUM-1474` 正文的那段）**在 session 可续时并不成立**：
+  续跑后 `06:46:05Z` 已经开始写 `crates/mc-chat/src/session.rs` / `message.rs`。
+- ⚠️ **反面**：`length` 那一类（~124.4k tokens 的 thinking 截断）说明续跑并非无代价——同一个 session 越跑越接近上限。
+  本 session 在 `06:47:26Z` 已触发一次 **compaction**；**若它再静默死亡，下一次应换新 workdir 重派**（新 run/新 session），
+  不要第三次续跑同一个已接近上限的 session。
+
+### 24.5 已落盘的派发纪律（写进 `LUM-1474` 正文，本轮修订）
+
+1. **前 25 个工具调用内落下第一个文件**：上一 attempt 的 82 次工具调用**全是只读侦察**，死在「马上就要写代码」那一刻；
+   侦察与写作要交替，不要串成一长段只读期。
+2. **每完成一个模块就 `git add` + `git commit`，第一次 commit 后立刻 `git push -u origin <branch>`**：
+   再遇同类 flake 时至少留下可被下一个 cycle 直接抢救的产物（本次什么都没留下 = 9 分钟白跑）。
+
+### 24.6 下一步（15:00 cycle 排位）
+
+1. **合并窗口**：`LUM-1472`（M4-1，分支 `agent/devbox5/a2728e008efe-1790144350`，已在改 `crates/mc-repos/src/project.rs`）
+   与 `LUM-1474`（M4-3）若交上 PR ⇒ 走真 merge 判据链（`--is-ancestor` → `merge-tree --write-tree` → 合并树 `--with-db` 10/10）再推 base；
+2. **剩余位排位**：**`LUM-1473`（M4-2 squad 10 条）> `LUM-1471` 重试（M4-0b 抽取器 I4，`i4-out/**` fixture 在 `lum-1471-3729eee9c3cd` workdir）> `LUM-1440`（M3-8-p0 execenv，与 `mc-daemon` 同 crate，避免与 M4 并行撞 `Cargo.lock`）**；
+3. **M4 收口链不变**：`M4-4`（`LUM-1475`，依赖 ws 用户面广播 ⇒ `LUM-1506` 或 docs/42 §7.4 R3 降级）→ `M4-INT`（`LUM-1476`：
+   ⑦ 基线**一次性** 242→287 + ⑨ 快照同批重生成）。
+
+### 24.7 本 cycle 没做什么（边界）
+
+没开 PR、没合并（base 无 open PR）、**没改一行 Rust**、没加迁移、没碰 `mount.rs` / allowlist / ⑦ 基线；
+没跑 ⑥/⑧（依据见 §24.1）；没派 `LUM-1473`/`LUM-1471`（只有 1 个空位，LPT 判给了 M4-3）。
+
+### 24.8 复算命令（§24.1–§24.4 逐条可重跑）
+
+```bash
+git fetch origin feat/multica-rs-initial; git log --oneline -1 origin/feat/multica-rs-initial  # 7401ee7
+git diff --stat fd3c81c 7401ee7                                                                # docs/37 一个文件 +38
+bash scripts/gates.sh --only route-parity,file-size,conformance                               # 3/3 PASS
+python3 scripts/slash_alias_audit.py --quiet; echo $?                                          # 0
+python3 scripts/slash_alias_audit.py --declared docs/fixtures/m4-declared-routes.tsv | tail -1 # 15 defect(s), 0 allowlisted
+multica daemon status --output json | grep -o '"running_task_count": [0-9]*'
+grep -a "task=01a0ccea-4fec-792b-8efe-68db42a17c32" ~/.multica/daemon.log | tail -1  # completed + output_bytes=0 = 静默死亡
+grep -a "task=01a0cd01-cc41-7d87-9b33-3ee1737c1af5" ~/.multica/daemon.log | head -8  # 06:44:02Z 重派 + resuming session
+# 今日「空回复」全量盘点（判据：assistant 消息既无 text 也无 toolCall）
+python3 - <<'EOF'
+import json,glob,os,datetime
+for p in sorted(glob.glob(os.path.expanduser('~/.multica/pi-sessions/*.jsonl')), key=os.path.getmtime):
+    for line in open(p, errors='ignore'):
+        r=json.loads(line) if line.strip() else None
+        if not r: continue
+        m=r.get('message',{}) or {}
+        c=m.get('content')
+        if m.get('role')=='assistant' and isinstance(c,list) and not any(x.get('type') in ('text','toolCall') for x in c):
+            print(r.get('timestamp'), os.path.basename(p), [x.get('type') for x in c],
+                  m.get('stopReason'), (m.get('usage') or {}).get('totalTokens'))
+EOF
+```
