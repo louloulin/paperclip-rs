@@ -121,7 +121,9 @@ pub fn parse_page_params(
     let created_at = DateTime::parse_from_rfc3339(raw_time)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|_| PageError::InvalidCursor)?;
-    let id = Uuid::parse_str(raw_id.trim()).map_err(|_| PageError::InvalidCursor)?;
+    // 逐字等价：上游 `util.ParseUUID` 走 `pgtype.UUID.Scan`，**不** trim 空白、
+    // 也不接受首尾空格（`" <uuid> "` → 400 `invalid cursor`），故这里同样不 trim。
+    let id = Uuid::parse_str(raw_id).map_err(|_| PageError::InvalidCursor)?;
     Ok(PageParams {
         limit,
         cursor: Some(Cursor { created_at, id }),
@@ -129,8 +131,11 @@ pub fn parse_page_params(
 }
 
 /// 上游查询串取值的空值语义：`?limit=` 与没传等价（Go 的 `Get` 拿到 `""` 会走默认分支）。
+///
+/// 与 Go 一样**只**判空串，不 trim：`?before_id=%20` 在上游是「给了游标但解析失败」
+/// ⇒ 400 `invalid cursor`，不是「没给游标」。
 fn non_empty(raw: Option<&str>) -> Option<&str> {
-    raw.map(str::trim).filter(|v| !v.is_empty())
+    raw.filter(|v| !v.is_empty())
 }
 
 /// 分页结果：一页消息 + `has_more` + 下一页游标。
@@ -252,6 +257,24 @@ mod tests {
         assert_eq!(
             parse_page_params(Some("10"), Some("2026-09-23T06:27:16Z"), Some("nope")).unwrap_err(),
             PageError::InvalidCursor
+        );
+        // 上游不 trim：带空白的游标是「解析失败」而不是「等价于没给」。
+        assert_eq!(
+            parse_page_params(Some("10"), Some(" "), Some(&id.to_string())).unwrap_err(),
+            PageError::InvalidCursor
+        );
+        assert_eq!(
+            parse_page_params(
+                Some("10"),
+                Some("2026-09-23T06:27:16Z"),
+                Some(&format!(" {id} "))
+            )
+            .unwrap_err(),
+            PageError::InvalidCursor
+        );
+        assert_eq!(
+            parse_page_params(Some(" 10"), None, None).unwrap_err(),
+            PageError::InvalidLimit
         );
     }
 

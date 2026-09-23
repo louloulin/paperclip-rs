@@ -7,7 +7,7 @@
 //! | --- | --- |
 //! | 每人最多 5 个置顶 agent | `chat_pinned_agent.go:34 maxChatPinnedAgents` |
 //! | 已置顶的 agent 重复 pin → **幂等**（不算第 6 个、不改位置） | `PinChatAgent` 的 `already` 分支 + `ON CONFLICT` |
-//! | 位置从 `max(position) + 1` 起（`0` 起算，新 pin 排最后） | `chat.sql` 的 `PinChatPinnedAgent` |
+//! | 位置从 `max(position) + 1` 起（空栏 `COALESCE(MAX(position), 0) + 1` ⇒ **第一条是 `1.0`**） | `chat.sql` 的 `GetMaxChatPinnedAgentPosition` + `CreateChatPinnedAgent` |
 //! | 列表按 `position ASC, created_at ASC` | `chat.sql` 的 `ListChatPinnedAgents` |
 //! | unpin **幂等**：没这一行也回 204 | `UnpinChatAgent`（不查 rows affected） |
 
@@ -17,10 +17,14 @@ use uuid::Uuid;
 pub const MAX_PINNED_AGENTS: usize = 5;
 
 /// pin 被拒的原因。
+///
+/// ⚠️ 状态码是 **400**（上游 `chat_pinned_agent.go:120` 的 `writeError(w, http.StatusBadRequest,
+/// "pinned agent limit reached")`），不是 409 —— 本仓早年把 `PinError` 写成 `too many pinned
+/// agents` / 409 是**错的**，以本文件为准。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PinError {
-    /// 槽位已满且目标不在栏里 → 409 `too many pinned agents`。
-    #[error("too many pinned agents")]
+    /// 槽位已满且目标不在栏里 → 400 `pinned agent limit reached`。
+    #[error("pinned agent limit reached")]
     LimitReached,
 }
 
@@ -40,9 +44,12 @@ pub fn already_pinned(existing_agent_ids: &[Uuid], agent_id: Uuid) -> bool {
     existing_agent_ids.contains(&agent_id)
 }
 
-/// 新 pin 的位置：`max(position) + 1`；空栏从 `0` 起（上游 `COALESCE(MAX(position), -1) + 1`）。
+/// 新 pin 的位置：`COALESCE(MAX(position), 0) + 1`。
+///
+/// 空栏 ⇒ `1.0`（上游 `GetMaxChatPinnedAgentPosition` 的兜底值是 `0` 而**不是 `-1`**；
+/// 已 pin 的第一条 position 就是 `1.0`，别改成 0 起算 —— 那会让存量数据与新建数据的位置语义混用）。
 pub fn next_position(max_position: Option<f64>) -> f64 {
-    max_position.unwrap_or(-1.0) + 1.0
+    max_position.unwrap_or(0.0) + 1.0
 }
 
 #[cfg(test)]
@@ -71,9 +78,10 @@ mod tests {
     }
 
     #[test]
-    fn positions_start_at_zero_and_append() {
-        assert!(next_position(None).abs() < f64::EPSILON);
-        assert!((next_position(Some(0.0)) - 1.0).abs() < f64::EPSILON);
+    fn positions_start_at_one_and_append() {
+        // 空栏 `COALESCE(MAX(position), 0)` = 0 ⇒ 第一条 1.0。
+        assert!((next_position(None) - 1.0).abs() < f64::EPSILON);
+        assert!((next_position(Some(1.0)) - 2.0).abs() < f64::EPSILON);
         assert!((next_position(Some(4.0)) - 5.0).abs() < f64::EPSILON);
     }
 }
