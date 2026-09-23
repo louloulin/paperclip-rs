@@ -162,7 +162,10 @@ async fn issue_reactions_metadata_and_properties() {
         .get("team")
         .is_none());
 
-    // properties：写 → 删（JSONB key = :propertyId）
+    // properties：M2-E（LUM-1370）起值写入必须指向一个**已存在的 property 定义**，
+    // 因此 `severity` 这种非 UUID key 现在直接 400（happy path 见
+    // `tests/label_property.rs`，那条路径要求 admin 成员才能建定义，而本文件的种子
+    // 是普通 member）。
     let res = app
         .clone()
         .oneshot(req(
@@ -174,23 +177,11 @@ async fn issue_reactions_metadata_and_properties() {
         ))
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        body_json(res.into_body()).await["properties"]["severity"],
-        "p1"
+        body_json(res.into_body()).await["error"]["code"],
+        "validation_error"
     );
-    let res = app
-        .clone()
-        .oneshot(req(
-            "DELETE",
-            &format!("/api/issues/{issue_id}/properties/severity"),
-            ws,
-            user,
-            None,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
 
     cleanup(&pool, ws, user).await;
 }

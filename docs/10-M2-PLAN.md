@@ -173,7 +173,12 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
 | `issue.metadata JSONB` | **存在**（`0001:152`） | 同 | metadata 读写可实现 |
 | `comment_reaction` / `issue_reaction` / `issue_subscriber` | 存在（scaffold `0004`） | 026 / 027 / 015 | ✓ |
 
-对三个切片的实际影响：
+> **⚠️ 更正（2026-09-23 22:10，LUM-1370 / M2-E 交付）**：上表的「不存在」是 **W0-B2 之前的**快照。
+> 本仓 `migrations/upstream/**` 现已逐字镜像上游全部 566 条迁移 ⇒ `issue_label`（001:75 + 059 + 162）、
+> `issue_to_label`（001:82）、`issue_property`（191 + 341）、`issue.properties`（0001:153）**全部现成**，
+> M2-E **一行迁移都没写**就完成了定义目录（`docs/59-M2-E-LABEL-PROPERTY.md` §2 有逐表 DDL 事实）。
+
+对三个切片的实际影响（**下面前两条的结论已被 M2-E 落实/推翻**，保留原文作历史记录）：
 
 - `GET/PUT/DELETE /api/issues/{id}/metadata/{key}` → 用 `issue.metadata JSONB`，**可实现**。
 - `PUT/DELETE /api/issues/{id}/properties/{propertyId}` → 值可落 `issue.properties JSONB`，但
@@ -181,17 +186,25 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
 - `GET/POST /api/issues/{id}/labels`、`DELETE /api/issues/{id}/labels/{labelId}` → **无表，不可实现**
   → 留 `501` / TODO。**不要在 M2 切片里新开迁移文件**（`0005` 编号由集成 master 统一分配）。
 
+> **2026-09-23 复测**：上面两条都已在 **M2-E（`LUM-1370`）**闭环 —— 3 条 labels 路由从 `501` 桩换成
+> 真实现（并**补上**遗漏的 `POST /api/issues/{id}/labels`）、值面加了类型/归档/actor/16KB 契约；
+> `docs/11` §6 的对应行已勾掉。同时确认：M2-E **没有**新开迁移文件（`migrations/**` 零改动）。
+
 ### 5.2 无 milestone 认领的上游路由（覆盖缺口）
 
 | 上游路由块 | router.go 行号 | 条数 | 归属 |
 | --- | --- | --- | --- |
-| `/api/labels`（GET/POST `/`、GET/PUT/DELETE `/{id}`） | L2041–L2051 | 5 | **M2-E（LUM-1370，backlog）** |
-| `/api/properties`（GET/POST `/`、GET/PATCH `/{id}`） | L2031–L2039 | 4 | **M2-E（LUM-1370，backlog）** |
+| `/api/labels`（GET/POST `/`、GET/PUT/DELETE `/{id}`） | L2041–L2051 | 5 | ✅ **M2-E（LUM-1370）已交付**（`docs/59`）|
+| `/api/properties`（GET/POST `/`、GET/PATCH `/{id}`） | L2031–L2039 | 4 | ✅ **M2-E（LUM-1370）已交付**（`docs/59`）|
 | `/api/quick-actions`（GET/POST `/`、PATCH/DELETE `/{id}`） | L2021–L2029 | 4 | autopilot 域（M3+，未立项） |
 | `POST /api/issues/{id}/quick-actions/{quickActionId}/{run,render}` | L1995–L1996 | 2 | 依赖 task queue（M3+，未立项） |
 
 注：M2-A 只覆盖 issue-**从属**的 `/api/issues/{id}/labels`、`/properties`，上游的**定义目录**
 （`/api/labels`、`/api/properties`）在 §0／§2 里从未出现——这是本计划的覆盖盲区，已单独立 **LUM-1370（M2-E）**。
+
+> **2026-09-23**：M2-E 已按上表交付 9 条定义目录路由（+ 闭环 `/api/issues/{id}/labels` 那条
+> M2-A 遗留缺口）；实测 `slash_aliases` 53 → 62（+9 条尾斜杠别名，逐条对应上游 chi `Mount` 形态），
+> `known_gap 191 → 181`。剩下的 6 条（quick-actions）仍无 milestone。
 
 ### 5.3 计数更正与实测基线
 

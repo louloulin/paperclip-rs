@@ -88,6 +88,11 @@ ListIssues L1164 / GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Gro
 
 占位端点**注册在真实 path 上**（不是 404），便于前端/M3 增量替换时按 path 对账。
 
+> **2026-09-23**：M2-E（`LUM-1370`）后，本面的 `501` 桩只剩 `timeline`（M9）、`attachments`（M5）、
+> `pull-requests`（M9）、`quick-actions`（M3+ 未立项）与 `comments/trigger-preview`（M3）；
+> `labels` 三键已换真实现（见 §6）。因此 `tests/issues/auth.rs` 的 501 canary **已换到**
+> `GET /api/issues/{id}/pull-requests`（原端起点的 canary 语意不变）。
+
 ## 3. Repo 对外接口（**M2-B / M2 集成对账用**）
 
 `IssueRepo`（`mc_repos::issue`，`new(db: Db)`，错误类型 `mc_repos::RepoError`：
@@ -168,8 +173,8 @@ PG `23505 → Conflict`、其余 → `RepoError::Db`。**HTTP 层**再翻译：
 | `active-task` / `task-runs` / `rerun` / `tasks/:taskId/cancel` / `usage` / `limit-usage` / `preview-trigger` | M3 | 需 agent task queue |
 | `attachments` | M5 | 需 storage + `attachment` 表（上游 029） |
 | `pull-requests` | M9 | 需 PR 同步 |
-| `labels`（GET/POST/DELETE） | 待立项（M2-E 或 M3） | **表不存在**；需先由 master 分配迁移编号 |
-| `properties` 定义目录（`/api/properties`） | 待立项（M2-E） | 值面已可用（JSONB） |
+| `labels`（GET/POST/DELETE） | ✅ M2-E / `LUM-1370` | **已交付**（`docs/59`）：目录 `/api/labels` + issue 侧三键真实现，`501` 桩已移除 |
+| `properties` 定义目录（`/api/properties`） | ✅ M2-E / `LUM-1370` | **已交付**（`docs/59`）：定义 CRUD + 值面类型/归档/actor/16KB 契约 |
 | `/api/issues/:id/comments*` | M2-B / LUM-1350 | 含 `trigger-preview`（M3） |
 | `/api/issues/:id/subscribers` + `subscribe` / `unsubscribe[/subtree]` | M2-C / LUM-1349 | 注册在 `routes/subscribers.rs` |
 
@@ -200,7 +205,8 @@ HTTP e2e（`crates/mc-http/tests/issues/main.rs`，`test-util` feature）：
 ```
 MULTICA_TEST_DATABASE_URL=postgres://multica:multica@127.0.0.1:5432/multica_test \
   cargo test -p mc-http --features test-util --test issues -- --ignored
-# 7 个：auth/workspace/501 形态（含 quick-create 400→201）、CRUD 全链 + revision 409 +
+# 7 个：auth/workspace/501 形态（canary 现为 `pull-requests`，M2-E 后 labels 已真实现；
+#   含 quick-create 400→201）、CRUD 全链 + revision 409 +
 #   终态迁移 409、filter/search/grouped、children/move/batch、
 #   metadata/properties/reactions（幂等）、status catalog 生命周期（含 member 写 → 403）、
 #   create/update 的 assignee 存在性 + attachment_ids 形态校验（LUM-1410，含“400 在写库之前”

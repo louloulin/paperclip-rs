@@ -119,15 +119,16 @@ async fn issue_auth_workspace_and_not_implemented() {
     assert_eq!(quick["origin"], "quick_create");
     assert_eq!(quick["status"], "todo");
 
-    // 501 占位（M3 能力）。这条断言换过两次落点：先是 `/api/issues/table/groups`，
+    // 501 占位（M3 能力）。这条断言换过三次落点：先是 `/api/issues/table/groups`，
     // M2-D（LUM-1355）实现后改用 `preview-trigger`，M3-6（LUM-1429）把它也实现成
-    // 真实路由（入队预演 200）后改用 `GET /api/issues/:id/labels` —— 本仓 schema 里
-    // 连 `issue_label` 表都不存在（见 `docs/10-M2-PLAN.md` §5），是当前最稳的缺口。
+    // 真实路由（入队预演 200）后改用 `GET /api/issues/:id/labels`；M2-E（LUM-1370）
+    // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests` —— 它要等 M9 的
+    // PR 同步（见 `docs/11-M2-ISSUE.md` §5 缺口表），是当前最远的缺口。
     let res = app
         .clone()
         .oneshot(req(
             "GET",
-            &format!("/api/issues/{}/labels", Uuid::new_v4()),
+            &format!("/api/issues/{}/pull-requests", Uuid::new_v4()),
             ws,
             user,
             None,

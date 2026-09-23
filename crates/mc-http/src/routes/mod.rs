@@ -63,6 +63,12 @@ pub mod autopilots;
 pub mod issue_wakeups;
 pub mod webhooks;
 
+// M2-E（LUM-1370）：标签目录 + property 定义目录。两个面各自一个独立文件；
+// `/api/issues/:id/labels*` 那 3 条注册在 `issues/mod.rs` 里指向 `labels.rs` 的
+// `pub(crate)` handler（注册留在原地，避免同 path+method 重复注册 panic）。
+pub mod labels;
+pub mod properties;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }
