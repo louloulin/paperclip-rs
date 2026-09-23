@@ -4958,3 +4958,55 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【锚点的「预测命中」是最好的交付证据】** §51.4 用 **delta 平移**现算的 8 项预测（325/263+0/193/57/0/0/9/5）
   本轮**逐项命中** ⇒ 说明 `docs/57` §6.1 的 delta 模型在 M6 上依然准确；后续每片都应照此自检，
   一旦某项偏了，先怀疑实现漏交，而不是先改基线。
+---
+
+## §55 07:00 cycle（`LUM-1697`）：**合并 #65（M6-0 anchor）⇒ base `d62558b`，M6 骨架落定**；空位只有 1 个 ⇒ 只派 M6-1（`LUM-1666`）；回收 21G 热 `target/`
+
+### 55.1 起手三连（23:00Z 实测）
+- 磁盘：`/` **21G 可用**（27G/49G，57%）。
+- `git fetch origin feat/multica-rs-initial` = **`fe0dde6`**（未动，与 §53.3b 收尾值一致）。
+- 认证 GH `pulls?state=open` = **1** 条：**#65**（M6-0 anchor，head `5c98bd27`，base 记录 `fe0dde64`；`mergeable=true / mergeable_state=clean`）。
+- 在飞采样（`pgrep -f '^pi$'` + `/proc/<pid>/cwd`）：`LUM-1370`（M2-E，pid 11370，cwd = `lum-1370-fa83ddd3bdff/workdir`，**正在跑** `cargo test -p mc-http --test issues -- --ignored`，`target/` 9.3G）∥ 本 cycle（pid 46410）。`LUM-1665` 的 run **已终态**（无 pi 进程占用其 workdir）⇒ 只剩「PR 未合」一件事。
+- **空位 = 3 − 2 = 1 个**（本 cycle 自己占一个位）。§53.4 写的「有空位即派 stage 2 三片」在这一轮**做不到**：三片需要 3 个位，实际只有 1 个。
+
+### 55.2 PR #65（M6-0 anchor）合并判据链（逐条读数）
+1. **预检**（`git -c user.name=… merge --no-ff --no-commit 5c98bd2`）⇒ `Automatic merge went well`；staged `--numstat` 汇总 = **81 files / +3185 / −453**，与 PR API **逐字相等**；staged `Cargo.lock` = **+338/−7**；锚点文件 `Cargo.toml`(**+18/−1**) / `crates/mc-http/Cargo.toml`(**+16/−0**) / `routes/mount.rs`(**+69/−8**) / `routes/mod.rs`(**+15/−0**) / `state.rs`(**+155/−0**) 均在 staged 面内 —— 与 §54.1 的自述面**逐字一致**。
+2. **base 祖先判定**：`git merge-base --is-ancestor fe0dde6 5c98bd2` ⇒ **真** ⇒ **PR 合并树 == 分支 tip 树**；两侧 tree 逐字相等 = **`e63c659661c17cc1db1dde2429532bc3eec96d43`** ⇒ 按 §42.2 直接在该片自己的热 `target/` 跑门禁（免冷建）。
+3. **合并树门禁当场重跑**（`lum-1665-356d10293a55/workdir/paperclip-rs`，HEAD = `5c98bd2` 且工作树 0 未提交；cycle 一次性真库 `multica_cyc1697` / 角色 `mc_cyc1697`）：
+   `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ **9/10 / 339s**（①1s ②71s ③26s ④22s ⑤35s ⑥141s ⑧**0s → FAIL(2)** ⑦1s ⑨42s ⑩0s），⑧ 修复前置后单跑 **PASS / 35s** ⇒ **合计 10/10**。
+   **⑧ 首跑 exit 2（0s）不是代码问题**：`schema_drift.py` 要 `CREATE DATABASE schema_probe_*`，而本轮角色没给 `CREATEDB` ⇒ 报 `permission denied to create database`；`ALTER ROLE mc_cyc1697 CREATEDB` 后 `--only schema-drift` 单跑 ⇒ **PASS(35s)**。
+   ⑦ 逐字（当轮日志）：`upstream 456 (commit f41fae6b08fb) | local 325 registered | baseline 325`；`implemented 263 real + 0 placeholder = 263 / 456`、`known_gap 193`、**`unclaimed 0` / `regression 0`**、`local_only 9`；`OK: every upstream route is either implemented or owned`。
+   ⑤ = **1378 passed / 0 failed**（101 target）；⑥ = **372 passed / 0 failed**（21 target）；⑨（`--no-db`）= `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`、`report matches …report.json`；⑩ = 0 违规。
+   ⇒ 与 §54.3 的表格**逐项同值**（同一棵树、同一条判据链）。
+4. **钉 head 合并**：`PUT /pulls/65/merge` 带 `"sha":"5c98bd27286d1cc3fdbc0c3d219d29b177108415"`（提交前重取 mergeable：`true / clean`）⇒ `merged=true`，merge commit = **`d62558b31f0751f33b4f23adbb7c55276cce6215`**。
+5. **复核**：`tree(origin/feat/multica-rs-initial)` = `tree(5c98bd2)` = **`e63c659…`**（逐字相等）；`git diff origin/feat/multica-rs-initial 5c98bd2` = **空**；认证 `pulls?state=open` = **0**。
+
+### 55.3 M6 骨架落定：波次的共享写者交接完成
+- `docs/57` §4.1 里 M6-0 的硬前置（M5 全合）与 stage 2 的前置（M6-0）**均已满足**。锚点冻结的 10 个共享文件（`mount.rs` / `routes/mod.rs` / 三个 crate 的 `Cargo.toml`+`lib.rs` / `mc-core` 两个 stub / `state.rs` / 根 `Cargo.toml` / `Cargo.lock` / ⑦ 基线 / allowlist）**在 stage 2 起不再有写者**。
+- **依赖冻结的实证**：三个新 crate 的 `Cargo.toml` 头注释明写「此后 M6 各切片不得再新增三方依赖」，且 stage 2 三片的写集（`mc-plugin-host/src/**`、`mc-skill/src/**`、`routes/skills/**`、`mc-repos/src/skill/**`）**不含任何 manifest** ⇒ stage 2 三片与 M5-9（写 `Cargo.lock` 3 行）**互不冲突于 lock**（这是 §53.4/§54.5 那条「anchor 后仍不可同飞」的解除判据）。
+
+### 55.4 并发与派发：**1 个空位 ⇒ 只派 M6-1（`LUM-1666`）**；M5-9 被 lock 挡住必须等
+- 起手 `running_task_count = 2`（`LUM-1370` + 本 cycle）⇒ **1 个切片位**。
+- **晋升：`LUM-1666`（M6-1 契约与凭据层，0 路由，stage 2 首位）** `backlog → todo`。它是 4 个 plugin 片（M6-5/6/7/8）的**硬前置**，也是 stage 2 三片里唯一「先做才解锁 stage 3 最多片」的那一片 ⇒ 单空位优先给它。
+  晋升**前**已把「起手补充」写进描述：当轮 base `d62558b`、合并树 10/10 与 ⑦/⑨ 逐字读数（并写明「0 路由片交付后这四组读数必须逐项不变」）、锚点冻结文件清单与「不写 manifest」纪律、§9.5 的落点更正（`git.rs` → `source.rs`）、**本轮并发约束（一个字节都不碰 `routes/{mod,mount}.rs`/`state.rs`/`Cargo.lock`）**。
+- **`LUM-1659`（M5-9）本轮仍然不能派** —— 理由从「等 owner 裁决」换成了**写集**：它的写集含**根 `Cargo.lock` 3 行**，而在飞的 `LUM-1370`（M2-E，`routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock`）**正在写同一批文件**；两个同写 `Cargo.lock` 的片同轮在飞 ⇒ 后合者必冲突（§43/§50.7 同型）。同理 `LUM-1691`（M2-A 尾）也不能与 `LUM-1370` 同飞。
+  ⇒ **空位的选择规则升级为「写集 + lock」双重判定**（不只是「0 路由片」）：本轮唯一同时满足「有硬前置价值」「不写 lock/state.rs/mount.rs」「不与在飞片撞文件」的候选就是 `LUM-1666`。
+- 派后（`multica issue runs` 实证）：`running_task_count = **3/3**` = 本 cycle ∥ `LUM-1370`（pid 11370）∥ `LUM-1666`（run `01a0d088-c6f8-774d-961b-63133e110ef5`，workdir `lum-1666-63133e110ef5`）。
+
+### 55.5 看板 / 磁盘 / 观察项
+- 看板：M6 子片 `LUM-1666` = **in_progress**（本轮派）、`LUM-1667`–`LUM-1675` = `backlog`（stage 2 余 2 片 + stage 3/4/5）、`LUM-1665`/`LUM-1652` = `in_review`；`LUM-1370`（M2-E）= `in_progress`；`LUM-1659`（M5-9）/`LUM-1691`（M2-A 尾）/`LUM-1580`（门 ⑦ 正则）= `backlog`；`blocked` 0 条。
+- 观察项（**连续第 5 轮登记，不动状态**）：`LUM-1521`（07:30Z 触发）/`LUM-1533`（08:30Z 触发）两条 autopilot cycle issue 仍停在 `todo`、从未启动（`pi` 进程 cwd 里没有它们的 workdir）。
+- **磁盘回收**：`LUM-1665` 三判据齐（PR #65 已合 + run 终态 + `/proc/*/cwd` 扫描无该 workdir 进程）⇒ 整删其 `target/` ⇒ `/` **26G 可用**（23G/49G，45%）。新片 `LUM-1666` 冷建 + `LUM-1370` 热建各自一份，余量够。
+
+### 55.6 下一轮起手
+1. 三连：`df -h /` → `git fetch` 取 base sha（本轮收尾 = 本 §55 的 docs-only 提交）→ 认证 `pulls?state=open` + `git ls-remote`（`LUM-1370` / `LUM-1666` 的 workdir 短 id 分支，起手时**尚未推**，以 issue 自述为准）。
+2. **合并判据链照 §55.2 走**：预检 staged stat == PR API → 先判 base 是否仍是 head 祖先（不是就真合 base 再重跑门禁）→ 合并树**当场重跑** `--with-db`（改基线/读数的片不得继承本轮）→ API 钉 head sha → `tree(base) == tree(预检)` 且 `git diff` 空。
+3. `--with-db` 起手前先把一次性角色的 `CREATEDB` 给上（§55.7 第 1 条），否则 ⑧ 会以 `exit 2 / 0s` 假红。
+4. 空位分配（按写集）：`LUM-1370` 合入 ⇒ `LUM-1659`（M5-9，lock 3 行 + `apps/mc-server/**`）与 `LUM-1691`（M2-A 尾，`routes/{mod,mount}.rs` + `state.rs` + lock）**二者不可同飞**（同争 lock/锚点文件），按优先级先给 M5-9（它解除 M6-8 `LUM-1673` 的硬前置）。
+5. M6 侧：stage 2 余片按 `LUM-1667`（M6-2，12 路由 + 5 个双形态键）→ `LUM-1668`（M6-3，2 路由）顺序补位；**三片都不写 lock/manifest** ⇒ 与 M5-9 可并行。M6-2 合入后 stage 3 的 `LUM-1669`（M6-4）即可起手，M6-1 合入后 `LUM-1670/1671` 可起手。
+
+### 55.7 本轮 lesson
+- **【门 ⑧ 的 exit 2 是前置条件，不是回归】** `schema_drift.py` 会 `CREATE DATABASE schema_probe_*` 探针库；测试角色**只有 `LOGIN` 没有 `CREATEDB`** 时门 ⑧ 以 **0s / exit 2** 红，日志里只有一行 `permission denied to create database`，**极易被误读成 schema 漂移**。判据：**0 秒就红的门先看是不是 `exit 2`（gates.sh 的 2 = 「根本没法开跑」）**，再看错误文本。修法 = `ALTER ROLE <role> CREATEDB` 后 `--only schema-drift` 单跑，不必重跑整轮（本轮 339s → 35s）。
+- **【「有 3 个空位」要减掉 cycle 自己】** `一次最多三个任务运行` 里**本 cycle 占一个位** ⇒ 起手「2 个在飞」意味着**只有 1 个切片位**，而不是 2 个。§53.4 的「有空位即派 stage 2 三片」在本轮是**不可能的**：先数位、再选片。
+- **【空位选择 = 写集 ∩ lock，不只是「0 路由」】** `LUM-1659` 的 P0 已解除、写集与 M6 stage 2 零交集 —— 但它的 `Cargo.lock` 与在飞的 `LUM-1370` 相撞 ⇒ **仍然不能派**。判定顺序：① 有无硬前置价值；② 是否写 lock / 锚点冻结文件；③ 与**当前在飞**的每一片比文件交集。三条都过才发 `todo`。
+- **【派发前把「当轮读数」写进描述】** 描述里的预演值（`docs/57` 写在 `eaba357` 上）在 anchor 合入后已全部过期；晋升前把 §55.2 第 3 条的逐字读数 + 不变式写进「起手补充」，片才不会拿旧值当验收线（§50.7 同型）。
