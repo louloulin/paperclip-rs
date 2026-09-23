@@ -1,17 +1,46 @@
-//! M3 anchor scaffold（LUM-1406）：daemon client + execenv crate —— **占位，无实现**。
+//! `mc-daemon`：daemon 侧客户端 + （M3-8）执行环境。
 //!
-//! 由两片填充，都在 W3c：
+//! ## 本切片（M3-7 / LUM-1438）交付什么
 //!
-//! - **M3-7**（`feat/multica-rs-m3c-daemon`）：client + 注册/心跳/claim 状态。
-//!   路由在 `crates/mc-http/src/routes/daemon.rs`（scaffold 已接好 `mount_slice_daemon()`），
-//!   cover docs/15 §1.5 的 36 条 + §1.2 的 8 条异步往返；
-//!   ws 服务端放 `crates/mc-ws` + `crates/mc-realtime`（**唯一**写这两者的切片）。
-//!   上游体量：`internal/daemon/daemon.go` 6056 行、`internal/daemonws/*` 1370 行
-//!   ⇒ 必然撞 800 行上限，预先按域拆 6 个文件（`daemon/{register,heartbeat,claims,tasks,requests,gc}.rs`）。
-//! - **M3-8**（`feat/multica-rs-m3c-adapters`）：`src/execenv/`（上游 99 文件）
-//!   + `mc-runtime/src/adapters/` 的 25 个 adapter，分 3 批（8/8/9）各一个 PR。
+//! `feat/multica-rs-m3c-daemon` 这一片的 `mc-daemon` 部分只做**客户端**：
 //!
-//! 协议类型不在本 crate：走 `mc-daemon-proto`（M3-1 冻结，依赖已预声明）。
-//! `axum`（`ws` feature）与 `tokio-tungstenite` 的版本确认见 `Cargo.toml` 注释。
+//! | 模块 | 内容 |
+//! |------|------|
+//! | [`wire`] | daemon → server 的线上请求/响应类型 + 路径常量 |
+//! | [`transport`] | [`DaemonTransport`] 传输缝 + 真 HTTP 实现 [`HttpTransport`] |
+//! | [`state`] | [`ClientState`]：登记台账 / 心跳水位 / in-flight 认领去重 |
+//! | [`client`] | [`DaemonClient`]：`register` / `heartbeat` / `claim` / `deregister` |
 //!
-//! scaffold 阶段本文件只有文档注释：一个类型都不定义。
+//! 服务端那半边（36 条 `/api/daemon/*` + 8 条 `/api/runtimes/{id}` 异步往返 + ws hub）
+//! 在 `crates/mc-http/src/routes/daemon/` 与 `crates/mc-ws`，不在本 crate。
+//!
+//! ## 不在本切片
+//!
+//! - **执行环境**（`src/execenv/`，上游 99 文件）：M3-8（`LUM-1440`），与本模块共用
+//!   这个 `lib.rs` 与 `Cargo.toml`，所以两者是**串行**关系，不能并行开工。
+//! - **WS 客户端**（`daemon:rpc_request` 帧）：本 crate 的 `tokio-tungstenite` 依赖是
+//!   给 M3-8 的连接管理预声明的；M3-7 只实现 HTTP 腿。RPC 腿要做的就是再写一个
+//!   [`DaemonTransport`] 实现 —— 客户端逻辑一行不改。
+//! - **待办动作的执行**（升级 CLI / 拉模型列表 / 导入技能）：[`client::PendingWork`]
+//!   只给出「该做什么」的清单，具体动作在 M3-8。
+//!
+//! ## 与上游的偏离
+//!
+//! 逐条记在 `docs/32-M3-DAEMON-FACE.md` 的偏离表里（D-1 dev-mode 身份、D-9 客户端
+//! 侧 DTO 重复定义、D-10 `reqwest` 依赖等），不在代码里静默省略。
+
+pub mod client;
+pub mod state;
+pub mod transport;
+pub mod wire;
+
+pub use client::{
+    ClaimOutcome, ClientConfig, ClientError, DaemonClient, HeartbeatOutcome, PendingWork,
+};
+pub use state::{ClientState, Registration};
+pub use transport::{DaemonTransport, HttpTransport, TransportError, CLIENT_VERSION_HEADER};
+pub use wire::{
+    ClaimRequest, ClaimResponse, ClaimedTask, DeregisterRequest, FailedProfile, RegisterRequest,
+    RegisterResponse, RegisterRuntime, RegisteredRuntime, CLAIM_PATH, DEREGISTER_PATH,
+    HEARTBEAT_PATH, REGISTER_PATH,
+};

@@ -204,6 +204,21 @@ pub struct AppState {
     /// 生产装配点就在 `AppState::new`（读进程环境）；测试用结构体字面量注入
     /// 指向本机 stub 的 base URL。
     pub google_oauth: GoogleOAuthConfig,
+    /// daemon 面 WebSocket 连接注册表（M3-7 / LUM-1438）。
+    ///
+    /// 消费 LUM-1439（M3-WS-TRANSPORT）已交付的 `mc_ws::Hub`：hub 自己**不持有 DB、
+    /// 不解析 token**，身份由调用方（`routes/daemon/lifecycle.rs` 的
+    /// `GET /api/daemon/ws`）构造好后注入。
+    ///
+    /// 与 `/live-events` 的 `realtime` **是两个不同的 hub**：用户面与 daemon 面的
+    /// 订阅集、帧类型、心跳都不同（`docs/37` §4.1）。
+    pub daemon_hub: Arc<mc_ws::hub::Hub>,
+    /// 「服务端 → runtime」异步请求的内存台账（M3-7）。
+    ///
+    /// 四类请求（update / models / local-skills / local-skills-import）在上游也是
+    /// 进程内 store，无 DB 表 —— 本仓照搬以避开新迁移带来的 schema-drift。
+    /// 语义与偏离见 `daemon_requests.rs` 模块头与 `docs/32`。
+    pub daemon_requests: Arc<crate::daemon_requests::RequestStore>,
 }
 
 impl AppState {
@@ -227,6 +242,8 @@ impl AppState {
             pat: mc_auth::PatStoreContainer::default(),
             verification: mc_auth::VerificationStoreContainer::default(),
             google_oauth: GoogleOAuthConfig::from_env(),
+            daemon_hub: Arc::new(mc_ws::hub::Hub::new()),
+            daemon_requests: Arc::new(crate::daemon_requests::RequestStore::new()),
         }
     }
 }
