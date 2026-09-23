@@ -4672,3 +4672,61 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 - **【记录号先定后派】** `LUM-1601` 描述允许「另开新记录文件」，而 `docs/56`（M5-INT）/`docs/58`（M6-10）都已预留 ⇒ 晋升**前**把「不要新开 `docs/NN`，写 `docs/45` 续记节」写进描述（§43 lesson 同型：**起手后再改描述，跑着的 session 不回读**）。
 - **【`multica issue status` 的 JSON 读法】** `multica issue status <id> <status> --output json` 会**先打印一行人类确认到 stdout**、再打印 JSON ⇒ `| python3 -c 'json.load(...)'` 会以 `Expecting value: line 1 column 1` 炸掉；用 `2>/dev/null | tail -n +2` 之类剥掉首行。本轮正是这一炸把 `&&` 链断掉、漏跑了第二片的晋升 ⇒ **同一条命令里不要用 `&&` 串「输出解析」**。
 - **【空位选择】** 「有 2 个空位」≠「能派 2 片」：M5-INT 的基线快照锁死同轮**所有加路由**的片，空位只能给 0 路由的测试/文档片。
+
+---
+
+## §51 05:30 cycle（`LUM-1683`）：**合并 #63（M5-INT）⇒ base `00034b7`，M5 波次全合**；末位晋升 M6-0 anchor（`LUM-1665`，单独跑）；回收 14G 热 `target/`
+
+### 51.1 起手三连（21:30Z 实测）
+- 磁盘：`/` **20G 可用**（27G/49G，58%）—— 在飞片 `LUM-1601` 的 `target/` 当轮为 3.4G（收尾前已涨到 13G，见 §51.5）。
+- `git fetch origin feat/multica-rs-initial` = **`e01c73a`**（未动，与 §50 收尾值一致）。
+- 认证 GH `pulls?state=open` = **1** 条：**#63**（M5-INT `LUM-1572`），head **`04aae4bb`**、base 记录 `e01c73a`；API `changed_files=3 / additions=361 / deletions=4`，`mergeable=true / mergeable_state=clean`。
+- checkout 坑复现（§49.1/§50.1 lesson）：全新 cycle workdir 的 `multica repo checkout` 落 **`origin/main`（pc-* 世代 `4fc96f3`）** ⇒ 一切操作显式对 `origin/feat/multica-rs-initial`（本轮 base 侧用独立 worktree `wt-docs`，门禁侧借 `LUM-1572` 的 worktree，见 §51.2）。
+- 在飞采样：`LUM-1601` workdir `lum-1601-7a6ee4061741` HEAD = `0fd96b4`、**7 个未提交文件**、`target/` 13G、pid 27732 **活跃**（`cargo test -p mc-repos -p mc-http -- --ignored --list`）⇒ 真在飞；`LUM-1572` worktree `lum-1572-43dcd6d6a0ed` HEAD = `04aae4b`、**工作树干净**、`readlink /proc/*/cwd` 无该 workdir 进程 ⇒ run 已终态，只差合并。
+
+### 51.2 PR #63（M5-INT）合并判据链（逐条读数）
+1. **预检**：从 `e01c73a` 起 `git -c user.name=devbox5 -c user.email=devbox5@multica.local merge --no-ff --no-commit 04aae4bb` ⇒ `Automatic merge went well`；staged `--numstat` 汇总 = **3 files / +361 / −4**，与 PR API **逐字相等**；staged 面 = `docs/44-M5-PLAN.md`（+41/−4）、`docs/56-M5-INTEGRATION.md`（+291/−0）、`docs/fixtures/route-parity-baseline.json`（+29/−0）；`Cargo.lock` staged **0 条**；共享锚点（`routes/mount.rs` / `routes/mod.rs` / 各 `lib.rs` / `state.rs`）**0 触碰**。
+2. **base 祖先判定**：`git merge-base --is-ancestor e01c73a 04aae4bb` ⇒ **真**（该分支 tip 的父提交就是 `e01c73a`，即 **fast-forward 形态**）⇒ **PR 合并树 == 分支 tip 树** ⇒ 按 §42.2 在它自己的热 `target/` 跑门禁（免冷建）。
+3. **合并树门禁**（`lum-1572-43dcd6d6a0ed/workdir/paperclip-rs`，热 `target/`；一次性真库角色 `mc_cyc1683` / 库 `multica_cyc1683`，CREATEDB 已授）：
+   `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ **10/10 绿 / 137s**（①fmt 2s ②build 3s ③clippy 15s ④clippy-test-util 4s ⑤test 45s ⑥db 28s ⑧schema-drift 34s ⑦route-parity 0s ⑨conformance 5s ⑩file-size 1s）。
+   ⑤ `1380 passed / 0 failed`（97 target）、⑥ migrate 绿 + e2e `333 passed / 0 failed`、⑨ `report matches crates/mc-conformance/report.json`。
+   ⑦ 读数（逐字取自当轮日志）：`upstream 456 (commit f41fae6b08fb) | local 329 registered | baseline 329`；
+   `implemented 263 real + 2 placeholder = 265 / 456`、`known_gap 191`、**`unclaimed 0` / `regression 0`**、`local_only 11`，`gaps by owner: M6=55 M9=33 M7=24 M8=24 M3+=16 M2-A=14 M3=11 M2-E=9 M10=5`。
+   ⑩ 0 违规；⑦ 第二条（`slash_alias_audit.py --quiet`）绿。
+4. **钉 head 合并**：提交前重取 `mergeable=true / mergeable_state=clean` ⇒ API `PUT /pulls/63/merge` 带 `"sha":"04aae4bb…"` ⇒ `merged=true`，merge commit = **`00034b7fc3e27840a8a0cce524effc89f09eaad7`**。
+5. **复核**：`git fetch` 后 `tree(origin/feat/multica-rs-initial)` = `tree(04aae4bb)` = **`8a563b8adc0070bc38ddf0b6f305b7cf84ae0655`**（逐字相等）；`git diff origin/feat/multica-rs-initial 04aae4bb` = **空**；认证 `pulls?state=open` = **0**。
+
+### 51.3 M5 波次全合（代码面 + INT）
+- `M5-0…M5-8` + **M5-INT** 全部进 base ⇒ base = **`00034b7`**；`docs/57` §7.1 的「M5 全合」硬前置**完全满足**，`owners.M5 = 0`（M5 缺口清零后未回弹：本轮 `gaps by owner` 里 M5 已不出现）。
+- ⑦ 基线随 INT 刷新到 **329**（与 local 相等）⇒ **M6 各片起手时的基线基准 = 329，不是 `docs/57` §6.1 表里的 300/296**（该表在 `eaba357` 上测；delta 仍有效，见 §51.4）。
+- M5 唯一遗留 = **M5-9（`LUM-1659`，接线）**，仍挂 owner P0（§51.5）；D8（上游 worker 轮询循环）由 INT 裁定登记在 `docs/56` §7。
+
+### 51.4 并发与派发：3/3 满位 —— 末位晋升 `LUM-1665`（M6-0 anchor，单独跑）
+- 起手 `running_task_count = 1`（cycle 自身）+ `LUM-1601` **真在飞**（pid 活跃，非僵尸）⇒ **1 个空位**。
+- **晋升 `LUM-1665`（M6-0 anchor，stage 1）** `backlog → todo`，**单独跑不并行**：它是 M6 全波**唯一共享写者**（`routes/mount.rs` / `routes/mod.rs` / `state.rs` / 各 `lib.rs` / 根 `Cargo.toml` + `Cargo.lock` / ⑦ 基线 / `slash-alias-allowlist.tsv`），任何第二片同轮飞都会互相覆盖。
+- 晋升**前**给描述加「起手补充」块（§43 lesson：起手后再改描述，跑着的 session 不回读），把**当轮**读数写上、覆盖描述里基于 `eaba357` 的过期预演值：
+  - 现状（base `00034b7` 实测）：`local 329 / baseline 329`、`implemented 265 = 263 real + 2 placeholder`、`known_gap 191`、`owners.M6 55`、`local_only 11`（其中 3 个 placeholder：`GET|POST /api/plugins`、`GET /api/feature-flags`）。
+  - **M6-0 后预测（按 `docs/57` §6.1 的 delta 平移，绝对值现算）**：`local 325`（−4）、`implemented 263 real + 0 placeholder`（−2）、`known_gap 193`（+2）、`owners.M6 57`（+2）、`baseline 329 → 325`（`--write-baseline` 记的是当轮 local；描述里的 `300 → 296` 是旧 base 上的同 delta 值）、`local_only 11 → 9`（−2）。不变式 `implemented + known_gap == 456`、`regression == 0`、`unclaimed == 0`。
+  - **尾斜杠口径**：当轮 `python3 scripts/slash_alias_audit.py --declared docs/fixtures/m6-declared-routes.tsv` = **`3 defect(s), 0 warning(s); 2 allowlisted`**（与 §6.1 预测的 `FAIL: 3` 一致）⇒ 本片删掉那 2 行 M6 豁免后**必然变 `5`**，不是回归。
+  - 描述里的「baseline 300 → 296」「⑦ 实测 local 324 / implemented 262 / known_gap 194 / local_only 9」已按上表**逐项改写**，避免 session 照旧值自检。
+- **同轮硬约束（重申）**：`LUM-1665` 与 `LUM-1659` **不同时在飞**（都动 `Cargo.lock`；M6-0 另动 `state.rs`）⇒ 本轮 `LUM-1659` 保持 `backlog`（P0 未解，见 §51.5）。
+- 派后 `running_task_count = **3/3**`（cycle + `LUM-1601` + `LUM-1665`）。`LUM-1601`（`0fd96b4` 起手、7 文件未提交）与该片**写集零交集**（前者只写 `mc-repos` chat 测试）。
+
+### 51.5 P0 / 看板 / 磁盘
+- **P0 仍开且不重复上报**：`LUM-1628` §4 的 member 提及（16:37Z）**至今 0 回复**（该 issue 现只有 1 条根注释、`reply_count=0`）；`apps/mc-server/Cargo.toml` 仍无 `mc-scheduler` 边 ⇒ `LUM-1659`（M5-9）**保持 `backlog`，不派、不再 @**；连带 `LUM-1673`（M6-8）的前置仍未成立（未合时只交桩级证据 + 登记）。
+- 看板：M6 十一子片 **`LUM-1665` = 本片已晋升（本轮起跑）**，`LUM-1666`–`LUM-1675` 全 `backlog`（stage 2:3 / 3:3 / 4:3 / 5:1）；`LUM-1580`（门 ⑦ 正则修复）/ `LUM-1370`（M2-E label/property）保持 `backlog`；`LUM-1572` 已合但**保持 `in_review`**（`done` 归人工）。
+- 观察项（连续第 5 轮登记，**不动状态**）：`LUM-1521`（07:30Z）/ `LUM-1533`（08:30Z）两条 autopilot cycle issue 仍停在 `todo`、从未启动。
+- **磁盘回收**：`LUM-1572` 三判据齐（PR #63 已合 + run 终态 + 无该 workdir 进程）⇒ 整删其 `target/`（**14G**）；`/` **9.7G → 22G 可用**（回收后实测：在飞片 `LUM-1601` 当刻 target 已涨到 15G）。
+
+### 51.6 下一轮起手
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §51 的 docs-only 提交）→ 认证 `pulls?state=open`；同时对**两个在飞 workdir**（`lum-1601-7a6ee4061741` / `lum-1665-*`）采样 HEAD、未提交数、`target/` 大小、pid 活性。
+2. `LUM-1601` 交 PR（代码片，测试专属写集）⇒ 判据链（§39.3/§42.2）：预检 staged stat == PR API → base 祖先判定 → `--with-db` **10/10** → API 钉 sha → `tree(base) == tree(预检)` 且 `git diff` 空。它可能改门 ⑥ 的 e2e 计数（新 `#[ignore]` 用例）⇒ ⑤/⑥ 读数**只从当轮日志取**。
+3. `LUM-1665` 交 PR（**anchor**，改 ⑦ 基线 / allowlist / crate 结构 / `Cargo.lock`）⇒ 同样走判据链，且**合并树的 ⑦/⑩ 必须当场重跑**（不得继承 §51.2 的读数），逐项比对 §51.4 的预测（`local 325 / implemented 263+0 / known_gap 193 / owners.M6 57 / baseline 325 / local_only 9`、`slash_alias_audit --declared = 5`）；`cargo metadata` 必须通过（3 个新 crate + 删 `mc-plugin-protocol`）。
+4. 两片全合 ⇒ **stage 2 三片并行**（`LUM-1666` M6-1 ∥ `LUM-1667` M6-2 ∥ `LUM-1668` M6-3）。anchor 已落定后同 stage 内不再有共享写者；M6-INT（`LUM-1675`）才再刷一次基线 ⇒ **M6 代码片之间的基线争用到此解除**。
+5. `LUM-1659` 只在 owner 回复 P0 后晋升；`LUM-1673`（M6-8）依赖它。
+
+### 51.7 本轮 lesson
+- **【fast-forward 形态的 PR 也要走完三步】** 本轮 PR 分支 tip 的父提交就是 base ⇒ `merge-base --is-ancestor` 为真、**合并树 == 分支 tip 树**，可免「真合 base」直接借其热 target；但**预检 `staged --numstat` 仍必须与 PR API 逐字比对**（本轮 `3 / +361 / −4` 相等）——「树相等」只证明树，不证明「PR 里没有尚未推送的本地提交/未暂存改动」。
+- **【跨 workdir 借热 `target/` 的充分条件】** cargo 的 fingerprint 含**包源路径** ⇒ 换 workdir 路径 = 全量重建。因此「借热 target」只在**合并树 == 该 workdir 的 HEAD 树**时成立。本轮在该片 worktree 里用 `checkout base → merge --no-ff --no-commit → (比对) → merge --abort → checkout <head>` 的顺序取到「合并树 + 热 target」，跑完立刻 `git checkout <原分支>` 把分支指回原 tip（工作树 0 未提交），既没污染在飞片、又省掉一次 ≈450s 冷建。
+- **【预测表要「按 delta 平移」，不要照抄绝对值】** `docs/57` §6.1 的 M6 预测表是在 `eaba357` 上测的；M5-INT 把基线刷到 329 / local 刷到 329 后，**「M6-0 后」那一行的绝对值全部过期**，但 **delta 仍有效**（local −4 / implemented −2 / known_gap +2 / owners.M6 +2 / local_only −2）。派 anchor 前必须用 delta 现算（本轮 325/263/193/57/9），否则 session 会对着 324/296 自检并误判「回归」。
+- **【`target/` 是并发轮的最大磁盘变量】** 轮内两次 `df` 的差值（20G → 9.7G）几乎全部来自在飞片的 `target/` 增长（3.4G → 13G）⇒ 空位评估与回收判据都应以**采样时刻**的读数为准，别用轮首读数推断轮尾空间。
