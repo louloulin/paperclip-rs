@@ -196,7 +196,7 @@ pub struct OnboardingOpenResult {
 #[derive(Debug, Clone)]
 pub enum StartOnboardingOutcome {
     /// 首次开门：落 kickoff + opening 两行。
-    Started(OnboardingOpenResult),
+    Started(Box<OnboardingOpenResult>),
     /// 会话已经有 user 消息 ⇒ 上游 `ErrChatSessionAlreadyStarted`（handler 200
     /// `{started:false}`）。
     AlreadyStarted,

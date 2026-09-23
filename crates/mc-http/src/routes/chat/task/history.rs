@@ -162,9 +162,8 @@ async fn chat_history_scope(
 
     // ⚠️ 上游把 `GetAgentTask` 的**任何**失败（含 DB 错误）都当 404；本仓逐字照做，
     // 以免出现上游没有的 500。登记在 `docs/45`。
-    let task = match repos.task_context(task_id).await {
-        Ok(Some(task)) => task,
-        _ => return Err(boxed(StatusCode::NOT_FOUND, not_found("task"))),
+    let Ok(Some(task)) = repos.task_context(task_id).await else {
+        return Err(boxed(StatusCode::NOT_FOUND, not_found("task")));
     };
     let Some(session_id) = task.chat_session_id else {
         return Err(boxed(
@@ -175,10 +174,9 @@ async fn chat_history_scope(
 
     // 纵深防御：会话必须活在令牌盖章的那个 workspace 里。令牌→任务的绑定已经保证 agent
     // 只能碰自己的任务，这一层是让**未来**的接线回归 fail closed。
-    let workspace = match repos.session_workspace(session_id).await {
-        Ok(Some(workspace)) => workspace,
-        // 上游 `GetChatSession` 失败同样是 404。
-        _ => return Err(boxed(StatusCode::NOT_FOUND, not_found("chat session"))),
+    // 上游 `GetChatSession` 失败同样是 404。
+    let Ok(Some(workspace)) = repos.session_workspace(session_id).await else {
+        return Err(boxed(StatusCode::NOT_FOUND, not_found("chat session")));
     };
     if let Some(raw) = workspace_id_raw(headers, query) {
         if raw != workspace.to_string() {
@@ -213,7 +211,7 @@ async fn chat_history_scope(
 ///
 /// 注意**不是** `Err(ApiError{..})`：那会被 axum 按 `Error` 自身的状态码渲染，而
 /// `Error::NotFound` 的 404 只是巧合 —— 上游的 `"this task is not a chat task"` 走 400，
-/// 本仓的错误信封里没有 400 的 NotFound。
+/// 本仓的错误信封里没有 400 的 `NotFound`。
 fn error_response(status: StatusCode, err: mc_errors::Error) -> Response {
     ApiError(err).respond_with(status)
 }
@@ -247,22 +245,21 @@ pub(super) async fn get_chat_channel_history(
 
     // 上游 `chatMessageHistory`：读一页（时间倒序）→ 反转 → 满页才给游标。
     // 读失败是 **502**（上游把渠道读失败与转录读失败合在一条分支上）。
-    let rows = match history
+    // `transcript_limit` 已把值夹在 `MAX_LIMIT` 内 ⇒ `try_from` 恒成功（门 ③ 的强转口径）。
+    let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+    let Ok(rows) = history
         .transcript_page(
             scope.session_id,
             scope.context_revision,
-            limit as i64,
+            limit_i64,
             before.map(|TranscriptCursor { created_at, id }| (created_at, id)),
         )
         .await
-    {
-        Ok(rows) => rows,
-        Err(_) => {
-            return Ok(error_response(
-                StatusCode::BAD_GATEWAY,
-                internal("failed to read channel history"),
-            ))
-        }
+    else {
+        return Ok(error_response(
+            StatusCode::BAD_GATEWAY,
+            internal("failed to read channel history"),
+        ));
     };
 
     let newest_first: Vec<HistoryMessage> = rows

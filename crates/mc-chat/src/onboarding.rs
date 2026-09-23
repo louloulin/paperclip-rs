@@ -89,43 +89,43 @@ const USE_CASE_LABELS: [(&str, &str); 7] = [
 const OPENINGS: [(&str, &str); 4] = [
     (
         "en",
-        r#"Hi — welcome to {0}. Multica is a workspace where you and AI agents coordinate real work through issues.
+        r"Hi — welcome to {0}. Multica is a workspace where you and AI agents coordinate real work through issues.
 
 I'm {1}, your Chief of Staff here. I shape what needs doing, bring in the right agent for it, and stay your starting point for anything.
 
 Here's how we begin: you name a goal, I turn it into an issue and start it with the right agent — and you watch it run.
 
-Pick one below, or just tell me what you want to get done right now."#,
+Pick one below, or just tell me what you want to get done right now.",
     ),
     (
         "zh",
-        r#"你好，欢迎来到 {0}。Multica 是一个人和 AI 智能体通过任务一起把事情做完的工作区。
+        r"你好，欢迎来到 {0}。Multica 是一个人和 AI 智能体通过任务一起把事情做完的工作区。
 
 我是 {1}，这里的 Chief of Staff。我负责把事情理清楚、找到合适的智能体接手，也是你随时可以开口的第一站。
 
 接下来是这样：你说一个目标，我把它变成一个任务，交给合适的智能体开始跑，你能看着它推进。
 
-从下面选一个开始，或者直接告诉我你现在想做成什么。"#,
+从下面选一个开始，或者直接告诉我你现在想做成什么。",
     ),
     (
         "ja",
-        r#"こんにちは。{0} へようこそ。Multica は、人と AI エージェントがタスクを通じて実際の仕事を進めるワークスペースです。
+        r"こんにちは。{0} へようこそ。Multica は、人と AI エージェントがタスクを通じて実際の仕事を進めるワークスペースです。
 
 私は {1}、ここの Chief of Staff です。やることを整理し、適したエージェントに引き継ぎ、いつでも最初に声をかけてもらえる存在でいます。
 
 進め方はこうです。目標をひとこと教えてください。私がそれをタスクにして、適したエージェントで動かします。進み方はそのまま見られます。
 
-下から一つ選ぶか、いま進めたいことをそのまま教えてください。"#,
+下から一つ選ぶか、いま進めたいことをそのまま教えてください。",
     ),
     (
         "ko",
-        r#"안녕하세요, {0}에 오신 걸 환영합니다. Multica는 사람과 AI 에이전트가 태스크를 통해 실제 일을 함께 진행하는 워크스페이스입니다.
+        r"안녕하세요, {0}에 오신 걸 환영합니다. Multica는 사람과 AI 에이전트가 태스크를 통해 실제 일을 함께 진행하는 워크스페이스입니다.
 
 저는 이곳의 Chief of Staff, {1}입니다. 할 일을 정리하고, 알맞은 에이전트를 붙이고, 언제든 먼저 말을 걸 수 있는 시작점이 되어 드립니다.
 
 시작은 이렇습니다. 목표를 한 줄로 알려주시면 제가 태스크로 만들어 알맞은 에이전트로 실행합니다. 진행 상황은 그대로 보실 수 있어요.
 
-아래에서 하나 고르시거나, 지금 해내고 싶은 일을 그대로 말씀해 주세요."#,
+아래에서 하나 고르시거나, 지금 해내고 싶은 일을 그대로 말씀해 주세요.",
     ),
 ];
 
@@ -293,6 +293,9 @@ pub fn profile_block(
     member_timezone: &str,
     answers: &QuestionnaireAnswers,
 ) -> String {
+    // `write!` 系：避免 `push_str(&format!(..))` 的额外分配（门 ③ 口径）。
+    use std::fmt::Write as _;
+
     let role = match ROLE_LABELS.iter().find(|(slug, _)| *slug == answers.role) {
         Some((_, label)) => (*label).to_owned(),
         None if answers.role == "other" => answers.role_other.trim().to_owned(),
@@ -318,28 +321,25 @@ pub fn profile_block(
     // 上游用 Go 的 `%q`：带引号 + Go 转义。这里复现同样的 `%q` 语义（serde_json 的
     // 字符串转义与 Go 的 `strconv.Quote` 在普通文本上一致；差异只在非 ASCII 与
     // 控制字符上：Go 保留可打印 UTF-8 原样，serde_json 也保留 ⇒ 一致）。
-    out.push_str(&format!("- Workspace name: {}\n", go_quote(workspace_name)));
+    let _ = writeln!(out, "- Workspace name: {}", go_quote(workspace_name));
     // 上游：**无论**成员是否回答问卷都要给时区行，且「unknown」是要被 skill 显式处理
     // 的情形（要问，而不是假设）。怎么用是 skill 的事 —— 这块只声明自己是数据。
     let tz = member_timezone.trim();
     if tz.is_empty() {
         out.push_str("- Member IANA timezone: unknown (not set on their account)\n");
     } else {
-        out.push_str(&format!("- Member IANA timezone: {}\n", go_quote(tz)));
+        let _ = writeln!(out, "- Member IANA timezone: {}", go_quote(tz));
     }
     if role.is_empty() && use_cases.is_empty() {
         out.push_str("- The member skipped the profile questions, so stay neutral until they say what they want.");
         return out;
     }
     if !role.is_empty() {
-        out.push_str(&format!("- Role: {role}\n"));
+        let _ = writeln!(out, "- Role: {role}");
     }
     if !use_cases.is_empty() {
         // 用 "; " 连接：好几个 label 自己带逗号。
-        out.push_str(&format!(
-            "- Wants to use Multica to: {}\n",
-            use_cases.join("; ")
-        ));
+        let _ = writeln!(out, "- Wants to use Multica to: {}", use_cases.join("; "));
     }
     out.trim_end_matches('\n').to_owned()
 }

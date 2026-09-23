@@ -193,7 +193,9 @@ fn send_error(err: ChatSendError) -> crate::error::ApiError {
         .into(),
         // 上游 `"failed to send chat message: " + err.Error()`（DB 细节入消息体，
         // 与本仓其余面同款偏离，登记在 `docs/45`）。
-        other => internal(format!("failed to send chat message: {other}")).into(),
+        other @ ChatSendError::Repo(_) => {
+            internal(format!("failed to send chat message: {other}")).into()
+        }
     }
 }
 

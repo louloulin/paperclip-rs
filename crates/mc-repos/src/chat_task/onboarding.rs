@@ -15,7 +15,7 @@
 //! `buildChatLastMessage` 返回 nil）⇒ 一个 onboarding 完全成功的会话会报告「没有最后一条
 //! 消息」，UI 上的 "Start with Mika" 恢复卡片会重新冒出来。差 1 微秒让顺序成为全序。
 //!
-//! **有意偏离**（`docs/45` §known_gap）：`user` / `workspace` 的两个读不走上游仓储
+//! **有意偏离**（`docs/45` §`known_gap`）：`user` / `workspace` 的两个读不走上游仓储
 //! （`UserRepo` / `WorkspaceRepo` 都不暴露 `timezone` / `onboarding_questionnaire` /
 //! `name`），按 `crate::chat_session` 的先例在仓储内原样写最小 SELECT。
 //! `publishChat`（开场白广播）属 LUM-1506，本片不发。
@@ -156,9 +156,11 @@ impl ChatTaskRepo {
 
         tx.commit().await.map_err(map_sqlx_err)?;
 
-        Ok(StartOnboardingOutcome::Started(OnboardingOpenResult {
-            kickoff: kickoff_row,
-            opening: opening_row,
-        }))
+        Ok(StartOnboardingOutcome::Started(Box::new(
+            OnboardingOpenResult {
+                kickoff: kickoff_row,
+                opening: opening_row,
+            },
+        )))
     }
 }

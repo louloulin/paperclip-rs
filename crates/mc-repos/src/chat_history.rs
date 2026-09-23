@@ -19,7 +19,7 @@
 //! `h.SlackHistory`（`channel.HistoryReader` 的 slack/lark 实现）。**本波只落「无渠道
 //! reader」的两条路径**：history = 已存转录（上面的分页），thread =
 //! `writeNoChannelIntegration`（200 + note）。渠道 reader 随 M7 补齐，已在 `docs/45`
-//! §known_gap 显式登记。⇒ 本文件**不引入渠道 API 客户端**，只读 `channel_*` 两张**已有**
+//! §`known_gap` 显式登记。⇒ 本文件**不引入渠道 API 客户端**，只读 `channel_*` 两张**已有**
 //! 表（无新迁移）。
 //!
 //! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::chat_session`）：

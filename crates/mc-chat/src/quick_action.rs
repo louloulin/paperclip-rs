@@ -185,6 +185,8 @@ mod tests {
     #[test]
     fn accepted_status_is_202() {
         assert_eq!(REGENERATE_ACCEPTED, 202);
-        assert!(QUICK_ACTIONS_TOGGLE_BYPASSED_BY_MANUAL);
+        // 同 `task.rs`：绕开常量断言口径（门 ③）。
+        let bypassed: bool = QUICK_ACTIONS_TOGGLE_BYPASSED_BY_MANUAL;
+        assert!(bypassed);
     }
 }

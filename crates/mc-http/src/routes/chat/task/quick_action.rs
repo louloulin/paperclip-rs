@@ -111,16 +111,17 @@ pub(super) async fn regenerate_chat_quick_actions(
     // 但**校验照跑** —— 坏 id 在两条路径上都得是 400 `invalid message_id`。
     let _expected_message_id = parse_uuid_field(&req.message_id, "message_id")?;
 
-    let refusal = match quick_actions_available() {
-        // provider 未接入 ⇒ 上游 service 的**第一句**就失败：本部署上真实执行的
-        // 就是这一条出口，不是占位。
-        false => RegenerateRefusal::Unavailable,
+    let refusal = if quick_actions_available() {
         // provider 接入后这里要接判定链：`latest_regenerable_reply`（无轮 / 不是普通消息轮
         // → 409 `no assistant reply to refresh yet`；不是 `expected_message_id` → 409
         // `a newer reply arrived …`）+ `has_active_chat_task_for_session`（→ 409
         // `still working …`），成功则 202 `{"message_id":"<uuid>"}`。
         // ⚠️ 不要在这里回 202：生成尚未实现（`docs/45` known_gap）。
-        true => unreachable!("quick-actions provider 未接入（docs/45 known_gap）"),
+        unreachable!("quick-actions provider 未接入（docs/45 known_gap）")
+    } else {
+        // provider 未接入 ⇒ 上游 service 的**第一句**就失败：本部署上真实执行的
+        // 就是这一条出口，不是占位。
+        RegenerateRefusal::Unavailable
     };
 
     Ok(code_error(

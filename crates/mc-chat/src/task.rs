@@ -10,7 +10,7 @@
 //! | `queued` = **位置**语义，不是 DB 状态：同会话已有更早的可见任务才算排队 | `task.go:2360` `HasPendingChatTurnForSession` |
 //! | `regenerate_quick_actions_for IS NULL` 的后台刷新不计入 pending | `chat.sql` 两条 pending 查询（MUL-5149） |
 //! | `wait_reason` 只在 `waiting_local_directory` 时下发 | `chat.go:1302` `waitReasonForStatus` |
-//! | chat 任务优先级恒 2（medium） | `task.go:2377` `Priority: 2`（注释：matches EnqueueChatTask）|
+//! | chat 任务优先级恒 2（medium） | `task.go:2377` `Priority: 2`（注释：matches `EnqueueChatTask`）|
 //! | `supports_queue` 恒 `true` | `chat.go` 三处响应字面量 |
 //! | 首条标题 = 第一行非空 + 去 Markdown + 30 字符 + 单省略号 | `chat_title.go:22` `Derive` |
 //! | 归档会话 / 归档 agent / 无 runtime agent 的三条拒绝文案 | `chat.go` send 分支 |
@@ -118,7 +118,8 @@ pub const TITLE_LIMIT: usize = 30;
 /// 1. 取**第一行非空**（Go `strings.TrimSpace` 判空，Unicode 空白）；
 /// 2. 抹掉行内 ```` ```...``` ```` 代码围栏（Go 正则 `.` 不跨行、且 `.*?` 非贪婪
 ///    ⇒ 只有**同行的**成对围栏才被匹配，没配对的保持原样）；
-/// 3. 去掉 Markdown 标记字符 `# * ` > ~ _`，再把 `!?[文字](链接)` 还原成 `文字`；
+/// 3. 去掉 Markdown 标记字符（Go 的 `markdownMarks`：`#`、`*`、反引号、`>`、`~`、
+///    `_`），再把 `!?[文字](链接)` 还原成「文字」；
 /// 4. ASCII 空白折叠成单空格 + Unicode trim；超 30 字符则截到 29 + 单省略号 `…`
 ///    （截断后**先**去掉右侧空白再拼省略号）。
 ///
@@ -174,7 +175,8 @@ fn strip_fences(line: &str) -> String {
     out
 }
 
-/// 去掉 Markdown 标记字符（Go `markdownMarks = [#*`>~_]`，逐字符删除）。
+/// 去掉 Markdown 标记字符（Go 的 `markdownMarks` 集合：`#`、`*`、反引号、`>`、`~`、`_`，
+/// 逐字符删除）。
 fn strip_marks(line: &str) -> String {
     line.chars()
         .filter(|c| !matches!(c, '#' | '*' | '`' | '>' | '~' | '_'))
@@ -335,7 +337,7 @@ mod tests {
 
     fn row(status: &str, secs: i64) -> PendingTaskRow {
         PendingTaskRow {
-            task_id: uuid::Uuid::from_u128(secs as u128),
+            task_id: uuid::Uuid::from_u128(u128::from(secs.unsigned_abs())),
             status: status.to_owned(),
             created_at: chrono::Utc.timestamp_opt(secs, 0).unwrap(),
             wait_reason: None,
@@ -390,7 +392,9 @@ mod tests {
         assert!(!position_is_queued(false));
         assert!(position_is_queued(true));
         assert_eq!(PRIORITY_CHAT, 2);
-        assert!(SUPPORTS_QUEUE);
+        // 借一个非 const 绑定，免得 `assert!` 在常量上被判「值恒真」（门 ③）。
+        let supports_queue: bool = SUPPORTS_QUEUE;
+        assert!(supports_queue);
     }
 
     #[test]

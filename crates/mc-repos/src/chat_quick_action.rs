@@ -6,7 +6,7 @@
 //! | [`ChatQuickActionRepo::latest_regenerable_reply`] | `GetLatestAssistantChatMessageForSession`（`chat.sql:1694`） |
 //! | [`ChatQuickActionRepo::has_active_chat_task_for_session`] | `HasActiveChatTaskForSession`（`chat.sql:1310`） |
 //!
-//! ⚠️ **anchor scaffold 的表判断是错的**（本片实测，登记在 `docs/45` §known_gap）：
+//! ⚠️ **anchor scaffold 的表判断是错的**（本片实测，登记在 `docs/45` §`known_gap`）：
 //! scaffold 的模块文档说「上游真值：表 `quick_action`（`migrations/upstream/237_quick_action.up.sql`，
 //! 15 列）；查询面 `quick_action.sql`（8 条 query）」。实测：**`quick_action` 表是
 //! *issue* 快捷动作**（`237` 的头顶注释：「Issue Quick Actions (MUL-5465) … posts a

@@ -10,7 +10,7 @@
 //! | [`ChatTaskRepo::prioritize_queued_task`] | `PrioritizeQueuedChatTask`（`chat.sql:1402`）+ `GetAgentTask` 回读 |
 //! | [`ChatTaskRepo::clear_queued_tasks`] | `CancelQueuedAgentTasksForSession`（`agent.sql:1709`）+ `settleQueuedChatInput`（`task.go:3092`） |
 //!
-//! **有意偏离**（登记在 `docs/45` §known_gap）：`CancelQueuedChatTasks` 提交后的四步
+//! **有意偏离**（登记在 `docs/45` §`known_gap`）：`CancelQueuedChatTasks` 提交后的四步
 //! 副作用（`captureTaskCancelled` 埋点、`ReconcileAgentStatus`、`broadcastTaskEvent`、
 //! `notifyTasksFinished`）本片都不做 —— 前两个要 analytics / agent 状态汇总（不在本片
 //! 写集），后两个是 LUM-1506 的广播面。`SettleDeliveredDelegatedFailureRecoveries` 在
@@ -141,7 +141,7 @@ impl ChatTaskRepo {
             return Err(PriorityError::LockAgent(crate::RepoError::NotFound));
         }
 
-        let sql = format!(
+        let sql =
             "WITH target AS MATERIALIZED ( \
                  SELECT candidate.id FROM agent_task_queue AS candidate \
                  WHERE candidate.id = $1 AND candidate.chat_session_id = $2 \
@@ -167,7 +167,7 @@ impl ChatTaskRepo {
                        AND active.regenerate_quick_actions_for IS NULL \
                      ORDER BY active.created_at ASC, active.id ASC LIMIT 1)::uuid AS active_task_id \
              FROM prioritized"
-        );
+        .to_string();
         let prioritized: Option<PrioritizedChatTaskRow> = sqlx::query_as(&sql)
             .bind(task_id)
             .bind(session_id)
@@ -175,26 +175,25 @@ impl ChatTaskRepo {
             .await
             .map_err(|e| PriorityError::Query(map_sqlx_err(e)))?;
 
-        let outcome = match prioritized {
-            Some(row) => PriorityOutcome::Prioritized(row),
-            None => {
-                // CAS 同时拒「过期队列行」与「还没有被认领的活跃回复」，两者的 409 兼容
-                // 契约相同但文案不同（上游用一次回读区分）。
-                let loaded: Option<(String, Option<Uuid>)> = sqlx::query_as(
-                    "SELECT status, chat_session_id FROM agent_task_queue WHERE id = $1",
-                )
-                .bind(task_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| PriorityError::LoadTask(map_sqlx_err(e)))?;
-                match loaded {
-                    Some((status, chat_session_id))
-                        if status == "queued" && chat_session_id == Some(session_id) =>
-                    {
-                        PriorityOutcome::NoActiveReply
-                    }
-                    _ => PriorityOutcome::NotQueued,
+        let outcome = if let Some(row) = prioritized {
+            PriorityOutcome::Prioritized(row)
+        } else {
+            // CAS 同时拒「过期队列行」与「还没有被认领的活跃回复」，两者的 409 兼容
+            // 契约相同但文案不同（上游用一次回读区分）。
+            let loaded: Option<(String, Option<Uuid>)> = sqlx::query_as(
+                "SELECT status, chat_session_id FROM agent_task_queue WHERE id = $1",
+            )
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| PriorityError::LoadTask(map_sqlx_err(e)))?;
+            match loaded {
+                Some((status, chat_session_id))
+                    if status == "queued" && chat_session_id == Some(session_id) =>
+                {
+                    PriorityOutcome::NoActiveReply
                 }
+                _ => PriorityOutcome::NotQueued,
             }
         };
 

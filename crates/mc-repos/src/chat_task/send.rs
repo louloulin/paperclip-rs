@@ -24,7 +24,7 @@
 //! 两者因此不会死锁）。本文件必须先锁会话再重读，才能保证并发 rebind 后发出去的任务不会
 //! 还挂着旧 runtime。
 //!
-//! **有意偏离**（登记在 `docs/45` §known_gap）：
+//! **有意偏离**（登记在 `docs/45` §`known_gap`）：
 //! 1. `buildRuntimeMCPOverlay` / `applyAttributionFallback` 不可达 —— 前者要 Composio（本仓
 //!    未实现），后者的 `workspace.attribution_fail_closed` 分支对 `AuthUser`（必有 userID）
 //!    永远不触发。⇒ `runtime_mcp_overlay` / `runtime_connected_apps` 恒 `NULL`，
@@ -67,6 +67,9 @@ impl ChatTaskRepo {
     /// 返回 [`DirectChatSendResult`]；三个 4xx 语义（会话归档 / agent 归档 / 无 runtime）
     /// 走 [`ChatSendError`]，其余错误由 handler 映射成上游同款
     /// `500 "failed to send chat message: {e}"`。
+    // 一个事务里平铺「锁会话 → 锁 agent → 重读 → 建任务 → 写消息 → 结算输入」六步，
+    // 与上游 `SendDirectChatMessage` 一一对应；拆子函数会割裂锁顺序，故整段保留。
+    #[allow(clippy::too_many_lines)]
     pub async fn send_direct_chat_message(
         &self,
         send: DirectChatSend<'_>,

@@ -14,8 +14,8 @@
 //!
 //! 上游真值：`server/pkg/db/queries/chat.sql`（task 面）+ `agent.sql:1696/1709` 的取消族
 //! + `attachment.sql:115/173` 的附件绑定族 + `service/task.go` 的四个事务
-//! （`SendDirectChatMessage` / `OpenMikaOnboardingChat` / `CancelQueuedChatTasks` /
-//! `PrioritizeQueuedChatTask` 的 handler 事务）。
+//!   （`SendDirectChatMessage` / `OpenMikaOnboardingChat` / `CancelQueuedChatTasks` /
+//!   `PrioritizeQueuedChatTask` 的 handler 事务）。
 //!
 //! ⚠️ 跨波依赖（`docs/42` §4.3 第 1/2 条）：
 //! 1. 本模块**读写 M3 的表** `agent_task_queue`（领域层 `mc-task`、用户面 M3-6 都已合）。
@@ -23,7 +23,7 @@
 //!    **本仓 `migrations/0001_init.up.sql:230` 的 CHECK 是错的**，不能当契约。
 //! 2. ws 广播（`BroadcastTaskQueued` / `chat:done` / `agent:status`）属 **LUM-1506**
 //!    （M3-7-fu）—— 本模块只落库与读回，**不发事件**；`chat:message` 广播同样登记为 gap
-//!    （`docs/45` §known_gap）。
+//!    （`docs/45` §`known_gap`）。
 //!
 //! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::agent`）：
 //! - `Row` 用原始 `Uuid`/`String` 字段（`mc_core::Id` 没有 sqlx impl ⇒ 手写 `FromRow`）

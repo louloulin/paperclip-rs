@@ -4,21 +4,21 @@
 //!
 //! | 方法 | 路径 | handler | 子模块 |
 //! | --- | --- | --- | --- |
-//! | POST | `/api/chat/sessions/:id/messages` | `SendChatMessage`（`chat.go:832`） | [`dispatch`] |
-//! | POST | `/api/chat/sessions/:id/onboarding` | `StartMikaOnboarding`（`mika_onboarding.go:60`） | [`dispatch`] |
-//! | POST | `/api/chat/sessions/:id/quick-actions/regenerate` | `RegenerateChatQuickActions`（`chat.go:1100`） | [`quick_action`] |
-//! | GET | `/api/chat/sessions/:id/pending-task` | `GetPendingChatTask`（`chat.go:1609`） | [`queue`] |
-//! | DELETE | `/api/chat/sessions/:id/queued-tasks` | `ClearQueuedChatTasks`（`chat.go:1758`） | [`queue`] |
-//! | POST | `/api/chat/sessions/:id/queued-tasks/:taskId/prioritize` | `PrioritizeQueuedChatTask`（`chat.go:1673`） | [`queue`] |
+//! | POST | `/api/chat/sessions/:sessionId/messages` | `SendChatMessage`（`chat.go:832`） | [`dispatch`] |
+//! | POST | `/api/chat/sessions/:sessionId/onboarding` | `StartMikaOnboarding`（`mika_onboarding.go:60`） | [`dispatch`] |
+//! | POST | `/api/chat/sessions/:sessionId/quick-actions/regenerate` | `RegenerateChatQuickActions`（`chat.go:1100`） | [`quick_action`] |
+//! | GET | `/api/chat/sessions/:sessionId/pending-task` | `GetPendingChatTask`（`chat.go:1609`） | [`queue`] |
+//! | DELETE | `/api/chat/sessions/:sessionId/queued-tasks` | `ClearQueuedChatTasks`（`chat.go:1758`） | [`queue`] |
+//! | POST | `/api/chat/sessions/:sessionId/queued-tasks/:taskId/prioritize` | `PrioritizeQueuedChatTask`（`chat.go:1673`） | [`queue`] |
 //! | GET | `/api/chat/pending-tasks` | `ListPendingChatTasks`（`chat.go:1477`） | [`queue`] |
 //! | GET | `/api/chat/pending-tasks/has-any` | `HasPendingChatTasks`（`chat.go:1565`） | [`queue`] |
 //! | GET | `/api/chat/history` | `GetChatChannelHistory`（`chat_history.go:55`） | [`history`] |
 //! | GET | `/api/chat/thread` | `GetChatThread`（`chat_history.go:178`） | [`history`] |
 //!
-//! 仓储面：`mc_repos::chat_task`（`agent_task_queue` 的 chat 读写）+ `mc_repos::chat_history`
-//! + `mc_repos::chat_quick_action`；纯领域规则在 `mc-chat`（`task` / `history` /
-//! `quick_action` / `onboarding`）。三层各只依赖上一层，`mc-chat` 与 `mc-repos` 之间**没有**
-//! 依赖边（SQL 字面量在 repos 里照上游原文写，见 `chat_session.rs` 的模块头先例）。
+//! 仓储面：`mc_repos::chat_task`（`agent_task_queue` 的 chat 读写）+ `mc_repos::chat_history` +
+//! `mc_repos::chat_quick_action`；纯领域规则在 `mc-chat`（`task` / `history` / `quick_action` /
+//! `onboarding`）。三层各只依赖上一层，`mc-chat` 与 `mc-repos` 之间**没有**依赖边
+//! （SQL 字面量在 repos 里照上游原文写，见 `chat_session.rs` 的模块头先例）。
 //!
 //! ⚠️ 跨波依赖（`docs/42` §4.3）—— 三条都要**显式**交接，不要在本片自造：
 //! 1. **task 队列**（M3-3 / M3-6，已合入）：`SendChatMessage` 的落库面复用
@@ -34,8 +34,9 @@
 //!    随 M7 落地，登记在 `docs/45` 的 `known_gap`。
 //!
 //! ⚠️ 形态纪律（`docs/37` §15.1，门 ⑦ 的 `slash_alias_audit.py`）：这 10 条全是 plain 子路由
-//! ⇒ **只有无尾斜杠形态**，不要加别名（会被判 `EXTRA_ALIAS` 警告）；路径参数写 `:id` /
-//! `:taskId`（matchit 0.7 把 `{id}` 当字面量段：编译过、恒 404）。
+//! ⇒ **只有无尾斜杠形态**，不要加别名（会被判 `EXTRA_ALIAS` 警告）；路径参数写 `:sessionId` /
+//! `:taskId`（matchit 0.7 把 `{id}` 当字面量段：编译过、恒 404）；会话参数**必须**叫
+//! `:sessionId`（与 `session.rs` / `message.rs` 同一位置同名，否则 matchit 注册冲突 panic）。
 //!
 //! ⚠️ `history` / `thread` 的认证是**另一套**：它们服务 agent 侧 CLI，用
 //! `X-Actor-Source: task_token` + `X-Task-ID`，**不**经过 `AuthUser`（见 [`history`] 的模块头）。
@@ -58,29 +59,30 @@ use crate::state::AppState;
 /// `mc_http::routes::router().with_state(state)` 时一次性注入。
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        // 会话内单条动作（`:id` 是 chat session id）。
+        // 会话内单条动作（`:sessionId` 必须与 M4-1..M4-3 的 chat 面同名：matchit 0.7 在
+        // 同一位置不允许两个不同的参数名，否则 `router()` 直接 panic）。
         .route(
-            "/api/chat/sessions/:id/messages",
+            "/api/chat/sessions/:sessionId/messages",
             post(dispatch::send_chat_message),
         )
         .route(
-            "/api/chat/sessions/:id/onboarding",
+            "/api/chat/sessions/:sessionId/onboarding",
             post(dispatch::start_mika_onboarding),
         )
         .route(
-            "/api/chat/sessions/:id/quick-actions/regenerate",
+            "/api/chat/sessions/:sessionId/quick-actions/regenerate",
             post(quick_action::regenerate_chat_quick_actions),
         )
         .route(
-            "/api/chat/sessions/:id/pending-task",
+            "/api/chat/sessions/:sessionId/pending-task",
             get(queue::get_pending_chat_task),
         )
         .route(
-            "/api/chat/sessions/:id/queued-tasks",
+            "/api/chat/sessions/:sessionId/queued-tasks",
             delete(queue::clear_queued_chat_tasks),
         )
         .route(
-            "/api/chat/sessions/:id/queued-tasks/:taskId/prioritize",
+            "/api/chat/sessions/:sessionId/queued-tasks/:taskId/prioritize",
             post(queue::prioritize_queued_chat_task),
         )
         // 跨会话（plain 子路由：**不要**加尾斜杠别名）。

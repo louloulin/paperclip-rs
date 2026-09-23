@@ -11,7 +11,7 @@
 //! | 读回的是 `chat_message` 行，**newest-first → oldest-first 反转** | `chat_history.go:98-120` `chatMessageHistory` |
 //! | 命中整页（`len == limit`）才给 `next_cursor` | 同上 |
 //! | 作者词表 `user` → `User`、`assistant` → `Bot` | `chat_history.go:180-186` `transcriptAuthor` |
-//! | `ts` 用 **RFC3339Nano**（与 `messages/page` 的游标同款） | `chat_history.go:113` + `chat.go:1248` |
+//! | `ts` 用 **`RFC3339Nano`**（与 `messages/page` 的游标同款） | `chat_history.go:113` + `chat.go:1248` |
 //! | 无渠道阅读器时 thread 直接 200 + note | `chat_history.go:362-367` `writeNoChannelIntegration` |
 //! | note 随 `channel_type` 二选一 | `chat_history.go:390-395` `noHistoryNote` |
 //!
@@ -154,12 +154,12 @@ pub struct HistoryMessage {
     pub text: String,
     /// 作者标签（`User` / `Bot`）。
     pub author: String,
-    /// `created_at`（`ts` 字段按 RFC3339Nano 渲染，游标也用它）。
+    /// `created_at`（`ts` 字段按 `RFC3339Nano` 渲染，游标也用它）。
     pub created_at: DateTime<Utc>,
 }
 
 impl HistoryMessage {
-    /// 线上 `ts`：RFC3339Nano + UTC `Z`。
+    /// 线上 `ts`：`RFC3339Nano` + UTC `Z`。
     pub fn ts(&self) -> String {
         nano(self.created_at)
     }
@@ -258,7 +258,7 @@ mod tests {
 
     fn msg(secs: i64, role: HistoryRole) -> HistoryMessage {
         HistoryMessage {
-            id: Uuid::from_u128(secs as u128),
+            id: Uuid::from_u128(u128::from(secs.unsigned_abs())),
             role,
             text: format!("m{secs}"),
             author: role.author().to_owned(),
