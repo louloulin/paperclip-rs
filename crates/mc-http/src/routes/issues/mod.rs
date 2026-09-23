@@ -24,7 +24,7 @@
 //!
 //! 而 `move` / `children` / `reactions` / `reorder` 这些是 `r.Get("/move")` 之类的 plain
 //! 子路由，上游只有**一个**形态 ⇒ 不要加别名（`EXTRA_ALIAS` 会由 gate ⑦ 的第二条命令告警）。
-//! 规则与全仓对账见 `docs/37-M3-W3C-PREFLIGHT.md` §15.1/§15.3，本片落地记录见其 §20。
+//! 规则与全仓对账见 `docs/37-M3-W3C-PREFLIGHT.md` §15.1/§15.3，本片落地记录见其 §21。
 //!
 //! **所有实现都是运行时 sqlx builder + 参数绑定**（不用 compile-time 宏），因此构建期
 //! 不需要数据库。workspace 由 header / query 解析（见 `resolve_workspace`），成员校验复用

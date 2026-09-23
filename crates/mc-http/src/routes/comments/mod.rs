@@ -18,7 +18,7 @@
 //! `router.go` 是 `Route("/api/comments/{commentId}") + Put("/")/Delete("/")`，chi 的
 //! `Mount` 两种形态都服务；axum 0.7 不做归一化 ⇒ 少注册一个就是 404（不是 307）。
 //! 其余 `keep-replies` / `resolve` / `reactions` / `sub-issues` 是 plain 子路由，
-//! 上游只有**一个**形态，不要加别名（`docs/37` §15.1、本片记录见其 §20）。
+//! 上游只有**一个**形态，不要加别名（`docs/37` §15.1、本片记录见其 §21）。
 //!
 //! 文件布局（gate ⑩ 单文件 800 行硬上限）：DTO / 请求体在 `comments/dto.rs`，
 //! 本文件只留路由表 + handler。**不要为了省行数让两个 `.route()` 共用一个
