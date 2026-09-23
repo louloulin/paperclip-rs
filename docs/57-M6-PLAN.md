@@ -596,6 +596,27 @@ manifest / bundle / capabilities 校验器（`ManifestVersion1`、`Capabilities`
 §3/§4/§5/§6/§7/§8/§10 与 `docs/44-M5-PLAN.md` 逐节同构（anchor 机制、写集矩阵、波次 ≤3、门 ⑦ 预测表、门 ⑩ 预飞、
 风险登记、复算命令），便于跨波对比；不重复解释已在 `docs/44` 立过的规矩。
 
+### 9.5 落地修订（M6-0 anchor `LUM-1665` 实测，**M6-1…M6-9 按本节读计划**）
+
+§5「每文件预扩张清单」落地时有 4 处归位判断与 1 处新增，逐条如下（细节与理由见 `docs/32-M3-DAEMON-FACE.md` §9）：
+
+| # | §5 原文 | 实际落点 | 为什么 |
+| - | --- | --- | --- |
+| 1 | `mc-skill/src/git.rs`（M6-3） | **`mc-skill/src/source.rs`**（M6-3） | 上游**没有** git 克隆路径：`internal/handler/skill.go:943-945` 只有 `clawHub` / `skillsSh` / `github` 三个 **HTTP** 源（`detectImportSource` L950）；保留 `git.rs` 会误导实现者去写 `git clone` |
+| 2 | `POST /api/plugin-bridge/v1/hooks/{key}` 归 `routes/plugins/hooks_job.rs`（M6-8） | **`routes/plugin_bridge/hooks.rs`**（M6-8）；`hooks_job.rs` 退为 **0 路由**的 job 粘合落点 | 路由前缀与文件所在目录一致，漏挂风险最小；注册键总数不变（57/57） |
+| 3 | `/api/agents/{id}/skills*` 6 条（M6-4） | M6-4 **自己**建 `routes/agents/skills.rs` + 在 `routes/agents.rs` 加 `mod skills;` 与 merge（锚点**不**碰 M2/M4 的既成文件） | `routes/agents.rs` 在 M6 内由 M6-4 独占；锚点越界会破「一文件一写者」 |
+| 4 | `state.rs` 只点名 `plugin_key` | 同处**加** `plugin_surface_origin: Option<String>` | `state.rs` 被锚点冻结（M6 各片只读）⇒ 留给 M6-6/M6-7 会逼它们改冻结文件 |
+| 5 | `plugin_key` 的类型未定 | `mc-http::state::PluginSecretKey { key: [u8; 32] }`（newtype，仿 `GoogleOAuthConfig`）；`mc-plugin-host::credentials` 只收 `&[u8]` | 唯一出口放 `state.rs`，骨架 crate 不读 env，便于单测（`state.rs` 已有 fake getter 的 `env()` 辅助） |
+
+**依赖版本（按声明的 `rust-version = 1.80` 选，不是「取最新」）**：`tower_governor 0.4`（0.8 拉 axum 0.8 + tonic 0.14
+⇒ lock 里出现第二个 axum 大版本，`Body` 不兼容；⚠️ rsproxy 索引下 manifest 键名必须写**下划线** `tower_governor`）、
+`zip 2`（6.0 MSRV 1.83 / 8.6 MSRV 1.88 均高于声明 MSRV）、`serde_yaml 0.9`、axum 加 `multipart`。
+
+**本锚点实测口径（后续各片起手基准）**：⑦ `local 325 / baseline 325`、`implemented 263 real + 0 placeholder`、
+`known_gap 193`、`owners.M6 57`、`local_only 9`；`slash-alias-allowlist.tsv` **已空**
+（`slash_alias_audit --declared docs/fixtures/m6-declared-routes.tsv` = `5 defect`，即 5 个双形态键全在 M6-2，**非回归**）。
+注意 §6.1 的预测表是在 `eaba357` 上测的：**delta 有效，绝对值过期**（`docs/37` §51.4 已按 delta 平移过一轮）。
+
 ---
 
 ## 10. 复算命令（全部只读，可在任意 workdir 复现）
