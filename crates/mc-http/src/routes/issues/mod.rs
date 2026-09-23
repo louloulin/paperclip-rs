@@ -13,6 +13,19 @@
 //! - 目录：`GET/POST /api/issue-statuses`、`PATCH/DELETE /api/issue-statuses/:id`、
 //!   `PATCH /api/issue-statuses/reorder`
 //!
+//! **尾斜杠双形态（LUM-1458）**：上游 `router.go` 的 `Route("<P>") + Get/Put/Delete("/")`
+//! 走 chi 的 `Mount`，同时服务 `<P>` 与 `<P>/`；axum 0.7 不做归一化（少注册一个就是 404，
+//! 不是 307）。因此集合与 item root 一律注册两个形态，且两个形态的方法集合逐字相同：
+//!
+//! - `GET|POST /api/issues` + `GET|POST /api/issues/`
+//! - `GET|PUT|DELETE /api/issues/:id` + `GET|PUT|DELETE /api/issues/:id/`
+//! - `GET|POST /api/issue-statuses` + `GET|POST /api/issue-statuses/`
+//! - `PATCH|DELETE /api/issue-statuses/:id` + `PATCH|DELETE /api/issue-statuses/:id/`
+//!
+//! 而 `move` / `children` / `reactions` / `reorder` 这些是 `r.Get("/move")` 之类的 plain
+//! 子路由，上游只有**一个**形态 ⇒ 不要加别名（`EXTRA_ALIAS` 会由 gate ⑦ 的第二条命令告警）。
+//! 规则与全仓对账见 `docs/37-M3-W3C-PREFLIGHT.md` §15.1/§15.3，本片落地记录见其 §20。
+//!
 //! **所有实现都是运行时 sqlx builder + 参数绑定**（不用 compile-time 宏），因此构建期
 //! 不需要数据库。workspace 由 header / query 解析（见 `resolve_workspace`），成员校验复用
 //! `invitations::require_workspace_member`（非成员 → 404，与上游一致）。
@@ -103,8 +116,10 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         // ---- 集合 ----------------------------------------------------------
         .route("/api/issues", get(list_issues).post(create_issue))
-        // 尾斜杠别名（M2-C `inbox` 同款处理：客户端常带斜杠）
-        .route("/api/issues/", get(list_issues))
+        // 尾斜杠别名（M2-C `inbox` 同款处理：客户端常带斜杠）。上游是
+        // `Route("/api/issues") + Get("/")/Post("/")` 走 chi `Mount`，两种形态都服务
+        // （docs/37 §15.1）⇒ 这里两个形态都必须注册，且**方法集合逐字相同**。
+        .route("/api/issues/", get(list_issues).post(create_issue))
         .route("/api/issues/query", post(query_issues))
         .route("/api/issues/search", get(search_issues))
         .route("/api/issues/grouped", get(list_grouped))
@@ -117,6 +132,13 @@ pub fn router() -> Router<Arc<AppState>> {
         // ---- 单体 ----------------------------------------------------------
         .route(
             "/api/issues/:id",
+            get(get_issue).put(update_issue).delete(delete_issue),
+        )
+        // 同上：上游 `Route("/{id}") + Get/Put/Delete("/")` ⇒ 带尾斜杠的形态也要服务。
+        // 下面的普通子路由（`move`/`children`/`reactions`/…）是 `r.Get("/move")` 这类
+        // plain 注册，只有**一个**形态，不要跟着加别名。
+        .route(
+            "/api/issues/:id/",
             get(get_issue).put(update_issue).delete(delete_issue),
         )
         .route("/api/issues/:id/move", post(move_issue))
@@ -170,10 +192,18 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/issue-statuses",
             get(list_statuses).post(create_status),
         )
-        .route("/api/issue-statuses/", get(list_statuses))
+        // 双形态注册，理由同上；`reorder` 是 plain 子路由 ⇒ 只注册不带斜杠的形态。
+        .route(
+            "/api/issue-statuses/",
+            get(list_statuses).post(create_status),
+        )
         .route("/api/issue-statuses/reorder", patch(reorder_statuses))
         .route(
             "/api/issue-statuses/:id",
+            patch(update_status).delete(delete_status),
+        )
+        .route(
+            "/api/issue-statuses/:id/",
             patch(update_status).delete(delete_status),
         )
         // M2-D（LUM-1355）：`/api/issues/table/{groups,rows,facets}` 与

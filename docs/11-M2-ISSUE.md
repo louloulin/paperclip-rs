@@ -28,6 +28,7 @@ ListIssues L1164 / GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Gro
 | GET | `/api/issues` | `list_issues` | ✅ |
 | GET | `/api/issues/` | `list_issues` | ✅（尾斜杠别名） |
 | POST | `/api/issues` | `create_issue` | ✅ |
+| POST | `/api/issues/` | `create_issue` | ✅（尾斜杠别名，LUM-1458 补） |
 | POST | `/api/issues/query` | `query_issues` | ✅（超大 filter 集的 POST 孪生） |
 | GET | `/api/issues/search` | `search_issues` | ✅ |
 | GET | `/api/issues/grouped` | `list_grouped` | ✅ |
@@ -45,6 +46,7 @@ ListIssues L1164 / GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Gro
 | Method | Path | Handler | 状态 |
 | --- | --- | --- | --- |
 | GET / PUT / DELETE | `/api/issues/:id` | `get_issue` / `update_issue` / `delete_issue` | ✅（`:id` 接受 UUID 或 `LUM-1348`） |
+| GET / PUT / DELETE | `/api/issues/:id/` | 同上 | ✅（尾斜杠别名，LUM-1458 补；两形态方法集逐字相同）|
 | POST | `/api/issues/:id/move` | `move_issue` | ✅（`before_id` / `after_id` 锚点重排） |
 | GET | `/api/issues/:id/children` | `list_issue_children` | ✅ |
 | GET / POST / DELETE | `/api/issues/:id/reactions` | `list_reactions` / `add_reaction` / `remove_reaction` | ✅（幂等） |
@@ -69,8 +71,10 @@ ListIssues L1164 / GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Gro
 | Method | Path | Handler | 状态 |
 | --- | --- | --- | --- |
 | GET / POST | `/api/issue-statuses` | `list_statuses` / `create_status` | ✅（尾斜杠别名同 `GET`） |
+| POST | `/api/issue-statuses/` | `create_status` | ✅（尾斜杠别名，LUM-1458 补） |
 | PATCH | `/api/issue-statuses/reorder` | `reorder_statuses` | ✅ |
 | PATCH / DELETE | `/api/issue-statuses/:id` | `update_status` / `delete_status` | ✅ |
+| PATCH / DELETE | `/api/issue-statuses/:id/` | 同上 | ✅（尾斜杠别名，LUM-1458 补） |
 
 读对任意成员开放（`GET` 内含 `ensure_defaults` self-heal）；**写路径限 owner/admin**
 （`require_workspace_admin`，与上游 router.go L2051 注释一致；非 admin → 403）。

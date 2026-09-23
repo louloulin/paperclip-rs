@@ -12,12 +12,11 @@
 #   * 清单内文件已不在 git 里    -> 失败（请从基线删除）
 crates/mc-conformance/src/lib.rs	1024
 crates/mc-http/src/routes/auth.rs	1704
-crates/mc-http/src/routes/comments.rs	831
 crates/mc-http/src/routes/inbox.rs	981
 crates/mc-http/tests/inbox.rs	1149
 crates/mc-repos/src/comment.rs	1403
-crates/mc-repos/src/inbox.rs	1186
+crates/mc-repos/src/inbox.rs	1185
 crates/mc-repos/src/invitation.rs	828
-crates/mc-repos/src/issue.rs	1950
+crates/mc-repos/src/issue.rs	1949
 scripts/extract_upstream_fixtures.py	1863
 scripts/schema_snapshot.py	1093

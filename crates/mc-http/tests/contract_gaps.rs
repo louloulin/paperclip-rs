@@ -9,7 +9,7 @@
 //! | 3 | 缺 `DELETE /api/workspaces/{id}/members/{memberId}` | `delete_member_*` |
 //! | 4 | PAT 路径偏离（`/api/me/pats` → `/api/tokens`） | `tokens_*` |
 //! | 5 | 多出 `POST /api/auth/{login,session}` 幽灵占位 | `ghost_auth_placeholders_are_gone` |
-//! | 6 | 尾斜杠形态（chi `Mount` 两种形态都服务，axum 只注册一个就 404） | `trailing_slash_alias_forms_are_mounted` |
+//! | 6 | 尾斜杠形态（chi `Mount` 两种形态都服务，axum 只注册一个就 404） | `trailing_slash_alias_forms_are_mounted`（19 键）|
 //!
 //! PAT 用例**同样需要真实 PG**：M1-F（LUM-1375）起 `/api/tokens*` 直连
 //! `personal_access_token` 表（`mc_repos::pat::PatRepo`），不再走 `InMemoryPatStore`，
@@ -386,15 +386,20 @@ async fn ghost_auth_placeholders_are_gone() {
 /// feature、⑥ 只跑 `--ignored` —— 不加 `#[ignore]` 的同文件用例在门禁里根本不会执行。
 /// 本用例自己**不需要**库（`Db::placeholder()`），挂 `#[ignore]` 纯粹是为了被 ⑥ 跑到。
 ///
-/// `comments.rs` 的 `PUT|DELETE /api/comments/{id}/` 不在表里：那个文件已顶到 gate ⑩ 的
-/// 基线（831/831），补键必须与拆分同 PR，已连同 `issues/mod.rs` 的 7 键记在
-/// `docs/fixtures/slash-alias-allowlist.tsv`（owner `LUM-1458`）。
+/// `comments.rs` 的 `PUT|DELETE /api/comments/{id}/` 已于 LUM-1458 与本表其余 8 键一起补齐：
+/// `issues/mod.rs` 7 键（`/api/issues` 集合 + `/:id` item root + `/api/issue-statuses` 集合 +
+/// `/:id` item root）与 `comments/mod.rs` 2 键。补键前那个文件正顶在 gate ⑩ 的基线
+/// （831/831）上，所以同 PR 把 DTO 拆到了 `routes/comments/dto.rs`；`docs/fixtures/
+/// slash-alias-allowlist.tsv` 里的 9 行 owner `LUM-1458` 同 PR 删除。
 #[tokio::test]
 #[ignore = "在 test-util 门控的集成测试文件里；门禁中只有 ⑥（--ignored）会执行它"]
 async fn trailing_slash_alias_forms_are_mounted() {
     let app = app(Db::placeholder());
     let ws = format!("/api/workspaces/{}", Uuid::new_v4());
     let member = format!("{ws}/members/{}", Uuid::new_v4());
+    let issue = format!("/api/issues/{}", Uuid::new_v4());
+    let status = format!("/api/issue-statuses/{}", Uuid::new_v4());
+    let comment = format!("/api/comments/{}", Uuid::new_v4());
     for (method, primary) in [
         ("GET", "/api/workspaces".to_string()),
         ("POST", "/api/workspaces".to_string()),
@@ -406,6 +411,18 @@ async fn trailing_slash_alias_forms_are_mounted() {
         ("DELETE", member.clone()),
         ("GET", "/api/tokens".to_string()),
         ("POST", "/api/tokens".to_string()),
+        // LUM-1458。`/api/issues` 只列 POST 不列 GET：GET 主形态本来就挂着
+        // （`list_issues`），别名那半由 `/api/issues/` 的 GET 在下面另行覆盖会重复；
+        // POST 才是这次新挂上去的那半。
+        ("POST", "/api/issues".to_string()),
+        ("GET", issue.clone()),
+        ("PUT", issue.clone()),
+        ("DELETE", issue.clone()),
+        ("POST", "/api/issue-statuses".to_string()),
+        ("PATCH", status.clone()),
+        ("DELETE", status.clone()),
+        ("PUT", comment.clone()),
+        ("DELETE", comment.clone()),
     ] {
         let alias = format!("{primary}/");
         let primary_status = status_of(&app, method, &primary).await;

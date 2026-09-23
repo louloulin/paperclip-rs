@@ -1114,6 +1114,7 @@ multica issue runs LUM-1427 ; multica issue runs LUM-1429
     git diff --stat crates/mc-conformance/report.json     # 预期 M3-4/M3-6 都不动它
 
     # ④ 合入后必须显式做的事（顺序固定）：补 §15.3 的 7 键（+ comments.rs 的 2 键）→ 删 mount.rs 占位 → 刷 ⑦ 基线
+    #    ✅ ④ 已由 LUM-1458 执行完（只有「删 mount.rs 占位」不属于它 —— 那 10 行是 M4/M5/M6 的地）。落地记录见 §20。
     python3 scripts/route_parity.py --write-baseline   # 基线是「锁」，不刷就等于没上锁（只对丢路由判红）
     #   注意：补完键后要同时删掉 docs/fixtures/slash-alias-allowlist.tsv 里对应的行，否则 ⑦ 报 stale 行
 
@@ -1542,7 +1543,7 @@ du -sh …/lum-1438-956b4027d025/workdir/paperclip-rs/target   # 2.1G，**未动
 | 候选片 | 声明写集（来自其描述）| 与在飞写集的交集 | 判定 |
 | --- | --- | --- | --- |
 | `LUM-1471` M4-0b（I4 抽取规则）| `scripts/extract_upstream_fixtures.py`、`contracts/golden/**`（+ 下方 ⑨ 注）| ∅ | ✅ **可立即派**（唯一零交集且不依赖任何未合片）|
-| `LUM-1458`（尾斜杠 9 键）| `routes/issues/mod.rs`、`routes/comments.rs`（+ ⑩ 拆出的子文件）、`slash-alias-allowlist.tsv`、`route-parity-baseline.json` | ∅ | ✅ 可立即派（晋升闸门「M3-6 合入」已满足：#32/#33 均已合）|
+| `LUM-1458`（尾斜杠 9 键）| `routes/issues/mod.rs`、`routes/comments.rs`（+ ⑩ 拆出的子文件）、`slash-alias-allowlist.tsv`、`route-parity-baseline.json` | ∅ | ✅ **已交付**：9 键全补 + `comments.rs` 拆成 `comments/{mod,dto}.rs`，名单 19→10 行，10/10 门绿（§20）|
 | `LUM-1470` M4-0 anchor | 3 新 crate + `Cargo.lock` + `mc-repos/src/lib.rs` + `routes/{projects,squads,chat}/**` + `routes/mod.rs` + `mount.rs` + ⑦/⑨ 快照 | **`Cargo.lock`、`mc-repos/src/lib.rs`**（若空切片就要 import 新 crate，还会撞 `mc-http/Cargo.toml`）| ⛔ 等 M3-7 合（同一文件两写者，docs/15 §3）|
 | `LUM-1443` M3-8 批 3 | `mc-runtime/src/{registry,catalog,adapters/mod}.rs` | `mc-runtime/src/adapters/**`（批 2 正在写）| ⛔ 等批 2 合 |
 | `LUM-1440` execenv | `mc-daemon/src/**`、`mc-daemon/{Cargo.toml,src/lib.rs}`、`Cargo.lock` | `mc-daemon` crate（M3-7 在写）+ `Cargo.lock` | ⛔ 等 M3-7 合 |
@@ -1601,6 +1602,12 @@ python3 scripts/route_parity.py | head -2                     # 手工预删 6 �
 `scripts/slash_alias_audit.py:239` 的 `=> N defect(s), M warning(s)` 只数 findings 派生的缺陷，**不含 stale 行**；于是「6 行 STALE、exit 1」时 stdout 仍打 `=> 0 defect(s), 0 warning(s); 13 allowlisted`，只有 stderr 打 `FAIL: 6 trailing-slash shape defect(s)`。**退出码是对的**（`main()` 用含 stale 的 `defects`），但只看 stdout 汇总行的人会误判为绿。
 本轮**不改**：改脚本 ⇒ 属代码改动 ⇒ 需要全量门禁（⑨ 要整仓编译），而此刻两个冷构建在跑。记为顺手项：**并入 `LUM-1458`**（它本来就要动 allowlist）或下一个集成 cycle；改法是把该行拆成「findings 缺陷 + stale 行」两个数。
 
+> ✅ **已并入并落地**（LUM-1458）：摘要行现在是
+> `=> 0 defect(s) from findings, 9 stale allowlist row(s), 0 warning(s); 10 allowlisted (…)`。
+> 附带修了一处顺序错误：stale 行原先由 `main()` 在 `render()` **之前**打印（出现在报告标题上方）。
+> 本片实测到的最坏情形（修前）正好就是上面描述的那个：**9 行 STALE、stdout 却打 `=> 0 defect(s)`**。
+> 详见 §20.4；判据未变（stale 仍让脚本 exit≠0）。
+
 ### 19.7 复算命令（§19.0–§19.5 逐条可重跑）
 
 ```bash
@@ -1623,3 +1630,122 @@ grep -vc '^#' docs/fixtures/slash-alias-allowlist.tsv
 - **没派发、没晋升**任何 backlog 片（无空位；晋升 = 立刻排 run ⇒ 4/3）。下一位的顺序见 §19.2。
 - **没动源码、⑨ 快照、⑦ 基线、allowlist**：那些属切片（`LUM-1470`/`LUM-1458`）。§19.3 的实测都在本工作树上跑完即 `git checkout` 还原，收尾 `git status` 0 行。
 - **没新建 issue**：下一位的清单已由 `LUM-1458`、`LUM-1471`、`LUM-1470…1476`、`LUM-1440/1443` 覆盖；本轮唯一新缺陷（§19.3）折进 `LUM-1470` 描述，不另开单。
+
+## 20. 尾斜杠收口 cycle 落地记录（LUM-1458）—— 剩余 9 键清零 + `comments.rs` 按 ⑩ 拆分
+
+### 20.0 一句话
+
+§15.3 表的 19 行欠账，第一组 10 键由 #32/#33 收掉，**本片把剩下的 9 键（`LUM-1458`）全部补齐**：
+`slash-alias-allowlist.tsv` 从 19 行降到 10 行，剩下 10 行**全部**是 `routes/mount.rs` 的 M0 占位
+（M4/M5/M6），不存在任何「已实现路由仍缺一个形态」的欠账。起点 `2a51a46`（= #39 / M3-7 合入后的
+`feat/multica-rs-initial`）；这也是 §15.5 ④ 的收官，本 cycle 已按那里的顺序执行完。
+
+### 20.1 9 个键
+
+| # | 键 | 落点 | 本片之前 |
+| --- | --- | --- | --- |
+| 1 | `POST /api/issues/` | `routes/issues/mod.rs` | `GET` 已有（#32），缺 `POST` 那半 |
+| 2–4 | `GET｜PUT｜DELETE /api/issues/:id/` | 同上 | 三条全缺 |
+| 5 | `POST /api/issue-statuses/` | 同上 | `GET` 已有，缺 `POST` 那半 |
+| 6–7 | `PATCH｜DELETE /api/issue-statuses/:id/` | 同上 | 两条全缺 |
+| 8–9 | `PUT｜DELETE /api/comments/:commentId/` | `routes/comments/mod.rs`（见 §20.2） | 两条全缺（卡在 ⑩） |
+
+写法要点两条：
+
+1. **每个键都写成显式方法链**（`.route("/api/issues/:id/", get(get_issue).put(update_issue).delete(delete_issue))`），
+   没有用「共用一个 `MethodRouter` 变量」的省行数写法 —— 那会让 ⑦ 的抽取器把这个键**静默丢掉**（§15.6）。
+2. **两形态的方法集合逐字相同**：`/api/issues` 的两个形态都是 `get+post`，`/:id` 都是 `get+put+delete`。
+   只补一半等于没补（`POST /api/issues/` 会 405 而不是 401）。
+
+**没跟着加别名的**：`move` / `children` / `reactions` / `reorder` / `keep-replies` / `resolve` / `sub-issues`。
+它们在上游是 `r.Get("/move")` 这类 plain 子路由，只有**一个**形态；加了会变成 `EXTRA_ALIAS`（⑦ 的
+第二个数字，绿但脏）。判断规则仍是 §15.1 的那一条：「上游这个路径是不是经 `Route(P)` + 子 `"/"` 注册的」。
+
+### 20.2 `comments.rs` 的 ⑩ 拆分（本片唯一的结构改动）
+
+831/831 顶格 ⇒ 补那 2 个键之前必须先拆（§15.6 的结论）。做法是 §15.6 末尾指定的那条：
+
+    git mv crates/mc-http/src/routes/comments.rs crates/mc-http/src/routes/comments/mod.rs
+    # 新增 crates/mc-http/src/routes/comments/dto.rs（147 行）：DTO / 请求体 / ts()
+
+- `routes/mod.rs` 早就写的是 `pub mod comments;` ⇒ **目录化对调用方透明**，一行没改。
+- `dto.rs` 收走 `ReactionDto` / `CommentDto` / `CreateCommentRequest` / `UpdateCommentRequest` /
+  `ReactionRequest` / `NotImplementedBody` / `ts()`；`ts` 与 `CommentDto::{new,bare}` 改 `pub(super)`。
+- `mod.rs` 只留路由表 + handler：**831 → 728 行**（新增那 2 个键的注释就是在这里付的钱）。
+- `pub use self::dto::{…}` 保住公开路径 `mc_http::routes::comments::CommentDto`；
+  `tests/comments.rs:710` 用的 `NEXT_BEFORE_HEADER` 仍在 `mod.rs`，未动。
+- 路由/handler 逻辑**一行未改**（纯搬移 + 可见性），所以 ⑥ 里 comments 那 6 条用例是原样通过的。
+
+### 20.3 三份名单/基线的同步（⑦ 和 ⑩ 全靠它们判红）
+
+| 文件 | 前 | 后 | 复算 |
+| --- | --- | --- | --- |
+| `docs/fixtures/slash-alias-allowlist.tsv` | 19 行 | 10 行（M4×6 / M5×2 / M6×2）| `grep -vc '^#' …`（连表头 = 11）|
+| `docs/fixtures/route-parity-baseline.json` | 239 键 | **248** 键 | `python3 scripts/route_parity.py --write-baseline` |
+| `scripts/file_size_baseline.tsv` | 11 行 | 10 行 | `python3 scripts/file_size_check.py --write-baseline` |
+
+两条要记的：
+
+- **⑦ 的基线是「锁」，不刷等于没上锁**：它只对「基线里有的键丢了」判红 ⇒ 新增键必须显式 `--write-baseline`。
+  239 + 9 = 248，`unclaimed 0` / `regression 0` 就是对上了。
+- **⑩ 基线的 diff 里有两条不是本片造成的收缩**：`mc-repos/src/inbox.rs` 1186→1185、
+  `mc-repos/src/issue.rs` 1950→1949。这是 `--write-baseline` 按实际行数重写暴露出来的 —— base 上
+  这两行的记录比实际**松 1 行**（`20a7bd8` 缩短文件时没同步刷基线）。收紧是 ⑩ 允许的方向（只减不增），
+  顺手带上；`comments.rs` 那一行则因文件已不在 git 里而被删除（规则明写：清单内文件已不在 git 里 ⇒ 失败）。
+
+### 20.4 §19.6 的「顺手项」已并入本片（⑦ 的摘要把 stale 行算成 0 缺陷）
+
+`slash_alias_audit.py` 修前 `render()` 只统计 findings，而 stale 行（allowlist 里「键已修好、行该删」）
+虽然会让脚本 exit 1，**却不出现在摘要行里**。本片实测到了这个最坏情形：
+
+    # 源码 9 键已修好、名单还没删时的修前行为
+    => 0 defect(s), 0 warning(s); 19 allowlisted (known debt, see docs/37 §15.3)   ← stdout
+    exit=1                                                                        ← 只有 stderr/exit 为红
+
+即**扫 stdout 的人会读成绿**。修法：`render()` 增加 `stale` / `allowlist_rel` 参数（stale 行原先由
+`main()` 在 render 之前打印，顺序也是错的，一并移进 render 内），摘要行改为两个数字：
+
+    => 0 defect(s) from findings, 9 stale allowlist row(s), 0 warning(s); 10 allowlisted (known debt, see docs/37 §15.3)
+
+判据没变（stale 仍计入 exit≠0），只是数字不再撒谎。§19.6 原文说的「改法是把该行拆成两个数」即此。
+
+### 20.5 运行期断言扩表：`trailing_slash_alias_forms_are_mounted` 10 → 19 键
+
+§15.6 那条断言（`crates/mc-http/tests/contract_gaps.rs`）的表从 10 行扩到 19 行。**这 9 个键之前不在表里
+不是疏忽**，旧注释写明了原因（`comments.rs` 的 2 键卡 831/831、其余 7 键当时还没立项）。⑥ 实测：
+
+    test trailing_slash_alias_forms_are_mounted ... ok      （同 target：9 passed; 1 filtered out）
+
+判据未变：两形态状态码相同 **且** 主形态 ≠ 404（少挂一个就是 401 vs 404 ⇒ 红）。本片只加了 9 个
+「主形态本来就在」的键 —— `POST /api/issues` 是唯一新挂上去的那半，其余 8 个键两形态都是新挂的。
+
+### 20.6 门禁实测（`bash scripts/gates.sh --with-db --db-url …`，真 PG）
+
+    ① fmt 0 / ② build 0 (62s) / ③ clippy 0 / ④ clippy-test-util 0 / ⑤ test 0
+    ⑥ db 0 (migrate=0,e2e=0) / ⑧ schema-drift 0 / ⑦ route-parity 0 / ⑨ conformance 0 / ⑩ file-size 0
+    overall: PASS — 10/10 gate(s) green in 232s
+
+    ⑦: upstream 456 (commit f41fae6b08fb) | local 248 registered | baseline 248
+         implemented  196 real +  10 placeholder =  206 / 456   known_gap  250   unclaimed    0   regression   0   local_only   11
+
+三个数字要读对的：
+
+- `local` 从 **239**（#39 合入后的实测；`LUM-1456` 立案时还是 195）→ **248**，正好 +9，`regression 0`。
+- `local_only 11` / `implemented 206` **都不变**：尾斜杠别名是既有路由的第二种形态，⑦ 把 `/x` 与 `/x/`
+  **折叠成同一个键** —— 这正是 §15.1 的盲区本身，也是这个缺陷类必须同时靠 allowlist（静态）+ 运行期断言
+  两条腿的原因（⑦ 绿**不能**证明别名挂上了）。
+- ⑨ `report matches crates/mc-conformance/report.json` exit 0：**没动**⑨ 快照（本片不新增 handler）。
+
+### 20.7 磁盘（给下一位）
+
+本片 `target/` 峰值 **746M**：`CARGO_INCREMENTAL=0` 且没开 incremental。**并发 cycle 里不要开 incremental**
+—— `LUM-1438` 实测它涨到 **9.5G**，能把 49G overlay 打满，而盘满会让 ④/⑨ 表现成「编译错误」而不是「缺盘」。
+
+### 20.8 本 cycle 没做（边界）
+
+- **没跑 `slash_alias_audit.py --no-allowlist`**：跑的话仍是 10 条 defect，全部是 M4/M5/M6 的 `mount.rs` 占位，
+  不是本片欠账（那是「未实现的路由」而不是「实现了却缺形态」）。
+- **没动 `routes/mount.rs`**、没动那 10 行占位（各属 M4/M5/M6，替换占位时必须两形态一起注册）。
+- **没派发/晋升**任何 backlog 片。
+- **没做 `LUM-1370`**（M2-E label/property）：它与本片相交 `issues/mod.rs`，`LUM-1458` 落地后即可派。
+  本片只把 `comments/mod.rs` 拆了（831→728），`issues/mod.rs` 仍只有 **234 行**，离 ⑩ 的 800 还很远。

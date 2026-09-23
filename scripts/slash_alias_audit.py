@@ -202,7 +202,24 @@ def predict(declared: set[tuple[str, str]], upstream: dict[tuple[str, str], str]
     return rows, unknown
 
 
-def render(name: str, routes, findings, declared_rows=None, unknown=None) -> list[str]:
+def render(
+    name: str,
+    routes,
+    findings,
+    declared_rows=None,
+    unknown=None,
+    stale=(),
+    allowlist_rel: str | None = None,
+) -> list[str]:
+    """Human-readable report.
+
+    `stale` rows (allowlist entries whose key now fires correctly) are defects too, but they are
+    not findings — they exist precisely because the finding disappeared.  They are counted in the
+    final `=>` line **separately** from the findings-derived defects: an earlier revision only
+    counted findings there, so a run with 6 stale rows and 0 findings printed
+    `=> 0 defect(s)` on stdout and failed on stderr, which reads as green to anyone skimming
+    stdout (docs/37 §19.6).
+    """
     out = [f"== {name} =="]
     if declared_rows is not None:
         dual_keys = [r for r in declared_rows if r["dual"]]
@@ -220,6 +237,8 @@ def render(name: str, routes, findings, declared_rows=None, unknown=None) -> lis
                 out.append(f"      ?      {meth:<6} {raw}")
     else:
         out.append(f"  registered upstream-key literals: {len(routes)}")
+    if not findings:
+        out.append("  shapes OK: every registered upstream key matches the form upstream serves")
     allowed = [f for f in findings if f.get("owner")]
     bad = [f for f in findings if f["kind"] != "EXTRA_ALIAS" and not f.get("owner")]
     for kind, label in (("MISSING_ALIAS", "missing alias"), ("MISSING_EXACT", "missing exact form"),
@@ -232,11 +251,19 @@ def render(name: str, routes, findings, declared_rows=None, unknown=None) -> lis
             tag = f"  [allowlisted: {f['owner'][0]}]" if f.get("owner") else ""
             out.append(f"      {f['key']:<52} registered={f['registered']} upstream={f['upstream']}{tag}")
             out.append(f"          {f['why']}")
-    if not findings:
-        out.append("  shapes OK: every registered upstream key matches the form upstream serves")
-    else:
-        note = f"; {len(allowed)} allowlisted (known debt, see docs/37 §15.3)" if allowed else ""
-        out.append(f"  => {len(bad)} defect(s), {len(findings) - len(bad) - len(allowed)} warning(s){note}")
+    stale_note = f", {len(stale)} stale allowlist row(s)" if stale else ""
+    known = f"; {len(allowed)} allowlisted (known debt, see docs/37 §15.3)" if allowed else ""
+    out.append(
+        f"  => {len(bad)} defect(s) from findings{stale_note}, "
+        f"{len(findings) - len(bad) - len(allowed)} warning(s){known}"
+    )
+    for key in stale:
+        meth, path = str(key).split("\t", 1)
+        where = allowlist_rel or "the allowlist"
+        out.append(
+            f"  STALE allowlist row (the key now fires correctly) — delete it from "
+            f"{where}: {meth} {canon(path)}"
+        )
     return out
 
 
@@ -304,19 +331,22 @@ def main(argv=None) -> int:
             f["owner"] = allow.get(f["id"])
         stale = sorted(k for k in allow if k not in {f["id"] for f in findings})
         defects = len([f for f in findings if f["kind"] != "EXTRA_ALIAS" and not f.get("owner")])
-        if stale:
-            defects += len(stale)
-            for k in stale:
-                meth, path = k.split("\t", 1)
-                lines.append(
-                    f"  STALE allowlist row (the key now fires correctly) — delete it from "
-                    f"{os.path.relpath(allowlist_path, ROOT)}: {meth} {canon(path)}"
-                )
+        defects += len(stale)
         report.update({"tree": args.tree, "base_ref": args.base_ref,
                        "registered_keys": len(routes), "stale_allowlist": stale,
                        "findings": findings})
         label = f"tree {args.tree}" + (f" (added vs {args.base_ref})" if args.base_ref else "")
-        lines += render(label, routes, findings)
+        lines += render(
+            label,
+            routes,
+            findings,
+            stale=stale,
+        allowlist_rel=(
+            os.path.relpath(allowlist_path, ROOT)
+            if allowlist_path and str(allowlist_path).startswith(str(ROOT))
+            else (str(allowlist_path) if allowlist_path else None)
+        ),
+        )
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=1))
