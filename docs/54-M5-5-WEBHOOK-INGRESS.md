@@ -13,7 +13,9 @@ M5 波次里**唯一无认证的路由**（凭证就在 URL 路径里，`docs/44
   `.../webhook_rate_limiter.go`、`.../handler.go:515-600`（`writeJSON`/`writeError`）、
   `server/internal/service/autopilot.go:186-470`、`server/pkg/db/queries/webhook_delivery.sql`、
   `server/cmd/server/router.go:1487`。
-- **基线**：`origin/feat/multica-rs-initial` @ `d2fc6c9`（C 波 #58 / #59 已合）。
+- **基线**：`origin/feat/multica-rs-initial` @ `5b94d54`（C 波 #58 / #59 与 **M5-8 #60** 均已合）。
+  本分支从 `d2fc6c9` 起，已把 base（含 M5-8 与 `docs/57` M6 计划）真合进来 —— M5-8 的写集是
+  `crates/mc-scheduler/**`，与本片**零交集**，合并无冲突。
 - **无新依赖**：`Cargo.toml` / `Cargo.lock` 一行未动（`docs/15` §8.4）—— HMAC 复用
   `mc_core::hash`，限流器复用 `std::sync::LazyLock` + `tokio::sync::Mutex`。
 
@@ -34,9 +36,10 @@ M5 波次里**唯一无认证的路由**（凭证就在 URL 路径里，`docs/44
 | `crates/mc-http/tests/autopilots/webhook.rs` | 739（新） | 10 例入站 e2e（门 ⑩ 拆分，见 D19） |
 | `crates/mc-http/tests/autopilots/webhook_support.rs` | 264（新） | 观测面 `Res` / `post` + 夹具（同上） |
 | `crates/mc-http/tests/autopilots/webhook_worker.rs` | 649（新） | 9 例 worker e2e |
-| `crates/mc-http/tests/autopilots/main.rs` | 51（+5） | 三行 `mod`（`webhook` / `webhook_support` / `webhook_worker`） |
+| `crates/mc-http/tests/autopilots/main.rs` | 51（+6） | 三行 `mod`（`webhook` / `webhook_support` / `webhook_worker`）+ 两行模块契约注释 |
 
-合计 **13 文件 +4844 / −34**（`git diff --numstat d2fc6c9`）。
+合计 **15 文件 +5366 / −34**（`git diff --numstat 5b94d54`；含 `docs/54` 本文 258 行，
+`Cargo.toml` / `Cargo.lock` 零改动）。
 
 **未触碰**（单写者规则）：`webhooks/mod.rs`（M5-0 anchor）、`routes/mount.rs`、`routes/mod.rs`、
 `mc-http/src/state.rs`（`AppState` 共享 anchor ⇒ 限流器状态放模块内进程级静态）、
@@ -60,7 +63,8 @@ M5 波次里**唯一无认证的路由**（凭证就在 URL 路径里，`docs/44
 **门 ⑦ 增量（唯一判据）**：
 
 ```
-基线 d2fc6c9：local 328 registered | implemented 262 real + 2 placeholder = 264/456 | known_gap 192
+基线 5b94d54（= d2fc6c9 + M5-8 + M6 计划，均为 code 面正交）：
+      local 328 registered | implemented 262 real + 2 placeholder = 264/456 | known_gap 192
 本片 HEAD  ：local 329 registered | implemented 263 real + 2 placeholder = 265/456 | known_gap 191
 ⇒ +1 注册键 / +1 implemented / −1 known_gap，unclaimed 0 / regression 0 / local_only 11（不变）
 ```
@@ -137,14 +141,14 @@ admit（去重回读 / 跳过落账 / 额度化建 run）  → 归一化存量 b
 | **D5** | 签名校验两处刻意差异：① 入站 hex 先归一小写再比（上游 `hex.DecodeString` 两种大小写都收，而 `hmac_sha256_verify` 逐字节比 hex）；② 加一道 `is_ascii_hexdigit` 预检 | 逐字照抄会在「客户端送大写 hex」时误判 `invalid`。前缀 `sha256=` 仍**大小写敏感** |
 | **D6** | `WebhookEnvelope.event_payload` 是 `serde_json::Value`（上游 `json.RawMessage` 原样字节） | 本地 jsonb 列按 `Value` 读写是本仓既有约定（`#[sqlx(flatten)]` 在本仓 sqlx 0.8 下不可用，见 D10）。字节级重序列化对 webhook 载荷无语义影响 |
 | **D7** | 信封序列化失败折成 `WebhookError::Internal`（500 `internal error`） | 结构里只有 `String` / `Value`，正常不可能失败；留一条不 panic 的兜底路径 |
-| **D8** | **不含轮询循环**：1 s ticker / `Notify` / 4 并发 / `ProcessNext` 的调度属 **M5-8（`LUM-1571`）** | 本片只交「认领一条 + 推到终态」这一步（`process_next_delivery[_in_workspace]`），循环与并发在 M5-8 复用本入口。当前没有任何生产调用点 |
+| **D8** | **不含轮询循环**：1 s ticker / `Notify` / 4 并发调度**在本仓尚无 owner** | 本片只交「认领一条 + 推到终态」这一步（`process_next_delivery[_in_workspace]`）。`docs/44` 的文件→切片表里**没有** `handler/webhook_delivery_worker.go`（M5-5 的 span 只到 service 侧那三处），而已合的 M5-8 是 `mc-scheduler` 的两个 job（与本面无关）⇒ 循环 + 通知触发需要 M5-INT（`LUM-1572`）定归属或新开切片。当前 `process_next_delivery*` **无生产调用点** |
 | **D9** | 新增 **workspace 收窄的认领变体**：`claim_queued_in_workspace`（repo）+ `process_next_delivery_in_workspace`（service）；生产路径仍是全局 `claim_queued` | 认领是**整库**的（上游 worker 是单例），而同一 test binary 内的用例并发跑 ⇒ 全局认领会抢走邻例刚落的 `queued` 行。变体与全局版 SQL 逐字相同，只多 ` AND workspace_id = $1` |
 | **D10** | `find_webhook_trigger_by_token` 必须写 `a.workspace_id AS autopilot_workspace_id` 并**手写** `sqlx::FromRow` | PG 结果列名取裸列名 ⇒ `SELECT a.workspace_id` 的列名是 `workspace_id`，`try_get("autopilot_workspace_id")` 运行期报 `no column found for name: autopilot_workspace_id`（编译期看不出来，真库实测）。`#[sqlx(flatten)]` 在本仓 sqlx 0.8 下不可用 |
 | **D11** | **跨写集修复**：`mc-repos/src/autopilot/run.rs::load_trigger_principal` 的 SQL 改成上游形态（JOIN `autopilot` 取 `a.workspace_id`），±3 行 | 原实现写 `t.workspace_id`（`autopilot_trigger` **没有**该列，上游也没有）⇒ 真库必炸 `column t.workspace_id does not exist`。M5-4 的直调路径没走到这一读，webhook 面第一次走到就暴露。**只改这一条只读查询，绑定参数与语义不变** |
 | **D12** | 不移植 `SyncRunFromTask` 的**重放**（只读 task 状态做判断） | 那条重放会反向改 run 状态，属 M5-4 的终态回写面（`dispatch/sync.rs`）；本片只需要「task 是否已终态」。多读两列（`find_task_status_by_run`）比复制一份状态机安全 |
 | **D13** | 不移植 `UpdateWebhookDeliveryDispatched` / `finaliseDeliveryWithRun` | **上游死代码**：全仓 grep 只有定义、无调用点（`autopilot_webhook.go:887`）⇒ 本地不落这条语句，带 run 的终态只走 `complete_claimed` |
 | **D14** | 事件作用域不匹配 ⇒ `status='ignored'` + `reason='event_filtered'`，**不是** `dispatched` | DoD 文案写「不产生 run（但 delivery 仍记 `dispatched`）」，与上游 `finaliseDeliveryTerminal(…ignored…, "event_filtered")` **冲突** ⇒ 取上游。理由在 `error` 列，`reason_code` NULL |
-| **D15** | 准入失败（非配额）⇒ 500 `{"error":"failed to admit autopilot"}`，投递**留在 `queued`**、不写终态 | 上游 `AdmitAutopilotWebhookDelivery` 的库错也是 500；留在 `queued` 让 worker 稍后重试准入（本片无循环 ⇒ 等 M5-8 sweep）。用独立变体（而不是 `Internal`）是为了让 5xx 也能区分「内部错」与「准入错」而不泄漏细节 |
+| **D15** | 准入失败（非配额）⇒ 500 `{"error":"failed to admit autopilot"}`，投递**留在 `queued`**、不写终态 | 上游 `AdmitAutopilotWebhookDelivery` 的库错也是 500；留在 `queued` 让 worker 稍后重试准入（本片无循环 ⇒ 等 D8 那条循环落地后的 sweep）。用独立变体（而不是 `Internal`）是为了让 5xx 也能区分「内部错」与「准入错」而不泄漏细节 |
 | **D16** | `ensureWebhookCreateIssueTask` 未移植（降级为 `tracing::debug` + 复用既有 run） | 本地「建 issue / 挂 run / 建 task」是**同一个事务**（M5-4 `create_issue.rs`）⇒ 上游那个「run 建好但 task 缺失」的崩溃窗口不存在 |
 | **D17** | `repair_run_task_link` 只补**链接**，不重放终态 | 终态回写属 M5-4 `sync.rs`；本片只做「run 缺 `agent_task_id` 时按 `autopilot_run_id` 回链」 |
 | **D18** | `mc-repos` 侧新增两个**只读自由函数**（`find_trigger_by_id` / `find_task_status_by_run`） | `trigger.rs::get_by_id` 是**需要 `Db` 的 repo 方法**，而 `mc-autopilot` 只持有 `PgPool`（无 `mc-db` 依赖）⇒ 构造不出来。自由函数 + `map_sqlx_err` 与既有 `ingress.rs` 同手法 |
@@ -206,19 +210,28 @@ worker 9 例逐条对应 §3 的收口表：
 
 ```
 $ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1570_dburl)" bash scripts/gates.sh --with-db
-① fmt 1s  PASS   ② build 17s  PASS   ③ clippy 26s PASS   ④ clippy-test-util 10s PASS
-⑤ test 33s PASS  ⑥ db 59s PASS (migrate=0,e2e=0)  ⑧ schema-drift 31s PASS
-⑦ route-parity 0s PASS  ⑨ conformance 14s PASS  ⑩ file-size 0s PASS
-overall: PASS — 10/10 gate(s) green in 191s
+① fmt 2s  PASS   ② build 3s   PASS   ③ clippy 2s PASS   ④ clippy-test-util 0s PASS
+⑤ test 33s PASS  ⑥ db 12s PASS (migrate=0,e2e=0)   ⑧ schema-drift 25s PASS
+⑦ route-parity 0s PASS  ⑨ conformance 5s PASS  ⑩ file-size 0s PASS
+overall: PASS — 10/10 gate(s) green in 82s
 ```
 
-（同一棵树上的热 target 二次跑为 78s，①—⑩ 同样全绿。）
+上面的读数是 **真实合并树**（base `5b94d54`，含 M5-8）上的那一轮；上一轮未合 base 时同树为
+191s，①—⑩ 同样全绿。合并后再单独复核两项：
+
+```
+⑦  upstream 456 (commit f41fae6b08fb) | local 329 registered | baseline 300
+    implemented 263 real + 2 placeholder = 265 / 456   known_gap 191   unclaimed 0   regression 0   local_only 11
+⑨  report matches crates/mc-conformance/report.json
+    totals = fixtures 365 / pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306
+```
 
 - ⑥ 是**真库**：migrate 566 条迁移 + 全部 `#[ignore]` e2e（`autopilots` target 跑 108 例 /
   84 例被 `--ignored` 过滤；`mc-repos` 侧同样全绿）。
 - ⑦：`upstream 456 (commit f41fae6b08fb) | local 329 registered | baseline 300`，
   `implemented 263 real + 2 placeholder = 265 / 456   known_gap 191   unclaimed 0   regression 0
   local_only 11`，`OK: every upstream route is either implemented or owned`。
+  ⇒ 本片落地后 ⑦ 缺口归属板上 **`owners.M5` 由 1 变 0**（M5 最后一条未实路由就是本路由）。
 - ⑨：`report matches crates/mc-conformance/report.json`，totals **与基线一致**
   （`pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`）—— 本路由**零 fixture**
   （`contracts/golden/autopilots/` 8 条只碰 2 条路由），等价证据全靠上面的 19 例 e2e。
@@ -243,12 +256,13 @@ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1570_dburl)" \
 
 ## 6. 交接
 
-1. **M5-8（`LUM-1571`）接轮询循环**：1 s ticker + `Notify` + 4 并发，循环体直接调
-   `WebhookIngress::process_next_delivery()`（本片已给 `Ok(None)` = 队列空 / `Ok(Some(row))` =
-   收口一条 / `Err` = 认领期基础设施错误的契约）。**注意 `LUM-1571` 仍受 P0 阻塞**
-   （`apps/mc-server/Cargo.toml` 缺 `mc-scheduler` 边），需按降级方案推进。
+1. **worker 轮询循环仍无 owner**（D8）：1 s ticker + `Notify` + 4 并发，循环体直接调
+   `WebhookIngress::process_next_delivery()`（本片已定契约：`Ok(None)` = 队列空 / `Ok(Some(row))` =
+   收口一条 / `Err` = 认领期基础设施错误）。已合的 **M5-8（`LUM-1571`）是 `mc-scheduler` 的两个 job**
+   （autopilot schedule / issue wakeup），**不含**这条循环；`docs/44` 的文件→切片表也没给它分配写者
+   ⇒ 需 M5-INT（`LUM-1572`）定归属。
 2. **生产链路还差「通知 worker」这一步**：入站 `Acknowledge` 后投递留在 `queued`，
-   现在只有 M5-8 的 sweep 会把它捡起来（上游是 `Notify` 触发）。
+   现在没有任何东西会把它捡起来（上游是 `Notify` 触发 + 1 s ticker 兼底）。
 3. **DoD 文案与上游冲突一条**（D14）：事件作用域不匹配记 `ignored` 而非 `dispatched`；
    如需改成 DoD 口径，改 `settle_inbound` 的那一处调用即可，但会与上游偏离。
 4. `find_task_status_by_run` / `find_trigger_by_id` 是 webhook worker 专用读；M5-4 的
@@ -256,3 +270,7 @@ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1570_dburl)" \
 5. 无 DB 单测只有 `ratelimit` / `provider` 两层；`signature.rs` 的三种输入形态现在只有
    e2e 覆盖（真库）—— 若想让它进 ⑤（无 DB 门），需要给 `mc-autopilot` 加一个不依赖
    `PgPool` 的入口。
+6. 上游 `docs/44` §342 把 M5-5 的 span 写成含 `ensureWebhookCreateIssueTask`(61) 与
+   `repairAutopilotRunTaskLink`(56)；本片分别按 **D16**（事务已合并 ⇒ 那个崩溃窗口不存在）与
+   **D17**（只补链接）降级 —— 两者的**完整**移植（含 `SyncRunFromTask` 重放）仍属 M5-4 的终态回写面，
+   若验收要求逐行对齐，请在 M5-INT 上重新裁定。
