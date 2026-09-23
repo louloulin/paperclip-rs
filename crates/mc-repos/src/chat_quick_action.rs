@@ -18,14 +18,17 @@
 //!
 //! **可达性说明**：本部署没有 chat quick-actions provider，所以服务层的**第一句**可用性检查
 //! （`QuickActions == nil || !Enabled()`）总是先失败 ⇒ 三个目标态 409（`NoTurn` / `Stale` /
-//! `Busy`）与 202 成功在路由上**不可达**。本文件仍把这两条 SQL **真做**（不是留空），并用
-//! `#[ignore]` 的真库测试钉住它们：一旦 M6/M7 装上 provider，门禁链的后半段就是现成的。
+//! `Busy`）与 202 成功在路由上**不可达**。本文件仍把这两条 SQL **真做**（不是留空）；
+//! 但**没有**真库测试钉住它们（见下方 §G9）⇒ 一旦 M6/M7 装上 provider，接线前必须先
+//! 补上这两条 SQL 的 `#[ignore]` 集成测试，别把它们当成已被验证的。
 //! ⇒ 路由侧只落「可用性 403」这一条出口（`docs/45` 的偏离 D-1）。
 //!
 //! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::chat_session`）：
 //! - `Row` 用原始 `Uuid`/`String` 字段（`mc_core::Id` 没有 sqlx impl ⇒ 手写 `FromRow`）
 //! - 错误统一走 `crate::workspace::map_sqlx_err`
-//! - Pg 实现 + `#[ignore]` 的 PG 集成测试（`MULTICA_TEST_DATABASE_URL`，不允许静默跳过）
+//! - **本模块尚无真库测试**：chat 面各 Repo 普遍没有 `#[ignore]` 的 PG 集成测试
+//!   （已合并的 `chat_session` / `chat_message` 同样如此）⇒ 这是**已知缺口**，
+//!   登记在 `docs/45` §3 G9，不要在任何地方把「有测试」写成既成事实
 //!
 //! 本文件**只读**：quick actions 的写入（生成侧）与 daemon 侧落库都随 provider 一起落地。
 

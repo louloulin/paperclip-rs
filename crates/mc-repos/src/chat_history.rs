@@ -25,7 +25,9 @@
 //! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::chat_session`）：
 //! - `Row` 用原始 `Uuid`/`String` 字段（`mc_core::Id` 没有 sqlx impl ⇒ 手写 `FromRow`）
 //! - 错误统一走 `crate::workspace::map_sqlx_err`
-//! - Pg 实现 + `#[ignore]` 的 PG 集成测试（`MULTICA_TEST_DATABASE_URL`，不允许静默跳过）
+//! - **本模块尚无真库测试**：chat 面各 Repo 普遍没有 `#[ignore]` 的 PG 集成测试
+//!   （已合并的 `chat_session` / `chat_message` 同样如此）⇒ 这是**已知缺口**，
+//!   登记在 `docs/45` §3 G9，不要在任何地方把「有测试」写成既成事实
 //!
 //! 本文件**只读**：不出现 INSERT / UPDATE / DELETE。
 
