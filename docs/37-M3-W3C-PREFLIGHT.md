@@ -4730,3 +4730,60 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 - **【跨 workdir 借热 `target/` 的充分条件】** cargo 的 fingerprint 含**包源路径** ⇒ 换 workdir 路径 = 全量重建。因此「借热 target」只在**合并树 == 该 workdir 的 HEAD 树**时成立。本轮在该片 worktree 里用 `checkout base → merge --no-ff --no-commit → (比对) → merge --abort → checkout <head>` 的顺序取到「合并树 + 热 target」，跑完立刻 `git checkout <原分支>` 把分支指回原 tip（工作树 0 未提交），既没污染在飞片、又省掉一次 ≈450s 冷建。
 - **【预测表要「按 delta 平移」，不要照抄绝对值】** `docs/57` §6.1 的 M6 预测表是在 `eaba357` 上测的；M5-INT 把基线刷到 329 / local 刷到 329 后，**「M6-0 后」那一行的绝对值全部过期**，但 **delta 仍有效**（local −4 / implemented −2 / known_gap +2 / owners.M6 +2 / local_only −2）。派 anchor 前必须用 delta 现算（本轮 325/263/193/57/9），否则 session 会对着 324/296 自检并误判「回归」。
 - **【`target/` 是并发轮的最大磁盘变量】** 轮内两次 `df` 的差值（20G → 9.7G）几乎全部来自在飞片的 `target/` 增长（3.4G → 13G）⇒ 空位评估与回收判据都应以**采样时刻**的读数为准，别用轮首读数推断轮尾空间。
+
+---
+
+## §52 06:00 cycle（`LUM-1685`）：**合并 #64（chat 面真库测试 39 例）⇒ base `75a317d`**；M6-0 anchor（`LUM-1665`）在飞未交；空位刻意不派（anchor 独占写者 + stage 2 依赖其骨架）；回收 18G 热 `target/`
+
+### 52.1 起手三连（22:00Z 实测）
+- 磁盘：`/` **18G 可用**（29G/49G，63%）—— 在飞片 `LUM-1601` 的 `target/` 当轮 **18G**（§51 收尾时 15G）。
+- `git fetch origin feat/multica-rs-initial` = **`7039718`**（未动，与 §51 收尾值逐字一致）。
+- 认证 GH `pulls?state=open` = **1** 条：**#64**（`LUM-1601` chat 面真库测试），head **`213c294a98`**、base 记录 `7039718`；API `changed_files=12 / additions=3875 / deletions=16`、`mergeable=true / mergeable_state=unstable`。
+- 在飞采样（只读）：`LUM-1665`（M6-0 anchor）workdir `lum-1665-356d10293a55`，分支 `agent/devbox5/356d10293a55` @ **`7039718`**、**0 提交**、未提交 = `Cargo.toml` / `Cargo.lock` / `crates/mc-core/src/{plugin,skill}.rs` / `crates/mc-http/Cargo.toml` / `crates/mc-repos/src/lib.rs` + **3 个新 crate 目录**（`crates/mc-skill/` `crates/mc-mcp/` `crates/mc-plugin-host/`）、`target/` 379M、pid 2850 **活跃**（起于 21:38Z，采样时 25min）⇒ 真在飞、骨架已在建。
+- `LUM-1601`：workdir `lum-1601-7a6ee4061741` **工作树干净**、分支 HEAD = `213c294`、`readlink /proc/*/cwd` 无该 workdir 进程 ⇒ run 已终态，只差合并。
+
+### 52.2 PR #64（`LUM-1601` 真库测试）合并判据链（逐条读数）
+1. **预检一（分支自身面 == PR 自述）**：`merge-base origin/feat/multica-rs-initial HEAD` = **`0fd96b4`**；`git diff --stat 0fd96b4 HEAD` = **12 files / +3875 / −16**，与 PR API **逐字相等**（`--numstat` 12 行）；HEAD == PR head sha `213c294a986c8bb4ecbcf887a62cd91095460fcf` ⇒ 无未推送提交。
+2. **base 祖先判定**：`git merge-base --is-ancestor 7039718 213c294` ⇒ **假**（与 §51 的 fast-forward 形态不同）⇒ **必须真合 base**，其热 `target/` 只有在合并树落地后才可用。
+3. **预检二（真合 base）**：`git -c user.name=devbox5 -c user.email=devbox5@multica.local merge --no-ff --no-commit origin/feat/multica-rs-initial` ⇒ `Automatic merge went well`；staged `--stat` = **4 files / +468 / −4**，面 = `docs/37`(+107) `docs/44`(+45/−4) `docs/56`(+291) `docs/fixtures/route-parity-baseline.json`(+29) —— 这**是 base 侧增量，不是 PR 自述面**（PR 面见第 1 步）；`git write-tree` = **`0d7f1b1032d10328140464eab667b5f1d1eed9a6`**，本地记为 merge commit `9c81b38`（**不推送**，仅作门禁载体）。
+4. **合并树门禁**（该片自己的工作树 + 18G 热 `target/`；真库 = 复用其一次性库 `multica_lum1601`，角色 `mc_lum1601` 的密码由 superuser `ALTER ROLE … PASSWORD` 重设为本轮一次性值 ⇒ 免建新库、免重跑 566 条迁移）：
+   `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ **10/10 绿 / 82s**（①fmt 1s ②build 1s ③clippy 0s ④clippy-test-util 0s ⑤test 33s ⑥db 13s ⑧schema-drift 28s ⑦route-parity 0s ⑨conformance 6s ⑩file-size 0s）。
+   ⑤ = **1380 passed / 0 failed**（与 base 同值 ⇒ 本片新增 39 条用例**全部是 `#[ignore]`**，不进 ⑤）；⑥ migrate 绿 + e2e = **372 passed / 0 failed**（`mc-repos` **147** + `mc-http` **221** + 集成 **4**，21 个 target；§51 的基数为 333 ⇒ **+39 恰好等于本片新增的 ignore 用例数**）。
+   ⑦ 逐字取自当轮日志：`upstream 456 (commit f41fae6b08fb) | local 329 registered | baseline 329`；`implemented 263 real + 2 placeholder = 265 / 456`、`known_gap 191`、**`unclaimed 0` / `regression 0`**、`local_only 11` —— 本片 **0 路由**（纯 `mc-repos` 测试 + `docs/45`），故与 §51.2 **逐项同值**。
+   ⑨ `report matches crates/mc-conformance/report.json`；⑩ **0 违规**（新增 8 个测试文件均在 800 行内）；⑦ 第二条 `slash_alias_audit.py --quiet` 绿。
+5. **钉 head 合并**：提交前重取 `pulls/64` 的 `head.sha` == `213c294a986c8bb4ecbcf887a62cd91095460fcf`（未动）⇒ `PUT /pulls/64/merge` 带 `{"sha":"213c294…","merge_method":"merge"}` ⇒ `merged=true`，merge commit = **`75a317d709c011c3ad472caeba5a2ac1abbf7e4e`**。
+6. **复核**：`git fetch` 后 `tree(origin/feat/multica-rs-initial)` = **`0d7f1b1032d10328140464eab667b5f1d1eed9a6`** == 预检 `git write-tree`（逐字相等）；`git diff 9c81b38 origin/feat/multica-rs-initial` = **空**；认证 `pulls?state=open` = **0**。
+
+### 52.3 M6-0 anchor（`LUM-1665`）体检：在飞、骨架在建、**尚无提交**
+- 形态（52.1 采样）：3 个新 crate 目录（`mc-skill` / `mc-mcp` / `mc-plugin-host`）+ 根 `Cargo.toml` / `Cargo.lock` + `mc-core` 两个 stub 重写 + `mc-http/Cargo.toml`（依赖边）+ `mc-repos/src/lib.rs`；**与描述里的写集完全吻合**（anchor 是 M6 全波唯一共享写者）。
+- **风险登记（本轮唯一新增观察）**：起跑 25min、**0 提交**、3 个新 crate 全在工作树里 ⇒ 若本轮内静默死亡，丢失面 = 整个骨架。**不介入**（§44④：会话体量只预测死亡概率、不等于零交付；且运行中的 workdir 属该片独占写权）。下一轮若判定静默死亡，按 §43 处置链**先固化未提交 + 推分支、再 `rerun`**，抢救优先级 = 3 个新 crate 骨架。
+- 预测口径**不变**（§51.4 已按 delta 平移过一次）：M6-0 合并后 `local 325 / baseline 325 / implemented 263 real + 0 placeholder / known_gap 193 / owners.M6 57 / local_only 9`，`slash_alias_audit --declared` `3 → 5`（**非回归**，是 2 行豁免被删）。
+
+### 52.4 并发与空位：2/3 ⇒ 1 个空位，**本轮刻意不派**
+- 派前 `running_task_count` = **2**（`LUM-1665` 在飞 + cycle 自身）⇒ 1 个空位。
+- 不派的四条判据（缺一不可）：
+  1. **anchor 独占写者**：`LUM-1665` 正在写根 `Cargo.toml` / `Cargo.lock` / `state.rs` / `mount.rs` / ⑦ 基线 / allowlist ⇒ 任何同轮第二片都会与它互相覆盖（其描述明写「单独跑不并行」）。
+  2. **stage 2 依赖 anchor 的骨架**：`LUM-1666`–`LUM-1668` 要在 `crates/mc-skill` 等新 crate 上写路由/仓储 ⇒ anchor 未合前派出去连编译都过不了。
+  3. **`LUM-1580`（门 ⑦ 正则修复）按 `docs/44` §8 **R3** 明确「属独立 issue、本波不修」**：改检测器会动门禁语义 ⇒ 与 anchor 的 ⑦ 基线刷新**同轮必冲突**（`implemented_real` 会一次位移 13 条），保持 `backlog`。
+  4. **`LUM-1659`（M5-9 接线）**：P0 未解（见 §52.5）且与 anchor 争 `Cargo.lock` / `state.rs` 边界 ⇒ 保持 `backlog`。
+- 结论：**本轮无第二片可派**；空位留给出 anchor 合入后的 stage 2 三片并行（这是「最多 3 任务」约束下唯一不产生写集冲突的用法）。
+
+### 52.5 P0 / 看板 / 磁盘
+- **P0 仍开且不重复上报**：`LUM-1628` §4 的 member 提及至今 **0 回复**；`apps/mc-server/Cargo.toml` 仍无 `mc-scheduler` 依赖边 ⇒ `LUM-1659`（M5-9）不派、不再 @；连带 `LUM-1673`（M6-8）的前置仍未成立（未合时只交桩级证据 + 登记）。
+- 看板：`LUM-1601` 已合但**保持 `in_review`**（`done` 归人工）；M6 十一子片 = `LUM-1665` **in_progress**，`LUM-1666`–`LUM-1675` 全 `backlog`（stage 2:3 / 3:3 / 4:3 / 5:1）；`LUM-1580` / `LUM-1370` 保持 `backlog`。
+- 观察项（连续第 6 轮登记，**不动状态**）：`LUM-1521`（07:30Z）/ `LUM-1533`（08:30Z）两条 autopilot cycle issue 仍停在 `todo`、从未启动。
+- **磁盘回收**：`LUM-1601` 三条判据首次全满足（PR #64 **已合** + run **终态** + `readlink /proc/*/cwd` **无**该 workdir 进程）⇒ 整删其 `target/`（**18G**）；`/` **18G → 36G 可用**。
+
+### 52.6 下一轮起手
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §52 的 docs-only 提交）→ 认证 `pulls?state=open`；同时只读采样 `lum-1665-356d10293a55` 的 HEAD / 未提交面 / `target/` 大小 / pid 活性（判「活跃」还是「静默死亡」）。
+2. `LUM-1665` 交 PR ⇒ 判据链（§39.3/§42.2）：**预检一**（分支自身 `--numstat` == PR API 逐字）→ **base 祖先判定**（本轮之后 base 已前进，多数要真合）→ 合并树**当场重跑** `--with-db` **10/10** 并逐项比对 §52.3 的预测（`local 325 / baseline 325 / implemented 263 real + 0 placeholder / known_gap 193 / owners.M6 57 / local_only 9`、`slash_alias_audit --declared = 5`）→ `cargo metadata` 必须通过（3 个新 crate + 删 `mc-plugin-protocol`）→ API 钉 sha → `tree(base) == tree(预检)` 且 `git diff` 空。
+3. 若 `LUM-1665` 静默死亡且远端无分支 ⇒ **先固化未提交（提交 + 推 `agent/devbox5/356d10293a55`）→ 描述追加交接说明 → 再 `rerun`**；抢救优先级 = 3 个新 crate 骨架（`mc-skill` / `mc-mcp` / `mc-plugin-host`）。
+4. anchor 合入 ⇒ **stage 2 三片并行**（`LUM-1666` M6-1 ∥ `LUM-1667` M6-2 ∥ `LUM-1668` M6-3）；anchor 落定后 M6 代码片之间的**基线争用解除**（下一次刷新归 M6-INT `LUM-1675`）。
+5. `LUM-1659` 只在 owner 回复 P0 后晋升；`LUM-1673`（M6-8）依赖它。
+
+### 52.7 本轮 lesson
+- **【两种「预检 stat」不可混用，本轮踩坑点】** 同一片有两个不同的预检读数：①**分支自身面** `git diff --stat <merge-base> HEAD`（== PR API 自述，证「无未推送提交」）；②**真合 base 后** `git diff --cached --stat`（== base 侧增量，证「合并没有冲突、base 没被反向改坏」）。base 是 head 祖先时两者退化成一件事（§51 的 fast-forward 形态），**base 落后时则完全不同** —— 本轮 ①= `12/+3875/−16`、②= `4/+468/−4`；拿 ② 去比 PR API 会得出「PR 少了 8 个文件」的假警报。
+- **【base 落后的 PR 必须真合，且合并树 == 未来 base 树】** 判据链的收尾等式 `tree(base_after_merge) == git write-tree(预检 merge)` 在「真合」形态下同样成立（本轮 `0d7f1b1…` 双向逐字相等）⇒ **本地预检 merge commit 不需要推送**，API 侧的重合会得到同一棵树。
+- **【⑥ 的 delta 可当不变式用】** 本片是**纯 `#[ignore]` 测试片** ⇒ ⑤ 读数**不变**（1380）+ ⑥ 恰好 **+39**。反过来可作为「新增用例是否误漏 `#[ignore]`」的自检手段：若 ⑤ 也涨了，说明有用例没挂 `#[ignore]`（会污染无库门 ⑤）。
+- **【真库密码可原地重置，不必建新角色/新库】** 上一片的一次性密码不可知时，superuser `ALTER ROLE <role> WITH PASSWORD '<一次性值>'` 即可复用它的库（`multica_lum1601` 已有全部 566 条迁移）⇒ 省掉「建角色 + 建库 + 全量迁移」的整段前置（门 ⑧ 的 scratch 库另需 CREATEDB，该角色本就有）。
+- **【回收的三条判据本轮首次全中】** 前几轮常因「run 未终态」或「进程 cwd 仍在」而留 `target/`；本轮 `LUM-1601` 三判据齐 ⇒ 一次回收 18G。**判据必须逐条实测**（PR API `state=merged` + `readlink /proc/*/cwd` 全表扫描），不能按「PR 已合」推断。
