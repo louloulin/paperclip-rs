@@ -8,10 +8,21 @@
 //! |---|---|---|
 //! | GET/POST | `/api/issues/{id}/comments` | `ListComments` / `CreateComment` |
 //! | PUT/DELETE | `/api/comments/{commentId}` | `UpdateComment` / `DeleteComment` |
+//! | PUT/DELETE | `/api/comments/{commentId}/` | 同上（chi `Mount` 的第二种形态，LUM-1458 补）|
 //! | DELETE | `/api/comments/{commentId}/keep-replies` | `DeleteComment`（兼容路径） |
 //! | POST/DELETE | `/api/comments/{commentId}/resolve` | `ResolveComment` / `UnresolveComment` |
 //! | POST/DELETE | `/api/comments/{commentId}/reactions` | `AddReaction` / `RemoveReaction` |
 //! | POST | `/api/comments/{commentId}/sub-issues` | `CreateCommentSubIssue`（M2-B 返回 501） |
+//!
+//! **尾斜杠双形态（LUM-1458）**：上面第 2 行的两个形态必须**同时**注册 —— 上游
+//! `router.go` 是 `Route("/api/comments/{commentId}") + Put("/")/Delete("/")`，chi 的
+//! `Mount` 两种形态都服务；axum 0.7 不做归一化 ⇒ 少注册一个就是 404（不是 307）。
+//! 其余 `keep-replies` / `resolve` / `reactions` / `sub-issues` 是 plain 子路由，
+//! 上游只有**一个**形态，不要加别名（`docs/37` §15.1、本片记录见其 §21）。
+//!
+//! 文件布局（gate ⑩ 单文件 800 行硬上限）：DTO / 请求体在 `comments/dto.rs`，
+//! 本文件只留路由表 + handler。**不要为了省行数让两个 `.route()` 共用一个
+//! `MethodRouter` 变量** —— ⑦ 的抽取器会把那个键当成没注册（`docs/37` §15.6 实测）。
 //!
 //! 鉴权（M2 阶段，与 M1 一致的 dev-mode 简化）：
 //! - `X-Multica-User-Id` header 提供当前用户（`AuthUser`）
@@ -38,8 +49,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use chrono::{DateTime, SecondsFormat, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 
 use mc_core::comment::CommentAuthorType;
 use mc_core::Id;
@@ -51,6 +61,14 @@ use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
 use crate::routes::invitations::not_found;
 use crate::state::AppState;
+
+mod dto;
+
+use self::dto::ts;
+pub use self::dto::{
+    CommentDto, CreateCommentRequest, NotImplementedBody, ReactionDto, ReactionRequest,
+    UpdateCommentRequest,
+};
 
 /// `GET /api/issues/:id/comments` 的 next-cursor 响应头（对齐上游）。
 pub const NEXT_BEFORE_HEADER: &str = "x-multica-next-before";
@@ -68,6 +86,13 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/comments/:commentId",
+            put(update_comment).delete(delete_comment),
+        )
+        // 上游 `router.go` 是 `Route("/api/comments/{commentId}") + Put("/")/Delete("/")`
+        // ⇒ chi `Mount` 同时服务带/不带尾斜杠两种形态（docs/37 §15.1）；axum 少注册
+        // 一个就是 404（不是 307）。两个形态的方法集合逐字相同。
+        .route(
+            "/api/comments/:commentId/",
             put(update_comment).delete(delete_comment),
         )
         // 上游把 `DELETE /` 与 `DELETE /keep-replies` 交给同一个 handler
@@ -92,136 +117,8 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 // ---------------------------------------------------------------------------
-// DTO
+// DTO：见 `comments/dto.rs`（LUM-1458 拆出，⑩ 的 831 行基线）
 // ---------------------------------------------------------------------------
-
-/// 时间戳序列化：UTC 一律用 `Z` 后缀（上游 `timestampToString` 的 Go `RFC3339Nano`
-/// 对 UTC 也输出 `Z`）。
-///
-/// 这不只是美观：`X-Multica-Next-Before` 里的游标会被客户端直接拼回
-/// `?before=` 查询串，而 `+00:00` 的 `+` 在 query 里解码成空格 → 翻页 400。
-/// 微秒精度与 PG `TIMESTAMPTZ` 一致，无损。
-fn ts(t: &DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Micros, true)
-}
-
-/// 评论 reaction 响应（对齐上游 `ReactionResponse`）。
-#[derive(Debug, Clone, Serialize)]
-pub struct ReactionDto {
-    pub id: String,
-    pub comment_id: String,
-    pub actor_type: String,
-    pub actor_id: String,
-    pub emoji: String,
-    pub created_at: String,
-}
-
-impl From<&mc_repos::comment::CommentReactionRow> for ReactionDto {
-    fn from(row: &mc_repos::comment::CommentReactionRow) -> Self {
-        Self {
-            id: row.id().to_string(),
-            comment_id: row.comment_id().to_string(),
-            actor_type: row.actor_type.clone(),
-            actor_id: row.actor_id.clone(),
-            emoji: row.emoji.clone(),
-            created_at: ts(&row.created_at),
-        }
-    }
-}
-
-/// 评论响应（对齐上游 `CommentResponse` 的子集）。
-///
-/// 省略的字段都是本仓库 0001 schema 里**没有列**的上游扩展：
-/// `resolved_by_type` / `resolved_by_id` / `quick_action_id` / `source_task_id` 之外的
-/// 触发 / fold / summary 投影。`attachments` 恒为空数组（M3 才有附件表），
-/// 保留该字段是为了让上游客户端的 `attachments.length` 读取不炸。
-#[derive(Debug, Clone, Serialize)]
-pub struct CommentDto {
-    pub id: String,
-    pub issue_id: String,
-    pub parent_id: Option<String>,
-    pub author_type: String,
-    pub author_id: String,
-    pub content: String,
-    /// 上游 `type`（`comment` / `progress_update`）。本仓库无 `comment.type` 列，
-    /// 只可能写出默认值 `comment`（`progress_update` 在写入前就被 400 拒绝）。
-    #[serde(rename = "type")]
-    pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_task_id: Option<String>,
-    pub revision: i64,
-    pub resolved_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deleted_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub reactions: Vec<ReactionDto>,
-    pub attachments: Vec<serde_json::Value>,
-}
-
-impl CommentDto {
-    fn new(row: &CommentRow, reactions: Vec<ReactionDto>) -> Self {
-        Self {
-            id: row.id().to_string(),
-            issue_id: row.issue_id().to_string(),
-            parent_id: row.parent_id().map(|p| p.to_string()),
-            // 直出 DB 原始字符串（0001 的 CHECK 限定 user/agent/system/plugin/squad/autopilot），
-            // 不用 `CommentRow::author_type()` —— 那个会把未知值回落成 user。
-            author_type: row.author_type.clone(),
-            author_id: row.author_id.clone(),
-            content: row.body.clone(),
-            kind: "comment".into(),
-            source_task_id: row.source_task_id().map(|t| t.to_string()),
-            revision: row.revision,
-            resolved_at: row.resolved_at.as_ref().map(ts),
-            deleted_at: row.deleted_at.as_ref().map(ts),
-            created_at: ts(&row.created_at),
-            updated_at: ts(&row.updated_at),
-            reactions,
-            attachments: Vec::new(),
-        }
-    }
-
-    fn bare(row: &CommentRow) -> Self {
-        Self::new(row, Vec::new())
-    }
-}
-
-/// `POST /api/issues/{id}/comments` 请求体（对齐上游 `CreateCommentRequest`）。
-#[derive(Debug, Deserialize)]
-pub struct CreateCommentRequest {
-    #[serde(default)]
-    pub content: String,
-    /// 上游字段名是 `type`（Rust 关键字，故 rename）。
-    #[serde(default, rename = "type")]
-    pub kind: Option<String>,
-    #[serde(default)]
-    pub parent_id: Option<String>,
-}
-
-/// `PUT /api/comments/{commentId}` 请求体（对齐上游子集）。
-#[derive(Debug, Deserialize)]
-pub struct UpdateCommentRequest {
-    #[serde(default)]
-    pub content: String,
-    #[serde(default)]
-    pub expected_revision: Option<i64>,
-}
-
-/// reaction 请求体（上游 inline struct：`{"emoji": "..."}`）。
-#[derive(Debug, Deserialize)]
-pub struct ReactionRequest {
-    #[serde(default)]
-    pub emoji: String,
-}
-
-/// `POST /api/comments/{commentId}/sub-issues` 的 501 响应体。
-#[derive(Debug, Serialize)]
-pub struct NotImplementedBody {
-    pub code: &'static str,
-    pub message: &'static str,
-    pub todo: &'static str,
-}
 
 // ---------------------------------------------------------------------------
 // 查询参数

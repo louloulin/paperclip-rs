@@ -31,6 +31,8 @@
 | POST | `/api/issues/:id/comments` | `CreateComment` | ✅ 201 |
 | PUT | `/api/comments/:commentId` | `UpdateComment` | ✅ 200 |
 | DELETE | `/api/comments/:commentId` | `DeleteComment` | ✅ 204 |
+| PUT | `/api/comments/:commentId/` | `UpdateComment` | ✅ 200（尾斜杠别名，LUM-1458 补）|
+| DELETE | `/api/comments/:commentId/` | `DeleteComment` | ✅ 204（尾斜杠别名，LUM-1458 补）|
 | DELETE | `/api/comments/:commentId/keep-replies` | `DeleteComment`（同一 handler） | ✅ 204 |
 | POST | `/api/comments/:commentId/resolve` | `ResolveComment` | ✅ 200 |
 | DELETE | `/api/comments/:commentId/resolve` | `UnresolveComment` | ✅ 200 |
