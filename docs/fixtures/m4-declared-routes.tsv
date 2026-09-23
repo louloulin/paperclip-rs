@@ -1,0 +1,72 @@
+# m4-declared-routes.tsv — M4（W4：chat 25 / project 10 / squad 10）的**声明路由**，45 条。
+#
+# 用途：M4 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m4-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M4-1/2/3 三个切片**必须两形态一起注册**的 15 个键（清单与推导见 docs/37 §23.3）。
+#   与 docs/fixtures/m3-6-declared-routes.tsv 同性质：这是**输入**，不是本地已注册路由的快照。
+#   注意：预测模式**故意**带 `FAIL: …` 且 exit 1（「若按此实现就会欠 15 个形态」才是预期输出，
+#   不是本地已经判红）；本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 数据源：docs/42-M4-PLAN.md §1.1 的三张表（method + path 两列）。该表与
+#   docs/fixtures/upstream-routes.tsv 的 owner=M4 行逐条相等（method + path + router.go 行号，
+#   45/45 实测，见 docs/37 §23.5）⇒ 上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     python3 - <<'EOF'
+#     import re
+#     txt = open('docs/42-M4-PLAN.md').read()
+#     sec = txt.split('#### chat（25 条')[1].split('> **形态纪律')[0]
+#     for m in re.finditer(r'\|\s*(\d+)\s*\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`\s*\|', sec):
+#         print(m.group(2) + chr(9) + m.group(3))
+#     EOF
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+METHOD	PATH
+POST	/api/chat/sessions/
+GET	/api/chat/sessions/
+GET	/api/chat/sessions/{sessionId}/
+PATCH	/api/chat/sessions/{sessionId}/
+PATCH	/api/chat/sessions/{sessionId}/pin
+PATCH	/api/chat/sessions/{sessionId}/archive
+DELETE	/api/chat/sessions/{sessionId}/
+POST	/api/chat/sessions/{sessionId}/messages
+POST	/api/chat/sessions/{sessionId}/onboarding
+POST	/api/chat/sessions/{sessionId}/quick-actions/regenerate
+GET	/api/chat/sessions/{sessionId}/messages
+GET	/api/chat/sessions/{sessionId}/messages/page
+GET	/api/chat/sessions/{sessionId}/pending-task
+DELETE	/api/chat/sessions/{sessionId}/queued-tasks
+POST	/api/chat/sessions/{sessionId}/queued-tasks/{taskId}/prioritize
+POST	/api/chat/sessions/{sessionId}/read
+GET	/api/chat/sessions/{sessionId}/draft-restores
+DELETE	/api/chat/sessions/{sessionId}/draft-restores/{restoreId}
+GET	/api/chat/pending-tasks
+GET	/api/chat/pending-tasks/has-any
+GET	/api/chat/pinned-agents
+POST	/api/chat/pinned-agents
+DELETE	/api/chat/pinned-agents/{agentId}
+GET	/api/chat/history
+GET	/api/chat/thread
+GET	/api/projects/search
+GET	/api/projects/
+POST	/api/projects/
+GET	/api/projects/{id}/
+PUT	/api/projects/{id}/
+DELETE	/api/projects/{id}/
+GET	/api/projects/{id}/resources
+POST	/api/projects/{id}/resources
+PUT	/api/projects/{id}/resources/{resourceId}
+DELETE	/api/projects/{id}/resources/{resourceId}
+GET	/api/squads/
+POST	/api/squads/
+GET	/api/squads/{id}/
+PUT	/api/squads/{id}/
+DELETE	/api/squads/{id}/
+GET	/api/squads/{id}/members
+GET	/api/squads/{id}/members/status
+POST	/api/squads/{id}/members
+DELETE	/api/squads/{id}/members
+PATCH	/api/squads/{id}/members/role

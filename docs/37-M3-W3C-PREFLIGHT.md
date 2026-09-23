@@ -1998,3 +1998,135 @@ python3 -c "import json;print(json.load(open('crates/mc-conformance/report.json'
                                                              # 58/5/1/5/47
 grep -rn "install_ws_handlers" --include=*.rs crates apps    # 只有定义（死代码，§22.5）
 ```
+
+---
+
+## 23. 14:00 cycle 落地记录（LUM-1507）—— 并发位 3/3 满（M4-0 anchor 已推 2 commit、M4-0b 已产 fixture）⇒ 不派发，改做 M4-1/2/3 **派发预飞**：15 键双形态清单（新 fixture `m4-declared-routes.tsv`）+ 上游事实逐条复核
+
+### 23.0 一句话
+
+base `78a7e2c` 上**没有 open PR**（两个在飞切片都还没开 PR），并发位 **3/3 满载**（`LUM-1470` + `LUM-1471` + 本 cycle）
+⇒ 本轮没有可做的集成动作。按 §13/§15/§19 的既有形态把 cycle 花在**下一批（M4-1/2/3）派发前的静态预飞**上，产出三件可复算的东西：
+
+1. base 三门复验（⑦/⑩/⑨，§23.1）；
+2. **M4-1/2/3 的 15 个键必须两形态一起注册**（新 fixture `docs/fixtures/m4-declared-routes.tsv` + `slash_alias_audit.py --declared`
+   实测，§23.3）—— 这是三个切片正文里**没写**、而 anchor 删掉 6 行 allowlist 之后**必须**遵守的硬约束；
+3. M4 上游事实逐条复核（`f41fae6b` 本机真码：`router.go` 结构 / query 数 / handler 行数 / 11 张表，§23.4）。
+
+### 23.1 base `78a7e2c` 复验：⑦/⑩/⑨ 三门绿，计数与 §22.2 逐字相同
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH" CARGO_INCREMENTAL=0
+bash scripts/gates.sh --only route-parity,file-size      # 2/2 PASS
+bash scripts/gates.sh --only conformance                 # 1/1 PASS（54s，含 mc-conformance 构建）
+git diff --stat 4322e2b 78a7e2c                          # docs/37 一个文件（+134 −1）
+```
+
+⑦ 实测（base）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 248 registered | baseline 248
+implemented  196 real +  10 placeholder =  206 / 456   known_gap  250   unclaimed    0   regression   0   local_only   11
+```
+
+⑦ 第二条：`0 defect(s), 0 warning(s); 10 allowlisted`（`M4`×6 + `M5`×2 + `M6`×2，见 §23.3）。
+⑨：`report matches crates/mc-conformance/report.json`（`58/5/1/5/47` 未漂移，契约等价率 8.62%）。
+
+**为什么本轮不跑 ⑥/⑧（真库两门）**：base 相对 §22.2 跑过 `--with-db` 10/10 的合并树 `4322e2b`，只多两个
+**docs-only** commit（`f1970a6` 的 §22 与 `78a7e2c`）——实测 `git diff --stat 4322e2b 78a7e2c` = `docs/37` 单文件
+⇒ ①–⑥/⑧（编译/测试/迁移/e2e/schema-drift）的结果不可能变；且本 cycle 的写集同样 docs-only（**零行 Rust**）。
+
+### 23.2 在飞两片健康核查（不是「run 是 running 就算健康」）
+
+| 片 | run | 可观察进度 |
+| --- | --- | --- |
+| `LUM-1470`（M4-0 anchor） \| attempt 1 `running`（05:40:01Z 起） \| 分支已推 `origin/agent/devbox5/7cb27b4cfc6b`：`74b367a` scaffold + `6711ea9` 占位预删；`git diff --stat 78a7e2c FETCH_HEAD` = **29 文件 +830 −25**；workdir mtime 05:59:55（活跃） |
+| `LUM-1471`（M4-0b 抽取器 I4） \| attempt 1 `running`（05:40:01Z 起；attempt 0 是 503 重试） \| workdir 已产 `i4_probe.py` + `i4-out/**`（`issue_views/` `squads/` `workspaces/` `config/` …）⇒ 规则 I4 在跑真抽取；**尚未推分支**（无 PR 可审） |
+
+anchor 分支对 base 的实际改动（本 cycle 逐文件核对，与 docs/42 §5.2 的配方一致）：
+
+- `crates/mc-http/src/routes/mount.rs`：删掉 3 条 M0 占位的 **6 个注册键**（`GET|POST /api/chat/sessions`、
+  `/api/squads`、`/api/projects`），加 3 行 `mount_slice_{project,squad,chat}()`；占位注释同步改写为 M4 说明；
+- `docs/fixtures/route-parity-baseline.json`：删 6 行 ⇒ `baseline 248 → 242`（与 docs/42 §3.3 的预测**一致**）；
+- `docs/fixtures/slash-alias-allowlist.tsv`：`10 → 4` 行（`M4` 全删，只剩 `M5`×2 + `M6`×2），并写明
+  「M4 各切片此后**没有** allowlist 退路」——正是 §23.3 那条约束；
+- 新增 `crates/{mc-project,mc-squad,mc-chat}` 空 crate + `crates/mc-repos/src/{project,project_resource,squad,chat_*}.rs`
+  空模块 + `crates/mc-http/src/routes/{projects.rs,squads.rs,chat/{mod,session,message,bar,task}.rs}` 空切片。
+- ✅ 三个空切片的**文件头模块文档**已经把「两形态一起注册 + 无 allowlist 退路 + 参数写 `:id` 不写 `{id}`」
+  写成「切片必读」段落 ⇒ 切片作者只要读自己要改的那个文件就会看到；本 cycle 再把同一条写进三片正文（§23.3 末）。
+
+### 23.3 派发预飞（本轮主要产出）：M4-1/2/3 的 **15 个键必须两形态一起注册**
+
+上游（`f41fae6b`）里带尾斜杠的 15 条全是「`r.Route("/x", …)` + 子路由 `r.Get("/") / r.Post("/")`」形态 ⇒ chi 的
+`Mount` 同时服务 `/x` 与 `/x/`；axum 0.7 / matchit 0.7 **不归一化**（§14.2：`Err(MissingTrailingSlash)` → **404，不是 307**）
+⇒ 只注册带斜杠那一个形态，上游的另一种形态在本仓就是 **404**。
+
+新增 fixture `docs/fixtures/m4-declared-routes.tsv`（45 条，源 `docs/42` §1.1；性质同 `m3-6-declared-routes.tsv`），
+在 base 树上预测：
+
+```bash
+python3 scripts/slash_alias_audit.py --declared docs/fixtures/m4-declared-routes.tsv
+#   declared 45 upstream key(s); dual-form required: 15 | single-form: 30
+#   MISSING_ALIAS (15): …   => 9 defect(s) from findings, 0 warning(s); 6 allowlisted (known debt)
+```
+
+**「9 + 6」的分母是 base 上还留着的那 6 行 allowlist** ⇒ anchor 合入后这 15 条**全是缺陷**（无退路，且它们
+在 anchor 前也不是零成本：9 条本来就在判红）。逐片清单（`:param` 是审计的归一写法，代码里写 `:id` / `:sessionId`）：
+
+| 片 | 两形态都要注册（上游逐字） | 键数 |
+| --- | --- | ---: |
+| `M4-1` \| `GET\|POST /api/projects/` + `/api/projects`；`GET\|PUT\|DELETE /api/projects/:id/` + `/api/projects/:id` \| 5 |
+| `M4-2` \| `GET\|POST /api/squads/` + `/api/squads`；`GET\|PUT\|DELETE /api/squads/:id/` + `/api/squads/:id` \| 5 |
+| `M4-3` \| `POST\|GET /api/chat/sessions/` + `/api/chat/sessions`；`GET\|PATCH\|DELETE /api/chat/sessions/:sessionId/` + `…/:sessionId` \| 5 |
+| `M4-4` \| —（10 条全是 plain 子路由，`pending-tasks` / `pinned-agents` / `history` / `thread` …） \| 0 |
+
+反向（**不要**多注册）：另外 30 条是 plain 子路由（`/api/projects/search`、`/api/projects/:id/resources`、
+`/api/squads/:id/members[/status|/role]`、`/api/chat/sessions/:sessionId/{messages,messages/page,read,pin,archive,draft-restores}…`）
+⇒ 加尾斜杠别名会被审计判 `EXTRA_ALIAS`（**警告**，不判红），但它服务的是上游 404 的路径，不是我们欠的契约 ⇒ 别加。
+
+**本 cycle 的正文修订**（已写进 `LUM-1472`/`LUM-1473`/`LUM-1474` 三片正文）：逐片落上表 + 验收补一条
+「`python3 scripts/slash_alias_audit.py --quiet` exit 0」。原正文只写了「形态逐字照抄，含尾斜杠」——按字面理解
+会把 15 条里的带斜杠形态当成**唯一**形态，正好踩这个坑。
+
+### 23.4 上游事实逐条复核（`f41fae6b`：本机真码，不靠回忆）
+
+| 复核项 | 结果 |
+| --- | --- |
+| `docs/42` §1.1 的 45 条 vs `upstream-routes.tsv` 的 owner=M4 行 \| **45/45 逐字段相等**（method + path + `router.go` 行号，对称差 0） |
+| `router.go` projects 面（L2064–L2078） \| `r.Route("/api/projects")` → `Get("/search")`、`Get\|Post("/")`、`Route("/{id}")` → `Get\|Put\|Delete("/")`、`*("/resources[/{resourceId}]")` —— 与 §23.3 表格逐行一致 |
+| `router.go` squads 面（L2081–L2092） \| `Get\|Post("/")`、`Route("/{id}")` → 3×`("/")` + `Get("/members")` + `Get("/members/status")` + `Post\|Delete("/members")` + `Patch("/members/role")` |
+| `router.go` chat 面（L2334–L2374） \| `Route("/api/chat/sessions")` 下 19 条 + `pending-tasks` / `pending-tasks/has-any` / `pinned-agents`×3 / `history` / `thread` 均为 plain `r.Get/Post/Delete` |
+| SQL query 数（`grep -c '^-- name:'`） \| `chat.sql` **77**、`squad.sql` **22**、`project.sql` **9**、`project_resource.sql` **10**、`chat_pinned_agent.sql` **6** —— 与三片正文引用一致 |
+| handler 行数（`wc -l`） \| `chat.go` **2105**、`chat_history.go` 418、`chat_title.go` 296、`chat_pinned_agent.go` 169、`squad.go` **1243**、`project.go` **962**、`project_resource.go` **1061** —— 与 docs/42 §1.2 一致 |
+| 11 张表「全在、0 迁移」（docs/42 §2） \| 8 张直接 `CREATE TABLE` 命中；`quick_action` → `237_quick_action.up.sql`、`agent_task_queue` → `001_init.up.sql`、`task_message` → `026_task_messages.up.sql` ⇒ **11/11 成立**，M4 仍**不新增迁移** |
+
+（`chat_title.go` 的标题生成**不在** 45 条里——上游是 `SendChatMessage` 内部调用，不是独立路由 ⇒ 别为它开路由。）
+
+### 23.5 下一步（15:00 cycle 的两条路）与闸门矩阵
+
+- **若 anchor 的 PR 已开** ⇒ 15:00 cycle 走真 merge（§22.1 判据链：`--is-ancestor` → `merge-tree` → 合并树真库全门）
+  并派 `LUM-1472`/`LUM-1473`/`LUM-1474`（**3/3 满位**，写集三片互不相交：`routes/projects.rs` / `routes/squads.rs` /
+  `routes/chat/{session,message,bar}.rs`；共享文件 `⑦ 基线 + ⑨ 快照 + allowlist` 由 anchor 一次性处理完）；
+- **若还没开** ⇒ 空位派 `LUM-1440`（M3 面最后的 execenv），M4-1/2/3 顺延到 15:30/16:00；
+- 之后：`M4-4`（`LUM-1475`，依赖 ws 用户面广播 ⇒ `LUM-1506` 或 docs/42 §7.4 R3 降级）→ `M4-INT`（`LUM-1476`，
+  ⑦ 基线**一次性**从 242 刷到 287、⑨ 快照同批重生成；§3.3 旧算术已作废，以 §22 的复算为准）。
+
+### 23.6 本 cycle 没做什么（边界，便于后来者对齐）
+
+- 没派发（并发位 3/3 满）；没开 PR、没合并、没碰 `mount.rs` / allowlist / ⑦ 基线（**anchor 的写集**，避免撞车）；
+- 没跑 ⑥/⑧（真库门，理由见 §23.1）；没改一行 Rust、没加迁移；
+- 没动 `docs/42`（其 §1.1/§2 复核结论是「成立」，无需修订）。
+
+### 23.7 复算命令（§23.1–§23.4 逐条可重跑）
+
+```bash
+bash scripts/gates.sh --only route-parity,file-size          # 2/2 PASS
+bash scripts/gates.sh --only conformance                     # 1/1 PASS
+git diff --stat 4322e2b 78a7e2c                              # docs/37 一个文件（不跑真库门的依据）
+python3 scripts/slash_alias_audit.py --declared docs/fixtures/m4-declared-routes.tsv
+                                                             # 15 dual / 30 plain / 9 defect + 6 allowlisted
+python3 scripts/slash_alias_audit.py --quiet; echo $?        # 0（0 defect / 10 allowlisted）
+git fetch origin agent/devbox5/7cb27b4cfc6b && git diff --stat 78a7e2c FETCH_HEAD   # 29 文件 +830 −25
+M=<multica@f41fae6b>; sed -n '2064,2093p;2334,2374p' $M/server/cmd/server/router.go
+for f in chat squad project project_resource chat_pinned_agent; do grep -c '^-- name:' $M/server/pkg/db/queries/$f.sql; done  # 77 22 9 10 6
+```
