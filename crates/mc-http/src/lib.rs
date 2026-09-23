@@ -1,5 +1,6 @@
 //! Multica HTTP layer：axum router + middleware + state。
 
+pub mod daemon_requests;
 pub mod error;
 pub mod middleware;
 pub mod routes;
