@@ -126,8 +126,8 @@ fn occurrences_are_ascending_and_capped_by_count() {
     );
     // 5 年视界**不截断** `count`：它只用来**终止**「根本不触发」的表达式
     //（robfig 的 `yearLimit`，零值时间 ⇒ 短切片）。所以年粒度表达式要 10 次就给 10 次。
-    let yearly =
-        next_occurrences_after_utc("0 0 1 1 *", "UTC", at("2024-01-01T00:00:00Z"), 10).expect("parse");
+    let yearly = next_occurrences_after_utc("0 0 1 1 *", "UTC", at("2024-01-01T00:00:00Z"), 10)
+        .expect("parse");
     assert_eq!(yearly.len(), 10);
     assert_eq!(yearly[0], at("2025-01-01T00:00:00Z"));
     assert_eq!(yearly[9], at("2034-01-01T00:00:00Z"));
@@ -166,12 +166,24 @@ fn timezone_decides_the_wall_clock() {
 fn tz_prefix_overrides_the_argument() {
     // 09:00 America/New_York = 14:00Z（1 月是 EST，UTC-5）。
     assert_eq!(
-        next("TZ=America/New_York 0 9 * * *", "UTC", "2024-01-01T00:00:00Z"),
+        next(
+            "TZ=America/New_York 0 9 * * *",
+            "UTC",
+            "2024-01-01T00:00:00Z"
+        ),
         Some(at("2024-01-01T14:00:00Z"))
     );
     assert_eq!(
-        next("CRON_TZ=America/New_York 0 9 * * *", "UTC", "2024-01-01T00:00:00Z"),
-        next("TZ=America/New_York 0 9 * * *", "UTC", "2024-01-01T00:00:00Z")
+        next(
+            "CRON_TZ=America/New_York 0 9 * * *",
+            "UTC",
+            "2024-01-01T00:00:00Z"
+        ),
+        next(
+            "TZ=America/New_York 0 9 * * *",
+            "UTC",
+            "2024-01-01T00:00:00Z"
+        )
     );
 }
 

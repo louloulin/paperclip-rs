@@ -162,7 +162,13 @@ struct Field {
 }
 
 impl Field {
-    fn parse(raw: &str, field: &'static str, min: u32, max: u32, names: &[(&str, u32)]) -> Result<Self, CronError> {
+    fn parse(
+        raw: &str,
+        field: &'static str,
+        min: u32,
+        max: u32,
+        names: &[(&str, u32)],
+    ) -> Result<Self, CronError> {
         let mut bits = 0_u64;
         let mut star = false;
         for item in raw.split(',') {
@@ -320,12 +326,12 @@ impl CronSpec {
     /// `dom` / `dow` 的匹配，逐字对齐 robfig `SpecSchedule.dayMatches`：
     /// 一方为 `*` ⇒ AND；**两边都受限 ⇒ OR**（Vixie 语义）。
     fn day_matches(self, local: &DateTime<Tz>) -> bool {
-        let dom_match = self.dom.star || self.dom.matches(local.day());
-        let dow_match = self.dow.star || self.dow.matches(dow_number(local.weekday()));
+        let day_of_month = self.dom.star || self.dom.matches(local.day());
+        let day_of_week = self.dow.star || self.dow.matches(dow_number(local.weekday()));
         if self.dom.star || self.dow.star {
-            dom_match && dow_match
+            day_of_month && day_of_week
         } else {
-            dom_match || dow_match
+            day_of_month || day_of_week
         }
     }
 
@@ -469,15 +475,16 @@ pub fn resolve_timezone(timezone: &str) -> Result<Tz, CronError> {
 /// # Errors
 ///
 /// 见 [`CronSpec::parse`] / [`resolve_timezone`]。
-pub fn parse_with_timezone(expr: &str, fallback_timezone: &str) -> Result<(CronSpec, Tz), CronError> {
+pub fn parse_with_timezone(
+    expr: &str,
+    fallback_timezone: &str,
+) -> Result<(CronSpec, Tz), CronError> {
     let (prefix_timezone, schedule) = split_timezone_prefix(expr)?;
     let tz = match prefix_timezone {
         // 前缀属于**表达式文本**（robfig 在字段解析前就 `LoadLocation` 它）⇒ 分类是 `invalid_cron`。
-        Some(timezone) => {
-            resolve_timezone(timezone).map_err(|_| CronError::BadPrefixTimezone {
-                timezone: timezone.to_string(),
-            })?
-        }
+        Some(timezone) => resolve_timezone(timezone).map_err(|_| CronError::BadPrefixTimezone {
+            timezone: timezone.to_string(),
+        })?,
         // `tz` 参数属于**请求参数**（上游 handler 先 `ValidateTimezone`）⇒ `invalid_timezone`。
         None => resolve_timezone(fallback_timezone)?,
     };

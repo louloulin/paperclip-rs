@@ -55,12 +55,6 @@ pub const STATE_CONSUMED: &str = "consumed";
 /// 见 [`STATE_RESERVED`]。
 pub const STATE_RELEASED: &str = "released";
 
-/// 显式跳过旧版的预留回收（`expired` 语义由调用方决定，本仓不发明时间窗）。
-///
-/// 说明：`ListRecoverableAutopilotQuotaReservations` 的两个时间界由**调用方**传入
-/// （上游 `terminal_created_before` / `partial_created_before` 来自 Cloud 侧策略）⇒
-/// 本仓只接受参数、不给默认值。
-
 // ---------------------------------------------------------------------------
 // 行结构
 // ---------------------------------------------------------------------------
@@ -196,6 +190,7 @@ where
 }
 
 /// 上游 `CreateAutopilotQuotaReservation`。
+#[allow(clippy::too_many_arguments)] // 与上游 sqlc 的 params struct 字段一一对应
 pub async fn reserve<'c, E>(
     executor: E,
     workspace_id: Uuid,
@@ -348,7 +343,7 @@ where
 
 /// 上游 `ReleaseAutopilotQuotaReservation`：`reserved → released`，`reserved_count - 1`。
 ///
-/// **只放行仍是 `reserved` 的行** —— 已经消费掉的 create_issue 额度在 run 被取消/阻塞/删除后
+/// **只放行仍是 `reserved` 的行** —— 已经消费掉的 `create_issue` 额度在 run 被取消/阻塞/删除后
 /// 依然计入周期用量。`Ok(None)` 同上：终态重放。
 pub async fn release<'c, E>(
     executor: E,
@@ -390,6 +385,9 @@ where
 /// 两个时间界都由调用方给：`terminal_created_before` 给「run 已终态」的宽限，
 /// `partial_created_before` 给「manual/api 半截 run」的宽限。schedule/webhook 的
 /// 半截状态由它们自己的重试逻辑修复，**故意排除**在本查询之外。
+///
+/// 本仓**不发明时间窗**：上游那两条界来自 Cloud 侧策略，本地只接受参数、不给默认值；
+/// 旧版的 `expired` 语义也完全由调用方决定。
 pub async fn list_recoverable<'c, E>(
     executor: E,
     terminal_created_before: DateTime<Utc>,

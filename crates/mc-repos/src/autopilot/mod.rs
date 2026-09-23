@@ -65,7 +65,8 @@ pub(crate) const AUTOPILOT_TRIGGER_COLUMNS: &str =
      published_by_type, published_by_id, created_by_type, created_by_id";
 
 /// `autopilot_subscriber` 的列清单（4 列）。
-pub(crate) const AUTOPILOT_SUBSCRIBER_COLUMNS: &str = "autopilot_id, user_type, user_id, created_at";
+pub(crate) const AUTOPILOT_SUBSCRIBER_COLUMNS: &str =
+    "autopilot_id, user_type, user_id, created_at";
 
 /// `autopilot_collaborator` 的列清单（5 列）。
 pub(crate) const AUTOPILOT_COLLABORATOR_COLUMNS: &str =
@@ -295,7 +296,9 @@ impl AutopilotRepo {
         id: Uuid,
         workspace_id: Id,
     ) -> Result<AutopilotRow, RepoError> {
-        let sql = format!("SELECT {AUTOPILOT_COLUMNS} FROM autopilot WHERE id = $1 AND workspace_id = $2");
+        let sql = format!(
+            "SELECT {AUTOPILOT_COLUMNS} FROM autopilot WHERE id = $1 AND workspace_id = $2"
+        );
         sqlx::query_as::<_, AutopilotRow>(&sql)
             .bind(id)
             .bind(workspace_id.0)

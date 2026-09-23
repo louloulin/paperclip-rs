@@ -226,7 +226,11 @@ pub fn usage_from_period(
     period: Option<&QuotaPeriodRow>,
 ) -> Result<AutopilotQuotaUsageResponse, AutopilotError> {
     let (used, reserved, blocked_counts) = match period {
-        Some(row) => (row.used_count, row.reserved_count, decode_blocked_counts(row)?),
+        Some(row) => (
+            row.used_count,
+            row.reserved_count,
+            decode_blocked_counts(row)?,
+        ),
         None => (0, 0, BTreeMap::new()),
     };
     let total = used + reserved;
@@ -251,14 +255,12 @@ pub fn usage_from_period(
 /// `blocked_counts` 列（jsonb）→ 计数表。
 ///
 /// 容忍 `null`（返回空表）与已经是对象的值；**解不开就报错**（见 [`usage_from_period`] 的说明）。
-fn decode_blocked_counts(
-    row: &QuotaPeriodRow,
-) -> Result<BTreeMap<String, i64>, AutopilotError> {
+fn decode_blocked_counts(row: &QuotaPeriodRow) -> Result<BTreeMap<String, i64>, AutopilotError> {
     if row.blocked_counts.is_null() {
         return Ok(BTreeMap::new());
     }
-    let counts: BTreeMap<String, i64> =
-        serde_json::from_value(row.blocked_counts.clone()).map_err(|err| {
+    let counts: BTreeMap<String, i64> = serde_json::from_value(row.blocked_counts.clone())
+        .map_err(|err| {
             AutopilotError::internal(format!("decode autopilot quota blocked counts: {err}"))
         })?;
     Ok(counts)
@@ -316,7 +318,12 @@ mod tests {
 
     fn plan(action: QuotaAction, limit: i64) -> QuotaPolicy {
         let t = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
-        QuotaPolicy::new(action, limit, t.into(), (t + chrono::Duration::days(30)).into())
+        QuotaPolicy::new(
+            action,
+            limit,
+            t.into(),
+            (t + chrono::Duration::days(30)).into(),
+        )
     }
 
     /// 关掉时：`off` + 全 `None`（含 `blocked_counts`，它是 `null` 而不是 `{}`）。
@@ -347,7 +354,10 @@ mod tests {
     fn enabled_without_period_row_reports_zeroes() {
         let resp = usage_from_period(&plan(QuotaAction::Enforce, 10), None).unwrap();
         assert_eq!(resp.action, "enforce");
-        assert_eq!((resp.used, resp.reserved, resp.total), (Some(0), Some(0), Some(0)));
+        assert_eq!(
+            (resp.used, resp.reserved, resp.total),
+            (Some(0), Some(0), Some(0))
+        );
         assert_eq!(resp.limit, Some(10));
         assert_eq!(resp.reached, Some(false));
         assert_eq!(resp.blocked_counts, Some(BTreeMap::new()));
@@ -361,7 +371,10 @@ mod tests {
     fn enforce_reached_is_used_plus_reserved_at_limit() {
         let row = period_row(7, 3, json!({"quota_exhausted": 2}));
         let resp = usage_from_period(&plan(QuotaAction::Enforce, 10), Some(&row)).unwrap();
-        assert_eq!((resp.used, resp.reserved, resp.total), (Some(7), Some(3), Some(10)));
+        assert_eq!(
+            (resp.used, resp.reserved, resp.total),
+            (Some(7), Some(3), Some(10))
+        );
         assert_eq!(resp.reached, Some(true));
         assert_eq!(
             resp.blocked_counts.as_ref().unwrap().get("quota_exhausted"),

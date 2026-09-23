@@ -22,7 +22,7 @@
 //! ⚠️ 上游 `triggerToResponse` 里也有「行 → DTO」的映射，本仓把它放在 `mc-http` 侧（矩阵把
 //! `triggerToResponse` 判给 `mc-http/…/dto.rs`）；下游切片要用它就走 `mc_http::routes::autopilots::dto`。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -37,14 +37,14 @@ pub const DEFAULT_WEBHOOK_PROVIDER: &str = "generic";
 /// webhook 公开基址的环境变量名（上游 `h.cfg.PublicURL` 的本地来源）。
 ///
 /// 上游读取点：`AutopilotTriggerResponse.WebhookURL` 的注释 ——
-/// 「absolute URL composed from the server's MULTICA_PUBLIC_URL setting」。
+/// 「absolute URL composed from the server's `MULTICA_PUBLIC_URL` setting」。
 pub const PUBLIC_URL_ENV: &str = "MULTICA_PUBLIC_URL";
 
 /// 上游 `WebhookEventFilter`：`{event, actions?}`。
 ///
 /// `actions` 是 `omitempty` ⇒ 本地 `Option` + `skip_serializing_if`（空数组与 `None` 都省略，
 /// 与 Go 的 `omitempty` 语义一致）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebhookEventFilter {
     /// 事件名（自由文本，写侧校验）。
     pub event: String,
