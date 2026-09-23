@@ -46,10 +46,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 另外，M2 切片的真实 router 里路径参数必须写 `:id`（axum 0.7 / matchit 0.7
         // 会把 `{id}` 当字面量段——编译通过但恒 404，docs/09 §7.4）。
         .route(
-            "/api/chat/sessions",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
             "/api/skills",
             get(health::placeholder).post(health::placeholder),
         )
@@ -59,14 +55,6 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/api/autopilots",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
-            "/api/squads",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
-            "/api/projects",
             get(health::placeholder).post(health::placeholder),
         )
         .route("/api/feature-flags", get(health::placeholder))
@@ -214,17 +202,19 @@ fn mount_slice_daemon() -> Router<Arc<AppState>> {
 // `Router::new()`，因此合并本片后**路由表只剩下面 6 行的删除**（route_parity 基线
 // 已随之刷新）。
 //
-// ⚠️ M0 的三条占位（`GET|POST /api/chat/sessions`、`GET|POST /api/squads`、
-// `GET|POST /api/projects`，共 6 个注册键）在本 commit **原样保留**：它们与上游的真形态
-// **不是同一个注册键**（占位是无尾斜杠的 `/api/chat/sessions`，上游 `router.go:2335-2336`
-// 的 `Route("/api/chat/sessions") + Post("/") / Get("/")` 服务的是带尾斜杠形态），而 chi 的
-// `Mount` 两种形态都服务 ⇒ 留着会永久留下 501 幽灵路由，并被门 ⑦ 的 `slash_aliases()`
-// 折叠算成「已实现」（docs/42 §1.1 形态纪律）。预删连同 ⑦ 基线 + `slash-alias-allowlist.tsv`
-// 的 6 行放在本 anchor 的**第二个 commit**（docs/42 §5.1 第 5 项 / §5.2）；本 commit 只有
-// 空 `Router::new()` 合并 ⇒ **路由表逐字不变**，⑦ 基线不受影响。
-// 注：切片接线时**不得**再加无尾斜杠形态的同键路由——axum 0.7 同 path+method 重复注册
-// 会在启动时 panic（docs/15 §9.6.6），且 chi 的两种形态**都要**注册（见
-// `routes/{projects,squads}.rs` / `routes/chat/mod.rs` 的模块文档）。
+// ✅ 三条 M0 占位（`GET|POST /api/chat/sessions`、`GET|POST /api/squads`、
+// `GET|POST /api/projects`，共 6 个注册键）已由 **M4-0 anchor 预删**删除
+// （LUM-1470，配方见 docs/42 §5.2）：它们与上游的真形态**不是同一个注册键**
+// （占位是无尾斜杠的 `/api/chat/sessions`，上游 `router.go:2335-2336` 的
+// `Route("/api/chat/sessions") + Post("/") / Get("/")` 服务的是带尾斜杠形态），
+// 而 chi 的 `Mount` 两种形态都服务 ⇒ 留着不仅会永久留下 501 幽灵路由，还会被门 ⑦
+// 的 `slash_aliases()` 折叠算成「已实现」，从报表上看不出来（docs/42 §1.1 形态纪律）。
+// 预删后 ⑦ 基线 248→242、`slash-alias-allowlist.tsv` 同步删掉 6 行（否则判 STALE）。
+// 三个面共用同一段代码位置（L49/L65/L69）⇒ 留给切片删就是三片同改本文件 +
+// ⑦ 基线 + ⑨ 快照（三个共享文件、三个写者），这是本 anchor 存在的理由。
+// 注：切片接线时**不得**再加无尾斜杠形态的同键路由——axum 0.7 同 path+method
+// 重复注册会在启动时 panic（docs/15 §9.6.6），且 chi 的两种形态**都要**注册
+// （见 `routes/{projects,squads}.rs` / `routes/chat/mod.rs` 的模块文档）。
 
 /// project 切片：`/api/projects*`（M4-1）。M0 占位已由 M4-0 anchor 预删（docs/42 §5.2），
 /// 切片只需在此实现 `router()`，不必再动本文件。
