@@ -200,6 +200,19 @@ pub fn agent_status_frame(payload: &AgentStatusPayload) -> Message {
     frame(events::AGENT_STATUS, payload)
 }
 
+/// 用户面事件的**第二批帧**（M4-4-fu / LUM-1600）：`chat:message` /
+/// `chat:quick_actions` / `task:cancelled`，以及它们的冻结载荷类型的再导出。
+///
+/// 另开文件**只为行数**（父文件 677 行 + 本片新增必超 R7 的 800 行硬上限，判据见
+/// `scripts/file_size_check.py`）；三个构造函数与上面的同胞逐字同款，
+/// 载荷仍是 `mc_daemon_proto` 的冻结类型 —— 细节与上游锚点见模块 `user_events`。
+mod user_events;
+
+pub use user_events::{
+    chat_message_frame, chat_quick_actions_frame, task_cancelled_frame, ChatMessagePayload,
+    ChatQuickActionsPayload,
+};
+
 /// RPC 响应帧（上游 `hub.go:1036` `sendRPCResponse` 内联构造）。
 #[must_use]
 pub fn rpc_response_frame(

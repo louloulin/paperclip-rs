@@ -21,6 +21,8 @@
 
 #![cfg(feature = "test-util")]
 
+#[path = "chat/broadcast.rs"]
+mod broadcast;
 #[path = "chat/support.rs"]
 mod support;
 

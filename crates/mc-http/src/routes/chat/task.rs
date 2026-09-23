@@ -24,10 +24,12 @@
 //! 1. **task 队列**（M3-3 / M3-6，已合入）：`SendChatMessage` 的落库面复用
 //!    `agent_task_queue`；状态取值对齐上游迁移的 CHECK（`migrations/0001_init.up.sql:230`
 //!    的 CHECK 是已知错误，**不是**契约，见 `crates/mc-task/src/lib.rs` 模块文档）。
-//! 2. **ws 广播**（M3-7 / LUM-1438，由 LUM-1506 承接）：上游在提交后发
+//! 2. **ws 广播**（M4-4-fu / LUM-1600 已接上）：上游在提交后发
 //!    `broadcastTaskEvent(EventTaskQueued)` + `NotifyTaskEnqueued` + `publishChat(EventChatMessage)`，
-//!    `chat:done` / `chat:quick_actions` 同理。本片**不发任何事件**（也不建 notifier），
-//!    已登记在 `docs/45` + PR；`state.daemon_hub` 已可用，接上只是调用点的事。
+//!    取消面还有逐条 `task:cancelled` + 合并的 `notifyTasksFinished`。调用点集中在 [`broadcast`]，
+//!    由 `dispatch` / `queue` 的 handler 在**事务提交之后**调（顺序 / best-effort / 键集见其模块头）。
+//!    仍缺的两条（登记在 `docs/53`）：`chat:done`（本地没有 chat 任务的完成路径 —— daemon 完成面
+//!    还没有 chat 分支）与 `chat:quick_actions`（provider 未接 ⇒ `quick_action` 唯一出口是 403）。
 //! 3. **渠道集成**（M7）：`/api/chat/history` + `/api/chat/thread` 本片只落**非渠道**分支
 //!    （上游 `h.SlackHistory == nil`）：history 读本会话转录，thread 回
 //!    `writeNoChannelIntegration` 的固定响应。渠道阅读器（`ChannelOverview` / `Thread`）
@@ -41,6 +43,7 @@
 //! ⚠️ `history` / `thread` 的认证是**另一套**：它们服务 agent 侧 CLI，用
 //! `X-Actor-Source: task_token` + `X-Task-ID`，**不**经过 `AuthUser`（见 [`history`] 的模块头）。
 
+pub(super) mod broadcast;
 pub(super) mod dispatch;
 pub(super) mod history;
 pub(super) mod queue;

@@ -17,6 +17,12 @@ fn task_available(runtime_id: &str, task_id: &str) -> String {
     )
 }
 
+/// 批量唤醒帧的线上字节：`task_id` 是 `omitempty` ⇒ 空 id（唤醒 hint）在线上**没有**该键
+/// —— `task_available` 带真 id 是「去领这一条」、不带 id 才是「队列里可能还有活儿」。
+fn task_available_wake(runtime_id: &str) -> String {
+    format!(r#"{{"type":"daemon:task_available","payload":{{"runtime_id":"{runtime_id}"}}}}"#)
+}
+
 fn pending_work(runtime_id: &str, kind: &str) -> String {
     format!(
         r#"{{"type":"daemon:pending_work","payload":{{"kind":"{kind}","runtime_id":"{runtime_id}"}}}}"#
@@ -154,6 +160,47 @@ async fn runtime_scoped_notification_reaches_only_matching_connections() {
         DeliveryOutcome::miss()
     );
     assert!(quiet_for(&mut a, QUIET).await);
+}
+
+/// 批量唤醒（M4-4-fu / LUM-1600，上游 `task.go:7076` `notifyTasksFinished`）：
+/// 按 runtime **去重**、空 id **跳过**、hint 的 `task_id` **为空**（`task_available`
+/// 的空 `task_id` 就是「队列里的后继值得再 claim 一次」的语义），返回被唤醒的 runtime 数。
+#[tokio::test]
+async fn batch_wake_dedupes_runtimes_and_skips_empty_ids() {
+    let server = TestServer::start(Hub::new()).await;
+    let mut a = server
+        .connect(&TestIdentity::daemon("d-a", &["rt-1"]).with_workspace("ws-1"))
+        .await;
+    let mut b = server
+        .connect(&TestIdentity::daemon("d-b", &["rt-2"]).with_workspace("ws-1"))
+        .await;
+    wait_until("两条连接就绪", || server.hub.connection_count() == 2).await;
+
+    // 四条终态任务落在两个 runtime 上 ⇒ 每个 runtime 只收**一帧**；空串既不是 runtime
+    // 也不是任何连接的 key ⇒ 静默跳过（上游 `if !runtimeID.Valid { continue }`）。
+    let ids = vec![
+        "rt-1".to_owned(),
+        String::new(),
+        "rt-2".to_owned(),
+        "rt-1".to_owned(),
+    ];
+    assert_eq!(
+        server.hub.notify_tasks_finished(&ids),
+        2,
+        "去重后的 runtime 数"
+    );
+    assert_eq!(expect_text(&mut a, WAIT).await, task_available_wake("rt-1"));
+    assert_eq!(expect_text(&mut b, WAIT).await, task_available_wake("rt-2"));
+    assert!(
+        quiet_for(&mut a, QUIET).await,
+        "同一 runtime 的重复项不能重复唤醒"
+    );
+
+    // 空批次 / 全空 id：0 次唤醒且无帧（上游空 `tasks` 切片的等价物）。
+    assert_eq!(server.hub.notify_tasks_finished(&[]), 0);
+    assert_eq!(server.hub.notify_tasks_finished(&[String::new()]), 0);
+    assert!(quiet_for(&mut a, QUIET).await);
+    assert!(quiet_for(&mut b, QUIET).await);
 }
 
 #[tokio::test]
