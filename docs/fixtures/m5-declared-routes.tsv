@@ -1,0 +1,61 @@
+# m5-declared-routes.tsv — M5（W5：autopilot 20 / issue wakeup 8 / autopilot webhook 1）的**声明路由**，29 条。
+#
+# 用途：M5 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m5-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M5 各切片**必须两形态一起注册**的键（逐键清单与实测见 docs/44-M5-PLAN.md §1.4）。
+#   与 docs/fixtures/m4-declared-routes.tsv、m3-6-declared-routes.tsv 同性质：这是**输入**，
+#   不是本地已注册路由的快照。
+#   注意：预测模式**故意**带 `FAIL: …` 且 exit 1（「若按此实现就会欠 N 个形态」才是预期输出，
+#   不是本地已经判红）；本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 owner=M5 行（method + path + router.go 行号，
+#   29/29 实测逐条相等）。上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M5"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空（下表按「autopilot 面 → webhook 面 → wakeup 面」分组，行序不同）：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M5"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m5-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   上游 chi 把 `r.Route("/api/autopilots", …)` 整棵子树当 Mount，
+#   子路由若写 `"/"` 则 Mount 同时服务 `/x` 与 `/x/` —— 因此本表里带尾斜杠的 7 个键
+#   （`/api/autopilots/` ×2、`/api/autopilots/{id}/` ×3、`/api/autopilots/{id}/triggers/{triggerId}/` ×2）
+#   必须两形态一起注册，漏一个是 `MISSING_ALIAS` 缺陷（axum 0.7 对另一形态是 404，不是 307）。
+#   `/api/webhooks/autopilots/{token}` 是独立 plain 注册（无尾斜杠形态）——
+#   它是唯一的**无认证**入口：凭据是路径里的 token 本身（router.go L1485–L1487 注释）。
+METHOD	PATH
+GET	/api/autopilots/
+POST	/api/autopilots/
+GET	/api/autopilots/cron-preview
+GET	/api/autopilots/usage
+GET	/api/autopilots/{id}/
+PATCH	/api/autopilots/{id}/
+DELETE	/api/autopilots/{id}/
+POST	/api/autopilots/{id}/trigger
+GET	/api/autopilots/{id}/runs
+GET	/api/autopilots/{id}/runs/{runId}
+GET	/api/autopilots/{id}/deliveries
+GET	/api/autopilots/{id}/deliveries/{deliveryId}
+POST	/api/autopilots/{id}/deliveries/{deliveryId}/replay
+POST	/api/autopilots/{id}/triggers
+PATCH	/api/autopilots/{id}/triggers/{triggerId}/
+DELETE	/api/autopilots/{id}/triggers/{triggerId}/
+POST	/api/autopilots/{id}/triggers/{triggerId}/rotate-webhook-token
+PUT	/api/autopilots/{id}/triggers/{triggerId}/signing-secret
+POST	/api/autopilots/{id}/collaborators
+DELETE	/api/autopilots/{id}/collaborators/{userId}
+POST	/api/webhooks/autopilots/{token}
+GET	/api/issues/{id}/wakeups
+POST	/api/issues/{id}/wakeups
+PUT	/api/issues/{id}/wakeups/{wakeupID}
+POST	/api/issues/{id}/wakeups/{wakeupID}/disable
+POST	/api/issues/{id}/wakeups/{wakeupID}/enable
+PATCH	/api/issues/{id}/wakeups/{wakeupID}/instruction
+GET	/api/issue-wakeups
+GET	/api/issue-wakeup-summaries
