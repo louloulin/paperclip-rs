@@ -58,7 +58,7 @@ fn auth_lines() -> Vec<String> {
         .collect()
 }
 
-/// 喂行并收集**每一次** push_line 之后新出队的帧。
+/// 喂行并收集**每一次** `push_line` 之后新出队的帧。
 fn pump(decoder: &mut AcpDecoder, lines: &[String]) -> Vec<String> {
     let mut frames = Vec::new();
     for line in lines {
@@ -101,10 +101,18 @@ fn handshake_is_initialize_then_session_then_prompt() {
 
     let frames = pump(&mut decoder, &success_lines());
     assert_eq!(frames.len(), 2, "会话帧 + prompt 帧：{frames:?}");
-    assert!(frames[0].contains("\"method\":\"session/new\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/new\""),
+        "{}",
+        frames[0]
+    );
     assert!(frames[0].contains("\"cwd\":\".\""), "{}", frames[0]);
     assert!(frames[0].contains("\"mcpServers\":[]"), "{}", frames[0]);
-    assert!(frames[1].contains("\"method\":\"session/prompt\""), "{}", frames[1]);
+    assert!(
+        frames[1].contains("\"method\":\"session/prompt\""),
+        "{}",
+        frames[1]
+    );
     assert!(frames[1].contains("\"sessionId\":\"s1\""), "{}", frames[1]);
     assert!(frames[1].contains("\"text\":\"hi\""), "{}", frames[1]);
 }
@@ -134,15 +142,27 @@ fn resume_uses_the_flavor_method_and_falls_back_to_the_requested_id() {
     // 只回 initialize 应答：会话帧该用 kiro 的 `session/load`。
     let frames = pump(&mut decoder, &[auth_lines()[0].clone()]);
     assert_eq!(frames.len(), 1);
-    assert!(frames[0].contains("\"method\":\"session/load\""), "{}", frames[0]);
-    assert!(frames[0].contains("\"sessionId\":\"old-session\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/load\""),
+        "{}",
+        frames[0]
+    );
+    assert!(
+        frames[0].contains("\"sessionId\":\"old-session\""),
+        "{}",
+        frames[0]
+    );
     // 对端没回 sessionId 时沿用请求里那个（上游 resolveResumedSessionID 的回退）。
     let frames = pump(
         &mut decoder,
         &[r#"{"jsonrpc":"2.0","id":3,"result":{}}"#.to_owned()],
     );
     assert_eq!(decoder.summary().session_id.as_deref(), Some("old-session"));
-    assert!(frames[0].contains("\"sessionId\":\"old-session\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"sessionId\":\"old-session\""),
+        "{}",
+        frames[0]
+    );
 }
 
 #[test]
@@ -167,8 +187,14 @@ fn kiro_prompt_carries_both_prompt_and_content() {
     decoder.initial_frames();
     let frames = pump(&mut decoder, &success_lines());
     let prompt = frames.last().expect("prompt 帧");
-    assert!(prompt.contains("\"content\":[{\"text\":\"hi\",\"type\":\"text\"}]"), "{prompt}");
-    assert!(prompt.contains("\"prompt\":[{\"text\":\"hi\",\"type\":\"text\"}]"), "{prompt}");
+    assert!(
+        prompt.contains("\"content\":[{\"text\":\"hi\",\"type\":\"text\"}]"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("\"prompt\":[{\"text\":\"hi\",\"type\":\"text\"}]"),
+        "{prompt}"
+    );
 }
 
 #[test]
@@ -211,18 +237,24 @@ fn notification_method_and_update_shapes_are_all_understood() {
         r#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"Agent_Message-Chunk":{"content":{"type":"text","text":"c"}}}}}"#,
     ] {
         let mut decoder = AcpDecoder::new(&KIMI, &LaunchRequest::new("hi"));
-        assert_eq!(text_events(events(&mut decoder, &[line.to_owned()])).len(), 1);
+        assert_eq!(
+            text_events(events(&mut decoder, &[line.to_owned()])).len(),
+            1
+        );
     }
 }
 
 #[test]
 fn junk_transcript_only_yields_the_valid_chunk() {
     let mut decoder = AcpDecoder::new(&KIMI, &LaunchRequest::new("hi"));
-    let lines: Vec<String> = conformance_junk_stdout("ok")
+    let lines: Vec<String> = conformance_junk_stdout(KIMI.label, "ok")
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(text_events(events(&mut decoder, &lines)), vec!["ok".to_owned()]);
+    assert_eq!(
+        text_events(events(&mut decoder, &lines)),
+        vec!["ok".to_owned()]
+    );
 }
 
 #[test]
@@ -334,7 +366,11 @@ fn permission_requests_prefer_single_use_grants_and_fail_closed() {
             r#"{"jsonrpc":"2.0","id":101,"method":"session/request_permission","params":{"options":[{"optionId":"always","kind":"allow_always"}]}}"#.to_owned(),
         ],
     );
-    assert!(frames[0].contains("\"optionId\":\"approve_for_session\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"optionId\":\"approve_for_session\""),
+        "{}",
+        frames[0]
+    );
     assert!(frames[1].contains("-32603"), "{}", frames[1]);
     assert!(frames[1].contains("no auto-selectable permission option offered"));
 }
@@ -361,7 +397,11 @@ fn terminal_requests_and_unknown_methods_are_refused() {
     );
     assert!(frames[0].contains("-32601"), "{}", frames[0]);
     assert!(frames[0].contains("terminal capability is not enabled"));
-    assert!(frames[1].contains("method not found: fs/read_text_file"), "{}", frames[1]);
+    assert!(
+        frames[1].contains("method not found: fs/read_text_file"),
+        "{}",
+        frames[1]
+    );
 }
 
 #[test]
@@ -373,7 +413,11 @@ fn cancel_sends_session_cancel_once_and_then_stops() {
     events(&mut decoder, &lines[..3]);
     let frames = decoder.cancel_frames();
     assert_eq!(frames.len(), 1);
-    assert!(frames[0].contains("\"method\":\"session/cancel\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/cancel\""),
+        "{}",
+        frames[0]
+    );
     assert!(frames[0].contains("\"sessionId\":\"s1\""), "{}", frames[0]);
     assert!(decoder.cancel_frames().is_empty(), "取消帧只发一次");
 }
@@ -382,7 +426,10 @@ fn cancel_sends_session_cancel_once_and_then_stops() {
 fn cancelled_run_before_any_session_has_nothing_to_send() {
     let mut decoder = AcpDecoder::new(&KIMI, &LaunchRequest::new("hi"));
     decoder.initial_frames();
-    assert!(decoder.cancel_frames().is_empty(), "还没有 sessionId，没什么可取消");
+    assert!(
+        decoder.cancel_frames().is_empty(),
+        "还没有 sessionId，没什么可取消"
+    );
 }
 
 #[test]
@@ -416,7 +463,10 @@ fn initialize_failure_stops_the_handshake() {
     decoder.initial_frames();
     let collected = events(
         &mut decoder,
-        &[r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32700,"message":"parse error"}}"#.to_owned()],
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32700,"message":"parse error"}}"#
+                .to_owned(),
+        ],
     );
     assert_eq!(collected.len(), 1);
     assert!(decoder.take_outbox().is_empty(), "握手失败不该再往下走");
@@ -481,14 +531,22 @@ fn thinking_level_goes_through_set_config_option() {
         "{}",
         frames[1]
     );
-    assert!(frames[1].contains("\"configId\":\"thinking\""), "{}", frames[1]);
+    assert!(
+        frames[1].contains("\"configId\":\"thinking\""),
+        "{}",
+        frames[1]
+    );
     assert!(frames[1].contains("\"value\":\"high\""), "{}", frames[1]);
     // set_config 的应答（id=5）到了才发 prompt。
     let frames = pump(
         &mut decoder,
         &[r#"{"jsonrpc":"2.0","id":5,"result":{}}"#.to_owned()],
     );
-    assert!(frames[0].contains("\"method\":\"session/prompt\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/prompt\""),
+        "{}",
+        frames[0]
+    );
 }
 
 #[test]
@@ -500,16 +558,27 @@ fn thinking_level_failure_does_not_block_the_prompt() {
     assert_eq!(frames.len(), 2, "会话帧 + set_config 帧：{frames:?}");
     let collected = events(
         &mut decoder,
-        &[r#"{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"unknown config"}}"#.to_owned()],
+        &[
+            r#"{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"unknown config"}}"#
+                .to_owned(),
+        ],
     );
     assert_eq!(
         collected.len(),
         2,
         "一条 Error（推理等级没生效）+ 一条 Progress（prompt 已发出）：{collected:?}"
     );
-    assert_eq!(decoder.summary().terminal_error, None, "推理等级失败不改终态");
+    assert_eq!(
+        decoder.summary().terminal_error,
+        None,
+        "推理等级失败不改终态"
+    );
     let frames = decoder.take_outbox();
-    assert!(frames[0].contains("\"method\":\"session/prompt\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/prompt\""),
+        "{}",
+        frames[0]
+    );
 }
 
 #[test]
@@ -524,12 +593,20 @@ fn model_is_selected_before_the_prompt() {
         "{}",
         frames[1]
     );
-    assert!(frames[1].contains("\"modelId\":\"kimi-k2\""), "{}", frames[1]);
+    assert!(
+        frames[1].contains("\"modelId\":\"kimi-k2\""),
+        "{}",
+        frames[1]
+    );
     let frames = pump(
         &mut decoder,
         &[r#"{"jsonrpc":"2.0","id":4,"result":{}}"#.to_owned()],
     );
-    assert!(frames[0].contains("\"method\":\"session/prompt\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/prompt\""),
+        "{}",
+        frames[0]
+    );
 }
 
 #[test]
@@ -541,9 +618,15 @@ fn model_switch_failure_is_fatal() {
     assert_eq!(frames.len(), 2, "会话帧 + set_model 帧：{frames:?}");
     events(
         &mut decoder,
-        &[r#"{"jsonrpc":"2.0","id":4,"error":{"code":-32602,"message":"unknown model"}}"#.to_owned()],
+        &[
+            r#"{"jsonrpc":"2.0","id":4,"error":{"code":-32602,"message":"unknown model"}}"#
+                .to_owned(),
+        ],
     );
-    let error = decoder.summary().terminal_error.expect("选模型失败要判失败");
+    let error = decoder
+        .summary()
+        .terminal_error
+        .expect("选模型失败要判失败");
     assert!(error.contains("无法切换到模型"), "{error}");
     assert!(decoder.take_outbox().is_empty(), "失败后不该再发 prompt");
 }
@@ -556,13 +639,25 @@ fn grok_authenticates_before_creating_the_session() {
     // id=1 的应答里有 authMethods → 立刻发 authenticate（id=2）。
     let frames = pump(&mut decoder, &lines[..1]);
     assert_eq!(frames.len(), 1);
-    assert!(frames[0].contains("\"method\":\"authenticate\""), "{}", frames[0]);
-    assert!(frames[0].contains("\"methodId\":\"cached_token\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"authenticate\""),
+        "{}",
+        frames[0]
+    );
+    assert!(
+        frames[0].contains("\"methodId\":\"cached_token\""),
+        "{}",
+        frames[0]
+    );
     assert!(frames[0].contains("\"headless\":true"), "{}", frames[0]);
     // authenticate 应答之后才是会话帧。
     let frames = pump(&mut decoder, &lines[1..2]);
     assert_eq!(frames.len(), 1);
-    assert!(frames[0].contains("\"method\":\"session/new\""), "{}", frames[0]);
+    assert!(
+        frames[0].contains("\"method\":\"session/new\""),
+        "{}",
+        frames[0]
+    );
 }
 
 #[test]
@@ -575,8 +670,14 @@ fn grok_without_a_usable_auth_method_fails_the_run() {
             r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"oauth2"}]}}"#.to_owned(),
         ],
     );
-    let error = decoder.summary().terminal_error.expect("认证不可用要判失败");
-    assert!(error.contains("unsupported authentication methods"), "{error}");
+    let error = decoder
+        .summary()
+        .terminal_error
+        .expect("认证不可用要判失败");
+    assert!(
+        error.contains("unsupported authentication methods"),
+        "{error}"
+    );
     assert!(decoder.take_outbox().is_empty());
 }
 
@@ -621,7 +722,7 @@ fn success_transcript_has_the_probe_friendly_frame_order() {
 
 #[test]
 fn shared_transcripts_only_use_frames_the_decoder_understands() {
-    let junk = conformance_junk_stdout("ok");
+    let junk = conformance_junk_stdout(KIMI.label, "ok");
     assert!(junk.starts_with("kimi: 无法解析的横幅"));
     assert!(junk.contains("future.chunk"));
 }

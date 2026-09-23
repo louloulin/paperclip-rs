@@ -51,10 +51,10 @@ use serde_json::{json, Map, Value};
 use super::super::cli_core::decoder::{field_str, json_str, CliDecoder, CliSummary, DecoderState};
 use super::decode::{
     content_text, env_non_empty, error_frame, extract_auth_methods, message_text, model_for_usage,
-    normalize_tool_aliases,
-    non_empty, normalize_update, notification_frame, parse_model_id, parse_tool_args, parse_usage,
-    request_frame, response_frame, rpc_error_message, select_permission_option,
-    select_xai_auth_method, tool_input, tool_name, tool_name_from_update, tool_output,
+    non_empty, normalize_tool_aliases, normalize_update, notification_frame, parse_model_id,
+    parse_tool_args, parse_usage, request_frame, response_frame, rpc_error_message,
+    select_permission_option, select_xai_auth_method, tool_input, tool_name, tool_name_from_update,
+    tool_output,
 };
 use super::{
     AcpAuth, AcpFlavor, AcpPromptFields, CLIENT_NAME, CLIENT_VERSION, ID_AUTHENTICATE,
@@ -134,8 +134,14 @@ impl AcpDecoder {
             thinking_level: non_empty(request.thinking_level.as_deref()),
             resume_session: non_empty(request.resume_session.as_deref()),
             // 上游 kimi.go 只在 cwd 为空时才回落到 "."：这里统一按同一回落。
-            cwd: non_empty(request.cwd.as_deref().map(|path| path.to_string_lossy().into_owned()).as_deref())
-                .unwrap_or_else(|| ".".to_owned()),
+            cwd: non_empty(
+                request
+                    .cwd
+                    .as_deref()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .as_deref(),
+            )
+            .unwrap_or_else(|| ".".to_owned()),
             have_api_key: env_non_empty(request, "XAI_API_KEY"),
             outbox: Vec::new(),
             pending_tools: BTreeMap::new(),
@@ -180,10 +186,7 @@ impl AcpDecoder {
     fn queue_after_session(&mut self) -> Vec<RuntimeEvent> {
         if let Some(model) = self.model.clone() {
             let Some(session_id) = self.state.session_id().map(str::to_owned) else {
-                return self.fail(format!(
-                    "{} 没有会话 id，无法切换模型",
-                    self.flavor.label
-                ));
+                return self.fail(format!("{} 没有会话 id，无法切换模型", self.flavor.label));
             };
             self.phase = Phase::AwaitSetModel;
             self.outbox.push(request_frame(
@@ -198,7 +201,9 @@ impl AcpDecoder {
 
     /// 模型这一步之后的下一步：推理等级（只有 kimi 有）→ prompt。
     fn queue_after_model(&mut self) -> Vec<RuntimeEvent> {
-        if let (Some(config_id), Some(level)) = (self.flavor.thinking_config, self.thinking_level.clone()) {
+        if let (Some(config_id), Some(level)) =
+            (self.flavor.thinking_config, self.thinking_level.clone())
+        {
             let Some(session_id) = self.state.session_id().map(str::to_owned) else {
                 return self.fail(format!(
                     "{} 没有会话 id，无法下发推理等级",
@@ -229,8 +234,11 @@ impl AcpDecoder {
         if self.flavor.prompt_fields == AcpPromptFields::PromptAndContent {
             params.insert("content".to_owned(), blocks);
         }
-        self.outbox
-            .push(request_frame(ID_PROMPT, "session/prompt", Value::Object(params)));
+        self.outbox.push(request_frame(
+            ID_PROMPT,
+            "session/prompt",
+            Value::Object(params),
+        ));
         self.state.progress("running")
     }
 
@@ -242,14 +250,22 @@ impl AcpDecoder {
 
     // ── 应答 ──
 
+    // JSON-RPC 的 id 在 serde_json 里是 f64，所以这里必须做一次截断转换（畸形 id
+    // 不在契约内）；上游同款先按整数认、再按浮点回落。
+    #[allow(clippy::cast_possible_truncation)]
     fn handle_response(&mut self, id: &Value, object: &Map<String, Value>) -> Vec<RuntimeEvent> {
         // JSON-RPC 数字默认是 f64，先按整数取，再按浮点回落（上游同款）。
-        let Some(id) = id.as_i64().or_else(|| id.as_f64().map(|value| value as i64)) else {
+        let Some(id) = id
+            .as_i64()
+            .or_else(|| id.as_f64().map(|value| value as i64))
+        else {
             return Vec::new();
         };
         match id {
             ID_INITIALIZE if self.phase == Phase::AwaitInitialize => self.on_initialize(object),
-            ID_AUTHENTICATE if self.phase == Phase::AwaitAuthenticate => self.on_authenticate(object),
+            ID_AUTHENTICATE if self.phase == Phase::AwaitAuthenticate => {
+                self.on_authenticate(object)
+            }
             ID_SESSION if self.phase == Phase::AwaitSession => self.on_session(object),
             ID_SET_MODEL if self.phase == Phase::AwaitSetModel => self.on_set_model(object),
             ID_SET_CONFIG if self.phase == Phase::AwaitSetConfig => self.on_set_config(object),
@@ -305,10 +321,7 @@ impl AcpDecoder {
             // 恢复请求：对端没回 id 时沿用请求里那个（上游 resolveResumedSessionID）。
             (None, Some(requested)) => self.state.set_session(&requested),
             (None, None) => {
-                return self.fail(format!(
-                    "{} session/new 没有返回会话 id",
-                    self.flavor.label
-                ));
+                return self.fail(format!("{} session/new 没有返回会话 id", self.flavor.label));
             }
         }
         self.queue_after_session()
@@ -318,17 +331,15 @@ impl AcpDecoder {
         if let Some(message) = rpc_error_message(self.flavor.label, "session/set_model", object) {
             // 上游对"选了模型却切换失败"是**致命**的：静默回落到默认模型会让
             // 用户以为选择生效了（kimi.go L320 的长注释）。
-            return self.fail(format!(
-                "{} 无法切换到模型：{message}",
-                self.flavor.label
-            ));
+            return self.fail(format!("{} 无法切换到模型：{message}", self.flavor.label));
         }
         self.queue_after_model()
     }
 
     fn on_set_config(&mut self, object: &Map<String, Value>) -> Vec<RuntimeEvent> {
         // 推理等级下发失败**不阻断**本轮（上游 kimi.go 只记 warning）。
-        let events = match rpc_error_message(self.flavor.label, "session/set_config_option", object) {
+        let events = match rpc_error_message(self.flavor.label, "session/set_config_option", object)
+        {
             Some(message) => self.state.emit_error(format!("推理等级未生效：{message}")),
             None => Vec::new(),
         };
@@ -407,30 +418,27 @@ impl AcpDecoder {
     fn handle_tool_call(&mut self, data: &Value) -> Vec<RuntimeEvent> {
         let call_id = field_str(data, "toolCallId").unwrap_or_default();
         let tool = self.map_tool(&tool_name(data));
-        match tool_input(data) {
-            Some(input) => {
-                self.pending_tools.insert(
-                    call_id.clone(),
-                    PendingTool {
-                        tool: tool.clone(),
-                        args_text: String::new(),
-                        emitted: true,
-                    },
-                );
-                self.state.tool_use(call_id, tool, input)
-            }
-            None => {
-                let args_text = content_text(data);
-                self.pending_tools.insert(
-                    call_id,
-                    PendingTool {
-                        tool,
-                        args_text,
-                        emitted: false,
-                    },
-                );
-                Vec::new()
-            }
+        if let Some(input) = tool_input(data) {
+            self.pending_tools.insert(
+                call_id.clone(),
+                PendingTool {
+                    tool: tool.clone(),
+                    args_text: String::new(),
+                    emitted: true,
+                },
+            );
+            self.state.tool_use(call_id, tool, input)
+        } else {
+            let args_text = content_text(data);
+            self.pending_tools.insert(
+                call_id,
+                PendingTool {
+                    tool,
+                    args_text,
+                    emitted: false,
+                },
+            );
+            Vec::new()
         }
     }
 
@@ -464,10 +472,7 @@ impl AcpDecoder {
             events.extend(self.state.tool_use(call_id.clone(), tool, input));
         }
         let output = tool_output(data);
-        events.extend(
-            self.state
-                .tool_result(call_id, output, status == "failed"),
-        );
+        events.extend(self.state.tool_result(call_id, output, status == "failed"));
         events
     }
 

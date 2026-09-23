@@ -21,7 +21,7 @@
 //! | [`adapter`] | 契约本身：trait、请求/终态、事件、错误 |
 //! | [`catalog`] | 25 个官方 agent 类型的白名单表（含上游 `launchHeaders` 启动骨架） |
 //! | [`registry`] | `AgentType → Arc<dyn RuntimeAdapter>` 注册表（替换 M0 的 `AdapterRegistryStub`） |
-//! | [`adapters`] | 各 provider 的实现（M3-2 的 `pi_local` + M3-8 批 1 的 7 项） |
+//! | [`adapters`] | 各 provider 的实现（M3-2 的 `pi_local` + M3-8 批 1 的 7 项 + 批 2 的 8 项） |
 //! | [`conformance`] | adapter 一致性套件（宏 + 假 CLI），M3-8 批量补 adapter 靠它 |
 //!
 //! # 五条契约（写新 adapter 前必须认同）
@@ -58,8 +58,8 @@ pub use adapter::{
     RunStatus, RuntimeAdapter, RuntimeEvent, Semver, TokenUsage, VersionProbe, STDERR_TAIL_LIMIT,
 };
 pub use adapters::{
-    builtin_adapters, Claude, Codearts, Codebuddy, Codex, Copilot, Deveco, Opencode, PiDecoder,
-    PiLocal, PiLocalConfig,
+    builtin_adapters, Antigravity, Claude, Codearts, Codebuddy, Codex, Copilot, Cursor, Deveco,
+    Grok, Kimi, Kiro, Opencode, PiDecoder, PiLocal, PiLocalConfig, Qoder, QoderCliCn, TraeCli,
 };
 pub use catalog::{AgentType, UnknownAgentType};
 #[cfg(unix)]
@@ -91,11 +91,12 @@ mod tests {
     }
 
     #[test]
-    fn builtin_registry_covers_m3_8_batch1() {
-        // 批 1 交付面：7 项新 adapter + pi，且每项的协议族与 `catalog` 的映射一致
-        // （两处独立声明同一事实，所以要对得上，而不是“差不多”）。
+    fn builtin_registry_covers_m3_8_batch1_and_batch2() {
+        // 批 1 / 批 2 交付面：7 + 8 项新 adapter + pi，且每项的协议族与 `catalog`
+        // 的映射一致（两处独立声明同一事实，所以要对得上，而不是“差不多”）。
         let registry = AdapterRegistry::with_builtin_adapters();
-        let batch1 = [
+        let batches = [
+            // 批 1。
             AgentType::Claude,
             AgentType::Codebuddy,
             AgentType::Codex,
@@ -103,8 +104,17 @@ mod tests {
             AgentType::Opencode,
             AgentType::Codearts,
             AgentType::Deveco,
+            // 批 2（本片）。
+            AgentType::Cursor,
+            AgentType::Kimi,
+            AgentType::Kiro,
+            AgentType::Antigravity,
+            AgentType::Qoder,
+            AgentType::QoderCliCn,
+            AgentType::TraeCli,
+            AgentType::Grok,
         ];
-        for kind in batch1 {
+        for kind in batches {
             let adapter = registry
                 .get(kind)
                 .unwrap_or_else(|| panic!("{kind} 未注册"));
@@ -114,10 +124,17 @@ mod tests {
                 kind.protocol_family(),
                 "{kind}：adapter 自报的协议族与 catalog 映射不一致"
             );
+            assert_ne!(
+                adapter.capabilities().protocol,
+                ProtocolFamily::Opaque,
+                "{kind}：已落地的 adapter 不该未归类"
+            );
             assert_eq!(adapter.capabilities().launch_header, kind.launch_header());
-            // 取解码器不该 panic（契约：每次 run 一个独立实例）。
-            assert!(adapter.decoder().push_line("not json").is_empty());
+            // 取解码器不该 panic（契约：每次 run 一个独立实例）。这里只断言"能
+            // 安全喂一行脏数据"，**不**断言零事件 —— 纯文本回退型解码器
+            // （如 `antigravity`，上游同款）会把解析不了的行当正文回显。
+            let _ = adapter.decoder().push_line("not json");
         }
-        assert_eq!(registry.len(), 8);
+        assert_eq!(registry.len(), 16);
     }
 }

@@ -4,7 +4,7 @@
 //! |---|---|
 //! | [`build_args`] | `kimiBackend.Execute`（`kimi.go` L41 起，argv 在 L67） |
 //! | `BLOCKED` | `kimiBlockedArgs`（L21） |
-//! | [`FLAVOR`] | `kimi.go` 的 `initialize` / resume / set_model / thinking |
+//! | [`FLAVOR`] | `kimi.go` 的 `initialize` / resume / `set_model` / thinking |
 //! | [`super::acp_core::AcpDecoder`] | 复用 `hermesClient`（L218 起） |
 //!
 //! # 命令面
@@ -139,7 +139,7 @@ impl TestableAdapter for Kimi {
             success_stdout: super::acp_core::conformance_success_stdout("kimi-ses-1", "ok", false),
             expected_output: "ok".to_owned(),
             expected_usage_tokens: Some(15),
-            junk_stdout: super::acp_core::conformance_junk_stdout("ok"),
+            junk_stdout: super::acp_core::conformance_junk_stdout(LABEL, "ok"),
             expected_junk_output: "ok".to_owned(),
             expected_error: "kimi exploded".to_owned(),
             prompt_via_stdin: true,

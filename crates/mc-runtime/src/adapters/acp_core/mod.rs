@@ -214,6 +214,7 @@ impl<P: AcpProvider> CliProvider for P {
 }
 
 /// 一行一帧地往 `out` 追加 JSON（`serde_json::to_string` 不产生裸换行）。
+#[allow(clippy::needless_pass_by_value)] // 调用方就是 `push_json(&mut out, json!({…}))`。
 pub(crate) fn push_json(out: &mut String, value: serde_json::Value) {
     out.push_str(&value.to_string());
     out.push('\n');
@@ -281,11 +282,12 @@ pub fn conformance_success_stdout(session_id: &str, text: &str, with_auth: bool)
 /// 一致性套件用的脏数据回放：非 JSON 横幅 + 未知 `sessionUpdate` + 一条正文通知。
 ///
 /// 解码器是**按行**驱动的状态机（通知不依赖握手阶段），所以这段流单独喂给
-/// `decoder()` 也能解出 `text`。
-pub fn conformance_junk_stdout(text: &str) -> String {
+/// `decoder()` 也能解出 `text`。`label` 只用来拼那句横幅（六个 ACP provider 共用
+/// 同一个回放，横幅带上自己的名字才像真的）。
+pub fn conformance_junk_stdout(label: &str, text: &str) -> String {
     use serde_json::json;
 
-    let mut out = String::from("kimi: 无法解析的横幅\n");
+    let mut out = format!("{label}: 无法解析的横幅\n");
     push_json(
         &mut out,
         json!({

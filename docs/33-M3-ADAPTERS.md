@@ -27,23 +27,25 @@
 | 8 | `Openclaw` | `openclaw` | `openclaw agent (json)` | `Opaque` | **待批 2/3 定**（`(json)` 只是输出开关，未证实是逐行 JSON） | 待定 |
 | 9 | `Hermes` | `hermes` | `hermes acp` | `Acp` | 冻结规则 | 待批 3 |
 | 10 | `Pi` | `pi` | `pi (json mode)` | `JsonLine` | M3-2 已落地（`pi -p --mode json`） | 已完成（批 1 回归确认） |
-| 11 | `Cursor` | `cursor` | `cursor-agent (stream-json)` | `StreamJson` | 冻结规则 | 待批 2 |
-| 12 | `Kimi` | `kimi` | `kimi acp` | `Acp` | 冻结规则 | 待批 2 |
+| 11 | `Cursor` | `cursor` | `cursor-agent (stream-json)` | `StreamJson` | 批 2 实测：`buildCursorArgs`（`cursor.go` L1036）+ `cursorStreamEvent`（L833）—— stdout 逐行 trim 后解析（`normalizeCursorStreamLine` L979），prompt 走 stdin 且写完**关掉**（`closeStdin()` L64） | **批 2 已交付** |
+| 12 | `Kimi` | `kimi` | `kimi acp` | `Acp` | 批 2 实测：`kimiArgs = ["acp"]`（`kimi.go` L67）；握手帧由 `acp_core` 共用（initialize → session/new → session/prompt） | **批 2 已交付** |
 | 13 | `Reasonix` | `reasonix` | `reasonix acp` | `Acp` | 冻结规则 | 待批 3 |
 | 14 | `Dsh` | `dsh` | `dsh --profile multica (stdio)` | `Opaque` | **待批 2/3 定**（`(stdio)` 没说是 ACP 还是自有 JSON） | 待定 |
-| 15 | `Kiro` | `kiro` | `kiro-cli acp` | `Acp` | 冻结规则 | 待批 2 |
-| 16 | `Antigravity` | `antigravity` | `agy -p (non-interactive)` | `Opaque` | **待批 2/3 定**（`-p` 是单次问答形态，无逐行 JSON 证据） | 待定 |
-| 17 | `Qoder` | `qoder` | `qodercli --acp` | `Acp` | 冻结规则 | 待批 2 |
-| 18 | `QoderCliCn` | `qoderclicn` | `qoderclicn --acp` | `Acp` | 冻结规则 | 待批 2 |
-| 19 | `TraeCli` | `traecli` | `traecli acp serve` | `Acp` | 冻结规则 | 待批 2 |
-| 20 | `Grok` | `grok` | `grok agent stdio` | `Opaque` | **待批 2/3 定** | 待定 |
+| 15 | `Kiro` | `kiro` | `kiro-cli acp` | `Acp` | 批 2 实测：`kiroArgs = ["acp","--trust-all-tools"]`（`kiro.go` L64）；可执行名是 `kiro-cli` 而**不是** `kiro` | **批 2 已交付** |
+| 16 | `Antigravity` | `antigravity` | `agy -p (non-interactive)` | `StreamJson` | 批 2 定族：argv 里硬编码 `--output-format stream-json`（`buildAntigravityArgs` `antigravity.go` L658-662），并按 `antigravityStreamEvent`（L68）逐行解 `event`/`step_update`/`result` ⇒ 是**逐行 JSON**，不是「单次问答的纯文本」 | **批 2 已交付** |
+| 17 | `Qoder` | `qoder` | `qodercli --acp` | `Acp` | 批 2 实测：`qoderArgs = ["--yolo","--acp"]`（`qoder.go` L100） | **批 2 已交付** |
+| 18 | `QoderCliCn` | `qoderclicn` | `qoderclicn --acp` | `Acp` | 批 2 实测：与 qoder 走**同一段 argv 构造**，只换 `defaultExecutable`（`qoder.go` L36/L80）⇒ 两个不同 CLI、同一份 ACP 面（`qoder_family.rs` 共用） | **批 2 已交付** |
+| 19 | `TraeCli` | `traecli` | `traecli acp serve` | `Acp` | 批 2 实测：`traecliArgs = ["acp","serve","--yolo"]`（`traecli.go` L110） | **批 2 已交付** |
+| 20 | `Grok` | `grok` | `grok agent stdio` | `Acp` | 批 2 定族：`grok --no-auto-update agent --always-approve [--effort L] stdio`（`grok.go` L139-144），`stdio` 子命令就是 ACP transport；`selectGrokAuthMethod`（L552）+ `session/load` + `authenticate` ⇒ 标准 ACP 帧 | **批 2 已交付** |
 | 21 | `Qwen` | `qwen` | `qwen -p (stream-json)` | `StreamJson` | 冻结规则 | 待批 3 |
 | 22 | `QwenPaw` | `qwenpaw` | `qwenpaw acp` | `Acp` | 冻结规则 | 待批 3 |
 | 23 | `Mcode` | `mcode` | `mcode acp` | `Acp` | 冻结规则 | 待批 3 |
 | 24 | `Dim` | `dim` | `dim acp` | `Acp` | 冻结规则 | 待批 3 |
 | 25 | `Zeroclaw` | `zeroclaw` | `zeroclaw acp` | `Acp` | 冻结规则 | 待批 3 |
 
-直方图（批 1 后）：**`Acp` 11 + `StreamJson` 4 + `JsonLine` 5 + `AppServer` 1 + `Opaque` 4 = 25**。
+直方图（**批 2 后**）：**`Acp` 12 + `StreamJson` 5 + `JsonLine` 5 + `AppServer` 1 + `Opaque` 2 = 25**
+（批 2 把 `Antigravity` 由 `Opaque` 定为 `StreamJson`、`Grok` 由 `Opaque` 定为 `Acp`；
+剩下的 `Opaque` 只有 `Openclaw` 与 `Dsh` 两个批 3 项）。
 `catalog.rs` 的测试 `protocol_family_covers_all_25_with_a_documented_split` 把这份直方图**钉死**：
 批 2/3 每定族一项，就要同步改那个断言与本表（直方图变了而测试没变 = 门禁红）。
 
@@ -341,3 +343,201 @@ grep -c 'adapter_conformance!' crates/mc-runtime/src/adapters/*/mod.rs   # 每�
 - 不改 `pi_local` 的实现（只做回归确认：`pi_local_e2e` 7 条 + 一致性套件 8 条全绿）。
 - 不改 `docs/fixtures/route-parity-baseline.json`、不改 `crates/mc-conformance/report.json`
   （0 路由 ⇒ 两个共享快照都不该动；且此刻被其它在审切片改着，避免合并冲突）。
+
+## 10. 批 2 落地记录（`LUM-1442`）
+
+### 10.1 交付物
+
+名单 8 项（`docs/15` §6 的 8 项 = 本文件 §1 表的第 **11 / 12 / 15–20** 行，含 `kimi`），**全部新增**：
+
+| 文件 | 行数 | 职责 |
+| --- | ---: | --- |
+| `src/adapters/acp_core/mod.rs` | 308 | **共享 ACP 核**：`AcpFlavor`（resume / auth / prompt 字段 / thinking 通道 / 工具名表）+ `impl<P: AcpProvider> CliProvider`（白得 spawn / 终态归因 / 取消）+ 固定帧 id 表 |
+| `src/adapters/acp_core/client.rs` | 606 | ACP 客户端状态机：`initialize` → （可选）`authenticate` → `session/new`\|`resume`\|`load` → `set_model` / `set_config` → `session/prompt` → `session/cancel` |
+| `src/adapters/acp_core/decode.rs` | 764 | 对端帧 → `RuntimeEvent`：`agent_message_chunk` / `agent_thought_chunk` / `tool_call(_update)` / 用量快照 / 工具名别名 |
+| `src/adapters/acp_core/tests.rs` | 728 | 核级用例（帧往返、工具名别名、用量口径、cancel 幂等、协议错误） |
+| `src/adapters/kimi/mod.rs` | 179 | kimi argv + flavor（唯一带 `thinking` config 通道的） |
+| `src/adapters/kiro/mod.rs` | 182 | kiro argv（可执行名 `kiro-cli`）+ flavor（`session/load`、`prompt`+`content`） |
+| `src/adapters/qoder_family.rs` | 69 | qoder / qoderclicn **共用**的 `BLOCKED` / `MODES` / `POLICY` / `build_args` |
+| `src/adapters/qoder/mod.rs` | 144 | qoder（`qodercli`）+ flavor |
+| `src/adapters/qoderclicn/mod.rs` | 141 | qoderclicn（`qoderclicn`，**另一个 CLI**）+ 同 flavor |
+| `src/adapters/traecli/mod.rs` | 185 | traecli argv（`acp serve --yolo`）+ flavor（`session/load`） |
+| `src/adapters/grok/mod.rs` | 258 | grok argv（`--no-auto-update agent --always-approve … stdio`）+ flavor（**唯一**要 `authenticate` 的） |
+| `src/adapters/antigravity/mod.rs` | 457 | antigravity argv（`--print-timeout` 常传）+ `go_duration` + spec |
+| `src/adapters/antigravity/stream.rs` | 541 | antigravity 的 stream-json 解码器（本片自己一份） |
+| `src/adapters/cursor/mod.rs` | 276 | cursor argv（`-p --output-format stream-json --yolo`）+ spec |
+| `src/adapters/cursor/stream.rs` | 786 | cursor 的 stream-json 解码器（本片自己一份） |
+| `tests/cli_adapters.rs` | 680 | 跨 adapter 集成测试 **14 条**（批 1 的 9 条 + 批 2 新增 5 条） |
+
+改动的既有文件（都在写集内）：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/adapters/mod.rs` | `pub mod` 登记 8 个新模块 + `pub use` 8 个类型；`builtin_adapters()` 由 8 项扩到 **16 项**（仍是上游白名单顺序） |
+| `src/catalog.rs` | `protocol_family()`：`Antigravity` 由 `Opaque` 定成 `StreamJson`、`Grok` 由 `Opaque` 定成 `Acp`；直方图断言改 `(12, 5, 5, 1, 2)` |
+| `src/registry.rs` | 只改文档注释（`with_builtin_adapters()` 说明从 8 项改成"白名单里已实现的全部"） |
+| `src/lib.rs` | re-export 批 2 的 8 个类型；覆盖测试从 8 项改成 16 项，并断言"批 2 的 3 个原 `Opaque` 项都已定族、`Openclaw`/`Dsh` 仍不注册" |
+| `src/adapters/kimi/mod.rs` | 由 attempt 1 的独立实现改成复用 `acp_core`（flavor 化），去掉重复的客户端代码 |
+| `src/conformance.rs` | **拆成目录模块** `src/conformance/mod.rs`（724）+ `src/conformance/fake_cli.rs`（281），并新增逐帧回放假 CLI（见 §10.4）。公开路径 `mc_runtime::conformance::*` 不变 |
+| `docs/33-M3-ADAPTERS.md` | 本文件（§1 三行族改判 + 直方图 + 本 §10） |
+
+### 10.2 逐 provider 契约（argv / 传输 / 解码 / 屏蔽表）
+
+8 项里有 **6 项是 ACP**（`kimi` / `kiro` / `qoder` / `qoderclicn` / `traecli` / `grok`），
+共用一个核：**prompt 一律走 JSON-RPC 的 `session/prompt`，不进 argv**（`PromptTransport::JsonRpc`），
+连"长连接 stdin"这条都是核里写死的（不能写完即关）。
+
+| provider | argv 骨架 | 解码器 | `BLOCKED`（键） | 上游出处 |
+| --- | --- | --- | --- | --- |
+| `kimi` | `acp ++extra` | `acp_core::AcpDecoder` | `acp` | `kimi.go` L67 / L21 |
+| `kiro` | `acp --trust-all-tools ++extra`（可执行名 `kiro-cli`） | 同上 | `acp` `-a` `--trust-all-tools` `--trust-tools` | `kiro.go` L64 / L26 |
+| `qoder` | `--yolo --acp ++extra` | 同上 | `--acp` `acp` `--yolo` | `qoder.go` L100 / L20 |
+| `qoderclicn` | 同 qoder（**不同可执行文件**） | 同上 | 同 qoder（`qoder_family` 共用） | `qoder.go` L36 / L80 |
+| `traecli` | `acp serve --yolo ++extra` | 同上 | `acp` `serve` `-y` `--yolo` `-p` `--print` `--output-format` `--permission-mode` | `traecli.go` L110 / L23 |
+| `grok` | `--no-auto-update agent --always-approve [--effort L] ++extra stdio` | 同上 | `agent` `stdio` `headless` `serve` `leader` `--always-approve` `--yolo` `--no-auto-update` `--no-alt-screen` `-p` `--print` `--single` … | `grok.go` L139-144 / L21 |
+| `cursor` | `-p --output-format stream-json --yolo [--workspace C] [--model M] [--resume R] ++extra` | `cursor::stream` | `-p` `--output-format` `--yolo` | `cursor.go` L1036 / L1009 |
+| `antigravity` | `-p <prompt> --dangerously-skip-permissions --output-format stream-json [--model M] --print-timeout D --log-file F [--conversation ID] [--add-dir C] ++extra` | `antigravity::stream` | 14 项（`-p` `--print` `--prompt` `-i` `--prompt-interactive` `-c` `--continue` `--conversation` `--model` `--output-format` `--print-timeout` `--dangerously-skip-permissions` `--log-file` `--settings`；**`--add-dir` 不在封锁表里**，与上游一致） | `antigravity.go` L658 / L621 |
+
+**prompt 传输的两处关键分歧**：cursor 是 `StdinText`（`-p` 是布尔开关，**读到 EOF** 才算 prompt 写完，
+因此 `prompt_write_is_fatal = true`）；antigravity 是 `Argv`（`-p` 后面那个位置参数就是提示词，
+`stdin` 是 `Stdio::null()`，`strip_prompt_like = false`）。
+
+> 表里的 argv 骨架是**上游形状**。本实现的一处偏差：`antigravity` 的 `--log-file F` **不传**
+> （上游用它做四件事，本实现四件都不做，见 §10.5）；它仍在**封锁表**里，避免用户塞进来一个
+> 没人读的日志路径。`--conversation ID`（恢复会话）与 `--add-dir C` 则按 `LaunchRequest`
+> 有值才传。
+
+能力位：6 个 ACP 项一律 `Acp` + `streaming/thinking/tool_events/usage_reporting/resume` 全真
+（协议层就有 `agent_thought_chunk` 与 `tool_call`）；`cursor` 同形（`StreamJson`）；
+`antigravity` **如实自报 `thinking: false` / `tool_events: false`** —— `agy` 的流里没有可单独成事件的
+思维块（`step_update` 只透 `agent_response` 的文本），工具执行只在步状态里。
+
+`launch_header` 逐字保留（含 `qodercli --acp` 与 `qoderclicn --acp` 这两个**不同 CLI**、
+`kiro-cli acp` 与可执行名分离、`agy -p (non-interactive)` 的截断形态）。
+
+### 10.3 6 个 ACP flavor 的差异表（本批最大的复用点）
+
+`AcpFlavor` 只有 6 个字段，6 个 provider 的差别就全在这张表里（`acp_core/mod.rs` 的 `AcpProvider::flavor()`）：
+
+| provider | `resume` | `auth` | `prompt_fields` | `thinking_config` | `tool_aliases` |
+| --- | --- | --- | --- | --- | --- |
+| `kimi` | `session/resume` | 无 | `prompt` | `Some("thinking")` | `Kimi` |
+| `qoder` / `qoderclicn` | `session/resume` | 无 | `prompt` | 无 | `Kimi` |
+| `kiro` | **`session/load`** | 无 | **`prompt` + `content` 都发** | 无 | `Kiro` |
+| `traecli` | **`session/load`** | 无 | `prompt` | 无 | `Kimi` |
+| `grok` | **`session/load`** | **`XaiApiKey`** | `prompt` | 无（思考走 argv 的 `--effort`） | `Kimi` |
+
+- **`auth` 只有 grok 有值**：`initialize` 之后从对端广告的 `authMethods` 里挑一个
+  （上游 `selectGrokAuthMethod`，`grok.go` L552）。一致性套件的 `authMethods` 里带
+  `cached_token` ⇒ 挑中的永远是它，与有没有 `XAI_API_KEY` 无关 ⇒ **grok 的回放里 id=2 帧必然出现**，
+  这也是集成测试里唯一 `with_auth = true` 的那一项。
+- **`thinking_config` 只有 kimi 有值**（`kimi.go` L357 起：`session/set_config_option` 的 `configId: "thinking"`）：
+  ACP 原生的推理等级旋钮；grok 的等级走 argv `--effort`（且**不校验**等级词表 —— 词表由 provider 演进，daemon 只负责传）。
+- `tool_aliases::{Kimi, Kiro}` 是两张工具名别名表（上游两个 provider 对同一个工具名的叫法不同）。
+
+### 10.4 一致性套件在 ACP 上的死锁（本批最大的坑，批 3 必读）
+
+**症状**：attempt 1 的 ACP 活体用例（成功 / 非零退出 / 取消 共 3 条一组）**永久挂死**（不是慢），
+`cargo test` 被外层 `timeout` 杀掉、run 静默结束、0 提交 —— 这正是本 issue 从 attempt 1 交接过来的原因。
+
+**根因**：假 CLI 的回放只有「一次性回放」和「单闸门 + 一次性回放」两种形态，它们都假定
+"把整段回放推过去，客户端就会自己走完"。这对**固定帧 id 的请求/应答协议**不成立：
+
+* 整段一次性回放 ⇒ 相位不对的应答（比如 `session/new` 的应答）在客户端还没问到那一步时就到达，
+  被解码器丢掉、流永远起不来；
+* 退化成"等 stdin EOF 再回放"（普通前台协议的写法）⇒ **双方互等**：假 CLI 在等 EOF，
+  而 ACP 的 stdin 是长连接、客户端在等应答。run 循环只在 stdout EOF / 超时 / 取消时收尾，
+  于是挂到外层 `timeout`。
+
+**修法**（`conformance/mod.rs` 的 `LivePlan` + `FakeCli::live_scripted*`）：按协议族给出
+**第三种**回放计划 `Frames` —— 固定帧 id 的请求/应答协议**逐帧推进**。要点：
+
+1. **闸门是内容而不是时序**（`read_gate`：逐行读 stdin、逐行落盘，命中子串才返回）⇒ 不用 sleep 抢，
+   在多线程测试下确定。
+2. **帧分组规则与套件同源**：`response_frame_groups(transcript)`（`pub`）按固定 id
+   （`initialize=1` / `authenticate=2` / `session=3` / `set_model=4` / `set_config=5` / `prompt=6`）
+   把一次成功的 ACP 回放切成分组，`FakeCli::live_scripted(&frames, tail)` 直接消费 ⇒
+   crate 内（`acp_core::tests`）与 crate 外（`tests/cli_adapters.rs`）的回放不可能分叉。
+3. **成功 / 失败 / 取消三个变体只差尾巴**：成功 `exit 0`；失败先 `frames.pop()`（丢掉
+   `session/prompt` 的应答）再 `exit 3` + stderr；取消同样 `frames.pop()` 再 `exec sleep 30`
+   —— 这样"握了手但没答 prompt"是可复现的中间态，取消用例不会与"turn 已经跑完"抢时序。
+4. 批 3 的 6 个 ACP 项**只需写 flavor + argv**，三个回放变体直接复用（`live_scripted` /
+   `live_scripted_failing`），不要再手搓假 CLI。
+
+### 10.5 刻意偏离 / 简化
+
+**cursor**（7 条：`mod.rs` 3 + `stream.rs` 4）：不加任何 prompt 内联参数（`AGENTS.md` 由 CLI 自己读）；
+不做"worker 赖着不退出"的 `cancel()`（本 crate 以 stdout EOF 收尾，`result` 只决定成败）；
+不做后台工具台账；不做协议漂移计数；`result` 之外不采纳 `assistant.message.usage`（避免重复计）。
+
+**antigravity**（9 条：`mod.rs` 5 + `stream.rs` 4）：**完全不写也不读 `--log-file`**（上游靠它做四件事：
+glog 会话 id 抢救、print-timeout 嗅探、provider 错误嗅探、空 stdout transcript 抢修 —— 本实现四件都不做，
+会话 id 只从流里取、超时只认墙钟、正文只认流，这是**已知缺口**）；不做 `agy models` 目录校验
+（模型名笔误表现为"completed 但正文为空"）；不做 `filepath.Clean(cwd)`；`ExtraArgs`/`CustomArgs` 合成一段
+（`LaunchRequest` 只有 `extra_args`）；无 `--system-prompt`；正文以流为准（`result.response` 只在**一个文本
+事件都没有**时兜底）；不做空 stdout 抢修。
+
+**两处"必须这么写"的硬约束**（不是简化，是复算过的契约）：
+
+- `--print-timeout` **永远显式传**：`agy` 省略它等于给每轮套 5 分钟的刀（上游 MUL-3570）。
+  `request.timeout` 有值则渲染成 Go duration 串（`20m0s`），`None` 则用 24h 哨兵（`24h0m0s`），
+  小于 1s 向上取整到 `1s`（否则 CLI 拒收）。
+- `qodercli` 与 `qoderclicn` 是**两个 CLI**，argv 形状相同但可执行名不同 ⇒ 共用 `qoder_family`
+  的 argv 构造，各自持有自己的 `LABEL`/`EXECUTABLE`/flavor。
+
+### 10.6 测试与门禁证据
+
+```
+cargo test -p mc-runtime
+  lib                       353 passed / 0 failed / 0 ignored
+  tests/cli_adapters.rs      14 passed / 0 failed
+  tests/pi_local_e2e.rs       7 passed / 0 failed
+  doc-tests                   0 passed / 2 ignored（原有）
+```
+
+lib 的 353 条里按**测试名归属**批 2 的 = **162 条**：`acp_core` 49 + `conformance::harness_tests` 3 +
+8 个 provider 模块 109（cursor 25 / antigravity 23 / grok 11 / kimi 10 / kiro 10 / qoder 10 /
+qoderclicn 10 / traecli 10）+ `qoder_family` 1；其中含一致性套件 **8 × 8 = 64 条**
+（`crate::adapter_conformance!(X)`，16 个 provider 共 128 条）。批 1 章节登记的 lib 总数是 192，
+本轮的"非批 2 归属"为 353 − 162 = 191 —— 差 1 是两次统计的口径差（批 1 的 192 在 `b8dca1a`
+之前测得），本表以**名字归属**为准，未强行抹平。
+
+**`#[ignore]`**：本批**没有新增任何 `#[ignore]`**（沿用批 1 的约定：全部跑在 `FakeCli` 上，
+机器不需要装这 8 个 CLI）。
+
+**门禁**（`bash scripts/gates.sh`，不带 `--with-db`，0 库依赖）：
+
+```
+GATE_FMT_EXIT=0              GATE_BUILD_EXIT=0     GATE_CLIPPY_EXIT=0     GATE_CLIPPY_TEST_UTIL_EXIT=0
+GATE_TEST_EXIT=0             GATE_ROUTE_PARITY_EXIT=0
+GATE_CONFORMANCE_EXIT=0      GATE_FILE_SIZE_EXIT=0
+（⑤ 工作区合计 870 passed / 0 failed；整体 PASS 8/8，39s）
+```
+
+- **③ clippy 本轮修掉 30 处**（首轮 26 处 + 修 `handle(&CursorEvent)` 签名后暴露的 4 处
+  `needless_borrow`）。两种修法：机械重写（unnested or-patterns、single-match-else → `if let`、
+  let-else → `?`、`map().unwrap_or_else()` → `map_or_else`、`format!` 追加 → `write!`、
+  `to_owned()` → `clone_into`、补文档反引号），以及**按仓库既有先例**的定点 `#[allow]`：
+  `#[allow(clippy::duration_suboptimal_units)]`（MSRV 1.80 无 `from_hours`，先例 `mc-db/src/pool.rs` 的
+  `from_mins`）、`#[allow(clippy::needless_pass_by_value)]`（ACP 帧构造器按值收 `json!(…)` 临时值，
+  先例 `mc-repos/src/workspace.rs`）、`#[allow(clippy::cast_possible_truncation)]`
+  （JSON-RPC 的 id / token 数在 `serde_json` 里是 f64，上游同款截断）。
+- **⑦ 与本片无关（0 路由）**：`git diff` 里没有任何路由注册、没有 `docs/fixtures/**` 改动；
+  实测计数 `upstream 456 | local 195 registered | baseline 184`、
+  `implemented 152 real + 10 placeholder = 162`、`known_gap 294`、`regression 0`、`local_only 11`。
+- **⑨ 无漂移**：`report matches crates/mc-conformance/report.json` —— `report.json` 与
+  `docs/fixtures/route-parity-baseline.json` 本片**一字未动**（0 路由、不加 fixture）。
+- **⑩ 本轮改了结构**：`src/conformance.rs` 因新增逐帧回放长到 **992 行 > 800** 触红。因为基线
+  「只允许变短」，**不允许**加白名单，只能拆：`conformance/{mod.rs 724, fake_cli.rs 281}`
+  （`FakeCli` 及其 `Drop`/引号工具独立成 `fake_cli.rs`，`pub use fake_cli::FakeCli` 保持公开路径不变）。
+  本批最大新文件 = `acp_core/decode.rs` **764 行 < 800**。
+
+### 10.7 本片没做什么（边界）
+
+- 不做 `execenv`（`LUM-1440`）、不做 daemon 面（M3-7）、不做批 3 的 9 项。
+- 不为 adapter 新增路由、不落库、不改迁移、不改 `Cargo.lock`（无依赖 delta）。
+- 不改 M3-2 的协议契约（`adapter.rs` / `traits.rs` 公开面未动）；`FakeCli` 的新增只落在
+  `conformance` 模块内部（`LivePlan` / `live_scripted*` / `response_frame_groups`）。
+- 不改 `docs/fixtures/route-parity-baseline.json`、不改 `crates/mc-conformance/report.json`。
+- antigravity 的 `--log-file` 四件事（会话 id 抢救 / 超时嗅探 / provider 错误嗅探 / 空 stdout 抢修）
+  明确留作缺口，未做 —— 已在 §10.5 与 `antigravity/stream.rs` 顶部逐条登记。

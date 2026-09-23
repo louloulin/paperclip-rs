@@ -19,23 +19,31 @@ const KIND_REJECT_ONCE: &str = "reject_once";
 const SESSION_SCOPED_OPTION_IDS: [&str; 2] = ["allow_session", "approve_for_session"];
 
 // ── 帧构造 ──
+//
+// 帧构造函数一律**按值**收 `Value`：调用方就是 `request_frame(ID, method, json!({…}))`
+// 这种形状，改成引用要在 16 处补 `&`，而构造出的帧本来就要拥有自己的 `Value`。
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn request_frame(id: i64, method: &str, params: Value) -> String {
     frame(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn notification_frame(method: &str, params: Value) -> String {
     frame(json!({"jsonrpc": "2.0", "method": method, "params": params}))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn response_frame(id: Value, result: Value) -> String {
     frame(json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn error_frame(id: Value, code: i64, message: impl Into<String>) -> String {
     frame(json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message.into()}}))
 }
 
+#[allow(clippy::needless_pass_by_value)] // 同帧构造器：调用方传的就是刚拼好的 `json!(…)`。
 pub(super) fn frame(value: Value) -> String {
     let mut line = value.to_string();
     line.push('\n');
@@ -110,7 +118,10 @@ pub(super) fn extract_auth_methods(result: &Value) -> Vec<String> {
 ///
 /// 只有**对端真的宣告过**的方式才会被选中；都没有时是启动失败，而不是"随便挑
 /// 一个试"或"不认证继续跑"。
-pub(super) fn select_xai_auth_method(offered: &[String], have_api_key: bool) -> Result<&'static str, String> {
+pub(super) fn select_xai_auth_method(
+    offered: &[String],
+    have_api_key: bool,
+) -> Result<&'static str, String> {
     const API_KEY: &str = "xai.api_key";
     const CACHED: &str = "cached_token";
     let has = |want: &str| offered.iter().any(|id| id == want);
@@ -189,10 +200,17 @@ pub(super) fn content_text(data: &Value) -> String {
     };
     let mut pieces: Vec<String> = Vec::new();
     for block in blocks {
-        match block.get("type").and_then(Value::as_str).unwrap_or_default() {
+        match block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             "content" => {
                 let inner = block.get("content");
-                if inner.and_then(|value| value.get("type")).and_then(Value::as_str) == Some("text")
+                if inner
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("text")
                 {
                     if let Some(text) = inner
                         .and_then(|value| value.get("text"))
@@ -245,7 +263,7 @@ pub(super) fn tool_input(data: &Value) -> Option<Value> {
 
 // ── 工具名 ──
 
-/// 正文 / 思维块的文本：`content` 是**单个** ContentBlock 对象（不是数组）。
+/// 正文 / 思维块的文本：`content` 是**单个** `ContentBlock` 对象（不是数组）。
 ///
 /// 上游 `handleAgentMessage` 只读 `content.text`，连 `type` 都不看；空串会被
 /// 调用方丢掉（`DecoderState::text` 对空增量不发事件）。
@@ -382,15 +400,15 @@ pub(super) fn parse_tool_args(args_text: &str) -> Value {
         return Value::Null;
     }
     serde_json::from_str::<Map<String, Value>>(trimmed)
-        .map(Value::Object)
-        .unwrap_or_else(|_| json!({"text": trimmed}))
+        .map_or_else(|_| json!({"text": trimmed}), Value::Object)
 }
 
 /// ACP 用量快照的字段别名（上游 `parseACPTokenUsageSnapshot` 逐条对应）。
 pub(super) fn parse_usage(raw: Option<&Value>) -> Option<TokenUsage> {
-    let Some(value) = raw.and_then(Value::as_object) else {
-        return None;
-    };
+    let value = raw.and_then(Value::as_object)?;
+    // token 数在 JSON 里是整数，但 `serde_json` 只有 `as_u64` / `as_f64` 两条路：
+    // 上游同款先取整数、再对浮点截断回落。畸形报文里的负数/小数不在契约内。
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let pick = |keys: &[&str]| -> u64 {
         keys.iter()
             .find_map(|key| value.get(*key))
@@ -484,7 +502,6 @@ pub(super) fn is_grant_kind(kind: &str) -> bool {
     kind_is(kind, KIND_ALLOW_ONCE) || kind_is(kind, KIND_ALLOW_ALWAYS)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,9 +523,15 @@ mod tests {
         let error = select_xai_auth_method(&offered(&["xai.api_key"]), false).unwrap_err();
         assert!(error.contains("XAI_API_KEY is not set"), "{error}");
         let error = select_xai_auth_method(&[], false).unwrap_err();
-        assert!(error.contains("no usable authentication methods"), "{error}");
+        assert!(
+            error.contains("no usable authentication methods"),
+            "{error}"
+        );
         let error = select_xai_auth_method(&offered(&["oauth"]), false).unwrap_err();
-        assert!(error.contains("unsupported authentication methods"), "{error}");
+        assert!(
+            error.contains("unsupported authentication methods"),
+            "{error}"
+        );
         // 空白 id 不算"提供过"。
         assert_eq!(
             select_xai_auth_method(&offered(&["", "cached_token"]), false).unwrap(),
@@ -518,8 +541,12 @@ mod tests {
 
     #[test]
     fn auth_methods_are_read_from_strings_and_objects() {
-        let result = json!({"authMethods": [{"id": "cached_token"}, "xai.api_key", {"id": "  "}, 7]});
-        assert_eq!(extract_auth_methods(&result), vec!["cached_token", "xai.api_key"]);
+        let result =
+            json!({"authMethods": [{"id": "cached_token"}, "xai.api_key", {"id": "  "}, 7]});
+        assert_eq!(
+            extract_auth_methods(&result),
+            vec!["cached_token", "xai.api_key"]
+        );
         assert!(extract_auth_methods(&json!({})).is_empty());
     }
 
@@ -527,7 +554,10 @@ mod tests {
     fn tool_names_are_normalized_like_upstream() {
         assert_eq!(tool_name_from_title("execute code", ""), "execute_code");
         // 上游只认小写前缀（`hermesToolNameFromTitle`），大小写由各家的别名表处理。
-        assert_eq!(tool_name_from_title("terminal: ls -l", "execute"), "terminal");
+        assert_eq!(
+            tool_name_from_title("terminal: ls -l", "execute"),
+            "terminal"
+        );
         assert_eq!(tool_name_from_title("Shell: ls -l", "execute"), "Shell");
         assert_eq!(tool_name_from_title("read: a.rs", ""), "read_file");
         // `patch` 走前缀匹配，且大小写敏感（"Patch" 原样返回，交给别名表）。
@@ -535,7 +565,10 @@ mod tests {
         assert_eq!(tool_name_from_title("Patch: a.rs", ""), "Patch");
         assert_eq!(tool_name_from_title("web search: x", ""), "web_search");
         assert_eq!(tool_name_from_title("Read file: a.rs", ""), "Read file");
-        assert_eq!(tool_name_from_title("analyze image: a.png", ""), "vision_analyze");
+        assert_eq!(
+            tool_name_from_title("analyze image: a.png", ""),
+            "vision_analyze"
+        );
         assert_eq!(tool_name_from_title("", "fetch"), "web_search");
         assert_eq!(tool_name_from_title("", "think"), "thinking");
         // kimi 会发没有 kind 的裸标题（保留原样，交给别名表归一）。
@@ -547,28 +580,64 @@ mod tests {
 
     #[test]
     fn tool_name_prefers_the_normalized_title_then_falls_back_to_name() {
-        assert_eq!(tool_name(&json!({"title": "terminal: ls", "name": "shell"})), "terminal");
+        assert_eq!(
+            tool_name(&json!({"title": "terminal: ls", "name": "shell"})),
+            "terminal"
+        );
         assert_eq!(tool_name(&json!({"name": "shell"})), "shell");
         assert_eq!(tool_name(&json!({})), "");
         // 完成帧：`title` 为空时用 `name` 顶替（起始帧不这么做）。
-        assert_eq!(tool_name_from_update(&json!({"name": "read", "kind": "read"})), "read_file");
-        assert_eq!(tool_name(&json!({"name": "read", "kind": "read"})), "read_file");
+        assert_eq!(
+            tool_name_from_update(&json!({"name": "read", "kind": "read"})),
+            "read_file"
+        );
+        assert_eq!(
+            tool_name(&json!({"name": "read", "kind": "read"})),
+            "read_file"
+        );
     }
 
     #[test]
     fn provider_tool_aliases_normalize_capitalised_titles() {
         // kimi/qoder/traecli/grok 共用一张表。
-        assert_eq!(normalize_tool_aliases("Read file: /x", AcpToolAliases::Kimi), "read_file");
-        assert_eq!(normalize_tool_aliases("Run command: ls", AcpToolAliases::Kimi), "terminal");
-        assert_eq!(normalize_tool_aliases("Write file: /x", AcpToolAliases::Kimi), "write_file");
-        assert_eq!(normalize_tool_aliases("Read file", AcpToolAliases::Kimi), "read_file");
-        assert_eq!(normalize_tool_aliases("Glob: *.rs", AcpToolAliases::Kimi), "glob");
-        assert_eq!(normalize_tool_aliases("Fetch: http://x", AcpToolAliases::Kimi), "web_fetch");
-        assert_eq!(normalize_tool_aliases("Todo write", AcpToolAliases::Kimi), "todo_write");
+        assert_eq!(
+            normalize_tool_aliases("Read file: /x", AcpToolAliases::Kimi),
+            "read_file"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Run command: ls", AcpToolAliases::Kimi),
+            "terminal"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Write file: /x", AcpToolAliases::Kimi),
+            "write_file"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Read file", AcpToolAliases::Kimi),
+            "read_file"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Glob: *.rs", AcpToolAliases::Kimi),
+            "glob"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Fetch: http://x", AcpToolAliases::Kimi),
+            "web_fetch"
+        );
+        assert_eq!(
+            normalize_tool_aliases("Todo write", AcpToolAliases::Kimi),
+            "todo_write"
+        );
         // 未识别的名字：小写 + 空格转下划线（给 UI 稳定标识）。
-        assert_eq!(normalize_tool_aliases("Shell Tool", AcpToolAliases::Kimi), "shell_tool");
+        assert_eq!(
+            normalize_tool_aliases("Shell Tool", AcpToolAliases::Kimi),
+            "shell_tool"
+        );
         // 已归一的名字是幂等的。
-        assert_eq!(normalize_tool_aliases("read_file", AcpToolAliases::Kimi), "read_file");
+        assert_eq!(
+            normalize_tool_aliases("read_file", AcpToolAliases::Kimi),
+            "read_file"
+        );
         assert_eq!(normalize_tool_aliases("", AcpToolAliases::Kimi), "");
         // kiro 的表多两个别名。
         assert_eq!(normalize_tool_aliases("code", AcpToolAliases::Kimi), "code");
@@ -594,7 +663,10 @@ mod tests {
             "hi"
         );
         assert_eq!(message_text(&json!({"content": {}})), "");
-        assert_eq!(message_text(&json!({"content": [{"type": "text", "text": "hi"}]})), "");
+        assert_eq!(
+            message_text(&json!({"content": [{"type": "text", "text": "hi"}]})),
+            ""
+        );
     }
 
     #[test]
@@ -606,7 +678,10 @@ mod tests {
             {"type": "content", "content": {"type": "text", "text": "tail"}},
         ]});
         let text = content_text(&data);
-        assert!(text.contains("--- a.rs\n+++ a.rs\n(new file, 4 bytes)"), "{text}");
+        assert!(
+            text.contains("--- a.rs\n+++ a.rs\n(new file, 4 bytes)"),
+            "{text}"
+        );
         assert!(text.ends_with("tail"), "{text}");
         assert!(!text.contains("ignored"), "{text}");
     }
@@ -628,7 +703,10 @@ mod tests {
     #[test]
     fn raw_text_preserves_non_string_payloads() {
         assert_eq!(raw_text(Some(&json!("plain"))), Some("plain".to_owned()));
-        assert_eq!(raw_text(Some(&json!({"a": 1}))), Some("{\"a\":1}".to_owned()));
+        assert_eq!(
+            raw_text(Some(&json!({"a": 1}))),
+            Some("{\"a\":1}".to_owned())
+        );
         assert_eq!(raw_text(Some(&json!(""))), None);
         assert_eq!(raw_text(None), None);
     }
@@ -655,15 +733,24 @@ mod tests {
 
     #[test]
     fn model_id_is_read_from_meta_in_both_spellings() {
-        assert_eq!(parse_model_id(Some(&json!({"modelId": "m1"}))), Some("m1".to_owned()));
-        assert_eq!(parse_model_id(Some(&json!({"model_id": "m2"}))), Some("m2".to_owned()));
+        assert_eq!(
+            parse_model_id(Some(&json!({"modelId": "m1"}))),
+            Some("m1".to_owned())
+        );
+        assert_eq!(
+            parse_model_id(Some(&json!({"model_id": "m2"}))),
+            Some("m2".to_owned())
+        );
         assert_eq!(parse_model_id(Some(&json!({"modelId": "  "}))), None);
         assert_eq!(parse_model_id(None), None);
     }
 
     #[test]
     fn update_type_normalization_accepts_aliases() {
-        assert_eq!(normalize_update_type("Agent_Message-Chunk"), "agent_message_chunk");
+        assert_eq!(
+            normalize_update_type("Agent_Message-Chunk"),
+            "agent_message_chunk"
+        );
         assert_eq!(normalize_update_type("TurnEnd"), "turn_end");
         assert_eq!(normalize_update_type("endTurn"), "turn_end");
         assert_eq!(normalize_update_type("future"), "");

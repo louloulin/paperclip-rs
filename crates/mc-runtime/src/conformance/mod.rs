@@ -39,7 +39,7 @@
 //! 8. `cancel` 幂等 → 终态 `Cancelled` + `Manual`；
 //! 9. 解码器容忍非 JSON / 未知事件类型，不会因此中断 run。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use crate::adapter::{
@@ -47,6 +47,10 @@ use crate::adapter::{
     RuntimeEvent,
 };
 use crate::catalog::AgentType;
+
+mod fake_cli;
+
+pub use fake_cli::FakeCli;
 
 /// adapter 作者提供的一致性套件配置。
 #[derive(Debug, Clone)]
@@ -84,218 +88,6 @@ pub trait TestableAdapter: RuntimeAdapter + Sized {
     fn conformance_script() -> ConformanceScript;
 }
 
-/// 现场生成的假 CLI（`#!/bin/sh` 脚本）。析构时删掉整个临时目录。
-pub struct FakeCli {
-    dir: PathBuf,
-    executable: PathBuf,
-}
-
-impl FakeCli {
-    fn allocate(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "mc-runtime-conformance-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir_all(&dir).expect("建临时目录");
-        Self {
-            executable: dir.join(format!("{tag}.sh")),
-            dir,
-        }
-    }
-
-    /// 假 CLI 的绝对路径（交给 adapter 当 executable）。
-    pub fn path(&self) -> PathBuf {
-        self.executable.clone()
-    }
-
-    /// 工作目录（adapter 的落盘目录都在这里，析构时一起删）。
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// 脚本捕获到的 stdin。
-    pub fn recorded_stdin(&self) -> String {
-        std::fs::read_to_string(self.dir.join("stdin.txt")).unwrap_or_default()
-    }
-
-    /// 脚本捕获到的 argv（一行一个）。
-    pub fn recorded_argv(&self) -> String {
-        std::fs::read_to_string(self.dir.join("argv.txt")).unwrap_or_default()
-    }
-
-    /// 只打印一行版本号的假 CLI。
-    pub fn version(stdout: &str) -> Self {
-        let fake = Self::allocate("version");
-        let payload = fake.payload("version.txt", stdout);
-        fake.install(&format!("#!/bin/sh\ncat {}\n", quoted(&payload)));
-        fake
-    }
-
-    /// 回放一段事件流、以 0 退出的假 CLI（同时捕获 stdin/argv）。
-    pub fn replaying(transcript: &str) -> Self {
-        let fake = Self::allocate("replay");
-        let payload = fake.payload("transcript.txt", transcript);
-        fake.install(&fake.script(&format!(
-            "while IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone < {}\nexit 0\n",
-            quoted(&payload)
-        )));
-        fake
-    }
-
-    /// 回放一段事件流、写 stderr、以 `exit_code` 退出的假 CLI。
-    pub fn failing(transcript: &str, exit_code: i32, stderr: &str) -> Self {
-        let fake = Self::allocate("failing");
-        let payload = fake.payload("transcript.txt", transcript);
-        let error = fake.payload("stderr.txt", &format!("{stderr}\n"));
-        fake.install(&fake.script(&format!(
-            "while IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone < {transcript}\ncat {error} >&2\nexit {exit_code}\n",
-            transcript = quoted(&payload),
-            error = quoted(&error),
-        )));
-        fake
-    }
-
-    /// 什么都不输出、睡死（用 `exec` 保证杀的就是 sleep 本体，不留孤儿）的假 CLI。
-    pub fn sleeping(seconds: u32) -> Self {
-        let fake = Self::allocate("sleeping");
-        fake.install(&fake.script(&format!("exec sleep {seconds}\n")));
-        fake
-    }
-
-    /// 先回放一段事件流、再睡死（用于"流已经起来了再取消"）。
-    ///
-    /// 回放必须是**一次写**（`cat`），不能逐行 `printf` 循环：取消用例在读到
-    /// 首个正文事件后**立刻** kill 进程，逐行版会留下一个负载相关的窗口 ——
-    /// 终态行还没落进管道就被杀，`opencode`/`codearts` 这类 fail-closed 解码器
-    /// 会把"被我们自己掐断的流"判成 `Failed`（这是 `docs/33` §5 规定的**正确**
-    /// 行为，不是 bug）⇒ 用例变成掷骰子。
-    /// 一次写保证数据在首个事件可读时**已经**整段进了管道，`run` 的 `BufReader`
-    /// 会把它入库，kill 之后的 drain 仍能读完（`docs/37` §18.6 有实测数据）。
-    pub fn replaying_then_sleeping(transcript: &str, seconds: u32) -> Self {
-        let fake = Self::allocate("replay-sleep");
-        let payload = fake.payload("transcript.txt", transcript);
-        fake.install(&fake.script(&format!("cat {}\nexec sleep {seconds}\n", quoted(&payload))));
-        fake
-    }
-
-    /// **长连接 stdin** 假 CLI（JSON-RPC 类协议专用）的脚本骨架。
-    ///
-    /// 普通前台的 `cat > stdin.txt` 要读到 EOF 才往下走，而 JSON-RPC 的 stdin 是
-    /// 长连接（写完 `initialize` 还在等应答）⇒ 双方互等，run 挂到超时。
-    /// 这里改用前台 `read_gate <子串>`：逐行读 stdin、逐行落盘，读到含该子串的帧
-    /// 才返回。闸门看的是**内容**而不是时序 ⇒ 确定性，不用 sleep 抢。
-    ///
-    /// 不改成后台 `cat`：dash 会把**异步列表**（`&`）的 stdin 接成 `/dev/null`，
-    /// 后台进程读到的永远是空（实测 stdin.txt 恒空），`<&3` 也只是在某些 redirect
-    /// 组合下才生效 —— 干脆不用后台。
-    fn live_script(&self, gate: &str, replay: Option<&Path>, tail: &str) -> String {
-        let dir = quoted(&self.dir);
-        let mut body = format!(
-            "#!/bin/sh\nd={dir}\nprintf '%s\\n' \"$@\" > \"$d/argv.txt\"\nexec 3<&0\n: > \"$d/stdin.txt\"\nread_gate() {{\n  while IFS= read -r line <&3; do\n    printf '%s\\n' \"$line\" >> \"$d/stdin.txt\"\n    case \"$line\" in *\"$1\"*) return 0;; esac\n  done\n  return 1\n}}\nread_gate '{gate}' || exit 0\n"
-        );
-        if let Some(transcript) = replay {
-            // 同样是一次写（理由见 `replaying_then_sleeping`）：`cat <文件>` 不读
-            // stdin，因此不会吃掉 adapter 的帧。
-            body.push_str("cat ");
-            body.push_str(&quoted(transcript));
-            body.push('\n');
-        }
-        body.push_str(tail);
-        body
-    }
-
-    /// 等 `after` 出现 → 回放事件流 → 等 `until` 也出现 → 以 0 退出。
-    ///
-    /// 第二道闸门必不可少：进程若在 adapter 写出 `turn/start`（带 prompt 的那帧）
-    /// 之前就退出，写入会得到 EPIPE，`stdin.txt` 里就看不到 prompt，
-    /// “prompt 必须走 stdin” 的断言会随机失败。
-    pub fn live_replaying(transcript: &str, after: &str, until: &str) -> Self {
-        let fake = Self::allocate("live-replay");
-        let payload = fake.payload("transcript.txt", transcript);
-        let tail = format!("read_gate '{until}'\nexit 0\n");
-        fake.install(&fake.live_script(after, Some(&payload), &tail));
-        fake
-    }
-
-    /// 等 `after` 出现 → 回放 → 写 stderr → 以 `exit_code` 退出。
-    pub fn live_failing(transcript: &str, exit_code: i32, stderr: &str, after: &str) -> Self {
-        let fake = Self::allocate("live-failing");
-        let payload = fake.payload("transcript.txt", transcript);
-        let error = fake.payload("stderr.txt", &format!("{stderr}\n"));
-        let tail = format!("cat {} >&2\nexit {exit_code}\n", quoted(&error));
-        fake.install(&fake.live_script(after, Some(&payload), &tail));
-        fake
-    }
-
-    /// 等 `after` 出现 → 回放 → 睡死（用于“流起来了再取消”）。
-    pub fn live_replaying_then_sleeping(transcript: &str, seconds: u32, after: &str) -> Self {
-        let fake = Self::allocate("live-replay-sleep");
-        let payload = fake.payload("transcript.txt", transcript);
-        let tail = format!("exec sleep {seconds}\n");
-        fake.install(&fake.live_script(after, Some(&payload), &tail));
-        fake
-    }
-
-    fn payload(&self, name: &str, content: &str) -> PathBuf {
-        let path = self.dir.join(name);
-        std::fs::write(&path, content).expect("写 payload");
-        path
-    }
-
-    fn install(&self, body: &str) {
-        use std::io::Write as _;
-        use std::process::{Command as StdCommand, Stdio as StdStdio};
-
-        // 脚本**刻意不**由本进程直接写（不用 `std::fs::write`）：
-        // 测试是多线程跑的，别的线程 `fork` 到 `execve` 之间会复制本进程的 FD。
-        // 若本进程正持有这个脚本的写 FD，别的线程的子进程就会短暂带着它，
-        // 此刻我们 exec 这个刚写好的文件会随机得到 ETXTBSY（Text file busy）——
-        // 实测 25 次连跑挂 2 次。交给子进程写（内容走 stdin）、等它退出再 exec，
-        // 本进程的 FD 表里从未出现过写 FD，竞态就从根上没了。
-        let mut child = StdCommand::new("/bin/sh")
-            .arg("-c")
-            .arg(format!(
-                "cat > {path} && chmod +x {path}",
-                path = quoted(&self.executable)
-            ))
-            .stdin(StdStdio::piped())
-            .stdout(StdStdio::null())
-            .stderr(StdStdio::null())
-            .spawn()
-            .expect("起写脚本的子进程");
-        child
-            .stdin
-            .take()
-            .expect("stdin 管道")
-            .write_all(body.as_bytes())
-            .expect("写脚本内容");
-        let status = child.wait().expect("等写脚本的子进程");
-        assert!(status.success(), "写脚本失败（chmod 一起）：{status}");
-    }
-
-    /// 公共前缀：把 argv 与 stdin 落到临时目录，便于"prompt 必须走 stdin"的断言。
-    fn script(&self, tail: &str) -> String {
-        format!(
-            "#!/bin/sh\nd={dir}\nprintf '%s\\n' \"$@\" > \"$d/argv.txt\"\ncat > \"$d/stdin.txt\"\n{tail}",
-            dir = quoted(&self.dir),
-        )
-    }
-}
-
-impl Drop for FakeCli {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// 把路径写成 shell 单引号字面量（临时目录路径里出现单引号才会出问题，直接拦掉）。
-fn quoted(path: &Path) -> String {
-    let text = path.display().to_string();
-    assert!(!text.contains('\''), "临时目录路径不能含单引号：{text}");
-    format!("'{text}'")
-}
-
 fn build<A: TestableAdapter>(fake: &FakeCli) -> A {
     A::with_conformance_env(&fake.path(), fake.dir())
 }
@@ -306,43 +98,137 @@ fn protocol_of<A: TestableAdapter>() -> ProtocolFamily {
     build::<A>(&fake).capabilities().protocol
 }
 
-/// 长连接 stdin（JSON-RPC 类）协议的假 CLI 需要**闸门**：先确认 adapter 已把
-/// 握手帧写进 stdin 再回放，且回放后等带 prompt 的那一帧也落盘再退出。
-/// 其它协议返回 `None`（用普通的 `cat > stdin.txt` 前缀，靠 EOF 推进）。
+/// 长连接 stdin（JSON-RPC 类）协议的假 CLI 回放计划。
 ///
-/// `(回放前要等到的子串, 退出前要等到的子串)` —— 见 [`FakeCli::live_replaying`]。
-fn live_gates<A: TestableAdapter>() -> Option<(&'static str, &'static str)> {
+/// 三个变体对应三种"谁在推着回放往前走"：
+///
+/// * `Eof`：普通前台协议，`cat > stdin.txt` 读到 EOF 就放（prompt 写完即关 stdin）；
+/// * `Gate`：单闸门协议，先确认 adapter 已把第一帧写进 stdin 再一次性回放，退出前
+///   再等带 prompt 的那一帧落盘（见 [`FakeCli::live_replaying`]）；
+/// * `Frames`：固定帧 id 的请求/应答协议，一帧一帧推（见 [`FakeCli::live_scripted`]）。
+///
+/// 挂错计划的后果都是**挂死**而不是误判：长连接协议若用 `Eof`，双方的"等对方先说话"
+/// 会一直顶到 run 超时（这是本片修掉的真实故障）；`Frames` 若整段一次性回放，
+/// 相位不对的应答被解码器丢掉，流永远起不来。
+enum LivePlan {
+    /// 靠 stdin EOF 推进。
+    Eof,
+    /// `(回放前要等到的子串, 退出前要等到的子串)`。
+    Gate(&'static str, &'static str),
+    /// `(客户端帧里的子串, 该帧到达后回放的文本)`。
+    Frames(Vec<(String, String)>),
+}
+
+/// 按协议族挑回放计划。
+fn live_plan<A: TestableAdapter>(script: &ConformanceScript) -> LivePlan {
     match protocol_of::<A>() {
-        ProtocolFamily::AppServer => Some(("thread/start", "turn/start")),
-        _ => None,
+        ProtocolFamily::AppServer => LivePlan::Gate("thread/start", "turn/start"),
+        ProtocolFamily::Acp => LivePlan::Frames(response_frame_groups(&script.success_stdout)),
+        _ => LivePlan::Eof,
+    }
+}
+
+/// 请求/应答协议的"逐帧回放"分帧：把回放文本按**应答帧**切成组，组 k 的触发条件是
+/// 客户端帧里出现 `"id":k`。
+///
+/// 依据（`acp_core::client` 的固定帧 id 约定，见 `docs/33` §6.3）：
+///
+/// 1. 客户端帧是 `serde_json` 紧凑序列化 ⇒ 帧里一定有 `"id":<n>` 子串，而本 crate
+///    的 id 是固定序号（`ID_INITIALIZE`..`ID_PROMPT`），与应答 id 一一对应；
+/// 2. 应答是"带 `id` 且带 `result`/`error` 的对象"，通知是"带 `method`、不带 `id`
+///    的对象" ⇒ 按应答切组即可；
+/// 3. 组内的非应答行（正文通知）留在**它前面**那个组里。
+///    [`crate::adapters::acp_core::conformance_success_stdout`] 正是把
+///    `session/update` 通知写在 `session/prompt` 应答**之前**的，因此这条通知随
+///    `session` 组先落地 —— 取消用例拿到第一个正文事件时，会话 id 已经就位，
+///    `session/cancel` 带得上 `sessionId`。
+///
+/// 通知略早到达不影响解析（解码器按行驱动，通知不依赖握手阶段），所以这个分帧只决定
+/// "哪道闸门推它"，不决定语义。
+///
+/// 公开给 `tests/` 下的集成用例：crate 内的一致性套件与 crate 外的端到端用例必须
+/// 用**同一套**分帧规则，否则会出现"套件绿、集成红"这种只能靠猜的偏差。
+pub fn response_frame_groups(transcript: &str) -> Vec<(String, String)> {
+    let mut groups: Vec<(String, String)> = Vec::new();
+    // 第一道应答之前的杂行（横幅）并进第一组，不单独丢弃。
+    let mut prefix = String::new();
+    for line in transcript.lines() {
+        match response_frame_id(line) {
+            Some(id) => {
+                let mut payload = std::mem::take(&mut prefix);
+                payload.push_str(line);
+                payload.push('\n');
+                groups.push((format!("\"id\":{id}"), payload));
+            }
+            None => {
+                if let Some(last) = groups.last_mut() {
+                    last.1.push_str(line);
+                    last.1.push('\n');
+                } else {
+                    prefix.push_str(line);
+                    prefix.push('\n');
+                }
+            }
+        }
+    }
+    assert!(
+        groups.len() >= 2,
+        "逐帧回放至少要有两道应答帧（握手 + 建会话），实际 {} 组：{transcript}",
+        groups.len()
+    );
+    groups
+}
+
+/// 一行是不是"应答帧"：带 `id`，且带 `result` 或 `error`（通知只带 `method`）。
+fn response_frame_id(line: &str) -> Option<i64> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let object = value.as_object()?;
+    let id = object.get("id")?.as_i64()?;
+    if object.contains_key("result") || object.contains_key("error") {
+        Some(id)
+    } else {
+        None
     }
 }
 
 /// 正常路径（回放到尾、0 退出）的假 CLI。
 fn success_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
-    match live_gates::<A>() {
-        Some((after, until)) => FakeCli::live_replaying(&script.success_stdout, after, until),
-        None => FakeCli::replaying(&script.success_stdout),
+    match live_plan::<A>(script) {
+        LivePlan::Eof => FakeCli::replaying(&script.success_stdout),
+        LivePlan::Gate(after, until) => {
+            FakeCli::live_replaying(&script.success_stdout, after, until)
+        }
+        LivePlan::Frames(frames) => FakeCli::live_scripted(&frames, "exit 0\n"),
     }
 }
 
 /// 非零退出路径的假 CLI。
 fn failing_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
-    match live_gates::<A>() {
-        Some((after, _)) => {
+    match live_plan::<A>(script) {
+        LivePlan::Eof => FakeCli::failing(&script.success_stdout, 3, &script.expected_error),
+        LivePlan::Gate(after, _) => {
             FakeCli::live_failing(&script.success_stdout, 3, &script.expected_error, after)
         }
-        None => FakeCli::failing(&script.success_stdout, 3, &script.expected_error),
+        LivePlan::Frames(mut frames) => {
+            frames.pop();
+            FakeCli::live_scripted_failing(&frames, 3, &script.expected_error)
+        }
     }
 }
 
 /// 取消路径的假 CLI（回放完就睡死）。
 fn cancelling_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
-    match live_gates::<A>() {
-        Some((after, _)) => {
+    match live_plan::<A>(script) {
+        LivePlan::Eof => FakeCli::replaying_then_sleeping(&script.success_stdout, 30),
+        LivePlan::Gate(after, _) => {
             FakeCli::live_replaying_then_sleeping(&script.success_stdout, 30, after)
         }
-        None => FakeCli::replaying_then_sleeping(&script.success_stdout, 30),
+        LivePlan::Frames(mut frames) => {
+            // 末组（`session/prompt` 应答）**不**回放：终态只能来自取消，不与
+            // "turn 已经跑完了再取消"抢时序（那会让用例变成掷骰子）。
+            frames.pop();
+            FakeCli::live_scripted(&frames, "exec sleep 30\n")
+        }
     }
 }
 
@@ -737,5 +623,102 @@ mod harness_tests {
             "argv 要落盘：{:?}",
             fake.recorded_argv()
         );
+    }
+
+    /// 分帧：应答按 `id` 成组，正文通知留在**它前面**那组（取消用例靠它拿到正文）。
+    #[test]
+    fn response_frames_are_grouped_by_fixed_ids() {
+        let transcript = concat!(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"sessionId\":\"s\"}}\n",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{}}\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"stopReason\":\"end_turn\"}}\n",
+        );
+        let groups = response_frame_groups(transcript);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|(gate, _)| gate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["\"id\":1", "\"id\":3", "\"id\":6"],
+            "闸门必须直接取自应答 id（客户端请求用同一批固定序号）"
+        );
+        assert!(
+            groups[1].1.contains("session/update"),
+            "正文通知要随 session 组一起先落地：{:?}",
+            groups[1].1
+        );
+        assert!(!groups[2].1.contains("session/update"));
+    }
+
+    /// 逐帧回放的闸门必须真的挡住"提前回放"：写第二帧之前不得出现第二组。
+    #[test]
+    fn scripted_fake_replays_one_group_per_client_frame() {
+        use std::sync::mpsc;
+
+        let frames = vec![
+            ("\"id\":1".to_owned(), "第一组\n第二行\n".to_owned()),
+            ("\"id\":3".to_owned(), "第三组\n".to_owned()),
+        ];
+        let fake = FakeCli::live_scripted(&frames, "exit 0\n");
+        let mut child = Command::new(fake.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("起逐帧假 CLI");
+        let mut stdin = child.stdin.take().expect("stdin 管道");
+        let stdout = child.stdout.take().expect("stdout 管道");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        // 1) 第一帧到位才回放第一组。
+        assert!(
+            rx.recv_timeout(Duration::from_millis(500)).is_err(),
+            "还没写任何帧就不该有回放"
+        );
+        stdin
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
+            .unwrap();
+        stdin.flush().unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).expect("第一行"),
+            "第一组\n"
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).expect("第二行"),
+            "第二行\n"
+        );
+
+        // 2) 第二帧没写之前，第二组不许出现（这就是"整段回放"会挂掉的原因）。
+        assert!(
+            rx.recv_timeout(Duration::from_millis(500)).is_err(),
+            "第二帧之前不该回放第二组"
+        );
+        stdin
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/new\"}\n")
+            .unwrap();
+        stdin.flush().unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).expect("第三行"),
+            "第三组\n"
+        );
+
+        drop(stdin);
+        let status = child.wait().expect("等逐帧假 CLI 退出");
+        assert!(status.success(), "{status}");
+        let recorded = fake.recorded_stdin();
+        assert!(recorded.contains("session/new"), "{recorded}");
     }
 }
