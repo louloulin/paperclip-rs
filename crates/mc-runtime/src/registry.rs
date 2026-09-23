@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{PoisonError, RwLock};
 
 use crate::adapter::RuntimeAdapter;
-use crate::adapters::PiLocal;
+use crate::adapters::builtin_adapters;
 use crate::catalog::AgentType;
 
 /// `AgentType` → adapter 的注册表。
@@ -41,13 +41,19 @@ impl AdapterRegistry {
         Self::default()
     }
 
-    /// 注册本片已实现的**内置 adapter**（当前只有 pi → [`PiLocal`]）。
+    /// 注册本片已实现的**内置 adapter**：`pi`（M3-2）+ M3-8 批 1 的 7 项。
     ///
-    /// 构造 `PiLocal` 不会探测/执行 `pi`（探测是 [`RuntimeAdapter::probe_version`] 的事），
-    /// 所以机器上没有 `pi` 也能安全装配 —— 真正的可用性由 probe 结果决定。
+    /// 构造这些 adapter **不会**探测/执行对应 CLI（探测是
+    /// [`RuntimeAdapter::probe_version`] 的事），所以机器上没装它们也能安全装配 ——
+    /// 真正的可用性由 probe 结果决定。
+    ///
+    /// 其余 17 项（ACP 11 + `cursor`/`qwen` + 待定的 4 项）由 M3-8 批 2/3 陆续注册；
+    /// 注册表是开放集合，`kinds()` 按白名单顺序输出，加项不会改变已有顺序。
     pub fn with_builtin_adapters() -> Self {
         let registry = Self::new();
-        registry.register(std::sync::Arc::new(PiLocal::default()));
+        for adapter in builtin_adapters() {
+            registry.register(adapter);
+        }
         registry
     }
 
@@ -196,11 +202,44 @@ mod tests {
     }
 
     #[test]
-    fn builtin_registry_holds_pi_without_probing() {
+    fn builtin_registry_holds_pi_and_the_m3_8_batch1_adapters_without_probing() {
         let registry = AdapterRegistry::with_builtin_adapters();
-        assert_eq!(registry.names(), vec!["pi".to_owned()]);
-        let adapter = registry.get(AgentType::Pi).expect("pi adapter");
-        assert_eq!(adapter.kind(), AgentType::Pi);
+        assert_eq!(
+            registry.names(),
+            vec![
+                "claude",
+                "codebuddy",
+                "codex",
+                "copilot",
+                "opencode",
+                "codearts",
+                "deveco",
+                "pi",
+            ]
+        );
+        assert_eq!(registry.len(), 8);
+        for kind in [
+            AgentType::Claude,
+            AgentType::Codebuddy,
+            AgentType::Codex,
+            AgentType::Copilot,
+            AgentType::Opencode,
+            AgentType::Codearts,
+            AgentType::Deveco,
+            AgentType::Pi,
+        ] {
+            let adapter = registry
+                .get(kind)
+                .unwrap_or_else(|| panic!("{kind} 没注册"));
+            assert_eq!(adapter.kind(), kind);
+            // 构造即用：不探测、不执行任何 CLI，`capabilities()` 必须是自洽的。
+            let caps = adapter.capabilities();
+            assert_ne!(caps.protocol, ProtocolFamily::Opaque, "{kind}");
+            assert_eq!(caps.launch_header, kind.launch_header(), "{kind}");
+        }
+        // 没落地的类型依旧拿不到 adapter（不是“随便给个句柄”）。
+        assert!(registry.get(AgentType::Qwen).is_none());
+        assert!(registry.get(AgentType::Dsh).is_none());
     }
 
     #[test]

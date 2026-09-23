@@ -21,7 +21,7 @@
 //! | [`adapter`] | 契约本身：trait、请求/终态、事件、错误 |
 //! | [`catalog`] | 25 个官方 agent 类型的白名单表（含上游 `launchHeaders` 启动骨架） |
 //! | [`registry`] | `AgentType → Arc<dyn RuntimeAdapter>` 注册表（替换 M0 的 `AdapterRegistryStub`） |
-//! | [`adapters`] | 各 provider 的实现；M3-2 落 [`adapters::pi_local`] |
+//! | [`adapters`] | 各 provider 的实现（M3-2 的 `pi_local` + M3-8 批 1 的 7 项） |
 //! | [`conformance`] | adapter 一致性套件（宏 + 假 CLI），M3-8 批量补 adapter 靠它 |
 //!
 //! # 五条契约（写新 adapter 前必须认同）
@@ -57,7 +57,10 @@ pub use adapter::{
     FailureReason, LaunchRequest, ModelUsage, ProtocolFamily, RunHandle, RunId, RunOutcome,
     RunStatus, RuntimeAdapter, RuntimeEvent, Semver, TokenUsage, VersionProbe, STDERR_TAIL_LIMIT,
 };
-pub use adapters::{PiDecoder, PiLocal, PiLocalConfig};
+pub use adapters::{
+    builtin_adapters, Claude, Codearts, Codebuddy, Codex, Copilot, Deveco, Opencode, PiDecoder,
+    PiLocal, PiLocalConfig,
+};
 pub use catalog::{AgentType, UnknownAgentType};
 #[cfg(unix)]
 pub use conformance::{ConformanceScript, FakeCli, TestableAdapter};
@@ -85,5 +88,36 @@ mod tests {
         let adapter = registry.get(AgentType::Pi).expect("pi-local 必须注册");
         assert_eq!(adapter.kind(), AgentType::Pi);
         assert_eq!(adapter.capabilities().protocol, ProtocolFamily::JsonLine);
+    }
+
+    #[test]
+    fn builtin_registry_covers_m3_8_batch1() {
+        // 批 1 交付面：7 项新 adapter + pi，且每项的协议族与 `catalog` 的映射一致
+        // （两处独立声明同一事实，所以要对得上，而不是“差不多”）。
+        let registry = AdapterRegistry::with_builtin_adapters();
+        let batch1 = [
+            AgentType::Claude,
+            AgentType::Codebuddy,
+            AgentType::Codex,
+            AgentType::Copilot,
+            AgentType::Opencode,
+            AgentType::Codearts,
+            AgentType::Deveco,
+        ];
+        for kind in batch1 {
+            let adapter = registry
+                .get(kind)
+                .unwrap_or_else(|| panic!("{kind} 未注册"));
+            assert_eq!(adapter.kind(), kind);
+            assert_eq!(
+                adapter.capabilities().protocol,
+                kind.protocol_family(),
+                "{kind}：adapter 自报的协议族与 catalog 映射不一致"
+            );
+            assert_eq!(adapter.capabilities().launch_header, kind.launch_header());
+            // 取解码器不该 panic（契约：每次 run 一个独立实例）。
+            assert!(adapter.decoder().push_line("not json").is_empty());
+        }
+        assert_eq!(registry.len(), 8);
     }
 }

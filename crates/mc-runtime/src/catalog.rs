@@ -26,6 +26,8 @@ use std::str::FromStr;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::adapter::ProtocolFamily;
+
 /// 官方支持的 agent 类型（CLI backend provider key）。
 ///
 /// 取值字符串 = 上游 `SupportedTypes` 的原文，**也是** 线上表示（手写 `Serialize` /
@@ -155,6 +157,45 @@ impl AgentType {
             Self::Dim => "dim acp",
             Self::Mcode => "mcode acp",
             Self::Zeroclaw => "zeroclaw acp",
+        }
+    }
+
+    /// 线协议族：adapter 靠哪套**线协议**跟 CLI 说话（不是 CLI 自己怎么实现）。
+    ///
+    /// 口径（`docs/37-M3-W3C-PREFLIGHT.md` §5，逐项可溯）：
+    ///
+    /// - **16 项**从上游 `launchHeaders` 的骨架就能判：`… acp` 11 项（ACP）+ 三个
+    ///   `(stream-json)` + `qwen -p (stream-json)`（`StreamJson`）+ `codex app-server`
+    ///   （`AppServer`）；
+    /// - `pi` = `JsonLine`（M3-2 已落地：`pi -p --mode json`）；
+    /// - M3-8 批 1 判定的 4 项（`copilot` / `opencode` / `codearts` / `deveco`）
+    ///   都是“每行一个 JSON 事件” ⇒ `JsonLine`；
+    /// - 剩下 4 项（`openclaw` / `dsh` / `antigravity` / `grok`）**刻意留 `Opaque`**：
+    ///   header 只给到命令名，没有可判的协议证据，等批 2/3 落地时再定。
+    ///
+    /// `Opaque` 是“未归类”，不是“没有协议”。一致性套件会断言每个已实现 adapter 的
+    /// `capabilities().protocol != Opaque`，所以拿它当“占位”不可能滑过去。
+    pub fn protocol_family(self) -> ProtocolFamily {
+        match self {
+            Self::Claude | Self::Codebuddy | Self::Cursor | Self::Qwen => {
+                ProtocolFamily::StreamJson
+            }
+            Self::Codex => ProtocolFamily::AppServer,
+            Self::Hermes
+            | Self::Kimi
+            | Self::Reasonix
+            | Self::Kiro
+            | Self::Qoder
+            | Self::QoderCliCn
+            | Self::TraeCli
+            | Self::QwenPaw
+            | Self::Mcode
+            | Self::Dim
+            | Self::Zeroclaw => ProtocolFamily::Acp,
+            Self::Copilot | Self::Opencode | Self::Codearts | Self::Deveco | Self::Pi => {
+                ProtocolFamily::JsonLine
+            }
+            Self::Openclaw | Self::Dsh | Self::Antigravity | Self::Grok => ProtocolFamily::Opaque,
         }
     }
 
@@ -299,6 +340,54 @@ mod tests {
         assert_eq!(AgentType::Qoder.cli_command(), "qodercli");
         assert_eq!(AgentType::Antigravity.cli_command(), "agy");
         assert_eq!(AgentType::Pi.cli_command(), "pi");
+    }
+
+    #[test]
+    fn protocol_family_covers_all_25_with_a_documented_split() {
+        use ProtocolFamily as P;
+        let (mut acp, mut stream, mut jsonl, mut app, mut opaque) = (0, 0, 0, 0, 0);
+        for kind in AgentType::ALL {
+            match kind.protocol_family() {
+                P::Acp => acp += 1,
+                P::StreamJson => stream += 1,
+                P::JsonLine => jsonl += 1,
+                P::AppServer => app += 1,
+                P::Opaque => opaque += 1,
+            }
+        }
+        // 分布本身就是“哪些还没判定”的证据：`Opaque` 只能是批 2/3 那 4 项。
+        assert_eq!((acp, stream, jsonl, app, opaque), (11, 4, 5, 1, 4));
+        assert_eq!(acp + stream + jsonl + app + opaque, 25);
+
+        // 逐项抽样：批 1 实现的 7 项 + pi 都要跟各自 adapter 声明的协议族一致。
+        assert_eq!(AgentType::Pi.protocol_family(), P::JsonLine);
+        for kind in [
+            AgentType::Claude,
+            AgentType::Codebuddy,
+            AgentType::Codex,
+            AgentType::Copilot,
+            AgentType::Opencode,
+            AgentType::Codearts,
+            AgentType::Deveco,
+        ] {
+            assert_ne!(
+                kind.protocol_family(),
+                P::Opaque,
+                "{kind} 已在 M3-8 批 1 落地，不该还是未归类"
+            );
+        }
+        assert_eq!(AgentType::Codex.protocol_family(), P::AppServer);
+        assert_eq!(AgentType::Claude.protocol_family(), P::StreamJson);
+        assert_eq!(AgentType::Copilot.protocol_family(), P::JsonLine);
+        // 尚未落地的 4 项：留 `Opaque` 是刻意的（不要顺手猜一个）。
+        for kind in [
+            AgentType::Openclaw,
+            AgentType::Dsh,
+            AgentType::Antigravity,
+            AgentType::Grok,
+        ] {
+            assert_eq!(kind.protocol_family(), P::Opaque, "{kind}");
+        }
     }
 
     #[test]
