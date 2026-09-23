@@ -70,6 +70,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_comment())
         .merge(mount_slice_inbox())
         .merge(mount_slice_subscriber())
+        .merge(mount_slice_label_property())
         // ----- M3 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
         .merge(mount_slice_agent())
         .merge(mount_slice_runtime())
@@ -160,6 +161,16 @@ fn mount_slice_inbox() -> Router<Arc<AppState>> {
 /// `/api/issues/:id` 下，若放进 M2-A 的 `issues.rs` 会制造同文件冲突（docs/10 §2 M2-C）。
 fn mount_slice_subscriber() -> Router<Arc<AppState>> {
     super::subscribers::router()
+}
+
+/// label + property 定义目录切片（M2-E / LUM-1370）：`/api/labels*` + `/api/properties*`。
+///
+/// 两个面共用一个 mount 点（同一片实现）；`/api/issues/:id/labels*` 那 3 条注册在
+/// `issues::router()` 里，不在本函数。
+fn mount_slice_label_property() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::labels::router())
+        .merge(super::properties::router())
 }
 
 // ---------------------------------------------------------------------------

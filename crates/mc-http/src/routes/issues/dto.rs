@@ -322,6 +322,31 @@ pub(crate) struct ValueRequest {
     pub(crate) value: JsonValue,
 }
 
+/// `PUT /api/issues/:id/properties/:propertyId` 的 body（上游 `SetIssuePropertyRequest`）。
+///
+/// 用 `Option<Option<_>>` 区分三态（上游靠 `json.RawMessage` 的 `len(raw) == 0` 做同一区分）：
+/// - 字段缺失 → `None` → 400 `value is required`
+/// - 显式 `null` → `Some(None)` → 400 `value cannot be null (use DELETE to unset a property)`
+/// - 有值 → `Some(Some(v))` → 进入 `validate_value`
+///
+/// 必须配 `deserialize_some`：serde 默认把嵌套 `Option` 的 `null` 折成 `None`（外层），
+/// 那样上面第一种情形就与第二种重合了。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct SetPropertyValueRequest {
+    #[serde(deserialize_with = "deserialize_some")]
+    pub(crate) value: Option<Option<JsonValue>>,
+}
+
+/// 把「字段存在」本身也编码进 `Option`（见 `SetPropertyValueRequest`）。
+fn deserialize_some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub(crate) struct CreateIssueStatusRequest {
@@ -354,4 +379,21 @@ pub(crate) struct ReorderStatusesRequest {
     pub(crate) category: Option<String>,
     pub(crate) ids: Vec<String>,
     pub(crate) include_system: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetPropertyValueRequest;
+
+    /// `SetPropertyValueRequest` 的三态必须真的分得开（否则会丢掉上游 `value is required`
+    /// 与 `value cannot be null ...` 两种 400 的区分）。
+    #[test]
+    fn set_property_value_request_distinguishes_missing_from_null() {
+        let missing: SetPropertyValueRequest = serde_json::from_str("{}").unwrap();
+        assert!(missing.value.is_none(), "字段缺失 ⇒ None");
+        let null: SetPropertyValueRequest = serde_json::from_str(r#"{"value":null}"#).unwrap();
+        assert_eq!(null.value, Some(None), "显式 null ⇒ Some(None)");
+        let value: SetPropertyValueRequest = serde_json::from_str(r#"{"value":"x"}"#).unwrap();
+        assert_eq!(value.value, Some(Some(serde_json::json!("x"))));
+    }
 }

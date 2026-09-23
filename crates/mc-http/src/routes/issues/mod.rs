@@ -9,7 +9,8 @@
 //! - 单体：`GET/PUT/DELETE /api/issues/:id`、`POST /api/issues/:id/move`、
 //!   `GET /api/issues/:id/children`、`GET/POST/DELETE /api/issues/:id/reactions`、
 //!   `GET /api/issues/:id/metadata` + `PUT/DELETE /api/issues/:id/metadata/:key`、
-//!   `PUT/DELETE /api/issues/:id/properties/:propertyId`
+//!   `PUT/DELETE /api/issues/:id/properties/:propertyId`、
+//!   `GET/POST /api/issues/:id/labels` + `DELETE /api/issues/:id/labels/:labelId`
 //! - 目录：`GET/POST /api/issue-statuses`、`PATCH/DELETE /api/issue-statuses/:id`、
 //!   `PATCH /api/issue-statuses/reorder`
 //!
@@ -51,6 +52,13 @@
 //! （`docs/44-M5-PLAN.md` §6.1 预测 M5-0 后 292 → 290，只掉 2 个 autopilot 占位），
 //! 且这 7 个键的 handler 名必须仍是 `not_implemented`（`route_parity.py` 的占位正则只认
 //! `\bplaceholder\b`，改名会偷改门禁语义；检测器缺陷登记在 R3，本波不修）。
+//!
+//! **M2-E（LUM-1370）移交**：原先在本文件以 501 stub 注册的两条 label 路由
+//! （`GET /api/issues/:id/labels`、`DELETE /api/issues/:id/labels/:labelId`）已由
+//! `super::labels` 里的 `pub(crate)` handler 真实实现，并按上游 `router.go:181-185`
+//! **补上** `POST /api/issues/:id/labels`（三条注册键与上游 1:1）。注册位置不动（原地
+//! 换 handler），因为同 path+method 重复注册会让 axum 在 `Router::route` 处 panic。
+//! 这三条都是上游的 plain 子路由（`r.Get("/labels")`）⇒ **单形态**，不要加尾斜杠别名。
 //!
 //! 注意（M1-D 实测踩过的坑）：axum 0.7（matchit 0.7）路径参数必须写 `:id`，
 //! `{id}` 会被当字面量段——编译通过但恒 404。
@@ -111,7 +119,9 @@ pub(crate) use self::statuses::{
     create_status, delete_status, list_statuses, reorder_statuses, update_status,
 };
 
-pub(crate) use self::context::{load_catalog, resolve_workspace, WorkspaceQuery};
+pub(crate) use self::context::{
+    issue_repo, load_catalog, load_issue, parse_target_id, resolve_workspace, WorkspaceQuery,
+};
 pub(crate) use self::dto::IssueDto;
 pub(crate) use self::helpers::{repo_err, validation};
 
@@ -181,8 +191,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/issues/:id/timeline", get(not_implemented))
         .route("/api/issues/:id/attachments", get(not_implemented))
         .route("/api/issues/:id/pull-requests", get(not_implemented))
-        .route("/api/issues/:id/labels", get(not_implemented))
-        .route("/api/issues/:id/labels/:labelId", delete(not_implemented))
+        .route(
+            "/api/issues/:id/labels",
+            get(super::labels::list_issue_labels).post(super::labels::attach_label),
+        )
+        .route(
+            "/api/issues/:id/labels/:labelId",
+            delete(super::labels::detach_label),
+        )
         .route("/api/issues/:id/quick-actions", get(not_implemented))
         // M5-0：`/api/issues/:id/wakeups*` 6 条与 `/api/issue-wakeups` 的 501 注册
         // 已搬到 `wakeups.rs` / `crate::routes::issue_wakeups`（理由见文件头）。
