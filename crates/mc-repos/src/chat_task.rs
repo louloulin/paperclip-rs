@@ -28,9 +28,10 @@
 //! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::agent`）：
 //! - `Row` 用原始 `Uuid`/`String` 字段（`mc_core::Id` 没有 sqlx impl ⇒ 手写 `FromRow`）
 //! - 错误统一走 `crate::workspace::map_sqlx_err`
-//! - **本模块尚无真库测试**：chat 面各 Repo 普遍没有 `#[ignore]` 的 PG 集成测试
-//!   （已合并的 `chat_session` / `chat_message` 同样如此）⇒ 这是**已知缺口**，
-//!   登记在 `docs/45` §3 G9，不要在任何地方把「有测试」写成既成事实
+//! - **真库测试**在 `tests/`（LUM-1601 补的 `docs/45` §3 G9 缺口）：`#[ignore]` +
+//!   `MULTICA_TEST_DATABASE_URL`，由 `scripts/gates.sh --with-db` 的第 ⑥ 道门拉起。
+//!   `chat_session` / `chat_message`（M4-3 已合）仍无真库测试，别把「chat 面有测试」
+//!   说成覆盖全部 chat 模块。
 //!
 //! 硬约束：**不引入本仓自造列**；不加迁移；锁顺序照上游（`chat_session` → `agent` →
 //! `agent_task_queue`）。
@@ -42,6 +43,9 @@ mod onboarding;
 mod queue;
 mod send;
 mod support;
+
+#[cfg(test)]
+pub(crate) mod tests;
 
 pub use onboarding::UserOnboardingRow;
 pub use support::{
