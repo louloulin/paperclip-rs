@@ -4111,3 +4111,68 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
 5. **P0 仍待 owner**（`apps/mc-server` 依赖边 + 门 ⑥ 加 `-p mc-scheduler`；`docs/48` §7.1）：`LUM-1609` / `LUM-1625` 两条 cycle 记录都写了，
    但**从未用 member 提及**通知 owner（两条 comment 的 `mention://` 解析结果均为空）⇒ 本轮改为显式请求裁决（**一次**，不重复刷）。
 6. 记录号 `docs/NN`：`46..49` 已用；`50`=M5-2、`51`=M5-3、`52`=M5-4 已派 ⇒ **下一个空号 = 53**（M5-5 取号用）。
+
+## 42. 01:00 cycle（`LUM-1630`）：**#56（M5-2）合并判据链 10/10 ⇒ 已合并 `415f194`**；C 波 2/3 在飞且产物持续落地；D 波仍不可派
+
+### 42.1 起手读数（三连 + 会话存量）
+
+- base head **`c37d714`**；GH `pulls?state=open` = **1**（`#56` M5-2，`mergeable=True / mergeable_state=clean`，head `fffa55a`，base `c37d714`）。
+- `df -h /` = 49G 盘 / 34G 用 / **14G 可用（72%）**。
+- daemon `running_task_count=3` = **本 cycle** + `LUM-1568`（session `20260923T163432` 2.6MB / 10 压缩）+ `LUM-1569`（session `20260923T160628` 3.8MB / 13 压缩）；
+  `LUM-1567` 已终态（`in_review`，PR 已开）。⇒ **本 cycle 是唯一在飞 cycle run**（无并发 cycle 撞车）⇒ 合并判据链由本 cycle 独占执行，不需要按「避让口径」让位。
+- **【运维坑，可复用】匿名 GitHub API 在本轮第 60 次请求后 403**（`x-ratelimit-remaining: 0`，`reset` 30s 后恢复）⇒
+  起手就取 token（`printf 'protocol=https\nhost=github.com\n\n' | git credential fill` 的 `password`，用户名恒为 `x-access-token`，Basic auth），
+  认证额度 5000/h。**不要**把 token 回显到任何输出里。
+
+### 42.2 PR #56 合并判据链（单片：base `c37d714` + head `fffa55a`）
+
+| 步骤 | 实测 |
+| --- | --- |
+| 预检（`--no-ff --no-commit`） | staged **`13 files changed, +4823 −20`** == PR/API 自述逐字一致（`changed_files 13 / additions 4823 / deletions 20 / commits 5`）；merge tree **`c95675837ca9f56c0fba93b1506d2fca9c26b180`** == 分支 tip tree（`fffa55a^{tree}`） |
+| `Cargo.lock` 专项核 | `git diff --cached --name-only -- Cargo.lock` **空** ⇒ 门 ② `--locked` 无风险 |
+| 合并树门禁（真库 `mc_lum1630`/`multica_lum1630`，`--with-db`） | **10/10 绿 / 173s**：①2s ②11s ③19s ④8s ⑤31s ⑥61s(`migrate=0,e2e=0`) ⑧35s ⑦0s ⑨5s ⑩1s；跑前跑后 `HEAD=fffa55a` / tree `c9567583` / `git status` **空**（同一棵树） |
+| API 合并 | `PUT /pulls/56/merge` 钉 **`fffa55a`** ⇒ **`415f194d49076f22ed0403d5d94da1347d2ee12d`**（真 merge commit，parents `c37d714` + `fffa55a`） |
+| 合并后复核 | 终态 base 树 = **`c9567583`** == 预检树；`git diff fffa55a origin/feat/multica-rs-initial` = **0 行**；GH open PR = **0** |
+
+- **【本轮新增口径】合并树门禁的执行位置**：可以在**被合并片自己的 workdir** 里跑 —— 前提两条：① base 是该分支的**祖先**（本轮 `c37d714` 正是 `fffa55a` 的第二父）；
+  ② 预检已证明 **merge tree == head tree**。满足时可在 PR 分支的 workdir（`lum-1567-68dfc65efba6`，target **16G 热**）直接跑 `--with-db`，**173s** 拿到与合并树逐字同树的证据
+  （对比：cycle 自己的全新 checkout 是冷 `target/`，一轮 ≈7.4G / 数十分钟）。这不是「本 cycle 更省事」，而是**证据等价**：门跑在哪台机器/哪个目录不重要，重要的是 tree sha。
+- 合并树读数（只取当轮日志）：⑤ `1281 passed / 0 failed`（118 ignored，**不带**库变量）；⑥ 真库 e2e **`260 passed / 0 failed`**（`--ignored`）；
+  ⑦ `upstream 456 (commit f41fae6b08fb) | local 315 registered | baseline 300`、`implemented 251 real + 2 placeholder = 253/456`、`known_gap 203`、
+  **`unclaimed 0`**、**`regression 0`**、`local_only 11`；⑨ `report matches crates/mc-conformance/report.json`；⑩ exit 0；全日志 `FAILED` = 0 次。
+- 本片**不刷** ⑦ 基线（`local 315 / baseline 300`，regression 0）：按 R13 仍归 M5-INT（`LUM-1572`）一次性刷，`LUM-1580` 保持 `backlog`。
+
+### 42.3 C 波在飞体检（2/3 在飞：`LUM-1568` / `LUM-1569`）——**判据修订：预警信号读「死亡概率」而不是「零交付」**
+
+| 片 | 分支 tip | 提交/规模 | session | 判读 |
+| --- | --- | --- | --- | --- |
+| M5-3 `LUM-1568` | `918becb` | 4 提交 `4887976..918becb`，**7 文件 +1816 −92**；末笔 `feat(M5-3): autopilot trigger 写面 3 路由 + 凭据 2 路由`（本片 5 路由已全落） | 2.6MB / 10 压缩 | 活；接近收尾（差测试 + 门） |
+| M5-4 `LUM-1569` | `d55b4af` | 2 提交 `d661fe8..d55b4af`，**4 文件 +1098 −135**；`M5-4: autopilot run/delivery 写边 SQL 收口 + create_issue 线拆子模块（R7 800 行）` | 3.8MB / **13 压缩** | 活；§40.2 预警信号**全触发**，但产物在持续落地 |
+
+- **判据修订（本轮最值得复用的一条）**：§40.2 的「session ≥2MB / 压缩 ≥8 ⇒ 零交付概率高」是**在「产物不推」的前提下**观察到的 —— 那两次死亡（§40.2 / §41.3）都伴随 **0 提交**。
+  本轮两片落在**同一预警区间**却仍在 `commit + push`（§40.3 派发说明把「每写完一个文件就 commit+push」纪律带进了重派 run）⇒
+  该信号应改读为「**run 死亡概率**高，而**产物损失上界 = 最后一个未提交文件**」，**不是**「必然零交付」。M5-3 第 2 次死亡时已有 962 行落袋（§41.3）即为正证。
+- **处置：不干预**（不杀、不重派、不抢救）。两片都处在「路由/SQL 已落、差测试与门」的收尾段，重派会换 workdir 并丢掉正在跑的收口；
+  更关键的是：**纪律已验证能让死亡不再等于丢产物** ⇒ 干预的期望收益为负。下一轮 cycle 重新体检（看分支是否前进 / 是否开 PR）。
+
+### 42.4 D 波（`M5-5` `LUM-1570` ∥ `M5-8` `LUM-1571`）预飞：仍不可派
+
+- ① **C 波未全合**：`M5-5` 的硬前置 `DispatchAutopilotForPlan` 仍在 `M5-4`（`LUM-1569`）手里（本轮 base 上 `grep` 仍只命中 `dispatch/skip.rs` 注释）。
+- ② **`M5-8` 受 P0 阻塞**：`apps/mc-server/Cargo.toml` + `Cargo.lock` 缺 `mc-scheduler` 边（`docs/48` §7.1），不同提交则门 ② `--locked` 必红。
+- ⇒ **本轮不派任何片**（切片位 2/3 在飞；cycle 自身不占位，§35.5）。
+
+### 42.5 磁盘：14G → **28G**（回收已合并片的 `target/`）
+
+- 删 `lum-1567-68dfc65efba6/workdir/paperclip-rs/target`（**16G**）。判据三条全满足：**PR 已合并（`415f194`）+ run 终态（`LUM-1567` `in_review`）+ `/proc/*/cwd` 无进程**；
+  只删 `target/`，工作树/提交/分支全部保留（该 workdir 的分支仍停在 `agent/devbox5/68dfc65efba6`）。
+- 在飞两片 target 5.9G（1568）/ 1.5G（1569）仍在增长 ⇒ 28G 余量覆盖它们的冷建与下一轮合并树门禁。
+
+### 42.6 遗留 / 下一轮起手
+
+1. **C 波剩 2 片**（`LUM-1568` / `LUM-1569`）：起手先 `git ls-remote origin`（两片分支是否前进：1568 `918becb` / 1569 `d55b4af`）+ GH `pulls?state=open`；
+   谁交 PR 就按 §39.3 同一条链走（**每步之间重取 head sha**），合并位置口径见 §42.2。
+2. **P0 仍待 owner，本轮不重复上报**：`LUM-1628` 的 §4 已用**有效** member 提及（`[louloulin](mention://member/71a2e368-5f70-4b78-9d69-cffd02bab2d3)`，实测解析成功）显式请求裁决 ⇒
+   口径是「**一次**，不重复刷」。下一轮只在「owner 有回复」或「M5-8 真被派」时才再提。
+3. `LUM-1567` 保持 `in_review`（cycle 不代改 `done`；`done` 归人工验收）。两处 DoD↔上游纠错已随 `docs/50` 进 base。
+4. 记录号 `docs/NN`：`50`=M5-2 / `51`=M5-3 / `52`=M5-4 已派 ⇒ **下一个空号 = 53**（M5-5 或 M5-INT 取号用）。
+5. ⑦ 基线 `local 315 / baseline 300`（regression 0）仍归 **M5-INT（`LUM-1572`）** 一次性刷；`LUM-1580` 保持 `backlog`（R13，不得与基线刷新同批）。
