@@ -54,6 +54,15 @@ pub mod chat;
 pub mod projects;
 pub mod squads;
 
+// M5 anchor scaffold（LUM-1563 / docs/44-M5-PLAN.md §3.1）：三个面一次性声明，让 M5-1..M5-8
+// 八个切片不再同时编辑本文件。`autopilots` 与 `webhooks` 是目录切片（各自的 `mod.rs` 自己
+// 聚合子 router），`issue_wakeups` 是 `GET /api/issue-wakeups` 的单文件；
+// `/api/issues/:id/wakeups*` 那 6 条在 `issues/wakeups.rs`（由 `issues/mod.rs` 内部 merge，
+// 所以不在本块里）。真实实现在各切片内，`mount.rs` 已接好 `mount_slice_autopilot()`。
+pub mod autopilots;
+pub mod issue_wakeups;
+pub mod webhooks;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

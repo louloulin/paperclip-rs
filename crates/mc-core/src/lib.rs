@@ -24,6 +24,9 @@ pub mod timestamp;
 
 pub mod agent;
 pub mod autopilot;
+// M5-0 anchor（LUM-1563）：quota 两张表（`352` / `448`）与 autopilot 主表不同源、不同生命周期，
+// 单独一个模块（`autopilot.rs` 已有 5 个类型组，再塞进去会逼近单文件门 ⑩）。
+pub mod autopilot_quota;
 pub mod channel;
 pub mod chat;
 pub mod comment;

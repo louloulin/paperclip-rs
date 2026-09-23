@@ -53,6 +53,8 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/plugins",
             get(health::placeholder).post(health::placeholder),
         )
+        // TODO(LUM-1563 第 2 笔提交): 删掉下面这条 M0 占位（它由下一笔提交连同 ⑦ 基线刷新 /
+        // allowlist 删行一起预删，理由见文件末尾 M5 anchor 段落）。
         .route(
             "/api/autopilots",
             get(health::placeholder).post(health::placeholder),
@@ -78,6 +80,8 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_project())
         .merge(mount_slice_squad())
         .merge(mount_slice_chat())
+        // ----- M5 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        .merge(mount_slice_autopilot())
 }
 
 /// workspace + member + me 切片。
@@ -234,4 +238,38 @@ fn mount_slice_squad() -> Router<Arc<AppState>> {
 /// **都不改本文件**。
 fn mount_slice_chat() -> Router<Arc<AppState>> {
     super::chat::router()
+}
+
+// ---------------------------------------------------------------------------
+// M5 anchor scaffold（LUM-1563 / docs/44-M5-PLAN.md §3.1）
+// ---------------------------------------------------------------------------
+//
+// 三个面（autopilot 20 条 / issue wakeup 8 条 / webhook 1 条）先接好，M5 的六个实现切片
+// 各自只实作自己的 `routes/*.rs`，不再分别改本文件。合并本片后**注册键集合只少 2 个**
+// （下面那两条 M0 占位）：
+// - `super::autopilots::router()` / `super::webhooks::router()` 的子文件目前是**空**
+//   `Router::new()` ⇒ 不加任何注册键；
+// - `super::issue_wakeups::router()` 与 `issues::wakeups::router()` 是**逐字搬运**的 501
+//   占位（从 `issues/mod.rs` 搬出，7 个注册键**一个不少**）⇒ ⑦ 的 `local` 从 292 掉到 290，
+//   与 `docs/44` §6.1 的预测表一致。
+//
+// ✅ 两条 M0 占位（`GET|POST /api/autopilots`）已由 **M5-0 anchor 预删**：它们与上游的真形态
+// **不是同一个注册键**（占位是无尾斜杠的 `/api/autopilots`，上游 `router.go:2101-2102` 的
+// `Route("/api/autopilots") + Get("/") / Post("/")` 服务的是带尾斜杠形态），而 chi 的
+// `Mount` 两种形态都服务 ⇒ 留着不仅会永久留下 501 幽灵路由，还会被门 ⑦ 的
+// `slash_aliases()` 折叠算成「已实现」，从报表上看不出来（docs/44 §6.1 的 292→290 就是这两条）。
+// 预删后 `docs/fixtures/slash-alias-allowlist.tsv` 同步删掉那 2 行（否则判 STALE）。
+// 注：切片接线时**必须**照上游注册**两个**形态（`/api/autopilots` + `/api/autopilots/`，
+// 方法集合逐字相同），漏一个会被 `slash_alias_audit.py` 判 `MISSING_ALIAS` —— 这条**不再有
+// allowlist 退路**。另：`issue_wakeups.rs` / `issues/wakeups.rs` 里的 handler 名必须仍是
+// `not_implemented`（门 ⑦ 的占位正则只认 `\bplaceholder\b`，改名等于偷改门禁语义，见 R3）。
+
+/// autopilot 面切片：`/api/autopilots*`（M5-1..M5-4）+ `/api/webhooks*`（M5-5）+
+/// `/api/issue-wakeups`（M5-6）—— 三个 M5 owned 的面全在这一个 mount 函数里，
+/// 所以 M5 的任何切片都不再需要改本文件（与 M4-0 同手法）。
+fn mount_slice_autopilot() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::autopilots::router())
+        .merge(super::webhooks::router())
+        .merge(super::issue_wakeups::router())
 }

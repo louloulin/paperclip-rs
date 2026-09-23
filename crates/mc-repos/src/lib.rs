@@ -20,6 +20,11 @@
 //! `project_resource` / `squad`。**本文件自本片起对 M4 是只读的**：M4-1..M4-4 各切片只填自己
 //! 那几个模块文件，不再编辑本 `lib`。见 `docs/42` §4.2 的「anchor 预建、此后任何切片不再改的
 //! 文件」表。
+//!
+//! M5 anchor scaffold（LUM-1563 / docs/44-M5-PLAN.md §5.3）：M5 的 3 个模块一次性声明
+//! （空 stub，与 M2/M3/M4 同手法）——`autopilot`（7 个文件）/ `wakeup`（3 个文件）/ `scheduler`
+//! （单文件）。**本文件自本片起对 M5 是只读的**：M5-1..M5-8 只填自己那格的文件，不再编辑本
+//! `lib`。写法与前几波一致：按字母序插入，不重排既有行（M4-4 与 M5-0 同时在飞）。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -28,6 +33,7 @@ use serde::Serialize;
 use mc_db::Db;
 
 pub mod agent;
+pub mod autopilot;
 pub mod chat_draft_restore;
 pub mod chat_history;
 pub mod chat_message;
@@ -47,12 +53,14 @@ pub mod pat;
 pub mod project;
 pub mod project_resource;
 pub mod runtime;
+pub mod scheduler;
 pub mod share_link;
 pub mod squad;
 pub mod subscriber;
 pub mod task;
 pub mod user;
 pub mod verification_code;
+pub mod wakeup;
 pub mod workspace;
 
 #[derive(Debug, thiserror::Error)]
