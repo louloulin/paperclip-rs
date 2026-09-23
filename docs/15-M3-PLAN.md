@@ -650,6 +650,14 @@ python3 scripts/route_parity.py --json | python3 -c "import json,sys;r=json.load
    且 §37 §5.4 实测「`AgentType → ProtocolFamily` 映射不存在」而 M3-7 的 hub 协商要按族决策 ⇒ 该表是 M3-7 的**前置**，
    先落批 1 是拆前置。`LUM-1440`（execenv，与 M3-7 共用 `mc-daemon/src/lib.rs` + `Cargo.toml`）与批 2/3 仍按本条串行。
    依据与实测见 `docs/37-M3-W3C-PREFLIGHT.md` §16.1。
+   **2026-09-23 08:00 状态更新**：批 1（`LUM-1441`）已在跑；**M3-4（PR #31）已合入 base** ⇒ `LUM-1438`（M3-7）的唯一阻塞解除，已在本 cycle 晋升。
+   合并波（#31/#32/#33 → base `463eb3f`）与合并树真库 10/10 门的证据见 `docs/37` §18.2。
+   **2026-09-23 08:30 状态更新（本 cycle 末实况）**：#34（M3-8 **批 1**）也已合入 ⇒ base = `4f0188e`；两个空位一次填满，并发 3/3 ——
+   `LUM-1438`（M3-7）run `01a0cba9-bd9`、`LUM-1442`（M3-8 **批 2**）run `01a0cba9-be1`（均 00:28:14Z 起）。
+   **就地修订上面「批 2/3 仍按本条串行」**：**批 2 的前置改写为「只依赖批 1 已合」** —— 按写集实测（`docs/37` §3 矩阵），
+   批 2 = `crates/mc-runtime/src/{adapters/**,catalog.rs,registry.rs}`，M3-7 = `mc-daemon/**` + `mc-http/src/routes/{daemon,runtimes}.rs` + `mc-ws/**` + `mc-repos/src/lib.rs`，**零交集**；
+   这与 `docs/17` §17.2「批 2 是唯一不需要任何 PR 合并的候选」同口径。**批 3 与 `LUM-1440`（execenv）仍守串行**（两者与 M3-7 共用 `mc-daemon/src/lib.rs`）。
+   另见 `docs/37` §18.3（两次晋升的判据）与 §18.6（批 1 取消用例「负载相关假红」的定位/复现/修复 `b8dca1a`）。
 6. **M3 集成 cycle**：按 §8.3 出门禁 → 一次性刷新 parity baseline → 写 `docs/34-M3-INTEGRATION.md`（照 `docs/21-M2-INTEGRATION-RECIPE.md` 的配方）→ 契约等价率按 §8.5 口径提升。
    **2026-09-23 新增纪律**（见 `docs/37` §16.2）：**切片 PR 不刷 `docs/fixtures/route-parity-baseline.json`** —— 一次性刷新就是本条的活；
    切片各刷一遍会让每两个改路由的切片 PR 必冲突（PR #31 × #32 实测同一 JSON 列表尾部相邻追加）。切片只跑门禁：⑦ 是**下界锁**，只对**丢**路由判红。
