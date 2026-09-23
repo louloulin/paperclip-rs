@@ -2473,6 +2473,7 @@ dependencies = [
  "mc-repos",
  "mc-runtime",
  "mc-secrets",
+ "mc-squad",
  "mc-storage",
  "mc-task",
  "mc-ws",

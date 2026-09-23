@@ -58,6 +58,9 @@ mc-openapi = { path = "../mc-openapi" }
 # - `mc-task`：task 状态机的**校验**入口（`TaskState::apply`），不重复建一套迁移规则。
 mc-daemon-proto = { path = "../mc-daemon-proto" }
 mc-task = { path = "../mc-task" }
+# M4-2（LUM-1473）：squad 成员 presence 的纯推导（`derive_member_status` / 五桶分类）。
+# 只走 domain 层，不碰 DB；放在 `mc-squad` 而不是 http 层是为了能单独做单元测试。
+mc-squad = { path = "../mc-squad" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
