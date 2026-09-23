@@ -77,11 +77,7 @@ pub async fn list_pending_for_update(
 }
 
 /// `ConsumeWakeupReceipts`：把收据绑到派出去（或合并进）的 task 上。
-pub async fn consume(
-    conn: &mut PgConnection,
-    ids: &[Uuid],
-    task_id: Option<Uuid>,
-) -> Result<u64> {
+pub async fn consume(conn: &mut PgConnection, ids: &[Uuid], task_id: Option<Uuid>) -> Result<u64> {
     if ids.is_empty() {
         return Ok(0);
     }
@@ -143,11 +139,7 @@ pub async fn delete_other_pending_time_due(
 }
 
 /// `DeleteExpiredWakeupReceipts`：只清**已处理**且超期的收据（批 1000，`SKIP LOCKED`）。
-pub async fn delete_expired(
-    pool: &PgPool,
-    cutoff: DateTime<Utc>,
-    batch: i64,
-) -> Result<u64> {
+pub async fn delete_expired(pool: &PgPool, cutoff: DateTime<Utc>, batch: i64) -> Result<u64> {
     let done = sqlx::query(
         "WITH batch AS MATERIALIZED ( \
              SELECT expired.id FROM issue_wakeup_receipt expired WHERE expired.processed_at < $1 \

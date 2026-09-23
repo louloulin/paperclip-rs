@@ -47,7 +47,7 @@ impl sqlx::error::DatabaseError for FakeDbError {
         self.constraint
     }
 
-    fn message(&self) -> &str {
+    fn message(&self) -> &'static str {
         "fake db error"
     }
 
@@ -65,7 +65,10 @@ impl sqlx::error::DatabaseError for FakeDbError {
 }
 
 fn db_error(code: &'static str, constraint: Option<&'static str>) -> sqlx::Error {
-    sqlx::Error::Database(Box::new(FakeDbError { code: Some(code), constraint }))
+    sqlx::Error::Database(Box::new(FakeDbError {
+        code: Some(code),
+        constraint,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -77,9 +80,15 @@ fn capacity_violation_is_identified_by_constraint_name() {
     let err = db_error("23514", Some("issue_wakeup_active_limit"));
     assert!(is_active_limit_violation(&err));
     // 同类 SQLSTATE 但换个约束名（例如同一张表上的其它 CHECK）不算容量超限。
-    assert!(!is_active_limit_violation(&db_error("23514", Some("issue_wakeup_kind_check"))));
+    assert!(!is_active_limit_violation(&db_error(
+        "23514",
+        Some("issue_wakeup_kind_check")
+    )));
     // 约束名对但 SQLSTATE 不是 CHECK 违规 —— 仍按约束名认（上游同口径：只看 ConstraintName）。
-    assert!(is_active_limit_violation(&db_error("23503", Some("issue_wakeup_active_limit"))));
+    assert!(is_active_limit_violation(&db_error(
+        "23503",
+        Some("issue_wakeup_active_limit")
+    )));
     assert!(!is_active_limit_violation(&db_error("23514", None)));
     assert!(!is_active_limit_violation(&sqlx::Error::RowNotFound));
 }
@@ -102,7 +111,10 @@ fn unique_violation_reports_the_index_name() {
     // 其它唯一冲突必须让 `capture_issue_wakeup` 重新抛（不能被当成重复事件吞掉）。
     let other = db_error("23505", Some("issue_wakeup_pkey"));
     assert!(is_unique_violation(&other));
-    assert_eq!(unique_violation_constraint(&other), Some("issue_wakeup_pkey"));
+    assert_eq!(
+        unique_violation_constraint(&other),
+        Some("issue_wakeup_pkey")
+    );
     // 非唯一冲突时不给约束名（调用方据此区分「重复事件」与「真冲突」）。
     assert_eq!(unique_violation_constraint(&db_error("23514", None)), None);
 }
@@ -112,12 +124,7 @@ fn unique_violation_reports_the_index_name() {
 // ---------------------------------------------------------------------------
 
 fn keys(value: &serde_json::Value) -> Vec<String> {
-    let mut keys: Vec<String> = value
-        .as_object()
-        .expect("object")
-        .keys()
-        .cloned()
-        .collect();
+    let mut keys: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
     keys.sort();
     keys
 }
@@ -262,7 +269,10 @@ fn issue_wakeup_view_serialises_with_column_names() {
         "last_task_status",
     ]));
     expected.sort_unstable();
-    assert_eq!(keys(&serde_json::to_value(&view).expect("serialize")), expected);
+    assert_eq!(
+        keys(&serde_json::to_value(&view).expect("serialize")),
+        expected
+    );
 }
 
 #[test]

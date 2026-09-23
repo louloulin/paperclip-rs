@@ -42,7 +42,9 @@ use serde_json::Value as JsonValue;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::{map_wakeup_err, new_id, IssueWakeupView, WakeupRow};
+use super::{
+    map_wakeup_err, map_wakeup_write_err, new_id, IssueWakeupView, WakeupRepoError, WakeupRow,
+};
 use crate::{RepoError, Result};
 
 /// 上游 `ListReadyWakeups` 的批大小（`LIMIT 100`）。
@@ -150,20 +152,18 @@ pub struct WakeupTaskRow {
 // 读（`&PgPool`）
 // ---------------------------------------------------------------------------
 
-/// `GetIssueWakeup`：按 (id, workspace_id) 读一行（handler 的 404 判定）。
+/// `GetIssueWakeup`：按 (`id`, `workspace_id`) 读一行（handler 的 404 判定）。
 pub async fn get_in_workspace(
     pool: &PgPool,
     workspace_id: Uuid,
     id: Uuid,
 ) -> Result<Option<WakeupRow>> {
-    sqlx::query_as::<_, WakeupRow>(
-        "SELECT * FROM issue_wakeup WHERE id = $1 AND workspace_id = $2",
-    )
-    .bind(id)
-    .bind(workspace_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(map_wakeup_err)
+    sqlx::query_as::<_, WakeupRow>("SELECT * FROM issue_wakeup WHERE id = $1 AND workspace_id = $2")
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_wakeup_err)
 }
 
 /// `LocklessWakeup`：不加锁读一行（`CheckClaim` 用；派发路径**不**用它）。
@@ -323,7 +323,7 @@ pub async fn lock_source_task(
     conn: &mut PgConnection,
     task_id: Uuid,
     issue_id: Uuid,
-) -> Result<Option<WakeupSourceTaskRow>> {
+) -> std::result::Result<Option<WakeupSourceTaskRow>, WakeupRepoError> {
     sqlx::query_as::<_, WakeupSourceTaskRow>(
         "SELECT id, agent_id, status, completed_at, retry_of_task_id, rerun_of_task_id \
          FROM agent_task_queue WHERE id=$1 AND issue_id=$2 FOR UPDATE NOWAIT",
@@ -332,11 +332,16 @@ pub async fn lock_source_task(
     .bind(issue_id)
     .fetch_optional(conn)
     .await
-    .map_err(map_wakeup_err)
+    .map_err(map_wakeup_write_err)
 }
 
 /// `CreateIssueWakeup`：`id` 用 UUIDv7（与上游 `dbid.NewV7()` 同口径）。
-pub async fn create(conn: &mut PgConnection, new: &NewWakeup) -> Result<WakeupRow> {
+///
+/// 唯一会抛 `23514 + issue_wakeup_active_limit` 的写路径（`530` 的容量触发器）⇒ 专用错误类型。
+pub async fn create(
+    conn: &mut PgConnection,
+    new: &NewWakeup,
+) -> std::result::Result<WakeupRow, WakeupRepoError> {
     sqlx::query_as::<_, WakeupRow>(
         "INSERT INTO issue_wakeup(id,workspace_id,issue_id,agent_id,created_by,source_task_id,parent_comment_id,instruction,kind,mode,event_types,filter_agent_id,filter_task_id,filter_actor_type,filter_actor_id,interval_seconds,cron_expression,timezone,next_fire_at) \
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *",
@@ -362,14 +367,18 @@ pub async fn create(conn: &mut PgConnection, new: &NewWakeup) -> Result<WakeupRo
     .bind(new.next_fire_at)
     .fetch_one(conn)
     .await
-    .map_err(map_wakeup_err)
+    .map_err(map_wakeup_write_err)
 }
 
 /// 上游 `save` 的 upsert UPDATE（`wakeup.sql` 里没有独立 query 名：它内联在 Go 里）。
 ///
 /// 语义逐字保留：`enabled=true` + 清 `disabled_at` + `revision=revision+1` +
 /// **清 `last_task_id`/`last_error`**（重订阅后不再显示上一次的派发痕迹）。
-pub async fn replace(conn: &mut PgConnection, id: Uuid, new: &NewWakeup) -> Result<WakeupRow> {
+pub async fn replace(
+    conn: &mut PgConnection,
+    id: Uuid,
+    new: &NewWakeup,
+) -> std::result::Result<WakeupRow, WakeupRepoError> {
     sqlx::query(
         "UPDATE issue_wakeup SET agent_id=$2,created_by=$3,source_task_id=$4,parent_comment_id=$5,instruction=$6,kind=$7,mode=$8,event_types=$9,filter_agent_id=$10,filter_task_id=$11,interval_seconds=$12,cron_expression=$13,timezone=$14,next_fire_at=$15,filter_actor_type=$16,filter_actor_id=$17,enabled=true,disabled_at=NULL,revision=revision+1,last_task_id=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
     )
@@ -392,8 +401,8 @@ pub async fn replace(conn: &mut PgConnection, id: Uuid, new: &NewWakeup) -> Resu
     .bind(new.filter_actor_id)
     .execute(&mut *conn)
     .await
-    .map_err(map_wakeup_err)?;
-    lock(conn, id).await
+    .map_err(map_wakeup_write_err)?;
+    lock(conn, id).await.map_err(WakeupRepoError::from)
 }
 
 /// `EditInstruction` 的 UPDATE：**不 bump revision**，`workspace_id` 也进 WHERE（上游口径）。
@@ -428,11 +437,7 @@ pub async fn disable(conn: &mut PgConnection, id: Uuid) -> Result<u64> {
 }
 
 /// 派发路径的自动停用（上游 `dispatch` 内联 SQL）：带 `last_error` 原因。
-pub async fn disable_with_reason(
-    conn: &mut PgConnection,
-    id: Uuid,
-    reason: &str,
-) -> Result<u64> {
+pub async fn disable_with_reason(conn: &mut PgConnection, id: Uuid, reason: &str) -> Result<u64> {
     let done = sqlx::query(
         "UPDATE issue_wakeup SET enabled=false,disabled_at=COALESCE(disabled_at,now()),last_error=$2 WHERE id=$1",
     )
@@ -535,5 +540,3 @@ pub async fn touch_dispatch(conn: &mut PgConnection, id: Uuid) -> Result<u64> {
         .map_err(map_wakeup_err)?;
     Ok(done.rows_affected())
 }
-
-

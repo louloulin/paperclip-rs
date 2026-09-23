@@ -32,6 +32,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::RepoError;
@@ -429,4 +430,56 @@ fn constraint_name(err: &sqlx::Error) -> Option<&str> {
 /// 单独包一层是为了让 `FOR UPDATE` 拿不到行（上游 `pgx.ErrNoRows` → 404）与真错误分开。
 pub(crate) fn map_wakeup_err(err: sqlx::Error) -> RepoError {
     crate::workspace::map_sqlx_err(err)
+}
+
+// ---------------------------------------------------------------------------
+// 写路径特有的失败（容量触发器 / NOWAIT 锁）
+// ---------------------------------------------------------------------------
+
+/// 只有 `issue_wakeup` 的**写路径**会踩到的两个特例 —— 它们必须与普通 `RepoError` 分开，
+/// 否则 HTTP 层拿不到上游要的两种响应形态（400 `wakeup_capacity_exceeded` /
+/// 409 `wakeup_source_busy`）：
+///
+/// - [`Self::Capacity`]：`530` 的 `guard_issue_wakeup_capacity()` 抛 `23514` +
+///   `CONSTRAINT='issue_wakeup_active_limit'`；message 取库的原文（上游原样写给客户端）；
+/// - [`Self::SourceBusy`]：`LockWakeupSourceTask` 的 `FOR UPDATE NOWAIT` 报 `55P03`。
+///
+/// 其余一律 [`Self::Repo`]，由调用方按 [`RepoError`] 判 404/409/500。
+#[derive(Debug, Error)]
+pub enum WakeupRepoError {
+    /// 活跃 wakeup 数量超上限（`32`/`1000`，常量在 `mc_core::wakeup`）。
+    #[error("{0}")]
+    Capacity(String),
+    /// 源 run 正在变更（`NOWAIT` 拿不到锁），注册方可重试。
+    #[error("source run is changing")]
+    SourceBusy,
+    /// 其它仓储错误。
+    #[error(transparent)]
+    Repo(#[from] RepoError),
+}
+
+impl WakeupRepoError {
+    /// 转成 [`RepoError`]（丢掉两个特例的区分）——给只用 `RepoError` 的老调用点用。
+    #[must_use]
+    pub fn into_repo_error(self) -> RepoError {
+        match self {
+            Self::Capacity(message) => RepoError::Db(message),
+            Self::SourceBusy => RepoError::Db("source run is changing".to_string()),
+            Self::Repo(inner) => inner,
+        }
+    }
+}
+
+/// 写路径的 sqlx 错误分类（**按约束名 / SQLSTATE**，不匹配文案）。
+pub(crate) fn map_wakeup_write_err(err: sqlx::Error) -> WakeupRepoError {
+    if is_active_limit_violation(&err) {
+        let message = err
+            .as_database_error()
+            .map_or_else(|| err.to_string(), |db| db.message().to_string());
+        return WakeupRepoError::Capacity(message);
+    }
+    if is_source_busy(&err) {
+        return WakeupRepoError::SourceBusy;
+    }
+    WakeupRepoError::Repo(crate::workspace::map_sqlx_err(err))
 }

@@ -55,10 +55,7 @@ pub struct WorkspaceWakeupQuery {
 }
 
 /// `ListWorkspaceWakeups`：`items` / `total` / `counts` / `agents` 一次成型。
-pub async fn list_workspace_wakeups(
-    pool: &PgPool,
-    q: &WorkspaceWakeupQuery,
-) -> Result<JsonValue> {
+pub async fn list_workspace_wakeups(pool: &PgPool, q: &WorkspaceWakeupQuery) -> Result<JsonValue> {
     sqlx::query_scalar::<_, JsonValue>(WORKSPACE_WAKEUPS_SQL)
         .bind(q.workspace_id)
         .bind(&q.agent_ids)
