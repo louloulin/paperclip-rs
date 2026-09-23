@@ -669,7 +669,7 @@ pub(crate) async fn ws(
         } => {
             // 用户连接的 runtime scope 本地**不加载**（`runtime_ids` 只由 `mdt_` token
             // 填），所以非空收窄 fail-closed 回 404 —— 与上游「不在你名下 ⇒ 404」同文案。
-            // 上游允许用户连接声明自己可见的 runtime；本地缺这条查询，登记在 `docs/44`。
+            // 上游允许用户连接声明自己可见的 runtime；本地缺这条查询，登记在 `docs/43-M3-7-FU-WS-CLOSE.md`。
             if !requested.is_empty() {
                 return not_found("runtime not found").into_response();
             }

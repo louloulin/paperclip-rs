@@ -19,7 +19,7 @@
 //! 发一条**脱敏**的 `agent:status`（载荷是 `AgentDto`，从不带 env 值），投递面是
 //! **该 workspace 的用户连接**（`Hub::notify_agent_status`）。
 //!
-//! 与上游的两处差异（登记在 `docs/44`）：① 本地 `AgentDto.skills` 恒为空（没有上游
+//! 与上游的两处差异（登记在 `docs/43-M3-7-FU-WS-CLOSE.md`）：① 本地 `AgentDto.skills` 恒为空（没有上游
 //! `attachAgentSkills` 的等价物），上游为此专门重读过 skills；② 上游的
 //! `invocation_targets` 会一并带上，本片不额外查它（省一次 DB 往返，客户端仍以 HTTP 面为准）。
 

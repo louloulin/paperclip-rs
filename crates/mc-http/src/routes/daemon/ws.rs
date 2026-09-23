@@ -82,7 +82,7 @@ pub(crate) fn install(state: &Arc<AppState>) {
 ///
 /// **偏离**：上游对**重复出现的** `runtime_id=` 参数会逐个合并，而 `HashMap` 只能留住
 /// 最后一个 —— 即 `?runtime_id=A&runtime_id=B` 本地只看到 `B`。逗号形态
-/// （`?runtime_ids=A,B`）逐字一致，而 daemon 升级时用的正是它。已登记在 `docs/44`。
+/// （`?runtime_ids=A,B`）逐字一致，而 daemon 升级时用的正是它。已登记在 `docs/43-M3-7-FU-WS-CLOSE.md`。
 pub(crate) fn requested_runtime_ids(query: &HashMap<String, String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut push = |raw: &str| {

@@ -157,7 +157,7 @@ pub struct ChatDonePayload {
 /// 上游把同一份 `taskEvent` 契约用在 `task:queued` / `task:running` / `task:completed` /
 /// `task:failed` / `task:cancelled` 上，所以这里的字段集与状态无关，只有 `status` 变。
 /// 上游还有两个信封级 scope 提示（`TaskID` / `ChatSessionID`），本地帧面只有
-/// `{type, payload}` 一层信封 ⇒ 它们落在载荷里（值相同，见 `docs/44` 偏离表）。
+/// `{type, payload}` 一层信封 ⇒ 它们落在载荷里（值相同，见 `docs/43-M3-7-FU-WS-CLOSE.md` 偏离表）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskQueuedPayload {
     /// 任务 id。
