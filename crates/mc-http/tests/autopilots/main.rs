@@ -26,6 +26,9 @@
 //! - `autopilots/deliveries_replay.rs`：#20 `…/deliveries/:deliveryId/replay`（判负阶梯 + 幂等，M5-4）
 //! - `autopilots/dispatch.rs`：派发**服务层**三块（`create_issue` / `run_only` / 同步回写，M5-4；
 //!   不经 HTTP，原因见该文件头）
+//! - `autopilots/webhook.rs`：无认证入站面 #21 `POST /api/webhooks/autopilots/:token`（M5-5 / LUM-1570；
+//!   无效 token 非泄漏 / 413 / 400 / 签名 401 / 429 / 去重幂等 / 事件作用域）
+//! - `autopilots/webhook_worker.rs`：同一片 B 段（worker 认领→派发→收口）的真库 e2e（M5-5）
 #![cfg(feature = "test-util")]
 
 mod auth;
@@ -43,3 +46,6 @@ mod support;
 mod trigger_crud;
 mod triggers;
 mod usage;
+mod webhook;
+mod webhook_support;
+mod webhook_worker;
