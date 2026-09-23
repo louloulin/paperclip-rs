@@ -1,0 +1,29 @@
+[package]
+name = "mc-skill"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M6 anchor scaffold 占位 — skill 前端件（frontmatter / 二进制判定 / 保留路径 / 归档 / 导入源判定 / 内置物化）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M6-0 anchor（LUM-1665 / docs/57-M6-PLAN.md §5）：依赖一次声明到位，此后 M6 各切片
+# **不得**再新增三方依赖（要加走 docs/15 §8.4 仲裁，由集成方加）。本 crate 是**纯逻辑**：
+# 不碰 HTTP、不碰数据库、不依赖 `mc-http`/`mc-repos`（M6-3 的取件走 route 层的 reqwest，
+# 见 `routes/skills/import.rs` 的「不做什么」）。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+zip = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+mc-core = { path = "../mc-core" }

@@ -4856,3 +4856,105 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
   ⇒ 与 §6.1 预测（`local 325` / `implemented 263 real + 0 placeholder` / `known_gap 193` / `local_only 9`）**逐字一致**；`unclaimed 0` 说明 `owners.M6 57` 已落在 `docs/fixtures/m6-declared-routes.tsv`（该行输出不含 owners 分列）。
 - ⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306` = 与 M5-INT（§52.5）**逐字不变**（骨架是 0 路由片 ⇒ 预期；**非回归**）；⑩ `violations=0`。
 - ⚠️ **口径警告（下一轮必读）**：这次 10/10 跑在 `merge(8d33080)` 的树上，而本 cycle 的 docs-only `6087d46` **在其之后**才推上 base ⇒ **该合并树 ≠ 未来 base 树**（差一个 `docs/37`）。下一轮合并前**仍须当场重跑**（热 ≈245s）才可当判据 —— 这就是 §52.6 第 2 条「合并树当场重跑」的理由；也是 anchor 自己在合入 `8d33080` 后重跑一次的原因。
+## §54 M6-0 anchor（`LUM-1665`）交付：共享骨架落定、M0 占位预删、⑦ 基线 329→325
+
+### 54.1 交付面（自身分支 `679959b`；合并树 `6e99d87`）
+
+- **分支**：`agent/devbox5/356d10293a55`，起手 `7039718`（= §51 的 base `00034b7` + §51 docs-only）。
+  交付时 base 已前进到 **`75a317d`**（§52 合入 #64）⇒ **真合**（`merge --no-ff`，本片第一版合并树 `6e99d87`）；
+  推 PR 后 base 又前进两次（`6087d46` §53 cycle / `fe0dde6` §53.3b，**均 docs-only**）⇒ **第二次真合** =
+  `96eb2f0`，仅 `docs/37` 冲突（两边都追加了新 §）：按 cycle 的 §53 在前、本片交付记录改号 **§54** 在后解决。
+  **门禁不继承**：两次合并树各自当场跑完 `--with-db`。
+- **提交面**：`79 files / +3062 / −453`。分区计数：`routes/**` 27、`mc-skill/**` 8、`mc-plugin-host/**` 8、
+  `mc-repos/src/plugin/**` 8、`mc-mcp/**` 6、`mc-repos/src/skill/**` 5、`mc-plugin-protocol/**` **−5 文件**（整删）、
+  锚点文件 `mount.rs`(+69/−8) / `routes/mod.rs`(+15) / `state.rs`(+155) / `Cargo.lock`(+338/−7)。
+- **0 路由实现 / 0 SQL / 0 迁移**：57 个 M6 路由键只落**空 router**（`Router::new()`），
+  14 张表本来就都在 `migrations/upstream/**`（§9.1 口径，本波 0 迁移）。
+- 骨架按 `docs/57` §3.2 写集矩阵落桩（26 个路由文件 + 5 个聚合器 + 4 个 `mc-repos` 子模块组 +
+  3 个新 crate 的 18 个 src 文件），**每个文件都写明「写者切片 + 上游源 + 门 ⑩ 行数预测」**：
+  后续切片只填自己的文件，不再有人碰 `mount.rs` / `routes/mod.rs` / 各 `lib.rs` / 根 `Cargo.toml` /
+  `Cargo.lock` / ⑦ 基线 / allowlist —— 这是「锚点独占共享写者」的全部意义。
+
+### 54.2 合并树门禁：**10/10 绿**（真库 `multica_lum1665`，一次性角色 `mc_lum1665`）
+
+`MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ ①fmt 1s ②build 44s ③clippy 16s
+④clippy-test-util 17s ⑤test 33s ⑥db 68s ⑧schema-drift 31s ⑦route-parity 1s ⑨conformance 34s ⑩file-size 0s
+（`overall: PASS — 10/10 gate(s) green in 245s`，树 = `6e99d87`）。
+**最终树 `96eb2f0` 当场重跑**（满足 §53.3b 的口径警告：docs-only 推 base 后合并树变了就必须重跑）：
+**10/10 绿 / 80s**（①2s ⑤33s ⑥13s ⑧25s ⑨6s，其余 0s —— 热 `target/`，读数与上轮**逐项同值**）。
+
+- ⑤ = **1378 passed / 0 failed**（101 target）；⑥ migrate 绿 + e2e = **372 passed / 0 failed**（21 target）。
+- ⑨（`--no-db`）= `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`、契约等价率 `5/365=1.4%`、
+  已接入路由等价率 `5/28=17.9%`，`report matches crates/mc-conformance/report.json`（本片**不**重生成快照）。
+- ⑩ = 0 违规。**踩到一个新坑**：`routes/auth.rs` 加两行字段后变 **1709 > 基线 1704** ⇒ 门 ⑩ 报
+  「超过基线记录（1704 行），只允许变短」。按规矩**不能**抬基线，只能就地压回：把该处两段历史注释
+  从 4+3 行压成 1+1 行（信息不丢，压缩后 1704 = 基线）。⇒ **凡在「贴线」文件（1704/1709 这种）里加代码，
+  先算行数账**：加 N 行就要在同一文件里先省 N 行。
+- ③/④ 的内容首跑（热 target）各 16s/17s；本片新 crate 的 `doc_markdown`（pedantic）命中
+  `dev_mode` / `IdP` / `DoD` 三处 ⇒ 加反引号即过（`-D warnings` 下 pedantic 等效 deny，见 §8）。
+
+### 54.3 与 §51.4 / §52.3 预测**逐项比对**（全部命中）
+
+| 读数 | §51.4/§52.3 预测 | 本轮实测 |
+| --- | --- | --- |
+| ⑦ `local` | 325 | **325** |
+| ⑦ `baseline` | 329 → 325 | **325** |
+| `implemented` | `263 real + 0 placeholder` | **`263 real + 0 placeholder = 263/456`** |
+| `known_gap` | 193 | **193** |
+| `owners.M6` | 57 | **57**（`gaps by owner: M6=57 M9=33 M7=24 M8=24 M3+=16 M2-A=14 M3=11 M2-E=9 M10=5`） |
+| `unclaimed` / `regression` | 0 / 0 | **0 / 0** |
+| `local_only` | 9 | **9**（7 真 local 路由 + `GET|POST /api/plugins`、`/api/skills` 占位已消失） |
+| `slash_alias_audit --declared` | `3 → 5 defect`（非回归） | **`5 defect(s), 0 warning(s)`**（5 个键全在 M6-2） |
+| `slash_alias_audit`（默认） | 0 defect / 0 allowlisted | **0 defect，本文件已空** |
+
+**⑤/⑥ 的 delta 归因（逐条，别当回归）**：⑤ 从 base 的 **1380** 变 **1378**（−2）= 删
+`mc-plugin-protocol` 的 **8** 条 − `mc-core` 两个旧 stub 的 **2** 条（被重写替换）+ 本片新增
+**7**（mc-core skill 3 + plugin 4）+ **1**（`state.rs` 密钥解析）。⑥ **不动**（372），因为本片
+**0 条 `#[ignore]`** —— 与 §52.7 的「⑥ delta 可当不变式」互补：**删 crate 会连带删测试**，
+所以 ⑤ 的「不变」只在「不增删 crate 且不增删用例」时成立。
+
+### 54.4 归位判断与偏离登记（M6-1…M6-9 按这两处读）
+
+- `docs/32-M3-DAEMON-FACE.md` **§9**（新增）：文件→写者表（含锚点冻结的 10 个共享文件）、
+  4 处归位判断、`mc-core` 的「不做什么」、依赖版本 MSRV 依据、本片门禁读数。
+- `docs/57-M6-PLAN.md` **§9.5**（新增）：4 处落地修订 + 1 处新增，逐条给理由与影响面。
+  摘要：① `mc-skill/src/git.rs` → **`source.rs`**（上游只有三个 HTTP 源、无 git 克隆路径）；
+  ② `POST /api/plugin-bridge/v1/hooks/{key}` 落 **`routes/plugin_bridge/hooks.rs`**（`hooks_job.rs` 退为 0 路由的 job 粘合）；
+  ③ `/api/agents/{id}/skills*` 由 **M6-4 自己**建 `routes/agents/skills.rs`（锚点不碰 M2/M4 既成文件）；
+  ④ `state.rs` 除 `plugin_key` 外**加** `plugin_surface_origin`（锚点冻结 ⇒ 不让 M6-6/M6-7 回来改）；
+  ⑤ `plugin_key` 的类型定为 `mc-http::state::PluginSecretKey { key: [u8; 32] }`（唯一出口，`mc-plugin-host` 只收 `&[u8]`）。
+- **密钥口径**（照上游 `internal/util/secretbox/secretbox.go:94` `LoadKey`）：`MULTICA_PLUGIN_SECRET_KEY`
+  取 **base64（STANDARD）** → 必须**恰好 32 字节**；未设 / 空串 / 非 base64 / 长度不符 ⇒ **`None`（视为未配置）**，
+  **不 trim、不 panic、不用零密钥**。`MULTICA_PLUGIN_SURFACE_ORIGIN` = `TrimSpace` 后去尾 `/`，空 ⇒ `None`
+  （origin 合法性校验归 M6-6，不是锚点的事）。两条都有 `#[cfg(test)]` 单测锁口径（含「不 trim」的反例）。
+
+### 54.5 下一轮起手
+
+0. **本片已交 PR #65**（`base = fe0dde6`；`head` = 本分支最终提交，含本行所在提交），issue 置 `in_review`。
+   ⚠️ **并发硬约束（新，源自 §53.2 的 P0 解除）**：`LUM-1659`（M5-9）写集含**根 `Cargo.lock` 3 行** +
+   `apps/mc-server/**`；本 anchor 也写 `Cargo.lock`（+338/−7）⇒ **两者不可同轮在飞**：先合 #65（或先合 M5-9），
+   第二个合并时 `Cargo.lock` 若有冲突**只重新生成、不手工合**（`cargo metadata` + `--locked` 重建）。
+   `state.rs` / `routes/mount.rs` 等锚点冻结点与 M5-9 无交集，唯一的交集就是 `Cargo.lock`。
+1. `LUM-1665` 交 PR ⇒ 走 §39.3/§42.2 判据链（预检一 == PR API；base 已前进 ⇒ 真合；合并树**当场重跑**
+   `--with-db`；`tree(base) == tree(预检)` 且 `git diff` 空）。
+2. 合入后 base 含 M6 骨架 ⇒ **stage 2 三片并行**：`LUM-1666`（M6-1 契约凭据）∥ `LUM-1667`（M6-2 skill 读写，
+   **5 个双形态键全在它**）∥ `LUM-1668`（M6-3 skill 导入/刷新）。三片写集互不相交（§3.2 矩阵），
+   且都不再碰锚点文件 ⇒ **M6 代码片之间的 ⑦ 基线争用到此解除**（下一次刷新归 M6-INT `LUM-1675`）。
+3. `LUM-1659`（M5-9）仍只在 owner 回复 P0 后晋升；`LUM-1673`（M6-8）依赖它 ⇒ 未合时只交桩级证据 + 登记。
+4. `LUM-1673` 的另一个前置已解：`routes/plugins/hooks_job.rs` 与 `plugin_bridge/hooks.rs` 的落点争议
+   由本锚点裁定（见 §54.4 ②），M6-8 可直接开工。
+
+### 54.6 本轮 lesson
+
+- **【「贴线」文件里加代码 = 先做行数账】** 门 ⑩ 的基线**只减不增**，所以在基线记录内的文件（`routes/auth.rs` 1704）
+  里每加一行都必须同文件省一行；本轮加 5 行（2 字段 + 3 注释）直接变红，压缩注释后回到 1704。
+  判断「会不会撞线」要在**写之前**用 `scripts/file_size_check.py` 算，不要等门 ⑩ 报错再返工。
+- **【删 crate 会连带删测试 ⇒ ⑤ 的 delta 必须逐项归因】** 本片 `⑤ 1380 → 1378`，不是回归：
+  `mc-plugin-protocol` 8 条被删、`mc-core` 旧 stub 2 条被替换、新增 8 条（7+1）。
+  §52.7 的「⑥ delta = 新增 `#[ignore]` 数」只在**不增删 crate** 时成立；两条 lesson 合起来才是完整不变式。
+- **【锚点期的「空 router」也要登记路由键】** 26 个路由文件虽然 `Router::new()` 全空，但每文件顶部的
+  键表（方法 + 路径 + router.go 行号 + 尾斜杠形态 + 门 ⑩ 预测）让后续切片**不必回读上游 Go 源码**；
+  `slash_alias_audit` 甚至把注释里的键字面量读作「已注册」⇒ 键表写法本身就是防漏注册的自检面。
+- **【锚点的「预测命中」是最好的交付证据】** §51.4 用 **delta 平移**现算的 8 项预测（325/263+0/193/57/0/0/9/5）
+  本轮**逐项命中** ⇒ 说明 `docs/57` §6.1 的 delta 模型在 M6 上依然准确；后续每片都应照此自检，
+  一旦某项偏了，先怀疑实现漏交，而不是先改基线。
