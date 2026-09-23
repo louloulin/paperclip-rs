@@ -1,4 +1,4 @@
-//! M3-8 批 1 的 7 个 adapter：走**公开 API** 验证注册表 + 真实 argv + 真实事件流。
+//! M3-8 批 1 / 批 2 的 adapter：走**公开 API** 验证注册表 + 真实 argv + 真实事件流。
 //!
 //! 分工与 `pi_local_e2e.rs` 一致：
 //!
@@ -7,12 +7,17 @@
 //!   **argv 契约**与**协议族映射**钉在公开面上 —— 这两样都在 `capabilities()` /
 //!   `recorded_argv()` 上可观测，不需要读私有实现。
 //!
+//! 批 2 的 ACP 5 项（kimi / kiro / qoder / qoderclicn / traecli）加 grok 共 6 个
+//! provider 走**同一套**握手，所以这里用同一个逐帧回放用例一次性证它们：
+//! 差异只允许出现在 argv 与差异表（resume 方法 / 认证 / prompt 字段）上。
+//!
 //! 假 CLI 现场生成，不依赖机器上装了任何一个 provider。
 
 #![cfg(unix)]
 
 use std::sync::Arc;
 
+use mc_runtime::conformance::response_frame_groups;
 use mc_runtime::{
     AdapterRegistry, AgentType, FailureReason, FakeCli, LaunchRequest, ProtocolFamily, RunStatus,
     RuntimeAdapter, RuntimeEvent,
@@ -29,6 +34,44 @@ const BATCH1: [AgentType; 7] = [
     AgentType::Deveco,
 ];
 
+/// 批 2 的 8 个新类型（按上游白名单顺序）。
+const BATCH2: [AgentType; 8] = [
+    AgentType::Cursor,
+    AgentType::Kimi,
+    AgentType::Kiro,
+    AgentType::Antigravity,
+    AgentType::Qoder,
+    AgentType::QoderCliCn,
+    AgentType::TraeCli,
+    AgentType::Grok,
+];
+
+/// 批 2 里共享 ACP 骨架的 6 个 provider：`(类型, 会话 id, 要不要先认证)`。
+///
+/// 只有 grok 的 `AcpAuth` 不是 `None`，所以只有它的回放里带 `id=2` 的
+/// `authenticate` 应答 —— 回放帧是按**客户端实际发的那几帧**闸门触发的，多一帧就死等。
+const ACP_FAMILY: [(AgentType, &str, bool); 6] = [
+    (AgentType::Kimi, "acp-int-kimi", false),
+    (AgentType::Kiro, "acp-int-kiro", false),
+    (AgentType::Qoder, "acp-int-qoder", false),
+    (AgentType::QoderCliCn, "acp-int-qoderclicn", false),
+    (AgentType::TraeCli, "acp-int-traecli", false),
+    (AgentType::Grok, "acp-int-grok", true),
+];
+
+/// 这个类型是不是批 2 里共享 ACP 骨架的那 6 个（kimi 在批 1 落地，同骨架）。
+fn is_acp_family(kind: AgentType) -> bool {
+    matches!(
+        kind,
+        AgentType::Kimi
+            | AgentType::Kiro
+            | AgentType::Qoder
+            | AgentType::QoderCliCn
+            | AgentType::TraeCli
+            | AgentType::Grok
+    )
+}
+
 /// 按类型造一个指向假 CLI 的 adapter（只走公开构造器）。
 fn adapter_for(kind: AgentType, cli: &FakeCli) -> Arc<dyn RuntimeAdapter> {
     let path = cli.path();
@@ -40,13 +83,22 @@ fn adapter_for(kind: AgentType, cli: &FakeCli) -> Arc<dyn RuntimeAdapter> {
         AgentType::Opencode => Arc::new(mc_runtime::Opencode::with_executable(path)),
         AgentType::Codearts => Arc::new(mc_runtime::Codearts::with_executable(path)),
         AgentType::Deveco => Arc::new(mc_runtime::Deveco::with_executable(path)),
-        other => panic!("{other} 不在批 1"),
+        // 批 2（本片）：五个 ACP + 两个 stream-json + grok。
+        AgentType::Kimi => Arc::new(mc_runtime::Kimi::with_executable(path)),
+        AgentType::Kiro => Arc::new(mc_runtime::Kiro::with_executable(path)),
+        AgentType::Qoder => Arc::new(mc_runtime::Qoder::with_executable(path)),
+        AgentType::QoderCliCn => Arc::new(mc_runtime::QoderCliCn::with_executable(path)),
+        AgentType::TraeCli => Arc::new(mc_runtime::TraeCli::with_executable(path)),
+        AgentType::Grok => Arc::new(mc_runtime::Grok::with_executable(path)),
+        AgentType::Cursor => Arc::new(mc_runtime::Cursor::with_executable(path)),
+        AgentType::Antigravity => Arc::new(mc_runtime::Antigravity::with_executable(path)),
+        other => panic!("{other} 不在批 1 / 批 2"),
     }
 }
 
-/// 注册表里的 8 项（按上游白名单顺序）—— 顺序本身是断言的一部分。
+/// 注册表里的 16 项（按上游白名单顺序）—— 顺序本身是断言的一部分。
 #[test]
-fn registry_exposes_batch1_plus_pi_in_whitelist_order() {
+fn registry_exposes_every_processed_kind_in_whitelist_order() {
     let registry = AdapterRegistry::with_builtin_adapters();
     assert_eq!(
         registry.names(),
@@ -58,31 +110,72 @@ fn registry_exposes_batch1_plus_pi_in_whitelist_order() {
             "opencode",
             "codearts",
             "deveco",
-            "pi"
+            "pi",
+            "cursor",
+            "kimi",
+            "kiro",
+            "antigravity",
+            "qoder",
+            "qoderclicn",
+            "traecli",
+            "grok",
         ]
     );
-    assert_eq!(registry.len(), 8);
-    assert!(
-        registry.get(AgentType::Qwen).is_none(),
-        "批 2 的类型还没注册"
-    );
+    assert_eq!(registry.len(), 16);
+    for kind in BATCH2 {
+        assert!(registry.get(kind).is_some(), "{kind} 应已注册");
+        assert_ne!(
+            kind.protocol_family(),
+            ProtocolFamily::Opaque,
+            "{kind} 的协议族不该还是 Opaque"
+        );
+    }
+    // 批 3 的类型还没注册（不是“随便给个句柄”）。
+    for kind in [AgentType::Qwen, AgentType::Openclaw, AgentType::Dsh] {
+        assert!(registry.get(kind).is_none(), "{kind} 还没落地");
+    }
 }
 
 /// adapter 自报的协议族必须与 `catalog` 的映射一致，且**都不是 `Opaque`**。
 #[test]
-fn every_batch1_adapter_declares_a_classified_protocol_family() {
+fn every_processed_adapter_declares_a_classified_protocol_family() {
     let registry = AdapterRegistry::with_builtin_adapters();
-    for kind in BATCH1 {
+    for kind in BATCH1.into_iter().chain(BATCH2) {
         let adapter = registry
             .get(kind)
             .unwrap_or_else(|| panic!("{kind} 未注册"));
         let caps = adapter.capabilities();
         assert_eq!(caps.protocol, kind.protocol_family(), "{kind}");
         assert_ne!(caps.protocol, ProtocolFamily::Opaque, "{kind} 未归类");
-        // 批 1 全是流式 + 能探版本（套件会按这两个开关断言真实行为）。
+        // 已落地的项全是流式 + 能探版本（套件会按这两个开关断言真实行为）。
         assert!(caps.streaming, "{kind}");
         assert!(caps.version_probe, "{kind}");
         assert_eq!(caps.launch_header, kind.launch_header(), "{kind}");
+    }
+}
+
+/// ACP 家族（批 1 的 kimi + 批 2 的 5 项）共享同一套能力声明。
+///
+/// 这是“共享骨架”在公开面上的证据：协议族、流式、thinking、工具事件、用量、
+/// 会话恢复六项全开是 `AcpDecoder` 的契约，而不是各家自己填的。
+#[test]
+fn acp_family_shares_one_capability_shape() {
+    let registry = AdapterRegistry::with_builtin_adapters();
+    for kind in [
+        AgentType::Kimi,
+        AgentType::Kiro,
+        AgentType::Qoder,
+        AgentType::QoderCliCn,
+        AgentType::TraeCli,
+        AgentType::Grok,
+    ] {
+        let caps = registry.get(kind).expect("ACP 项已注册").capabilities();
+        assert_eq!(caps.protocol, ProtocolFamily::Acp, "{kind}");
+        assert!(caps.streaming, "{kind}");
+        assert!(caps.thinking, "{kind}");
+        assert!(caps.tool_events, "{kind}");
+        assert!(caps.usage_reporting, "{kind}");
+        assert!(caps.resume, "{kind}");
     }
 }
 
@@ -365,4 +458,223 @@ async fn cancel_stops_a_live_run_and_is_idempotent() {
         adapter.cancel(&run_id).await.expect("幂等"),
         mc_runtime::CancelOutcome::Signalled | mc_runtime::CancelOutcome::NotRunning
     ));
+}
+
+/// 批 2：非零退出 → `Failed` + `AgentError` + stderr 尾部带诊断。
+///
+/// ACP 的假 CLI 必须**逐帧**回放（客户端等每一帧的应答），所以末组
+/// （`session/prompt` 应答）不给 —— 让进程死在“等 prompt 应答”的那一刻，
+/// 与 crate 内套件的 `failing_fake` 用的是同一条路径。
+#[tokio::test]
+async fn batch2_nonzero_exit_is_reported_as_agent_error_with_stderr_tail() {
+    for kind in BATCH2 {
+        let cli = if is_acp_family(kind) {
+            let mut frames =
+                response_frame_groups(&mc_runtime::adapters::acp_core::conformance_success_stdout(
+                    "ses-int-fail",
+                    "ok",
+                    kind == AgentType::Grok,
+                ));
+            frames.pop();
+            FakeCli::live_scripted_failing(&frames, 3, "boom")
+        } else {
+            FakeCli::failing("", 3, "boom")
+        };
+        let adapter = adapter_for(kind, &cli);
+        let handle = adapter
+            .launch(LaunchRequest::new("p"))
+            .await
+            .expect("launch");
+        let (_, outcome) = handle.drain().await.expect("终态");
+
+        assert_eq!(outcome.status, RunStatus::Failed, "{kind}");
+        assert_eq!(
+            outcome.failure_reason,
+            Some(FailureReason::AgentError),
+            "{kind}"
+        );
+        assert_eq!(outcome.exit_code, Some(3), "{kind}");
+        assert!(
+            outcome.stderr_tail.contains("boom"),
+            "{kind} 的 stderr 尾部丢了诊断：{:?}",
+            outcome.stderr_tail
+        );
+    }
+}
+
+/// 批 2 的 6 个 ACP provider 走同一套握手：`initialize` →（grok 才有
+/// `authenticate`）→ `session/new` → `session/prompt`，逐帧等应答，
+/// prompt 走 stdin 的 JSON-RPC 帧，argv 里不带 prompt。
+///
+/// 差异只在 argv 和差异表上，**不该**在事件流上：所以这里对 6 项断言同一组终态。
+#[tokio::test]
+async fn acp_family_speaks_the_shared_handshake_frame_by_frame() {
+    for (kind, session_id, with_auth) in ACP_FAMILY {
+        let transcript =
+            mc_runtime::adapters::acp_core::conformance_success_stdout(session_id, "ok", with_auth);
+        let frames = response_frame_groups(&transcript);
+        let cli = FakeCli::live_scripted(&frames, "exit 0\n");
+        let adapter = adapter_for(kind, &cli);
+        let handle = adapter
+            .launch(LaunchRequest::new("改代码"))
+            .await
+            .expect("launch");
+        let (events, outcome) = handle.drain().await.expect("终态");
+
+        assert_eq!(outcome.status, RunStatus::Completed, "{kind}");
+        assert_eq!(outcome.failure_reason, None, "{kind}");
+        assert_eq!(outcome.output, "ok", "{kind}");
+        assert_eq!(outcome.session_id.as_deref(), Some(session_id), "{kind}");
+        assert_eq!(
+            outcome
+                .usage
+                .iter()
+                .map(|usage| usage.usage.total_tokens)
+                .sum::<u64>(),
+            15,
+            "{kind}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::Text { .. })),
+            "{kind} 应有正文事件"
+        );
+
+        // prompt 必须在 stdin 的 JSON-RPC 帧里，且 argv 里没有它。
+        let stdin = cli.recorded_stdin();
+        assert!(stdin.contains("\"jsonrpc\":\"2.0\""), "{kind}：{stdin}");
+        assert!(stdin.contains("\"method\":\"initialize\""), "{kind}");
+        assert!(stdin.contains("\"method\":\"session/prompt\""), "{kind}");
+        assert!(stdin.contains("改代码"), "{kind}：prompt 必须走 stdin");
+        assert!(stdin.ends_with('\n'), "{kind}：每帧一行");
+        assert_eq!(
+            stdin.contains("\"method\":\"authenticate\""),
+            with_auth,
+            "{kind}：只有 grok 先认证"
+        );
+        let argv = cli.recorded_argv();
+        assert!(
+            !argv.contains("改代码"),
+            "{kind} argv 不该带 prompt：{argv:?}"
+        );
+    }
+}
+
+/// cursor：`-p --output-format stream-json --yolo`，prompt 走 stdin（写完即关）。
+#[tokio::test]
+async fn cursor_speaks_stream_json_with_the_prompt_on_stdin() {
+    let cli = FakeCli::replaying(concat!(
+        r#"{"type":"system","subtype":"init","session_id":"cursor-int-1"}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}"#,
+        "\n",
+        r#"{"type":"result","subtype":"success","session_id":"cursor-int-1","result":"ok","is_error":false,"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0}"#,
+        "\n",
+    ));
+    let adapter = mc_runtime::Cursor::with_executable(cli.path());
+    let cwd = cli.dir().join("repo");
+    std::fs::create_dir_all(&cwd).expect("建 cwd");
+    let handle = adapter
+        .launch(
+            LaunchRequest::new("改代码")
+                .with_model("gpt-5")
+                .with_cwd(cwd.clone()),
+        )
+        .await
+        .expect("launch");
+    let (_, outcome) = handle.drain().await.expect("终态");
+
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.output, "ok");
+    assert_eq!(outcome.session_id.as_deref(), Some("cursor-int-1"));
+    assert_eq!(
+        outcome
+            .usage
+            .iter()
+            .map(|usage| usage.usage.total_tokens)
+            .sum::<u64>(),
+        15
+    );
+
+    let argv = cli.recorded_argv();
+    assert!(argv.contains("-p"), "argv={argv:?}");
+    assert!(argv.contains("--output-format"), "argv={argv:?}");
+    assert!(argv.contains("stream-json"), "argv={argv:?}");
+    assert!(argv.contains("--yolo"), "argv={argv:?}");
+    assert!(argv.contains("--workspace"), "argv={argv:?}");
+    assert!(
+        argv.contains(cwd.to_str().unwrap()),
+        "`--workspace` 要带上请求的 cwd：{argv:?}"
+    );
+    assert!(cli.recorded_stdin().contains("改代码"), "prompt 走 stdin");
+    assert!(!argv.contains("改代码"), "argv 不该带 prompt：{argv:?}");
+}
+
+/// antigravity：`agy -p <prompt>`（prompt 是 argv 取值），stream-json 事件流 +
+/// 纯文本回退，`--print-timeout` 永远在。
+#[tokio::test]
+async fn antigravity_passes_the_prompt_on_argv_and_reads_both_stream_shapes() {
+    let cli = FakeCli::replaying(concat!(
+        r#"{"event":"init","conversation_id":"agy-int-1","init":{"model":"gemini-3.6-flash-high"}}"#,
+        "\n",
+        r#"{"event":"step_update","conversation_id":"agy-int-1","step_update":{"step_index":0,"state":"active","step_type":"agent_response","text_delta":"o"}}"#,
+        "\n",
+        // 纯文本行（agy 1.0.14 的空白 stdout 之前的形态）：按原样回显。
+        "不是 JSON 的裸文本\n",
+        r#"{"event":"step_update","step_update":{"step_index":0,"state":"done","step_type":"agent_response","text_delta":"k","usage":{"input_tokens":4,"output_tokens":6,"thinking_tokens":3,"total_tokens":10}}}"#,
+        "\n",
+        r#"{"event":"result","result":{"status":"SUCCESS","response":"ok","usage":{"input_tokens":100,"output_tokens":100,"total_tokens":200}}}"#,
+        "\n",
+    ));
+    let adapter = mc_runtime::Antigravity::with_executable(cli.path());
+    let cwd = cli.dir().join("repo");
+    std::fs::create_dir_all(&cwd).expect("建 cwd");
+    let handle = adapter
+        .launch(
+            LaunchRequest::new("改代码")
+                .with_model("gemini-3.6-flash-high")
+                .with_cwd(cwd.clone()),
+        )
+        .await
+        .expect("launch");
+    let (events, outcome) = handle.drain().await.expect("终态");
+
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.session_id.as_deref(), Some("agy-int-1"));
+    // 正文 = 拼接的 Text 事件（含回退的裸文本行），**不**取 `result.response`：
+    // 这与 crate 的 `output == 拼接 Text` 不变量一致（见模块文档的偏离 1）。
+    assert_eq!(outcome.output, "o\n不是 JSON 的裸文本k");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::Usage { .. })),
+        "step_update 里的用量要报出来"
+    );
+    // 单步用量（10）胜出：`result` 那份是**整轮**统计，不参与按模型取最大值的口径。
+    assert_eq!(
+        outcome
+            .usage
+            .iter()
+            .map(|usage| usage.usage.total_tokens)
+            .sum::<u64>(),
+        10
+    );
+
+    let argv = cli.recorded_argv();
+    assert_eq!(
+        argv.lines().next(),
+        Some("-p"),
+        "`-p` 是第一个参数（后面紧跟 prompt）：{argv:?}"
+    );
+    assert!(argv.contains("改代码"), "prompt 是 argv 取值：{argv:?}");
+    assert!(argv.contains("--dangerously-skip-permissions"), "{argv:?}");
+    assert!(argv.contains("--output-format"), "{argv:?}");
+    assert!(argv.contains("stream-json"), "{argv:?}");
+    assert!(
+        argv.lines().any(|arg| arg == "--print-timeout"),
+        "`--print-timeout` 永远在（上游默认 5m 会掐死长 turn）：{argv:?}"
+    );
+    assert!(argv.contains("--add-dir"), "{argv:?}");
+    assert!(cli.recorded_stdin().is_empty(), "argv 传输不该写 stdin");
 }
