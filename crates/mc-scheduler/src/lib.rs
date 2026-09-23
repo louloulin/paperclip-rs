@@ -29,7 +29,7 @@
 //! * `db_ops.rs`：`try_claim`（新鲜插入 / 抢陈旧 / 重试到期三态）、`heartbeat`、`finish_success`、
 //!   `finish_failure`、`mark_stale_as_failed`、`latest_plan` —— SQL 全在 `mc-repos` 的
 //!   `scheduler.rs`，本层只把「影响 0 行」翻译成 [`SchedulerError::LeaseLost`]。
-//! * `manager.rs`：`Options` / `Manager`（`register` / `run_once` / `spawn`）/ 每 tick 一轮 / 
+//! * `manager.rs`：`Options` / `Manager`（`register` / `run_once` / `spawn`）/ 每 tick 一轮 /
 //!   handler 隔离（`tokio::spawn` + `timeout` + abort）/ 心跳任务 / `SchedulerHandle`（
 //!   `shutdown().await` 接 `main.rs` 的关闭序列）。
 //! * `error.rs`：`code()`（= 上游 `classifyError`）+ [`ErrorClass`]（重试 / 永久 / 租约已丢）

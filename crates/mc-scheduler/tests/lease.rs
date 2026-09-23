@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use mc_repos::scheduler::{ExecutionStatus, LatestPlanInfo, Lease};
 use mc_repos::RepoError;
-use mc_scheduler::db_ops::{Claim, Claimed, ClaimKind};
+use mc_scheduler::db_ops::{Claim, ClaimKind, Claimed};
 use mc_scheduler::error::{ErrorClass, SchedulerError};
 use mc_scheduler::spec::{
     floor_plan, global_scopes, stale_secs_f64, CatchUpMode, Handler, HandlerInput, HandlerResult,
@@ -70,7 +70,10 @@ fn floor_plan_truncates_since_go_zero_not_since_unix_epoch() {
     // 整除一天的 cadence（5m / 1h）⇒ 与「按 Unix 纪元取整」同结果。
     assert_eq!(floor_plan(epoch, Duration::minutes(5)), epoch);
     assert_eq!(
-        floor_plan(epoch + Duration::minutes(4) + Duration::seconds(59), Duration::minutes(5)),
+        floor_plan(
+            epoch + Duration::minutes(4) + Duration::seconds(59),
+            Duration::minutes(5)
+        ),
         epoch
     );
     assert_eq!(floor_plan(epoch, Duration::hours(1)), epoch);
@@ -92,8 +95,14 @@ fn floor_plan_handles_sub_second_and_zero_cadence() {
         epoch
     );
     // 非正 cadence 原样返回（上游同：`if c <= 0 { return eligible }`）。
-    assert_eq!(floor_plan(epoch + Duration::seconds(3), Duration::zero()), ts(3));
-    assert_eq!(floor_plan(epoch + Duration::seconds(3), Duration::seconds(-5)), ts(3));
+    assert_eq!(
+        floor_plan(epoch + Duration::seconds(3), Duration::zero()),
+        ts(3)
+    );
+    assert_eq!(
+        floor_plan(epoch + Duration::seconds(3), Duration::seconds(-5)),
+        ts(3)
+    );
     // 未来桶不会被造出来：调用方拿到的桶必须 <= 入参。
     let eligible = ts(1_700_000_123);
     assert!(floor_plan(eligible, Duration::minutes(15)) <= eligible);
@@ -111,17 +120,28 @@ fn validate_rejects_each_missing_budget_with_the_field_name() {
     assert_invalid(&valid_spec("   "), "job name is required");
     // `JobSpec::new` 故意把所有时间预算留零 ⇒ 漏填必须在这里炸，不能静默取默认值。
     assert_invalid(
-        &JobSpec::new("itest-zero", Duration::minutes(5), global_scopes(), noop_handler()),
+        &JobSpec::new(
+            "itest-zero",
+            Duration::minutes(5),
+            global_scopes(),
+            noop_handler(),
+        ),
         "run_timeout",
     );
     assert_invalid(
-        &valid_spec("itest-stale")
-            .with_timing(StdDuration::from_secs(60), StdDuration::from_secs(60), StdDuration::from_secs(30)),
+        &valid_spec("itest-stale").with_timing(
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(30),
+        ),
         "stale_timeout",
     );
     assert_invalid(
-        &valid_spec("itest-hb-zero")
-            .with_timing(StdDuration::from_secs(60), StdDuration::from_secs(300), StdDuration::ZERO),
+        &valid_spec("itest-hb-zero").with_timing(
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(300),
+            StdDuration::ZERO,
+        ),
         "heartbeat_interval",
     );
     assert_invalid(
@@ -132,10 +152,16 @@ fn validate_rejects_each_missing_budget_with_the_field_name() {
         ),
         "heartbeat_interval",
     );
-    assert_invalid(&valid_spec("itest-attempts").with_retry(0, Vec::new()), "max_attempts");
     assert_invalid(
-        &valid_spec("itest-every-plan")
-            .with_catch_up(CatchUpMode::EveryPlan, Duration::hours(6), 0),
+        &valid_spec("itest-attempts").with_retry(0, Vec::new()),
+        "max_attempts",
+    );
+    assert_invalid(
+        &valid_spec("itest-every-plan").with_catch_up(
+            CatchUpMode::EveryPlan,
+            Duration::hours(6),
+            0,
+        ),
         "max_plans_per_tick",
     );
 }
@@ -143,15 +169,20 @@ fn validate_rejects_each_missing_budget_with_the_field_name() {
 #[test]
 fn validate_accepts_zero_cadence_and_zero_cap_when_a_plan_hook_is_set() {
     // 上游：`PlansForScope` 一设，`cadence` 与「every_plan 必须有上限」两条都不再适用。
-    let spec = JobSpec::new("itest-hooked", Duration::zero(), global_scopes(), noop_handler())
-        .with_plans_for_scope(noop_hook())
-        .with_catch_up(CatchUpMode::EveryPlan, Duration::hours(6), 0)
-        .with_timing(
-            StdDuration::from_secs(60),
-            StdDuration::from_secs(300),
-            StdDuration::from_secs(30),
-        )
-        .with_retry(1, Vec::new());
+    let spec = JobSpec::new(
+        "itest-hooked",
+        Duration::zero(),
+        global_scopes(),
+        noop_handler(),
+    )
+    .with_plans_for_scope(noop_hook())
+    .with_catch_up(CatchUpMode::EveryPlan, Duration::hours(6), 0)
+    .with_timing(
+        StdDuration::from_secs(60),
+        StdDuration::from_secs(300),
+        StdDuration::from_secs(30),
+    )
+    .with_retry(1, Vec::new());
     assert!(spec.validate().is_ok());
 }
 
@@ -187,8 +218,14 @@ fn error_codes_match_upstream_classify_error() {
     assert_eq!(SchedulerError::LeaseLost("heartbeat").code(), "lease_lost");
     assert_eq!(SchedulerError::RunTimeout.code(), "run_timeout");
     assert_eq!(SchedulerError::Canceled.code(), "canceled");
-    assert_eq!(SchedulerError::HandlerPanic("boom".to_owned()).code(), "handler_panic");
-    assert_eq!(SchedulerError::Handler("boom".to_owned()).code(), "handler_error");
+    assert_eq!(
+        SchedulerError::HandlerPanic("boom".to_owned()).code(),
+        "handler_panic"
+    );
+    assert_eq!(
+        SchedulerError::Handler("boom".to_owned()).code(),
+        "handler_error"
+    );
     assert_eq!(
         SchedulerError::Permanent {
             code: "invalid_cron".to_owned(),
@@ -198,14 +235,26 @@ fn error_codes_match_upstream_classify_error() {
         "invalid_cron",
         "Permanent 透传 handler 自己的审计码"
     );
-    assert_eq!(SchedulerError::InvalidSpec("boom".to_owned()).code(), "invalid_spec");
-    assert_eq!(SchedulerError::DuplicateJob("boom".to_owned()).code(), "duplicate_job");
-    assert_eq!(SchedulerError::Repo(RepoError::Db("boom".to_owned())).code(), "db_error");
+    assert_eq!(
+        SchedulerError::InvalidSpec("boom".to_owned()).code(),
+        "invalid_spec"
+    );
+    assert_eq!(
+        SchedulerError::DuplicateJob("boom".to_owned()).code(),
+        "duplicate_job"
+    );
+    assert_eq!(
+        SchedulerError::Repo(RepoError::Db("boom".to_owned())).code(),
+        "db_error"
+    );
 }
 
 #[test]
 fn error_classes_drive_the_three_dispositions() {
-    assert_eq!(SchedulerError::LeaseLost("x").class(), ErrorClass::LeaseLost);
+    assert_eq!(
+        SchedulerError::LeaseLost("x").class(),
+        ErrorClass::LeaseLost
+    );
     for retryable in [
         SchedulerError::RunTimeout,
         SchedulerError::Canceled,
@@ -241,17 +290,48 @@ fn retry_eligible_follows_upstream_order() {
         max_attempts: 3,
         next_retry_at: None,
     };
-    assert!(failed.retry_eligible(now), "NULL next_retry_at 的语义是「尽快」= 现在");
-    assert!(!LatestPlanInfo::empty().retry_eligible(now), "没有历史 ⇒ 不重试");
-    assert!(!LatestPlanInfo { status: ExecutionStatus::Success, ..failed }.retry_eligible(now));
-    assert!(!LatestPlanInfo { status: ExecutionStatus::Running, ..failed }.retry_eligible(now));
-    assert!(!LatestPlanInfo { attempt: 3, ..failed }.retry_eligible(now), "预算用尽");
-    assert!(!LatestPlanInfo { attempt: 4, ..failed }.retry_eligible(now));
     assert!(
-        !LatestPlanInfo { next_retry_at: Some(ts(1_700_000_001)), ..failed }.retry_eligible(now)
+        failed.retry_eligible(now),
+        "NULL next_retry_at 的语义是「尽快」= 现在"
     );
     assert!(
-        LatestPlanInfo { next_retry_at: Some(now), ..failed }.retry_eligible(now),
+        !LatestPlanInfo::empty().retry_eligible(now),
+        "没有历史 ⇒ 不重试"
+    );
+    assert!(!LatestPlanInfo {
+        status: ExecutionStatus::Success,
+        ..failed
+    }
+    .retry_eligible(now));
+    assert!(!LatestPlanInfo {
+        status: ExecutionStatus::Running,
+        ..failed
+    }
+    .retry_eligible(now));
+    assert!(
+        !LatestPlanInfo {
+            attempt: 3,
+            ..failed
+        }
+        .retry_eligible(now),
+        "预算用尽"
+    );
+    assert!(!LatestPlanInfo {
+        attempt: 4,
+        ..failed
+    }
+    .retry_eligible(now));
+    assert!(!LatestPlanInfo {
+        next_retry_at: Some(ts(1_700_000_001)),
+        ..failed
+    }
+    .retry_eligible(now));
+    assert!(
+        LatestPlanInfo {
+            next_retry_at: Some(now),
+            ..failed
+        }
+        .retry_eligible(now),
         "退避正好到期（== now）就算到"
     );
 }
@@ -271,7 +351,10 @@ fn claim_exposes_kind_and_lease() {
     let won = Claim::Won(Claimed { lease, attempt: 1 });
     assert_eq!(won.kind(), ClaimKind::Won);
     assert_eq!(won.claimed().map(|claimed| claimed.attempt), Some(1));
-    assert_eq!(won.claimed().map(|claimed| claimed.lease.id), Some(Uuid::nil()));
+    assert_eq!(
+        won.claimed().map(|claimed| claimed.lease.id),
+        Some(Uuid::nil())
+    );
 
     let stole = Claim::Stole(Claimed { lease, attempt: 2 });
     assert_eq!(stole.kind(), ClaimKind::Stole);
@@ -283,8 +366,14 @@ fn catch_up_mode_round_trips_and_rejects_unknown() {
     assert_eq!(CatchUpMode::default(), CatchUpMode::LatestOnly);
     assert_eq!(CatchUpMode::LatestOnly.as_str(), "latest_only");
     assert_eq!(CatchUpMode::EveryPlan.to_string(), "every_plan");
-    assert_eq!(CatchUpMode::from_str("latest_only").expect("parse"), CatchUpMode::LatestOnly);
-    assert_eq!(CatchUpMode::from_str("every_plan").expect("parse"), CatchUpMode::EveryPlan);
+    assert_eq!(
+        CatchUpMode::from_str("latest_only").expect("parse"),
+        CatchUpMode::LatestOnly
+    );
+    assert_eq!(
+        CatchUpMode::from_str("every_plan").expect("parse"),
+        CatchUpMode::EveryPlan
+    );
     match CatchUpMode::from_str("hourly") {
         Err(SchedulerError::InvalidSpec(msg)) => assert!(msg.contains("catch_up_mode"), "{msg}"),
         other => panic!("未知模式必须在注册期报错，实际 {other:?}"),
@@ -295,7 +384,10 @@ fn catch_up_mode_round_trips_and_rejects_unknown() {
 fn scope_formats_as_kind_slash_id() {
     assert_eq!(GLOBAL, "global");
     assert_eq!(Scope::global().to_string(), "global/global");
-    assert_eq!(Scope::new("workspace", "ws-1").to_string(), "workspace/ws-1");
+    assert_eq!(
+        Scope::new("workspace", "ws-1").to_string(),
+        "workspace/ws-1"
+    );
     assert_eq!(Scope::global().kind, GLOBAL);
 }
 

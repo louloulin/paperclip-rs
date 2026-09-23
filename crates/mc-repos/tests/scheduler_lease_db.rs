@@ -12,9 +12,7 @@
 
 use chrono::Utc;
 use mc_db::Db;
-use mc_repos::scheduler::{
-    ExecutionStatus, FailureWrite, PlanKey, SchedulerRepo,
-};
+use mc_repos::scheduler::{ExecutionStatus, FailureWrite, PlanKey, SchedulerRepo};
 use uuid::Uuid;
 
 /// 建库连接 + 本测试专用 job 名。
@@ -188,7 +186,10 @@ async fn stale_lease_is_closed_as_failed() {
         .expect("mark stale");
     assert_eq!(closed, 1, "应恰好收掉一行");
 
-    let info = repo.latest_plan(&job, "global", "global").await.expect("latest");
+    let info = repo
+        .latest_plan(&job, "global", "global")
+        .await
+        .expect("latest");
     assert!(info.found);
     assert_eq!(info.status, ExecutionStatus::Failed);
     assert!(info.retry_eligible(later), "退避为 NULL ⇒ 尽快可重试");
@@ -212,7 +213,10 @@ async fn latest_plan_is_empty_then_tracks_newest_bucket() {
     let repo = SchedulerRepo::new(db.clone());
     let now = repo.db_now().await.expect("db now");
 
-    let empty = repo.latest_plan(&job, "global", "global").await.expect("latest");
+    let empty = repo
+        .latest_plan(&job, "global", "global")
+        .await
+        .expect("latest");
     assert!(!empty.found);
     assert!(!empty.retry_eligible(now));
     assert_eq!(empty.plan_time, chrono::DateTime::<Utc>::MIN_UTC);
@@ -231,7 +235,10 @@ async fn latest_plan_is_empty_then_tracks_newest_bucket() {
         .expect("claim")
         .expect("fresh");
     }
-    let info = repo.latest_plan(&job, "global", "global").await.expect("latest");
+    let info = repo
+        .latest_plan(&job, "global", "global")
+        .await
+        .expect("latest");
     assert!(info.found);
     assert_eq!(info.status, ExecutionStatus::Running);
     assert!(

@@ -124,7 +124,13 @@ pub async fn try_claim(
     }
 
     let stolen = repo
-        .claim_steal_or_retry(&key, runner_id, db_time, stale_secs, job.allow_stale_reentry)
+        .claim_steal_or_retry(
+            &key,
+            runner_id,
+            db_time,
+            stale_secs,
+            job.allow_stale_reentry,
+        )
         .await?;
     Ok(match stolen {
         Some(row) => Claim::Stole(Claimed {
@@ -213,9 +219,7 @@ pub async fn latest_plan(
     job_name: &str,
     scope: &Scope,
 ) -> SchedulerResult<LatestPlanInfo> {
-    Ok(repo
-        .latest_plan(job_name, &scope.kind, &scope.id)
-        .await?)
+    Ok(repo.latest_plan(job_name, &scope.kind, &scope.id).await?)
 }
 
 /// 递给 handler 的租约续期句柄（上游 `HandlerInput.Heartbeat` 闭包的对应物）。

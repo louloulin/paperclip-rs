@@ -324,28 +324,22 @@ impl Manager {
         plan_time: DateTime<Utc>,
         now: DateTime<Utc>,
     ) {
-        let claim = match db_ops::try_claim(
-            &self.repo,
-            job,
-            scope,
-            plan_time,
-            now,
-            &self.opts.runner_id,
-        )
-        .await
-        {
-            Ok(claim) => claim,
-            Err(err) => {
-                tracing::warn!(
-                    job = %job.name,
-                    scope = %scope,
-                    plan_time = %plan_time.to_rfc3339(),
-                    error = %err,
-                    "scheduler: claim error"
-                );
-                return;
-            }
-        };
+        let claim =
+            match db_ops::try_claim(&self.repo, job, scope, plan_time, now, &self.opts.runner_id)
+                .await
+            {
+                Ok(claim) => claim,
+                Err(err) => {
+                    tracing::warn!(
+                        job = %job.name,
+                        scope = %scope,
+                        plan_time = %plan_time.to_rfc3339(),
+                        error = %err,
+                        "scheduler: claim error"
+                    );
+                    return;
+                }
+            };
         match claim {
             // 别人持有 / 已终态 / 退避未到 / 预算用尽 —— 一律静默（这是预期路径）。
             Claim::Conflicted => {}
@@ -442,7 +436,10 @@ impl Manager {
             }
         };
         match outcome {
-            Ok(result) => self.write_success(lease, db_time, duration_ms, &result).await,
+            Ok(result) => {
+                self.write_success(lease, db_time, duration_ms, &result)
+                    .await;
+            }
             Err(err) => {
                 self.write_failure(job, lease, claimed.attempt, db_time, duration_ms, &err)
                     .await;

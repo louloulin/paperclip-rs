@@ -40,7 +40,9 @@ type Seen = Arc<Mutex<Vec<(DateTime<Utc>, i32)>>>;
 async fn repo() -> SchedulerRepo {
     let url = std::env::var("MULTICA_TEST_DATABASE_URL")
         .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
-    SchedulerRepo::connect(&url, 4, 1).await.expect("connect scheduler repo")
+    SchedulerRepo::connect(&url, 4, 1)
+        .await
+        .expect("connect scheduler repo")
 }
 
 /// 每个用例一个唯一 job 名（隔离 + 便于事后按名字查审计行）。
@@ -52,7 +54,10 @@ fn unique_job(purpose: &str) -> String {
 async fn wait_for_flag(flag: &AtomicBool, timeout: StdDuration) {
     let deadline = tokio::time::Instant::now() + timeout;
     while !flag.load(Ordering::SeqCst) {
-        assert!(tokio::time::Instant::now() < deadline, "标志位没有在超时前置位");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "标志位没有在超时前置位"
+        );
         tokio::time::sleep(StdDuration::from_millis(10)).await;
     }
 }
@@ -63,7 +68,9 @@ fn recording_handler(calls: Arc<AtomicUsize>, seen: Seen) -> Handler {
         let (calls, seen) = (calls.clone(), seen.clone());
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            seen.lock().expect("lock").push((input.plan_time, input.attempt));
+            seen.lock()
+                .expect("lock")
+                .push((input.plan_time, input.attempt));
             Ok(HandlerResult::rows(7))
         })
     })
@@ -161,9 +168,16 @@ async fn failure_schedules_a_backoff_retry_that_blocks_early_reclaim() {
     assert!(!info.retry_eligible(now), "退避未到 ⇒ 本 tick 不能重跑");
 
     // 退避未到 ⇒ 再抢同一个桶一律输（这是「不重试风暴」的可观测证据）。
-    let again = db_ops::try_claim(&repo, &probe, &Scope::global(), info.plan_time, now, "itest-b")
-        .await
-        .expect("claim");
+    let again = db_ops::try_claim(
+        &repo,
+        &probe,
+        &Scope::global(),
+        info.plan_time,
+        now,
+        "itest-b",
+    )
+    .await
+    .expect("claim");
     assert_eq!(again.kind(), ClaimKind::Conflicted);
 }
 
@@ -182,11 +196,11 @@ async fn permanent_failure_burns_the_retry_budget() {
     });
     let spec = JobSpec::new(name.clone(), Duration::minutes(5), global_scopes(), handler)
         .with_timing(
-        StdDuration::from_secs(60),
-        StdDuration::from_secs(300),
-        StdDuration::from_secs(30),
-    )
-    .with_retry(5, vec![Duration::seconds(1)]);
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(300),
+            StdDuration::from_secs(30),
+        )
+        .with_retry(5, vec![Duration::seconds(1)]);
     let probe = spec.clone();
 
     let mut manager = Manager::new(repo.clone(), Options::default().with_runner_id("itest-a"));
@@ -202,10 +216,21 @@ async fn permanent_failure_burns_the_retry_budget() {
     assert!(info.next_retry_at.is_none());
     assert!(!info.retry_eligible(now));
 
-    let again = db_ops::try_claim(&repo, &probe, &Scope::global(), info.plan_time, now, "itest-b")
-        .await
-        .expect("claim");
-    assert_eq!(again.kind(), ClaimKind::Conflicted, "预算用尽 ⇒ 永久不再重试");
+    let again = db_ops::try_claim(
+        &repo,
+        &probe,
+        &Scope::global(),
+        info.plan_time,
+        now,
+        "itest-b",
+    )
+    .await
+    .expect("claim");
+    assert_eq!(
+        again.kind(),
+        ClaimKind::Conflicted,
+        "预算用尽 ⇒ 永久不再重试"
+    );
 }
 
 #[tokio::test]
@@ -223,19 +248,21 @@ async fn every_plan_returns_to_the_failed_bucket_when_its_backoff_has_burned() {
             let (calls, seen) = (calls.clone(), seen.clone());
             Box::pin(async move {
                 calls.fetch_add(1, Ordering::SeqCst);
-                seen.lock().expect("lock").push((input.plan_time, input.attempt));
+                seen.lock()
+                    .expect("lock")
+                    .push((input.plan_time, input.attempt));
                 Err(SchedulerError::Handler("boom".to_owned()))
             })
         }
     });
     let spec = JobSpec::new(name.clone(), Duration::minutes(1), global_scopes(), handler)
         .with_catch_up(CatchUpMode::EveryPlan, Duration::zero(), 1)
-    .with_timing(
-        StdDuration::from_secs(60),
-        StdDuration::from_secs(300),
-        StdDuration::from_secs(30),
-    )
-    .with_retry(3, Vec::new());
+        .with_timing(
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(300),
+            StdDuration::from_secs(30),
+        )
+        .with_retry(3, Vec::new());
     manager.register(spec).expect("register");
 
     manager.run_once().await.expect("first tick");
@@ -243,7 +270,10 @@ async fn every_plan_returns_to_the_failed_bucket_when_its_backoff_has_burned() {
 
     let attempts = seen.lock().expect("lock").clone();
     assert_eq!(attempts.len(), 2, "两个 tick 各跑一次：{attempts:?}");
-    assert_eq!(attempts[0].0, attempts[1].0, "FAILED 桶还会重试 ⇒ 游标不能跳过它");
+    assert_eq!(
+        attempts[0].0, attempts[1].0,
+        "FAILED 桶还会重试 ⇒ 游标不能跳过它"
+    );
     assert_eq!((attempts[0].1, attempts[1].1), (1, 2));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
@@ -270,16 +300,9 @@ async fn stale_lease_is_stolen_and_the_old_holder_gets_lease_lost() {
 
     let scope = Scope::global();
     let plan_time = repo.db_now().await.expect("db now");
-    let first = db_ops::try_claim(
-        &repo,
-        &spec,
-        &scope,
-        plan_time,
-        plan_time,
-        "itest-a",
-    )
-    .await
-    .expect("claim");
+    let first = db_ops::try_claim(&repo, &spec, &scope, plan_time, plan_time, "itest-a")
+        .await
+        .expect("claim");
     let Claim::Won(holder_a) = first else {
         panic!("首次认领应为 Won：{first:?}");
     };
@@ -295,9 +318,15 @@ async fn stale_lease_is_stolen_and_the_old_holder_gets_lease_lost() {
     let Claim::Stole(holder_b) = second else {
         panic!("陈旧租约应可被偷：{second:?}");
     };
-    assert_eq!(holder_b.lease.id, holder_a.lease.id, "窃取是同一行的 UPDATE");
+    assert_eq!(
+        holder_b.lease.id, holder_a.lease.id,
+        "窃取是同一行的 UPDATE"
+    );
     assert_eq!(holder_b.attempt, holder_a.attempt + 1);
-    assert_ne!(holder_b.lease.lease_token, holder_a.lease.lease_token, "每次认领轮换令牌");
+    assert_ne!(
+        holder_b.lease.lease_token, holder_a.lease.lease_token,
+        "每次认领轮换令牌"
+    );
 
     // 旧持有者：心跳与终态写入都影响 0 行 ⇒ 必须报 LeaseLost（而不是静默成功）。
     assert!(matches!(
@@ -329,7 +358,9 @@ async fn stale_lease_is_stolen_and_the_old_holder_gets_lease_lost() {
     db_ops::finish_success(&repo, holder_b.lease, now, 5, &HandlerResult::rows(1))
         .await
         .expect("新持有者写 SUCCESS");
-    let info = db_ops::latest_plan(&repo, &name, &scope).await.expect("latest plan");
+    let info = db_ops::latest_plan(&repo, &name, &scope)
+        .await
+        .expect("latest plan");
     assert_eq!(info.status, ExecutionStatus::Success);
     assert_eq!(info.attempt, 2);
 }
@@ -386,7 +417,9 @@ async fn heartbeat_renewal_pushes_the_stale_window_forward() {
         "心跳在续期 ⇒ 租约不该在 1s 陈旧窗口后被偷"
     );
 
-    let info = db_ops::latest_plan(&repo, &name, &scope).await.expect("latest plan");
+    let info = db_ops::latest_plan(&repo, &name, &scope)
+        .await
+        .expect("latest plan");
     assert_eq!(info.status, ExecutionStatus::Running);
     assert_eq!(info.attempt, 1, "没有被重跑");
 }
@@ -413,11 +446,11 @@ async fn shutdown_stops_the_loop_and_aborts_the_running_handler() {
     });
     let spec = JobSpec::new(name.clone(), Duration::minutes(5), global_scopes(), handler)
         .with_timing(
-        StdDuration::from_secs(10),
-        StdDuration::from_secs(60),
-        StdDuration::from_secs(20),
-    )
-    .with_retry(3, Vec::new());
+            StdDuration::from_secs(10),
+            StdDuration::from_secs(60),
+            StdDuration::from_secs(20),
+        )
+        .with_retry(3, Vec::new());
 
     let mut manager = Manager::new(
         repo.clone(),
@@ -434,16 +467,25 @@ async fn shutdown_stops_the_loop_and_aborts_the_running_handler() {
         .expect("shutdown 必须立刻返回，不能等 handler 跑完");
 
     tokio::time::sleep(StdDuration::from_millis(1_200)).await;
-    assert!(!finished.load(Ordering::SeqCst), "关闭必须 abort 掉在跑的 handler");
+    assert!(
+        !finished.load(Ordering::SeqCst),
+        "关闭必须 abort 掉在跑的 handler"
+    );
 
     let info = db_ops::latest_plan(&repo, &name, &Scope::global())
         .await
         .expect("latest plan");
-    assert_eq!(info.status, ExecutionStatus::Running, "被中止的 handler 不写终态");
+    assert_eq!(
+        info.status,
+        ExecutionStatus::Running,
+        "被中止的 handler 不写终态"
+    );
     assert_eq!(info.attempt, 1);
     let now = repo.db_now().await.expect("db now");
     assert!(!info.retry_eligible(now), "在飞的行不算「可重试」");
     // 回收只能走陈旧路径，且**只在窗口过了之后**（本 job 的窗口是 60s）。
-    let reaped = db_ops::mark_stale_as_failed(&repo, &name, now).await.expect("reap");
+    let reaped = db_ops::mark_stale_as_failed(&repo, &name, now)
+        .await
+        .expect("reap");
     assert_eq!(reaped, 0, "窗口没过 ⇒ 不能回收在飞的行");
 }

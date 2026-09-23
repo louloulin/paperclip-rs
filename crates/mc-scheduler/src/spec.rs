@@ -122,7 +122,8 @@ impl fmt::Display for Scope {
 ///
 /// 上游签名带 `ctx`；本地不传 —— 取消靠 future 被 drop 传播（`run_once` 的 future 被
 /// `CancellationToken` 掉时，正在 await 的这个回调也一起被 drop）。
-pub type ScopeProvider = Arc<dyn Fn(DateTime<Utc>) -> BoxFuture<Result<Vec<Scope>, SchedulerError>> + Send + Sync>;
+pub type ScopeProvider =
+    Arc<dyn Fn(DateTime<Utc>) -> BoxFuture<Result<Vec<Scope>, SchedulerError>> + Send + Sync>;
 
 /// 固定作用域集合（上游 `StaticScopes`）。集合在构造时**冻结**一份，之后与调用方无关。
 #[must_use]
@@ -145,7 +146,11 @@ pub fn global_scopes() -> ScopeProvider {
 /// 返回的 `plan_time` 必须已经是**规范 UTC**（调度器原样交给 `try_claim`）；返回空表 =
 /// 「本 tick 无事」。重复返回已终态的 `plan_time` 是安全的（`try_claim` 会当冲突）。
 pub type PlansHook = Arc<
-    dyn Fn(Scope, DateTime<Utc>, LatestPlanInfo) -> BoxFuture<Result<Vec<DateTime<Utc>>, SchedulerError>>
+    dyn Fn(
+            Scope,
+            DateTime<Utc>,
+            LatestPlanInfo,
+        ) -> BoxFuture<Result<Vec<DateTime<Utc>>, SchedulerError>>
         + Send
         + Sync,
 >;
@@ -155,9 +160,8 @@ pub type PlansHook = Arc<
 /// 长任务**必须**定期调 [`HandlerInput::heartbeat`]，否则 `stale_after` 过期后租约会被
 /// 回收 / 被别的实例偷走；`beat()` 返回 `Err(LeaseLost)` 表示「你已经不是持有者了」，
 /// 应尽快收尾并返回（不要在租约丢失后继续写业务数据）。
-pub type Handler = Arc<
-    dyn Fn(HandlerInput) -> BoxFuture<Result<HandlerResult, SchedulerError>> + Send + Sync,
->;
+pub type Handler =
+    Arc<dyn Fn(HandlerInput) -> BoxFuture<Result<HandlerResult, SchedulerError>> + Send + Sync>;
 
 /// 递给 handler 的上下文。
 pub struct HandlerInput {
