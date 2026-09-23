@@ -36,7 +36,8 @@ pub(crate) const MIN_LOCAL_WORKTREE_CLI_VERSION: &str = "0.4.24";
 
 /// `local_directory` 的 worktree 能力在 daemon metadata 里的 capability 名
 /// （上游 `protocol.DaemonCapabilityLocalWorktreeV1`）。
-const DAEMON_CAPABILITY_LOCAL_WORKTREE_V1: &str = mc_daemon_proto::DAEMON_CAPABILITY_LOCAL_WORKTREE_V1;
+const DAEMON_CAPABILITY_LOCAL_WORKTREE_V1: &str =
+    mc_daemon_proto::DAEMON_CAPABILITY_LOCAL_WORKTREE_V1;
 
 // ---------------------------------------------------------------------------
 // 归一化 / 校验
@@ -310,7 +311,8 @@ pub(crate) async fn require_worktree_capable_daemon(
         Ok(runtimes) => runtimes,
         Err(err) => {
             return Err(Box::new(
-                crate::error::ApiError(err).respond_with(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+                crate::error::ApiError(err)
+                    .respond_with(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
             ))
         }
     };
@@ -454,7 +456,26 @@ mod tests {
         assert!(validate_git_ref("main").is_ok());
         assert!(validate_git_ref("feature/x-1").is_ok());
         assert!(validate_git_ref("v1.2.3").is_ok());
-        for bad in [" a", "a b", "a..b", "@", "a@{0}", "/a", "a/", "a//b", "a.", ".a", "a.lock/x.lock", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b"] {
+        for bad in [
+            " a",
+            "a b",
+            "a..b",
+            "@",
+            "a@{0}",
+            "/a",
+            "a/",
+            "a//b",
+            "a.",
+            ".a",
+            "a.lock/x.lock",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+        ] {
             assert!(validate_git_ref(bad).is_err(), "should reject {bad:?}");
         }
     }

@@ -242,32 +242,31 @@ impl ProjectResourceRepo {
 
     /// `DeleteProjectResource`（+ 租户守卫）。
     pub async fn delete(&self, id: Uuid, workspace_id: Id) -> Result<u64> {
-        let affected = sqlx::query("DELETE FROM project_resource WHERE id = $1 AND workspace_id = $2")
-            .bind(id)
-            .bind(workspace_id.0)
-            .execute(self.db.pool())
-            .await
-            .map_err(map_sqlx_err)?
-            .rows_affected();
+        let affected =
+            sqlx::query("DELETE FROM project_resource WHERE id = $1 AND workspace_id = $2")
+                .bind(id)
+                .bind(workspace_id.0)
+                .execute(self.db.pool())
+                .await
+                .map_err(map_sqlx_err)?
+                .rows_affected();
         Ok(affected)
     }
 
     /// `CountProjectResources`（新建时 `position` 缺省 = 追加到末尾）。
     pub async fn count(&self, project_id: Uuid) -> Result<i64> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*)::bigint FROM project_resource WHERE project_id = $1")
-                .bind(project_id)
-                .fetch_one(self.db.pool())
-                .await
-                .map_err(map_sqlx_err)?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM project_resource WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_one(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
         Ok(count)
     }
 
     /// `GetProjectResourceCounts`（列表响应里的 `resource_count`）。
-    pub async fn resource_counts(
-        &self,
-        project_ids: &[Uuid],
-    ) -> Result<HashMap<Uuid, i64>> {
+    pub async fn resource_counts(&self, project_ids: &[Uuid]) -> Result<HashMap<Uuid, i64>> {
         if project_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -279,7 +278,10 @@ impl ProjectResourceRepo {
         .fetch_all(self.db.pool())
         .await
         .map_err(map_sqlx_err)?;
-        Ok(rows.into_iter().map(|r| (r.project_id, r.resource_count)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.project_id, r.resource_count))
+            .collect())
     }
 }
 
@@ -405,11 +407,17 @@ mod db_tests {
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].id, first.id, "position ASC");
         assert_eq!(
-            repo.resource_counts(&[project_id]).await.expect("counts").get(&project_id),
+            repo.resource_counts(&[project_id])
+                .await
+                .expect("counts")
+                .get(&project_id),
             Some(&2)
         );
         assert_eq!(
-            repo.list_in_workspace(project_id, ws).await.expect("ws list").len(),
+            repo.list_in_workspace(project_id, ws)
+                .await
+                .expect("ws list")
+                .len(),
             2
         );
         assert!(repo
@@ -436,10 +444,14 @@ mod db_tests {
         // 租户守卫：换一个 workspace 的 update/delete 都打不到行。
         let other = Id(Uuid::new_v4());
         assert!(matches!(
-            repo.update(second.id, other, &serde_json::json!({}), None, 0).await,
+            repo.update(second.id, other, &serde_json::json!({}), None, 0)
+                .await,
             Err(WriteError::Repo(RepoError::NotFound))
         ));
-        assert_eq!(repo.delete(second.id, other).await.expect("delete other"), 0);
+        assert_eq!(
+            repo.delete(second.id, other).await.expect("delete other"),
+            0
+        );
 
         assert_eq!(repo.delete(first.id, ws).await.expect("delete"), 1);
         assert_eq!(repo.delete(second.id, ws).await.expect("delete second"), 1);

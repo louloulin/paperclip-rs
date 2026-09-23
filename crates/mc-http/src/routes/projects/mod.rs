@@ -80,7 +80,7 @@ mod resource_ref;
 mod resources;
 mod search;
 
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, put};
 use axum::Router;
 use std::sync::Arc;
 

@@ -32,11 +32,11 @@ use crate::state::AppState;
 
 use super::dto::{
     CreateProjectResourceRequest, LocalDirectoryRef, ProjectResourceListResponse,
-    ProjectResourceResponse, UpdateProjectResourceRequest,
+    ProjectResourceResponse,
 };
 use super::helpers::{
-    conflict, load_project_scoped, not_found, parse_body, parse_uuid, project_repo,
-    resource_repo, resource_write_err, validation,
+    conflict, load_project_scoped, not_found, parse_body, parse_uuid, project_repo, resource_repo,
+    resource_write_err, validation,
 };
 use super::resource_ref::{
     local_directory_ref_differs_only_by_label, local_directory_ref_label,
@@ -49,7 +49,8 @@ const RESOURCE_TYPE_LOCAL_DIRECTORY: &str = "local_directory";
 
 const RESOURCE_UNIQUE_MESSAGE: &str = "this resource is already attached to the project";
 const LOCAL_DIRECTORY_CREATE_CONFLICT: &str = "this daemon already has a local_directory attached to the project; remove it before adding another";
-const LOCAL_DIRECTORY_UPDATE_CONFLICT: &str = "another local_directory on this daemon is already attached to the project";
+const LOCAL_DIRECTORY_UPDATE_CONFLICT: &str =
+    "another local_directory on this daemon is already attached to the project";
 
 // ---------------------------------------------------------------------------
 // 集合
@@ -72,10 +73,8 @@ pub(crate) async fn list_resources(
             tracing::error!(error = %err, "failed to list project resources");
             not_found("project")
         })?;
-    let resources: Vec<ProjectResourceResponse> = rows
-        .iter()
-        .map(ProjectResourceResponse::from_row)
-        .collect();
+    let resources: Vec<ProjectResourceResponse> =
+        rows.iter().map(ProjectResourceResponse::from_row).collect();
     let total = resources.len();
     Ok(Json(ProjectResourceListResponse { resources, total }))
 }
@@ -135,10 +134,16 @@ pub(crate) async fn create_resource(
     let row = match resource_repo(&state).create(&new).await {
         Ok(row) => row,
         Err(err) => {
-            return Err(resource_write_err(err, "create project resource", RESOURCE_UNIQUE_MESSAGE).into())
+            return Err(
+                resource_write_err(err, "create project resource", RESOURCE_UNIQUE_MESSAGE).into(),
+            )
         }
     };
-    Ok((StatusCode::CREATED, Json(ProjectResourceResponse::from_row(&row))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(ProjectResourceResponse::from_row(&row)),
+    )
+        .into_response())
 }
 
 /// 上游 `findLocalDirectoryConflict`：`(project, daemon)` 至多一条 `local_directory`。
@@ -215,8 +220,7 @@ pub(crate) async fn update_resource(
     let mut next_ref = existing.resource_ref.clone();
     let raw_ref = raw.get("resource_ref");
     if let Some(raw_ref) = raw_ref {
-        next_ref =
-            validate_and_normalize_resource_ref(&existing.resource_type, Some(raw_ref))?;
+        next_ref = validate_and_normalize_resource_ref(&existing.resource_type, Some(raw_ref))?;
     }
     let ref_provided = raw_ref.is_some();
 
@@ -297,20 +301,17 @@ pub(crate) async fn update_resource(
                 .filter(|stored| !stored.is_empty()),
         };
         if ref_provided || next_label.is_some() || label_cleared {
-            next_ref =
-                with_local_directory_ref_label(&next_ref, name.as_deref())?;
+            next_ref = with_local_directory_ref_label(&next_ref, name.as_deref())?;
         }
     }
 
     let row = match resource_repo(&state)
         .update(
-            &mc_repos::project_resource::ProjectResourceUpdate {
-                id: existing.id,
-                workspace_id: project.workspace_id,
-                resource_ref: next_ref,
-                label: next_label,
-                position: next_position,
-            },
+            existing.id,
+            project.workspace_id(),
+            &next_ref,
+            next_label.as_deref(),
+            next_position,
         )
         .await
     {
@@ -337,7 +338,7 @@ pub(crate) async fn delete_resource(
     let resource_id = parse_uuid("resource id", &raw_resource_id)?;
     let existing = load_resource(&state, &project, resource_id).await?;
     match resource_repo(&state)
-        .delete(existing.id, project.workspace_id)
+        .delete(existing.id, project.workspace_id())
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
@@ -360,7 +361,7 @@ async fn load_resource(
     resource_id: mc_core::Id,
 ) -> Result<ProjectResourceRow, crate::error::ApiError> {
     let row = resource_repo(state)
-        .get_in_workspace(resource_id, project.workspace_id)
+        .get_in_workspace(resource_id.0, project.workspace_id())
         .await
         .map_err(|err| crate::error::ApiError(mc_errors::Error::Database(err.to_string())))?
         .filter(|row| row.project_id == project.id)

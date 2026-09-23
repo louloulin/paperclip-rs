@@ -161,7 +161,7 @@ pub(crate) async fn create_project(
     validate_enum("priority", &priority, VALID_PRIORITIES)?;
 
     let lead_id = match req.lead_id.as_deref() {
-        Some(raw) => Some(parse_uuid("lead_id", raw)?),
+        Some(raw) => Some(parse_uuid("lead_id", raw)?.0),
         None => None,
     };
     let start_date = parse_create_date("start_date", req.start_date.as_deref())?;
@@ -264,10 +264,8 @@ pub(crate) async fn create_project(
         Err(err) => return Err(project_write_err(err, "create").into()),
     };
 
-    let resources: Vec<ProjectResourceResponse> = rows
-        .iter()
-        .map(ProjectResourceResponse::from_row)
-        .collect();
+    let resources: Vec<ProjectResourceResponse> =
+        rows.iter().map(ProjectResourceResponse::from_row).collect();
     let mut resp = ProjectResponse::from_row(&project);
     resp.resource_count = i64::try_from(resources.len()).unwrap_or(i64::MAX);
     Ok((
@@ -289,10 +287,7 @@ fn prefixed_resource_error(index: usize, err: Error) -> Error {
 }
 
 /// 创建时的日期：`None` 或空串都留 NULL，形态非法 → 400。
-fn parse_create_date(
-    field: &str,
-    raw: Option<&str>,
-) -> Result<Option<chrono::NaiveDate>, Error> {
+fn parse_create_date(field: &str, raw: Option<&str>) -> Result<Option<chrono::NaiveDate>, Error> {
     match raw.map(str::trim) {
         None | Some("") => Ok(None),
         Some(value) => parse_calendar_date(field, value).map(Some),
@@ -315,7 +310,7 @@ pub(crate) async fn get_project(
     let workspace_id = resolve_workspace(&state, &headers, &query).await?;
     require_workspace_member(&state, workspace_id, user.id()).await?;
     let row = project_repo(&state)
-        .get_in_workspace(project_id, workspace_id)
+        .get_in_workspace(project_id.0, workspace_id)
         .await
         .map_err(repo_err)?
         .ok_or_else(|| not_found("project"))?;
@@ -340,7 +335,7 @@ pub(crate) async fn update_project(
     require_workspace_member(&state, workspace_id, user.id()).await?;
     let repo = project_repo(&state);
     let previous = repo
-        .get_in_workspace(project_id, workspace_id)
+        .get_in_workspace(project_id.0, workspace_id)
         .await
         .map_err(repo_err)?
         .ok_or_else(|| not_found("project"))?;
@@ -386,7 +381,7 @@ pub(crate) async fn update_project(
     }
     if let Some(lead_id) = &req.lead_id {
         params.lead_id = match lead_id {
-            Some(raw) => Some(parse_uuid("lead_id", raw)?),
+            Some(raw) => Some(parse_uuid("lead_id", raw)?.0),
             None => None,
         };
     }
@@ -407,10 +402,7 @@ pub(crate) async fn update_project(
 }
 
 /// 更新时的日期：显式 `null` 或空串都是清空，形态非法 → 400。
-fn parse_update_date(
-    field: &str,
-    raw: Option<&str>,
-) -> Result<Option<chrono::NaiveDate>, Error> {
+fn parse_update_date(field: &str, raw: Option<&str>) -> Result<Option<chrono::NaiveDate>, Error> {
     match raw.map(str::trim) {
         None | Some("") => Ok(None),
         Some(value) => parse_calendar_date(field, value).map(Some),
@@ -429,7 +421,7 @@ pub(crate) async fn delete_project(
     let workspace_id = resolve_workspace(&state, &headers, &query).await?;
     let repo = project_repo(&state);
     let project = repo
-        .get_in_workspace(project_id, workspace_id)
+        .get_in_workspace(project_id.0, workspace_id)
         .await
         .map_err(repo_err)?
         .ok_or_else(|| not_found("project"))?;
@@ -446,9 +438,17 @@ pub(crate) async fn delete_project(
 }
 
 /// 单体读写的计数装饰（上游 `loadProjectIssueStats` + `loadProjectResourceCount`）。
-async fn fill_counts(state: &AppState, workspace_id: Id, project_id: Uuid, resp: &mut ProjectResponse) {
+async fn fill_counts(
+    state: &AppState,
+    workspace_id: Id,
+    project_id: Uuid,
+    resp: &mut ProjectResponse,
+) {
     let ids = [project_id];
-    if let Some((total, done)) = issue_stats_map(state, workspace_id, &ids).await.get(&project_id) {
+    if let Some((total, done)) = issue_stats_map(state, workspace_id, &ids)
+        .await
+        .get(&project_id)
+    {
         resp.issue_count = *total;
         resp.done_count = *done;
     }

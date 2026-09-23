@@ -228,6 +228,11 @@ pub(crate) struct CreateProjectResourceRequest {
 /// `map[string]json.RawMessage` 取 key，`rawRef` 的 `ok` 才是「有没有传」。第三态
 /// `Some(JsonValue::Null)` 会走 `validateAndNormalizeResourceRef` 并拿到 url/path
 /// 缺失的 400 —— 与上游 `json.RawMessage("null")` 同款。
+///
+/// 注意：`routes/projects/resources.rs` 的 `update_resource` 按上游原样**先解到裸 map**
+/// （要区分「键缺失」与「键为 null」，且逐字段的 400 文案与上游逐字一致），所以本结构
+/// 只作线上形状的文档与后续切片复用点，当前不在编译期被构造。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct UpdateProjectResourceRequest {
     pub resource_ref: Option<JsonValue>,

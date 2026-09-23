@@ -39,9 +39,7 @@ use uuid::Uuid;
 
 use mc_db::Db;
 
-use crate::project_resource::{
-    NewProjectResource, ProjectResourceRow, PROJECT_RESOURCE_COLUMNS,
-};
+use crate::project_resource::{NewProjectResource, ProjectResourceRow, PROJECT_RESOURCE_COLUMNS};
 use crate::workspace::map_sqlx_err;
 use crate::{RepoError, RepoWithDb, Result};
 
@@ -342,7 +340,8 @@ impl ProjectRepo {
 
     /// `GetProjectInWorkspace`。
     pub async fn get_in_workspace(&self, id: Uuid, workspace_id: Id) -> Result<Option<ProjectRow>> {
-        let sql = format!("SELECT {PROJECT_COLUMNS} FROM project WHERE id = $1 AND workspace_id = $2");
+        let sql =
+            format!("SELECT {PROJECT_COLUMNS} FROM project WHERE id = $1 AND workspace_id = $2");
         sqlx::query_as::<_, ProjectRow>(&sql)
             .bind(id)
             .bind(workspace_id.0)
@@ -391,7 +390,10 @@ impl ProjectRepo {
     /// `UpdateProject`（`COALESCE` + 直接赋值语义见 [`ProjectUpdate`]）。
     ///
     /// 上游 SQL 只有 `WHERE id = $1`；本仓加 `workspace_id` 守卫作纵深防御。
-    pub async fn update(&self, patch: &ProjectUpdate) -> std::result::Result<ProjectRow, WriteError> {
+    pub async fn update(
+        &self,
+        patch: &ProjectUpdate,
+    ) -> std::result::Result<ProjectRow, WriteError> {
         let sql = format!(
             "UPDATE project SET \
                  title = COALESCE($2::text, title), \
@@ -520,7 +522,6 @@ impl RepoWithDb for ProjectRepo {
         &self.db
     }
 }
-
 
 #[cfg(test)]
 mod tests;

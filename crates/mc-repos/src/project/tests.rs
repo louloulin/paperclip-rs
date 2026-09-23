@@ -6,69 +6,71 @@ use super::search::{build_project_search_query, extract_snippet, split_search_te
 use super::*;
 use crate::RepoError;
 
+#[test]
+fn escape_like_covers_backslash_percent_underscore() {
+    assert_eq!(escape_like("a%b_c\\d"), "a\\%b\\_c\\\\d");
+}
 
+#[test]
+fn split_search_terms_drops_empty_and_splits_unicode_space() {
+    assert_eq!(split_search_terms("  a\u{3000}b "), vec!["a", "b"]);
+    assert!(split_search_terms("   ").is_empty());
+}
 
-    #[test]
-    fn escape_like_covers_backslash_percent_underscore() {
-        assert_eq!(escape_like("a%b_c\\d"), "a\\%b\\_c\\\\d");
-    }
+#[test]
+fn search_sql_numbers_placeholders_and_ranks() {
+    let (sql, args) =
+        build_project_search_query("Road Map", &split_search_terms("Road Map"), false);
+    // $1 短语 + $2 workspace + $3/$4 两个词 + limit + offset
+    assert_eq!(args.len(), 6);
+    assert!(matches!(args[0], SearchArg::Text(_)));
+    assert!(matches!(args[1], SearchArg::Uuid(_)));
+    assert!(sql.contains("ELSE 5 END"));
+    assert!(sql.contains("p.status NOT IN ('completed', 'cancelled')"));
+    assert!(sql.contains("LIMIT $5 OFFSET $6"));
+}
 
-    #[test]
-    fn split_search_terms_drops_empty_and_splits_unicode_space() {
-        assert_eq!(split_search_terms("  a\u{3000}b "), vec!["a", "b"]);
-        assert!(split_search_terms("   ").is_empty());
-    }
+#[test]
+fn search_sql_single_term_has_no_multiword_tiers() {
+    let (sql, args) = build_project_search_query("road", &split_search_terms("road"), true);
+    assert_eq!(args.len(), 4, "$1 短语 + $2 workspace + limit + offset");
+    assert!(!sql.contains("THEN 3"), "单词查询没有 tier 3");
+}
 
-    #[test]
-    fn search_sql_numbers_placeholders_and_ranks() {
-        let (sql, args) = build_project_search_query("Road Map", &split_search_terms("Road Map"), false);
-        // $1 短语 + $2 workspace + $3/$4 两个词 + limit + offset
-        assert_eq!(args.len(), 6);
-        assert!(matches!(args[0], SearchArg::Text(_)));
-        assert!(matches!(args[1], SearchArg::Uuid(_)));
-        assert!(sql.contains("ELSE 5 END"));
-        assert!(sql.contains("p.status NOT IN ('completed', 'cancelled')"));
-        assert!(sql.contains("LIMIT $5 OFFSET $6"));
-    }
+#[test]
+fn extract_snippet_centers_on_match_and_marks_truncation() {
+    let text = "x".repeat(60) + "needle" + &"y".repeat(200);
+    let snippet = extract_snippet(&text, "needle");
+    assert!(snippet.starts_with("..."));
+    assert!(snippet.ends_with("..."));
+    assert!(snippet.contains("needle"));
+}
 
-    #[test]
-    fn search_sql_single_term_has_no_multiword_tiers() {
-        let (sql, args) = build_project_search_query("road", &split_search_terms("road"), true);
-        assert_eq!(args.len(), 4, "$1 短语 + $2 workspace + limit + offset");
-        assert!(!sql.contains("THEN 3"), "单词查询没有 tier 3");
-    }
+#[test]
+fn extract_snippet_is_cjk_safe() {
+    let text = "中文内容".repeat(10) + "关键字" + &"尾部".repeat(60);
+    let snippet = extract_snippet(&text, "关键字");
+    assert!(snippet.contains("关键字"));
+    assert!(
+        snippet.chars().count() <= 126,
+        "窗口 = idx-40..idx+len+80 + '...'"
+    );
+}
 
-    #[test]
-    fn extract_snippet_centers_on_match_and_marks_truncation() {
-        let text = "x".repeat(60) + "needle" + &"y".repeat(200);
-        let snippet = extract_snippet(&text, "needle");
-        assert!(snippet.starts_with("..."));
-        assert!(snippet.ends_with("..."));
-        assert!(snippet.contains("needle"));
-    }
+#[test]
+fn extract_snippet_falls_back_to_first_term() {
+    let text = format!("{}beta {}", "a".repeat(30), "c".repeat(200));
+    let snippet = extract_snippet(&text, "beta gamma");
+    assert!(snippet.contains("beta"));
+}
 
-    #[test]
-    fn extract_snippet_is_cjk_safe() {
-        let text = "中文内容".repeat(10) + "关键字" + &"尾部".repeat(60);
-        let snippet = extract_snippet(&text, "关键字");
-        assert!(snippet.contains("关键字"));
-        assert!(snippet.chars().count() <= 126, "窗口 = idx-40..idx+len+80 + '...'");
-    }
-
-    #[test]
-    fn extract_snippet_falls_back_to_first_term() {
-        let text = format!("{}beta {}", "a".repeat(30), "c".repeat(200));
-        let snippet = extract_snippet(&text, "beta gamma");
-        assert!(snippet.contains("beta"));
-    }
-
-    #[test]
-    fn write_error_classifies_sqlstates() {
-        assert!(matches!(
-            map_write_err(sqlx::Error::RowNotFound),
-            WriteError::Repo(RepoError::NotFound)
-        ));
-    }
+#[test]
+fn write_error_classifies_sqlstates() {
+    assert!(matches!(
+        map_write_err(sqlx::Error::RowNotFound),
+        WriteError::Repo(RepoError::NotFound)
+    ));
+}
 
 // ---------------------------------------------------------------------------
 // 真库集成测试（`MULTICA_TEST_DATABASE_URL`；`--ignored` 才跑）
@@ -210,9 +212,7 @@ mod db_tests {
                 priority: None,
                 lead_type: Some("member".into()),
                 lead_id: None,
-                start_date: Some(
-                    chrono::NaiveDate::from_ymd_opt(2026, 9, 23).expect("valid date"),
-                ),
+                start_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 23).expect("valid date")),
                 due_date: None,
             })
             .await
@@ -290,7 +290,11 @@ mod db_tests {
             .await
             .expect("search open");
         let titles: Vec<&str> = hits.iter().map(|h| h.project.title.as_str()).collect();
-        assert_eq!(titles, vec!["Road Map", "Q3 planning"], "标题命中先于描述命中");
+        assert_eq!(
+            titles,
+            vec!["Road Map", "Q3 planning"],
+            "标题命中先于描述命中"
+        );
         assert_eq!(hits[0].match_source, "title");
         assert_eq!(hits[1].match_source, "description");
 
@@ -387,13 +391,17 @@ mod db_tests {
         .await
         .expect("seed pin");
 
-        assert_eq!(repo.delete_cascade(target.id, fx.ws).await.expect("delete"), 1);
+        assert_eq!(
+            repo.delete_cascade(target.id, fx.ws).await.expect("delete"),
+            1
+        );
 
-        let project_left: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM project WHERE id = $1")
-            .bind(target.id)
-            .fetch_one(pool)
-            .await
-            .expect("count project");
+        let project_left: i64 =
+            sqlx::query_scalar("SELECT count(*)::bigint FROM project WHERE id = $1")
+                .bind(target.id)
+                .fetch_one(pool)
+                .await
+                .expect("count project");
         assert_eq!(project_left, 0);
         let session_project: Option<Uuid> =
             sqlx::query_scalar("SELECT project_id FROM chat_session WHERE id = $1")
@@ -401,12 +409,16 @@ mod db_tests {
                 .fetch_one(pool)
                 .await
                 .expect("session survives");
-        assert!(session_project.is_none(), "chat_session.project_id 清空但行保留");
-        let view_left: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM issue_view WHERE id = $1")
-            .bind(view_id)
-            .fetch_one(pool)
-            .await
-            .expect("count view");
+        assert!(
+            session_project.is_none(),
+            "chat_session.project_id 清空但行保留"
+        );
+        let view_left: i64 =
+            sqlx::query_scalar("SELECT count(*)::bigint FROM issue_view WHERE id = $1")
+                .bind(view_id)
+                .fetch_one(pool)
+                .await
+                .expect("count view");
         assert_eq!(view_left, 0);
         let pin_left: i64 = sqlx::query_scalar(
             "SELECT count(*)::bigint FROM pinned_item WHERE item_type = 'view' AND item_id = $1",

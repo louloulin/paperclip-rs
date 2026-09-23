@@ -19,8 +19,6 @@ use super::{
     SEARCH_DEFAULT_WORK_MEM_MB, SEARCH_STATEMENT_TIMEOUT_MS, SEARCH_WORK_MEM_ENV,
 };
 
-
-
 // ---------------------------------------------------------------------------
 // 搜索 SQL 构造（上游 `buildProjectSearchQuery` 的逐条移植）
 // ---------------------------------------------------------------------------
@@ -105,7 +103,11 @@ fn title_term_conditions(terms: &[String]) -> String {
 ///
 /// 返回的 `args` 顺序与 SQL 的 `$N` 顺序严格一致：`$1` 短语、`$2` workspace、多词时
 /// `$3..` 各词、最后两个是 limit / offset。
-pub(super) fn build_project_search_query(phrase: &str, terms: &[String], include_closed: bool) -> (String, Vec<SearchArg>) {
+pub(super) fn build_project_search_query(
+    phrase: &str,
+    terms: &[String],
+    include_closed: bool,
+) -> (String, Vec<SearchArg>) {
     let phrase = phrase.to_lowercase();
     let terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
 
@@ -143,7 +145,10 @@ pub(super) fn build_project_search_query(phrase: &str, terms: &[String], include
         format!("WHEN LOWER(p.title) LIKE {phrase_contains} THEN 2"),
     ];
     if term_params.len() > 1 {
-        rank_cases.push(format!("WHEN ({}) THEN 3", title_term_conditions(&term_params)));
+        rank_cases.push(format!(
+            "WHEN ({}) THEN 3",
+            title_term_conditions(&term_params)
+        ));
     }
     rank_cases.push(format!(
         "WHEN LOWER(COALESCE(p.description, '')) LIKE {phrase_contains} THEN 4"

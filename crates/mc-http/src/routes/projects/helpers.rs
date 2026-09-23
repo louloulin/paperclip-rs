@@ -183,7 +183,7 @@ pub(crate) async fn load_project_scoped(
     let workspace_id = resolve_workspace(state, headers, query).await?;
     require_workspace_member(state, workspace_id, user.id()).await?;
     let row = project_repo(state)
-        .get_in_workspace(project_id, workspace_id)
+        .get_in_workspace(project_id.0, workspace_id)
         .await
         .map_err(repo_err)?
         .ok_or_else(|| not_found("project"))?;
@@ -273,11 +273,8 @@ pub(crate) async fn resource_count_map(
         return map;
     }
     match resource_repo(state).resource_counts(project_ids).await {
-        Ok(rows) => {
-            for row in rows {
-                map.insert(row.project_id, row.resource_count);
-            }
-        }
+        // 仓储直接返回 `project_id -> count`（缺键由调用方按 0 处理）。
+        Ok(rows) => map = rows,
         Err(err) => tracing::warn!(error = %err, "project resource counts failed"),
     }
     map
