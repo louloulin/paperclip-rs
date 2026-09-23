@@ -21,10 +21,10 @@
 
 #![cfg(feature = "test-util")]
 
-#[path = "chat/support.rs"]
-mod support;
 #[path = "chat/broadcast.rs"]
 mod broadcast;
+#[path = "chat/support.rs"]
+mod support;
 
 use mc_core::Id;
 use serde_json::json;
