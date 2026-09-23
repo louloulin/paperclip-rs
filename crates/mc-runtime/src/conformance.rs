@@ -174,6 +174,63 @@ impl FakeCli {
         fake
     }
 
+    /// **长连接 stdin** 假 CLI（JSON-RPC 类协议专用）的脚本骨架。
+    ///
+    /// 普通前台的 `cat > stdin.txt` 要读到 EOF 才往下走，而 JSON-RPC 的 stdin 是
+    /// 长连接（写完 `initialize` 还在等应答）⇒ 双方互等，run 挂到超时。
+    /// 这里改用前台 `read_gate <子串>`：逐行读 stdin、逐行落盘，读到含该子串的帧
+    /// 才返回。闸门看的是**内容**而不是时序 ⇒ 确定性，不用 sleep 抢。
+    ///
+    /// 不改成后台 `cat`：dash 会把**异步列表**（`&`）的 stdin 接成 `/dev/null`，
+    /// 后台进程读到的永远是空（实测 stdin.txt 恒空），`<&3` 也只是在某些 redirect
+    /// 组合下才生效 —— 干脆不用后台。
+    fn live_script(&self, gate: &str, replay: Option<&Path>, tail: &str) -> String {
+        let dir = quoted(&self.dir);
+        let mut body = format!(
+            "#!/bin/sh\nd={dir}\nprintf '%s\\n' \"$@\" > \"$d/argv.txt\"\nexec 3<&0\n: > \"$d/stdin.txt\"\nread_gate() {{\n  while IFS= read -r line <&3; do\n    printf '%s\\n' \"$line\" >> \"$d/stdin.txt\"\n    case \"$line\" in *\"$1\"*) return 0;; esac\n  done\n  return 1\n}}\nread_gate '{gate}' || exit 0\n"
+        );
+        if let Some(transcript) = replay {
+            // 回放循环的 stdin 被 `done < 文件` 接管，不会吃掉 adapter 的帧。
+            body.push_str("while IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone < ");
+            body.push_str(&quoted(transcript));
+            body.push('\n');
+        }
+        body.push_str(tail);
+        body
+    }
+
+    /// 等 `after` 出现 → 回放事件流 → 等 `until` 也出现 → 以 0 退出。
+    ///
+    /// 第二道闸门必不可少：进程若在 adapter 写出 `turn/start`（带 prompt 的那帧）
+    /// 之前就退出，写入会得到 EPIPE，`stdin.txt` 里就看不到 prompt，
+    /// “prompt 必须走 stdin” 的断言会随机失败。
+    pub fn live_replaying(transcript: &str, after: &str, until: &str) -> Self {
+        let fake = Self::allocate("live-replay");
+        let payload = fake.payload("transcript.txt", transcript);
+        let tail = format!("read_gate '{until}'\nexit 0\n");
+        fake.install(&fake.live_script(after, Some(&payload), &tail));
+        fake
+    }
+
+    /// 等 `after` 出现 → 回放 → 写 stderr → 以 `exit_code` 退出。
+    pub fn live_failing(transcript: &str, exit_code: i32, stderr: &str, after: &str) -> Self {
+        let fake = Self::allocate("live-failing");
+        let payload = fake.payload("transcript.txt", transcript);
+        let error = fake.payload("stderr.txt", &format!("{stderr}\n"));
+        let tail = format!("cat {} >&2\nexit {exit_code}\n", quoted(&error));
+        fake.install(&fake.live_script(after, Some(&payload), &tail));
+        fake
+    }
+
+    /// 等 `after` 出现 → 回放 → 睡死（用于“流起来了再取消”）。
+    pub fn live_replaying_then_sleeping(transcript: &str, seconds: u32, after: &str) -> Self {
+        let fake = Self::allocate("live-replay-sleep");
+        let payload = fake.payload("transcript.txt", transcript);
+        let tail = format!("exec sleep {seconds}\n");
+        fake.install(&fake.live_script(after, Some(&payload), &tail));
+        fake
+    }
+
     fn payload(&self, name: &str, content: &str) -> PathBuf {
         let path = self.dir.join(name);
         std::fs::write(&path, content).expect("写 payload");
@@ -235,6 +292,52 @@ fn quoted(path: &Path) -> String {
 
 fn build<A: TestableAdapter>(fake: &FakeCli) -> A {
     A::with_conformance_env(&fake.path(), fake.dir())
+}
+
+/// adapter 自报的协议族（用一个只打印版本的假 CLI 构造一次）。
+fn protocol_of<A: TestableAdapter>() -> ProtocolFamily {
+    let fake = FakeCli::version("x\n");
+    build::<A>(&fake).capabilities().protocol
+}
+
+/// 长连接 stdin（JSON-RPC 类）协议的假 CLI 需要**闸门**：先确认 adapter 已把
+/// 握手帧写进 stdin 再回放，且回放后等带 prompt 的那一帧也落盘再退出。
+/// 其它协议返回 `None`（用普通的 `cat > stdin.txt` 前缀，靠 EOF 推进）。
+///
+/// `(回放前要等到的子串, 退出前要等到的子串)` —— 见 [`FakeCli::live_replaying`]。
+fn live_gates<A: TestableAdapter>() -> Option<(&'static str, &'static str)> {
+    match protocol_of::<A>() {
+        ProtocolFamily::AppServer => Some(("thread/start", "turn/start")),
+        _ => None,
+    }
+}
+
+/// 正常路径（回放到尾、0 退出）的假 CLI。
+fn success_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
+    match live_gates::<A>() {
+        Some((after, until)) => FakeCli::live_replaying(&script.success_stdout, after, until),
+        None => FakeCli::replaying(&script.success_stdout),
+    }
+}
+
+/// 非零退出路径的假 CLI。
+fn failing_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
+    match live_gates::<A>() {
+        Some((after, _)) => {
+            FakeCli::live_failing(&script.success_stdout, 3, &script.expected_error, after)
+        }
+        None => FakeCli::failing(&script.success_stdout, 3, &script.expected_error),
+    }
+}
+
+/// 取消路径的假 CLI（回放完就睡死）。
+fn cancelling_fake<A: TestableAdapter>(script: &ConformanceScript) -> FakeCli {
+    match live_gates::<A>() {
+        Some((after, _)) => {
+            FakeCli::live_replaying_then_sleeping(&script.success_stdout, 30, after)
+        }
+        None => FakeCli::replaying_then_sleeping(&script.success_stdout, 30),
+    }
 }
 
 /// 断言进程已被回收（Linux 下 `/proc/<pid>` 消失；其它平台跳过）。
@@ -321,7 +424,7 @@ pub async fn check_probe_version_parses_semver<A: TestableAdapter>() {
 /// 套件 4 + 5：正常 run 的完整生命周期，以及 prompt 走 stdin。
 pub async fn check_launch_streams_and_completes<A: TestableAdapter>() {
     let script = A::conformance_script();
-    let fake = FakeCli::replaying(&script.success_stdout);
+    let fake = success_fake::<A>(&script);
     let adapter = build::<A>(&fake);
     let caps = adapter.capabilities();
     let prompt = "conformance prompt：请只回一行";
@@ -391,7 +494,7 @@ pub async fn check_launch_streams_and_completes<A: TestableAdapter>() {
 /// 套件 6：非零退出 → `Failed` / `AgentError`，并带上 stderr 诊断。
 pub async fn check_nonzero_exit_maps_to_agent_error<A: TestableAdapter>() {
     let script = A::conformance_script();
-    let fake = FakeCli::failing(&script.success_stdout, 3, &script.expected_error);
+    let fake = failing_fake::<A>(&script);
     let adapter = build::<A>(&fake);
     let outcome = adapter
         .launch(LaunchRequest::new("会失败的 run"))
@@ -440,7 +543,7 @@ pub async fn check_timeout_maps_to_timeout<A: TestableAdapter>() {
 /// 套件 8：`cancel` 幂等，终态是 `Cancelled` / `Manual`。
 pub async fn check_cancel_is_idempotent<A: TestableAdapter>() {
     let script = A::conformance_script();
-    let fake = FakeCli::replaying_then_sleeping(&script.success_stdout, 30);
+    let fake = cancelling_fake::<A>(&script);
     let adapter = build::<A>(&fake);
     let mut handle = adapter
         .launch(LaunchRequest::new("会被取消的 run"))
@@ -570,4 +673,63 @@ macro_rules! adapter_conformance {
             }
         }
     };
+}
+
+#[cfg(all(test, unix))]
+mod harness_tests {
+    use super::*;
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::process::{Command, Stdio};
+
+    /// `live_*` 的闸门必须真的被 stdin 内容推开。
+    ///
+    /// 这是**测试台自己的测试**：闸门一坏（例如后台读 stdin 被 dash 接到
+    /// `/dev/null`），长连接协议的 adapter 会退化成"10 秒后拿到空流"，
+    /// 断言却指向 adapter —— 排查成本极高。
+    #[test]
+    fn live_fake_gates_replay_behind_stdin_content() {
+        let fake = FakeCli::live_replaying("第一行\n第二行\n", "thread/start", "turn/start");
+        let mut child = Command::new(fake.path())
+            .arg("--listen")
+            .arg("stdio://")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("起假 CLI");
+        let mut stdin = child.stdin.take().expect("stdin 管道");
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout 管道"));
+
+        // 1) 写出第一道闸门：此时脚本才该开始回放。
+        stdin.write_all(b"{\"method\":\"thread/start\"}\n").unwrap();
+        stdin.flush().unwrap();
+        let mut line = String::new();
+        stdout.read_line(&mut line).expect("回放第一行");
+        assert_eq!(line, "第一行\n");
+        line.clear();
+        stdout.read_line(&mut line).expect("回放第二行");
+        assert_eq!(line, "第二行\n");
+
+        // 2) 第二道闸门没写之前不许退出（写方还没把 prompt 帧送完）。
+        assert!(
+            child.try_wait().expect("探活").is_none(),
+            "第二道闸门之前不该退出"
+        );
+        stdin
+            .write_all(b"{\"id\":3,\"method\":\"turn/start\"}\n")
+            .unwrap();
+        stdin.flush().unwrap();
+        drop(stdin);
+        let status = child.wait().expect("等假 CLI 退出");
+        assert!(status.success(), "{status}");
+
+        let recorded = fake.recorded_stdin();
+        assert!(recorded.contains("thread/start"), "{recorded}");
+        assert!(recorded.contains("turn/start"), "{recorded}");
+        assert!(
+            fake.recorded_argv().contains("stdio://"),
+            "argv 要落盘：{:?}",
+            fake.recorded_argv()
+        );
+    }
 }
