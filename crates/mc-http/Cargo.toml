@@ -68,6 +68,7 @@ mc-task = { path = "../mc-task" }
 # M4-2（LUM-1473）：squad 成员 presence 的纯推导（`derive_member_status` / 五桶分类）。
 # 只走 domain 层，不碰 DB；放在 `mc-squad` 而不是 http 层是为了能单独做单元测试。
 mc-squad = { path = "../mc-squad" }
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 # M1 sub-issue C 的 e2e 测试（tests/{invitations,pats}.rs）依赖以下三件套。
