@@ -164,13 +164,18 @@ impl FakeCli {
     }
 
     /// 先回放一段事件流、再睡死（用于"流已经起来了再取消"）。
+    ///
+    /// 回放必须是**一次写**（`cat`），不能逐行 `printf` 循环：取消用例在读到
+    /// 首个正文事件后**立刻** kill 进程，逐行版会留下一个负载相关的窗口 ——
+    /// 终态行还没落进管道就被杀，`opencode`/`codearts` 这类 fail-closed 解码器
+    /// 会把"被我们自己掐断的流"判成 `Failed`（这是 `docs/33` §5 规定的**正确**
+    /// 行为，不是 bug）⇒ 用例变成掷骰子。
+    /// 一次写保证数据在首个事件可读时**已经**整段进了管道，`run` 的 `BufReader`
+    /// 会把它入库，kill 之后的 drain 仍能读完（`docs/37` §18.6 有实测数据）。
     pub fn replaying_then_sleeping(transcript: &str, seconds: u32) -> Self {
         let fake = Self::allocate("replay-sleep");
         let payload = fake.payload("transcript.txt", transcript);
-        fake.install(&fake.script(&format!(
-            "while IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone < {}\nexec sleep {seconds}\n",
-            quoted(&payload)
-        )));
+        fake.install(&fake.script(&format!("cat {}\nexec sleep {seconds}\n", quoted(&payload))));
         fake
     }
 
@@ -190,8 +195,9 @@ impl FakeCli {
             "#!/bin/sh\nd={dir}\nprintf '%s\\n' \"$@\" > \"$d/argv.txt\"\nexec 3<&0\n: > \"$d/stdin.txt\"\nread_gate() {{\n  while IFS= read -r line <&3; do\n    printf '%s\\n' \"$line\" >> \"$d/stdin.txt\"\n    case \"$line\" in *\"$1\"*) return 0;; esac\n  done\n  return 1\n}}\nread_gate '{gate}' || exit 0\n"
         );
         if let Some(transcript) = replay {
-            // 回放循环的 stdin 被 `done < 文件` 接管，不会吃掉 adapter 的帧。
-            body.push_str("while IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone < ");
+            // 同样是一次写（理由见 `replaying_then_sleeping`）：`cat <文件>` 不读
+            // stdin，因此不会吃掉 adapter 的帧。
+            body.push_str("cat ");
             body.push_str(&quoted(transcript));
             body.push('\n');
         }

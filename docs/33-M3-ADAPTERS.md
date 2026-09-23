@@ -198,6 +198,15 @@ M3-4 的 runtime 台账都会按这条读族 —— 读到错族比读到"未知
 —— `tests/cli_adapters.rs` 的取消用例因此回放**完整**流（含 `step_finish`）后才取消，
 这是刻意的：截断流被判失败是 fail-closed 解码器的**正确行为**，不是 bug。
 
+**2026-09-23 08:30 补一条实现约束（集成 cycle 实测）**：「取消前先把终态行喂进去」在**假 CLI 里必须是一次写**。
+`FakeCli::replaying_then_sleeping` / `live_script` 原来用 `while IFS= read -r line; do printf '%s\n' "$line"; done < transcript`
+逐行回放 —— 那是**多次 write**，于是在「读到首个正文事件就立刻取消」的用例里留下一个负载相关的窗口：
+进程被 kill 时终态行可能还没落进管道 ⇒ fail-closed 解码器如实报"流被截断" ⇒ 期望 `Cancelled` 的用例偶发拿到 `Failed`。
+实测（本机 32 核 + 20 个 `yes` 占满 CPU）：`cargo test -p mc-runtime --lib conformance_cancel_is_idempotent` **30 次 4 次假红**
+（`codearts` / `opencode` 各半，正是两个 fail-closed 解码器）；把回放改成 `cat <transcript>`（一次 write，数据在首个事件可读时
+已整段进管道，`run` 的 `BufReader` 会入库，kill 之后的 drain 仍能读完）后**同条件 30/30 绿**。
+⇒ 后续给取消类用例写假 CLI 时，回放一律用 `cat`（或任何一次写的形式），不要用 `read` 循环。
+
 ## 6. 本批的刻意偏离 / 简化 / 契约缺口
 
 ### 6.1 刻意不复制上游的"优化"（都是有意的）
