@@ -132,6 +132,37 @@ async fn pure_daemon_workspace_connection_is_not_a_user_audience() {
 /// 帧字节逐字断言（键序 = 字典序，见 `docs/16` §11.5）：用户面帧的键集是契约的一部分，
 /// `task_id` / `failed` 两个 `omitempty` 键的**缺席**与 `quick_actions: []` 的**在场**
 /// 都是客户端分支的依据。
+/// 一条用户面帧的投递面断言：发出后**只有**同工作区的用户连接收到 `expected` 字节
+/// （返回它，供调用方追加断言），同工作区的 daemon 面连接与其他工作区的用户连接都静默。
+async fn assert_user_face_only(
+    server: &TestServer,
+    user: &mut Ws,
+    daemon: &mut Ws,
+    other: &mut Ws,
+    expected: &str,
+    emit: impl FnOnce() -> DeliveryOutcome,
+) -> String {
+    // 防假绿：`ws-1` 的工作区索引里**确实**有两条连接（用户 + daemon 面）—— 排除靠的是
+    // `user_id` 空，而不是「daemon 连接压根不在索引里」。
+    assert_eq!(server.hub.workspace_connection_count("ws-1"), 2);
+    assert_eq!(
+        emit(),
+        DeliveryOutcome::hit(),
+        "受众在场 ⇒ 必须 hit：{expected}"
+    );
+    let text = expect_text(user, WAIT).await;
+    assert_eq!(text, expected);
+    assert!(
+        quiet_for(daemon, QUIET).await,
+        "同工作区的 daemon 面连接（user_id 空）必须被排除：{expected}"
+    );
+    assert!(
+        quiet_for(other, QUIET).await,
+        "ws-2 不该收到 ws-1 的帧：{expected}"
+    );
+    text
+}
+
 #[tokio::test]
 async fn dispatch_family_frames_share_the_user_face_filter() {
     let server = TestServer::start(Hub::new()).await;
@@ -156,22 +187,15 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         task_id: "task-1".to_owned(),
         created_at: "2026-01-02T03:04:05Z".to_owned(),
     };
-    assert_eq!(
-        server.hub.notify_chat_message("ws-1", &message),
-        DeliveryOutcome::hit()
-    );
-    assert_eq!(
-        expect_text(&mut user, WAIT).await,
-        r#"{"type":"chat:message","payload":{"chat_session_id":"cs-1","content":"你好","created_at":"2026-01-02T03:04:05Z","message_id":"msg-1","role":"user","task_id":"task-1"}}"#
-    );
-    assert!(
-        quiet_for(&mut daemon, QUIET).await,
-        "chat:message 正文不能投给 daemon 面连接"
-    );
-    assert!(
-        quiet_for(&mut other, QUIET).await,
-        "ws-2 不该收到 ws-1 的帧"
-    );
+    assert_user_face_only(
+        &server,
+        &mut user,
+        &mut daemon,
+        &mut other,
+        r#"{"type":"chat:message","payload":{"chat_session_id":"cs-1","content":"你好","created_at":"2026-01-02T03:04:05Z","message_id":"msg-1","role":"user","task_id":"task-1"}}"#,
+        || server.hub.notify_chat_message("ws-1", &message),
+    )
+    .await;
 
     // 2) `chat:quick_actions`（上游 `service/chat_quick_actions.go:285`）：`quick_actions`
     //    恒在（可为空数组）、`failed` 只在失败收敛时出现。
@@ -186,18 +210,16 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         }],
         failed: false,
     };
-    assert_eq!(
-        server.hub.notify_chat_quick_actions("ws-1", &actions),
-        DeliveryOutcome::hit()
-    );
-    let text = expect_text(&mut user, WAIT).await;
-    assert_eq!(
-        text,
-        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","message_id":"msg-2","quick_actions":[{"label":"换个说法","primary":true,"prompt":"换一种说法重讲"}],"task_id":"task-1"}}"#
-    );
+    let text = assert_user_face_only(
+        &server,
+        &mut user,
+        &mut daemon,
+        &mut other,
+        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","message_id":"msg-2","quick_actions":[{"label":"换个说法","primary":true,"prompt":"换一种说法重讲"}],"task_id":"task-1"}}"#,
+        || server.hub.notify_chat_quick_actions("ws-1", &actions),
+    )
+    .await;
     assert!(!text.contains("failed"), "成功收敛不该有 failed 键：{text}");
-    assert!(quiet_for(&mut daemon, QUIET).await);
-    assert!(quiet_for(&mut other, QUIET).await);
 
     // 失败收敛：`failed: true` 出现，空数组仍然是 `[]` —— 这是解开客户端骨架屏的终态。
     let failed = ChatQuickActionsPayload {
@@ -207,15 +229,15 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         quick_actions: Vec::new(),
         failed: true,
     };
-    assert_eq!(
-        server.hub.notify_chat_quick_actions("ws-1", &failed),
-        DeliveryOutcome::hit()
-    );
-    assert_eq!(
-        expect_text(&mut user, WAIT).await,
-        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","failed":true,"message_id":"msg-2","quick_actions":[],"task_id":"task-1"}}"#
-    );
-    assert!(quiet_for(&mut daemon, QUIET).await);
+    assert_user_face_only(
+        &server,
+        &mut user,
+        &mut daemon,
+        &mut other,
+        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","failed":true,"message_id":"msg-2","quick_actions":[],"task_id":"task-1"}}"#,
+        || server.hub.notify_chat_quick_actions("ws-1", &failed),
+    )
+    .await;
 
     // 3) `task:cancelled`（上游 `BroadcastCancelledTasks`）：与 `task:queued` 同一份
     //    `taskEvent` 键集，只有 `status` 不同；chat 任务的 `issue_id` 是空串（键仍在）。
@@ -226,16 +248,15 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         status: "cancelled".to_owned(),
         chat_session_id: Some("cs-1".to_owned()),
     };
-    assert_eq!(
-        server.hub.notify_task_cancelled("ws-1", &cancelled),
-        DeliveryOutcome::hit()
-    );
-    assert_eq!(
-        expect_text(&mut user, WAIT).await,
-        r#"{"type":"task:cancelled","payload":{"agent_id":"ag-1","chat_session_id":"cs-1","issue_id":"","status":"cancelled","task_id":"task-9"}}"#
-    );
-    assert!(quiet_for(&mut daemon, QUIET).await);
-    assert!(quiet_for(&mut other, QUIET).await);
+    assert_user_face_only(
+        &server,
+        &mut user,
+        &mut daemon,
+        &mut other,
+        r#"{"type":"task:cancelled","payload":{"agent_id":"ag-1","chat_session_id":"cs-1","issue_id":"","status":"cancelled","task_id":"task-9"}}"#,
+        || server.hub.notify_task_cancelled("ws-1", &cancelled),
+    )
+    .await;
 
     // 空工作区 = miss，且不产生任何帧（上游 `notifyWorkspaceFrame` 的 `""` 分支）。
     assert_eq!(
@@ -243,7 +264,7 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         DeliveryOutcome::miss()
     );
     assert_eq!(
-        server.hub.notify_chat_quick_actions("", &actions),
+        server.hub.notify_chat_quick_actions("", &failed),
         DeliveryOutcome::miss()
     );
     assert_eq!(
@@ -251,4 +272,6 @@ async fn dispatch_family_frames_share_the_user_face_filter() {
         DeliveryOutcome::miss()
     );
     assert!(quiet_for(&mut user, QUIET).await);
+    assert!(quiet_for(&mut daemon, QUIET).await);
+    assert!(quiet_for(&mut other, QUIET).await);
 }

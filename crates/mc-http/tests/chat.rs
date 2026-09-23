@@ -23,9 +23,6 @@
 
 #[path = "chat/support.rs"]
 mod support;
-
-/// M4-4-fu（LUM-1600）的广播用例：真库 + 真 socket（`oneshot` 拿不到已升级的连接），
-/// 所以它自带一套 WS 夹具；库夹具仍复用 [`support`]。
 #[path = "chat/broadcast.rs"]
 mod broadcast;
 
