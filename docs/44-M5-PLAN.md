@@ -709,7 +709,44 @@ bash scripts/gates.sh --with-db  # 期望 10/10
 
 ---
 
-## 11. M5-INT 落地记录（占位，由 M5-INT 填写）
+## 11. M5-INT 落地记录（`LUM-1572`，起手 base `0fd96b4` → 真合到 `e01c73a`）
 
-（M5-INT 追加：实际 ⑦/⑨ 读数、逐片 PR 与合并提交、与本文档预测值的差异及原因、
-`docs/45-M5-INTEGRATION.md` 的指针。）
+详见 **`docs/56-M5-INTEGRATION.md`**（本号段原计划的 `docs/45` 已被 `45-M4-4-CHAT-DISPATCH.md` 占用 ⇒ 改用 `56`）。
+
+**逐片 PR / 合并提交**（全部入 base，`owners.M5 = 0`）：
+
+| 片 | issue | PR | merge |
+| --- | --- | --- | --- |
+| M5-0 | `LUM-1563` | #50 | `e07e0f2` |
+| M5-1 | `LUM-1564` | #55 | `76db3eb` |
+| M5-6 | `LUM-1565` | #54 | `5b4f407` |
+| M5-7 | `LUM-1566` | #52 | `659f19e` |
+| M5-2 | `LUM-1567` | #56 | `415f194` |
+| M5-3 | `LUM-1568` | #57 | `22d7135` |
+| M5-4 | `LUM-1569` | #58 | `f80ad18` |
+| M5-8 | `LUM-1571` | #60 | `eed6969` |
+| M5-5 | `LUM-1570` | #62 | `0fd96b4` |
+| **M5-INT** | **`LUM-1572`** | 本片 | — |
+
+**⑦ 实测（本轮 `gates.sh --with-db` 日志，10/10 PASS；冷 target 448s / 热 target 86s、79s）**：
+`upstream 456 | local 329 registered | baseline 300 → 329（+29 / −0）`；
+`implemented 263 real + 2 placeholder = 265 / 456  known_gap 191  unclaimed 0  regression 0  local_only 11`；
+`implemented + known_gap = 456`、`owners.M5 = 0`、⑩ 0 违规、`slash_alias_audit` 0 defect（allowlist 仅剩 M6 那 2 行）。
+
+**与 §6.1 预测的差异（逐项，原因已定位）**：预测 `local 319 / implemented 255 / known_gap 201`，实测 **329 / 265 / 191** ——
+差额 `+10 / +10 / −10` **全部**来自 **M4-4（PR #51，merge `542e833`）的 10 条 chat 键**（它晚于 M5-0 锚点合入，基线由 M4-INT `015ff2f` 补收 290→300），**不是 M5 超交**：
+锚点实测（`e07e0f2` 只读 worktree）= `290 / 233（real 231 + placeholder 2）/ 223`，与 §6.1 的「M5-0 后」行**逐字一致**。
+§6.1 的「刷新基线 → 319」因此按实测改为 **329**（刷新后 `baseline == local`）。
+
+**⑨ 复核（本 issue 必答项，§6.2）**：真库模式下 autopilot 域 8 条 **`unevaluable` 0**（6 pass / 1 mismatch / 1 unmounted，契约率 6/8 = 75%，已接入路由率 6/7 = 85.7%）；
+005（`TestAutopilotSubscriberReadFailureFailsClosed`）是 `direct_handler` + 故障注入站点，router+真库重放不可达 ⇒ 记 mismatch + 原因（实现侧 fail-closed 已落地）；
+008（`PUT /api/autopilots/not-a-uuid`）按 §6.2 口径**保留、不加 `PUT` 路由**，harness 记 `unmounted`；
+`--no-db` 模式仍是 8/8 `unevaluable`（结构上判不了，非回归）。`crates/mc-conformance/report.json` 无 diff。
+
+**跨波缺口（本片集中登记，详见 `docs/56` §7）**：R7 entitlement 平面（`QuotaPolicyProvider` 已留口，生产实现归 M9）、
+R9 daemon 执行面（`queued` 行仍无执行者）、R8 realtime 广播口径（唯一发点是 M5-4 的 `resource="workspace"` + `autopilot:run_*`，CRUD 事件未接）、
+调度内核共享给 M6/M9（`register_all(manager, &JobPorts)` 需要两个生产端口实现 —— §7.1 的旧代码段已过期）、
+**P0 = `apps/mc-server/Cargo.toml` 缺 `mc-scheduler` 边 + 门 ⑥ 未收集 `-p mc-scheduler`（本片按令不接线，归 `LUM-1659`）**，
+webhook worker 轮询循环（`docs/54` §6.1）由本片**裁定归 `LUM-1659`**（备选 M6-9）。
+
+**本片写集**：`docs/fixtures/route-parity-baseline.json`（刷新）+ `docs/56-M5-INTEGRATION.md`（新增）+ 本节；未碰任何 `crates/**`、`Cargo.toml`/`Cargo.lock`、`migrations/**`、`scripts/**`。
