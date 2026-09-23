@@ -2835,3 +2835,180 @@ multica issue get LUM-1471 --output json | grep -o '"status": "[a-z]*"'
    发版前 `git log -1 --format=%B` 复核。
 3. **`git add -A` 会把 `scratch/` 一起入库**：`scratch/m4_expect*.json` 是审计用的一次性产物（§27.4），
    提交前若已 `add -A`，要先 `git reset -q scratch/…` 再 commit（本 cycle 命中过一次，已在 amend 前清掉）。
+
+---
+
+## 28. 18:00 cycle 落地记录（`LUM-1541`）—— 并发 3/3 满（不派发）+ base 三条独立复验 + **更正 §27.6「4 条行为差」：实现侧本就是上游语义，是断言过严** + 两个在飞切片的 WIP  durability 快照 + 队列换位（`LUM-1506` 提到 M4-4 之前）
+
+### 28.0 一句话
+
+起手实测：base **`6497f32`**、GitHub **0 open PR**、daemon 并发 **3/3**（本 cycle + M4-3 + M4-0b）⇒ 本轮**不派新片**。
+产能投到四处：① base 三条独立复验（§28.2）；② 两片体检（§28.3）+ **给在飞 WIP 做只读耐久快照**（§28.4）；
+③ **逐条对着上游 Go 源码推翻** §27.6 的「4 条行为差」结论（§28.5）；④ 队列换位（§28.6）与 M4-4 串行边界（§28.7）。
+
+### 28.1 起手实测与并发位
+
+```bash
+git fetch origin feat/multica-rs-initial; git rev-parse --short origin/feat/multica-rs-initial   # 6497f32
+git diff --stat cf65ed3..6497f32                                                                  # docs/37 单文件 +176
+multica daemon status --output json                                                               # active_task_count 3 / running_task_count 3
+df -h /                                                                                           # 24G 可用
+```
+
+`6497f32` = §27.2 的合并树 `cf65ed3` **再加一个 docs-only 提交**（下面 §28.2 第 3 条证明它代码字节等价）。
+
+| 槽 | task | 片 | 09:3xZ 实测 |
+| --- | --- | --- | --- |
+| 1 | `01a0cd99-…` | 本 cycle `LUM-1541` | 编排（本记录） |
+| 2 | `01a0cd92-26c4-7427` | M4-3 `LUM-1474` | **活；已推 `0d121b5`**（§28.3） |
+| 3 | `01a0cd92-f6bf` | M4-0b `LUM-1471` | 活但 **0 提交 / 分支未推**，session 已 **114.7k / ~124k**（§28.3） |
+
+本 cycle 自带测试库：角色 `mc_lum1541`（`CREATEDB`）/ 库 `multica_lum1541`；全程 `CARGO_INCREMENTAL=0`。
+
+### 28.2 base 复验（三条独立证据，总成本 ~3 分钟）
+
+1. **GitHub CI：两个 SHA 各 3/3 全绿**（`curl …/commits/<sha>/check-runs` 实测）——
+   `fast — fmt / build / clippy / test / file-size`、`contract — route parity + conformance`、`db — postgres:16 + DB e2e`，
+   `6497f32` 与 `cf65ed3` 上都 `completed/success`；同时 `pulls?state=open` ⇒ **0 open PR**。
+2. **本地三门**：`bash scripts/gates.sh --only route-parity,file-size,conformance` ⇒ exit 0。⑦ 读数与 §27.3 逐字一致：
+   `upstream 456 (f41fae6b08fb) | local 272 | baseline 242 | implemented 216 real + 4 placeholder = 220/456 | known_gap 236 | unclaimed 0 | regression 0 | local_only 11`，
+   `gaps by owner: M6=55 M9=33 **M4=25** M7=24 …`（= M4-3 的 15 + M4-4 的 10，与 §27.4 的「丢失 25 条」自洽）。
+3. **`cf65ed3..6497f32` = docs-only**：`git diff --stat` 只有 `docs/37-M3-W3C-PREFLIGHT.md`（+176）⇒ §27.2 在 `cf65ed3` 上跑出的**合并树真库 10/10 对 `6497f32` 同样成立**（不必再花 263s「重证一次」）。
+
+> 口径：**base 变了才重跑全门**。base 没变（或只动了 docs）时，入场券由「CI + 本地三门 + diff 证明」三件套给出，
+> 把墙钟留给真正改变 state 的动作。
+
+### 28.3 在飞两片体检（daemon 日志 + session `usage` 逐条）
+
+**M4-3（`LUM-1474`，session `20260923T092144.454519697.jsonl`）：**
+
+- 活着：`grep -a "01a0cd92-26c4-7427" daemon.log | tail -1` ⇒ `tool #93: bash` @ `09:36:56Z`；
+- **产物已落 git 且已推**：`git ls-remote` 实测 `origin/agent/devbox5/68db42a17c32` = **`0d121b5`**，
+  链路 `3f85499 → def76f5`(merge base) `→ a961c80`(5 条 e2e 断言校正) `→ 0d121b5`(`cargo fmt`, 门 ①)；
+- 自证：`cargo test -p mc-http --test chat --features test-util -- --ignored --test-threads=1` ⇒ **5 passed**（`a961c80` message 附 `scratch/chat_tests_4.log`）；
+- 风险：session `totalTokens=99,283` @ `09:36:56Z` = **~80% of 124k 硬顶**。§25.6 的「每模块 commit + 早 push」纪律**生效** ⇒
+  最坏情况退化为「这个 attempt 收不了尾」，**不再是「丢文件」**（对比 §26 的前两次抢救）。
+
+**M4-0b（`LUM-1471`，session `20260923T033337.030278940.jsonl`）：**
+
+- 活着：`tool #45: bash` @ `09:37:32Z`；
+- ⚠️ **session 溯源（本轮新发现）**：该 session **不是本片开的**——
+  `grep -a "20260923T033337" daemon.log` ⇒ `05:40:01 resuming session task=01a0ccc7-3010-…`（那个 task `06:16:39` 以
+  `Concurrency limit exceeded for user` 失败），`09:22:36` 才被 `01a0cd92-f6bf`（本片）resume ⇒
+  它**继承了一份不属于自己的、已经很大的上下文**：`totalTokens=114,658` = **92% of 124k**，只剩 ~9k；
+- 工作树实测：` M scripts/extract_upstream_fixtures.py` + 3 个 untracked
+  (`docs/fixtures/handler-routes.tsv`、`scripts/extract_i4_direct_handler.py`、`scripts/upstream_handler_index.py`)；
+  HEAD 仍停 `f1970a6`（13:30 cycle 的 docs 提交 ⇒ 分支落后 base 多个 merge）；
+  **`agent/devbox5/3729eee9c3cd` 在 origin 上不存在**（`git ls-remote` 实测）⇒ **零产物入库**。
+
+### 28.4 WIP 耐久快照（本轮新套路：把「抢救」提前成只读快照）
+
+三片曾三次静默死亡，每次抢救 ≈ 一个 cycle 的墙钟。本轮改成**起手就把两个在飞切片的 WIP 落成可复原快照**：
+
+```bash
+# M4-3：整片相对 base 的合并面（21 万字节，19 文件，+4595/-117）
+git -C <m4-3>/workdir/paperclip-rs diff origin/feat/multica-rs-initial...a961c80 > m43_snapshot_a961c80.patch
+git apply --check ../m43_snapshot_a961c80.patch     # 在 6497f32 上 dry-run ⇒ 干净可套（实测）
+# M4-0b：untracked 一起收（用 cp+tar，不走 git，绝不碰对方 index）
+cp --parents docs/fixtures/handler-routes.tsv scripts/extract_i4_direct_handler.py \
+              scripts/upstream_handler_index.py scripts/extract_upstream_fixtures.py /tmp/m40b/
+tar czf m40b_wip_snapshot.tgz -C /tmp/m40b .
+git -C <m4-0b>/workdir/paperclip-rs diff -- scripts/extract_upstream_fixtures.py > m40b_tracked.patch
+```
+
+`m43_snapshot_a961c80.patch`（212,775 B，sha256 `00c3412b58…`）与 `m40b_wip_snapshot.tgz` + `m40b_tracked.patch`
+**已作为本 issue 评论的附件落库** ⇒ 即使 workdir 被清、即使 124k 静默死亡，产物也能从评论取回。
+**只读保证**：全程 `git diff` / `cp` / `tar`——**没有** `git add`（不打乱对方 index）、**没有** push（§28.7 的「一个分支一个写者」）。
+
+### 28.5 更正：§27.6 的「4 条行为差」⇒ **断言过严，实现侧本就是上游语义** ⚠️
+
+§27.6 的写法（「判据都指向上游 `chat.sql` / `chat.go`」）读起来像实现侧有差。本轮**逐条对着上游 Go 源码复核**（只读），结论**是反的**：
+
+| 测试（`tests/chat.rs`） | §27.6 的判据 | 本轮复核：实现侧（`git show 3f85499:<file>`）+ 上游出处 | 定性 |
+| --- | --- | --- | --- |
+| `create_get_and_list_visibility`（:216） | 「`ListChatSessions` 的 agent join 缺可见性过滤」 | 实现**已有**：`session.rs:346-350` = `scope.accessible_agent_ids()` + `.filter(\|row\| allowed.contains(&row.agent_id))`。是**断言把 owner 视图写严了**：上游 `memberAllowedToViewAgent`(`agent_access.go:192`) 与 `canAccessPrivateAgent`(`:150`) 对 `role ∈ {owner,admin}` **和** agent owner **无条件 `return true`**（注释原文 “workspace owner/admin pass (governance / inventory visibility retained)”）。 | **断言过严** |
+| `flags_update_and_delete`（:314） | 「删隐藏渠道会话被公开门挡成 404（应 204）」 | `delete_session` 走 `scope.load_session_for_user(…)`（= 上游 `loadChatSessionForUser`，`chat.go:252` 的**所有权门**），**没用** public 投影门——同文件里读面 / flags / archive 才用 `gate_public_session_for_user`，且注释专门写了这个分工。上游 `DeleteChatSession`(`chat.go:677`) 同样先 `loadChatSessionForUser` ⇒ 已删会话再删是 **404**；幂等 204 只覆盖 `LockChatSessionForDelete` 的 `ErrNoRows` **竞态窗口**。是**测试写成「连删两次都 204」**。 | **断言写错** |
+| `message_read_and_paging`（:397） | 「`next_cursor.created_at` 取区间下界（应窗口最旧一条）」 | `mc-chat/src/message.rs:157-175`：`has_more` 在截断**前**算 → `truncate(limit)` → **之后**才 `messages.last()` ⇒ 正是「窗口最旧一条」；`visible()` 又在 `page_window` **之前**滤（与上游 `visibleChatMessages` 同序）。测试把 `limit=2` 的期望取成了窗口里**新**那条（`…03Z` vs 正确的 `…02.5Z`）。 | **断言取反** |
+| `pinned_agents_bar`（:493） | 「`PinChatAgent` 未过可见性门（200，应 404）」 | `bar.rs:125-128` **有**门，且刻意用**原始字符串**做键（`allowed.contains(&raw_agent_id)`，对齐上游 `allowed[req.AgentID]`）；测试选的 agent 在**正确**规则下本就可见（同第 1 行的 owner/admin 放行）。上游真条件是「**权限变更后**丢 pin」：`ListChatPinnedAgents` 只按 `accessibleAgentIDs` 过滤，而它读的 `ListAllAgents` 是 `WHERE workspace_id=$1 AND kind='user'`（**没有** `archived_at IS NULL`）⇒ 归档 agent 的 pin **保留**。 | **断言选错场景** |
+
+**独立佐证（强）**：M4-3 自己在飞的 attempt 于 `09:32:29Z` 提交 `a961c80`，message 给出**同样的结论 + 同样的上游出处**；
+`git show --stat a961c80` 实测 = **只动 `crates/mc-http/tests/chat.rs`(118) + `session.rs` 的 4 行文档注释，零执行路径改动** ⇒
+「实现侧无差」由**两条独立路径**确认（本 cycle 的上游只读复核 + 切片自己的修订 commit）。
+
+**流程教训（写入纪律）**：上一轮 cycle 交下来的「剩余行为差清单」是**读数的直觉归因**，不是**已核事实**。
+下个 cycle 拿到这类清单，**第一动作是复核实现侧**（`git show <branch>:<file>` 即可，分钟级）。
+本轮若照 §27.6 动手，会在**已经正确**的实现上「再修一遍」，并把正确的断言改坏——**这是最贵的一类返工**。
+⇒ 今后记「行为差」必须写成四列：`测试名（断言点） / 实现侧实测（文件:行） / 上游依据（文件:行） / 定性`；
+**缺「实现侧实测」一列只能算「待核」，不算结论**。
+
+### 28.6 队列换位：`LUM-1506`（M3-7-fu ws 收口）**排在 M4-4 之前**
+
+`docs/42` §7 第 4 条给 M4-4 的前置写的是「**M3-7（`LUM-1438`）已合入**（ws 广播）」。该条件**形式上已满足**：
+
+```bash
+git merge-base --is-ancestor 2a51a46 HEAD && echo yes     # yes（2a51a46 = merge #39 M3-7 daemon 面 44 条）
+```
+
+但它要保的**实质**并未满足（base `6497f32` 实测）：
+
+```bash
+grep -rn "chat:done\|TaskQueued\|agent:status" crates/mc-ws/src crates/mc-daemon/src   # 0 命中
+grep -rn "install_ws_handlers" crates apps                                             # 只有 daemon/mod.rs:166 一处定义，0 调用点（死代码）
+grep -n "pub fn notify_" crates/mc-ws/src/hub.rs                                       # 5 个，全是 runtime/daemon 面
+```
+
+⇒ 照字面读条件，M4-4 会走「降级预案」（不发广播 + 登记 follow-up），把债务留给未来。本轮把顺序反过来：
+**先 `LUM-1506`、再 M4-4**。代价为零——M4-4 与 M4-3 **同写 4 个文件**（§28.7），它本来就必须等 M4-3 合入，
+`LUM-1506` 插在这个空档里**不占 M4-4 的墙钟时间**。hub 侧已有的是「投递机制」
+（`DeliveryOutcome`、`Index::User`、`user_connection_count()`，5 个 `notify_*` 里 `notify_workspaces_changed(user_id)`
+已是用户寻址）⇒ `LUM-1506` 是**加法活**，不是重写。
+该决定（含写集加严：**禁碰** `mc-chat/**`、`mc-repos/**`、`routes/chat/**`、`tests/chat.rs`、`tests/chat/**`、`Cargo.lock`；
+扩入 `routes/agents/env.rs`、`routes/daemon/tasks.rs`；⑩ 预飞 `daemon/lifecycle.rs` = **757/800，只剩 43 行**）**已写入 `LUM-1506` 的描述**，
+命令带 `--no-start`（状态仍 `backlog`，下一个空位即派）。
+
+### 28.7 边界：M4-4 必须与 M4-3 **严格串行**（一个分支一个写者）
+
+M4-3 分支实测动 19 个文件（`git diff --stat origin/feat/multica-rs-initial...0d121b5`），其中与 M4-4 **必然冲突**的 4 个：
+
+- `crates/mc-chat/src/lib.rs`（新模块必须在这里 `pub mod`）；
+- `crates/mc-http/src/routes/chat/mod.rs`（M4-0 anchor 曾声明「任何切片都不改本文件」，M4-3 为 `#[cfg(test)] upstream_text()` 破了例）；
+- `crates/mc-http/tests/chat.rs` + `crates/mc-http/tests/chat/support.rs`（M4-4 的 chat 集成测试天然落在这里）。
+
+⇒ **`LUM-1475`（M4-4）排出前必须先确认 M4-3 已合入 base**；本轮 `LUM-1475` / `LUM-1476`（M4-INT）**不派**（并发 3/3 亦然）。
+另：本轮**没有** push 任何在飞分支、**没有**改在飞 workdir 的文件与 index。
+
+### 28.8 本轮没做什么（边界）
+
+- **没合并任何东西**（0 open PR）；**没改 base 的执行路径**（只新增本 §28）；**没刷新** ⑦ 基线 / ⑨ 快照 /
+  `slash-alias-allowlist.tsv` / `file_size_baseline.tsv`（基线只减不增），**没动**迁移、`routes/mount.rs`、`routes/mod.rs`；
+- **没派发**（并发 3/3）；`LUM-1506` 的换位只写进它的描述（`--no-start`，仍 `backlog`）；
+- **没动** `LUM-1474` / `LUM-1471` 的 issue 状态、分支与工作树（只读快照）；
+- `LUM-1440`（execenv）、`LUM-1476`（M4-INT）仍在 backlog。
+
+### 28.9 复算命令（§28.1–§28.6 逐条可重跑）
+
+```bash
+git log --oneline -1 origin/feat/multica-rs-initial                    # 6497f32
+git diff --stat cf65ed3..6497f32                                       # docs/37 单文件（+176）
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
+curl -s -u "x-access-token:$TOKEN" https://api.github.com/repos/louloulin/paperclip-rs/commits/6497f32/check-runs   # 3/3 success
+curl -s -u "x-access-token:$TOKEN" "https://api.github.com/repos/louloulin/paperclip-rs/pulls?state=open"           # []
+bash scripts/gates.sh --only route-parity,file-size,conformance; echo $?   # 0
+python3 scripts/route_parity.py | head -3                               # 272 / 220-of-456 / regression 0 / M4=25
+git ls-remote --heads origin 'refs/heads/agent/devbox5/68db42a17c32'    # 0d121b5
+git ls-remote --heads origin 'refs/heads/agent/devbox5/3729eee9c3cd'    # 空 ⇒ M4-0b 分支未推
+grep -a "01a0cd92-f6bf\|20260923T033337" ~/.multica/daemon.log | tail -5
+git -C <m4-0b workdir> status --porcelain
+python3 -c "import json;last=[json.loads(l) for l in open('/home/devbox/.multica/pi-sessions/20260923T033337.030278940.jsonl',errors='replace') if l.strip()]"  # 末条 assistant 的 usage.totalTokens
+```
+
+### 28.10 本轮三个新坑
+
+1. **`resume_reachable` 会把「别的 task 的 session」续给你**：`LUM-1471` 的 session `20260923T033337` 原本属于
+   `01a0ccc7-3010`（daemon 日志 `05:40:01 resuming session task=01a0ccc7-3010-…`），后者 `06:16:39` 因并发限流失败；
+   `09:22:36` 本片 resume 了**同一份**上下文 ⇒ 起手 `totalTokens` 就是 **114.7k（92% 硬顶）**。
+   现象：`resume_reachable` 只看「有没有可续的 session」，**既不问它属于哪个 task，也不看它剩多少预算**。
+   处置：派重活前读一眼该 session 末条 `usage.totalTokens`（§28.9 最后一行），**>80% 就别再 `todo` 续跑，改 `rerun`**（§27.7 实测 `rerun` = 新 session + 新 workdir）。
+2. **「上一轮的行为差清单」必须先核实现侧再动手**（§28.5）——当事实用是本程序最贵的返工来源。
+3. **untracked 产物快照不要用 `git add -N`**：那会改对方 worktree 的 **index**（在飞 agent 可能正在用 `git status` / `git stash` 判断自己的状态）。
+   用 `cp --parents` + `tar`，或 `git diff --no-index /dev/null <file>`，全程只读。
