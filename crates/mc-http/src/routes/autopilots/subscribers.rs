@@ -30,11 +30,11 @@
 //! 或 `DELETE` 就结束。`AddAutopilotCollaborator` 的 upsert 本身幂等（重复授权 = 刷新
 //! `granted_by`，不是错误），也不存在「超员」这种跨行不变量，所以既没有 advisory 锁的
 //! 对象，也没有需要原子化的第二条写 ⇒ 本片按上游实现（无事务），并把这条出入记进
-//! `docs/47-M5-2-WRITE-FACE.md` §5。
+//! `docs/50-M5-2-WRITE-FACE.md` §5。
 //!
 //! ## 无实时事件（跨片缺口）
 //!
-//! 上游两条都会 `h.publish(EventAutopilotUpdated, …)`；与 `crud.rs` 同口径先不接（缺口记 `docs/47` §5）。
+//! 上游两条都会 `h.publish(EventAutopilotUpdated, …)`；与 `crud.rs` 同口径先不接（缺口记 `docs/50` §5）。
 
 use std::collections::HashMap;
 use std::sync::Arc;

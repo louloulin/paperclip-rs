@@ -106,7 +106,7 @@ pub struct SubscriberCandidate {
 ///
 /// 1. `user_type != "member"` → `subscribers[i].user_type must be 'member'`
 /// 2. `user_id == ""` → `subscribers[i].user_id is required`
-/// 3. 非 UUID → `subscribers[i].user_id must be a valid uuid`（**本地文案**，见 `docs/47`）
+/// 3. 非 UUID → `subscribers[i].user_id must be a valid uuid`（**本地文案**，见 `docs/50`）
 /// 4. 已出现过的规范化 UUID ⇒ 丢弃（**保留首次的 `input_index`**）
 ///
 /// 空切片返回空 `Vec`（不是 `None`）：Create 把「缺失 / `null`」与「空数组」都折成空，
@@ -184,7 +184,10 @@ mod tests {
 
     #[test]
     fn user_type_must_be_member_and_error_names_the_index() {
-        let err = parse_subscribers(&[input("member", "u"), input("agent", "u")]).unwrap_err();
+        // 第一项必须是**合法 UUID**：校验是逐项「user_type → user_id 非空 → UUID 解析」的，
+        // 用假 id 会在第 0 项就报 user_id，永远走不到第 1 项的 user_type。
+        let good = uuid::Uuid::nil().to_string();
+        let err = parse_subscribers(&[input("member", &good), input("agent", &good)]).unwrap_err();
         assert_eq!(err.to_string(), "subscribers[1].user_type must be 'member'");
     }
 

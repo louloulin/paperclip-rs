@@ -26,7 +26,7 @@
 //! | 怪癖 | 为什么 |
 //! | --- | --- |
 //! | 三态补丁用 **`rawFields` + `Option<T>`**，不是 `Option<Option<T>>` | 上游用的就是 `map[string]json.RawMessage` 判「键在不在」，指针判「是不是 null」；两份信息合起来正好是 `Option<Option<T>>`，但**分开更贴上游**（`assignee_type: null` 与 `assignee_type: ""` 在上游是两条不同分支） |
-//! | `description` 的 `rawFields` 分支**不实现** | 该列是 `COALESCE($3, description)`：显式 `null` 与「不传」在 SQL 里都保持原值 ⇒ 那条分支**不可观测**，写出来只是死代码 |
+//! | `description` 的 `rawFields` 分支：**键出现且非 `null` 才覆盖** | 列是 `COALESCE($3, description)` ⇒ `null` / 不传都保持原值（上游 `ptrToText` 的两条腿）。⚠️ anchor 原本判定这条分支「不可观测」是**错的** —— 上游 `if _, ok := rawFields["description"]; ok` + `ptrToText(req.Description)` 在**给了字符串**时就是可观测的，而 `description` 又算实质变更（run 的 PROMPT）⇒ 必须消费。见 `docs/50-M5-2-WRITE-FACE.md` §5 |
 //! | `issue_title_template` / `project_id` 是**直赋值**（`$8` / `$9`，不 COALESCE） | 不传时 handler 必须**回填 `prev`**，否则一次 PATCH 就把它们清空 |
 //! | Update **不校验** `title` / `status` / `execution_mode` 的取值 | 上游只在 Create 校验 `execution_mode` 白名单（Update 传 `"whatever"` 会撞 DB CHECK → 500），`status` 同理，`title` 允许空串 |
 //! | `subscribers: []` 是**断言**（整表替换），`null` / 缺失 = 保持 | 与读面的 fail-closed 500 同源（MUL-6680） |
@@ -57,7 +57,7 @@
 //!
 //! 上游在这三条路径上都会 `h.publish(...)`（`EventAutopilotCreated/Updated/Deleted`）。
 //! 本仓 M4 的 projects 写面同样没有接 realtime 平面（`projects/crud.rs`），M5-2 沿用
-//! 「先不 publish」的口径，缺口记入 `docs/47-M5-2-WRITE-FACE.md` §5；等 realtime 平面统一接。
+//! 「先不 publish」的口径，缺口记入 `docs/50-M5-2-WRITE-FACE.md` §5；等 realtime 平面统一接。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -164,10 +164,11 @@ struct CreateAutopilotRequest {
 struct UpdateAutopilotRequest {
     #[serde(default)]
     title: Option<String>,
-    /// 解析出来但**故意不消费**（见模块文档：该列是 `COALESCE`，显式 `null` 与不传等价，
-    /// 上游那条 `rawFields["description"]` 分支不可观测）。留着是为了让结构体与上游请求形状一致。
+    /// 任务指令本体（上游把它当 run 的 PROMPT）⇒ 改它算实质变更。
+    ///
+    /// 三态：键不出现 = 不改；键出现且为 `null` = 不改（`COALESCE(null, description)`）；
+    /// 键出现且是字符串 = 覆盖。
     #[serde(default)]
-    #[allow(dead_code)]
     description: Option<String>,
     #[serde(default)]
     project_id: Option<String>,
@@ -300,7 +301,7 @@ async fn lock_and_validate_subscribers(
 ///
 /// 上游那条失败路径会把 `subscribers` 序列化成 `null`（Go 的 nil slice），本地恒回 `[]` ——
 /// 「本字段恒为数组」是本仓写面更强的口径（MUL-6680 的教训），且该分支在一次刚提交的
-/// 同连接查询里不可达。记入 `docs/47` §5。
+/// 同连接查询里不可达。记入 `docs/50` §5。
 async fn reload_subscribers(
     repo: &AutopilotRepo,
     autopilot_id: Uuid,
@@ -468,8 +469,12 @@ async fn update_autopilot(
         project_id: prev.project_id,
         ..UpdateAutopilot::default()
     };
-    // `description` **故意不处理**：列是 `COALESCE($3, description)`，显式 `null` 与不传等价
-    // （上游那条 `rawFields["description"]` 分支不可观测）。
+    // `description`：上游有 `rawFields["description"]` 分支，**值非 `null` 时是可观测的**（列是
+    // `COALESCE($3, description)` ⇒ `Some("新值")` 覆盖、`None`（显式 `null` 或不传）保持，
+    // 正好是上游 `ptrToText` 的两条腿）。改它算实质变更（上游把它当 run 的 PROMPT）⇒ 必须消费。
+    if sent(&raw, "description") {
+        params.description = req.description.clone();
+    }
     if let Some(title) = req.title.clone() {
         params.title = Some(title);
     }
