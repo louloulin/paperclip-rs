@@ -19,6 +19,7 @@
 //! - `issues/statuses.rs`：issue-statuses 目录生命周期
 //! - `issues/auth.rs`：鉴权 / workspace 解析 / 501 占位
 //! - `issues/validation.rs`：`(assignee_type, assignee_id)` 存在性 + `attachment_ids` 形态（LUM-1410）
+//! - `issues/wakeups.rs`：issue wakeup 8 路由（M5-6 / LUM-1565）
 #![cfg(feature = "test-util")]
 
 mod auth;
@@ -29,3 +30,4 @@ mod reactions;
 mod statuses;
 mod support;
 mod validation;
+mod wakeups;

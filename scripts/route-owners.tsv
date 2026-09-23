@@ -41,9 +41,6 @@
 ^/api/issues/[^/]+/wakeups	M5	issue wakeup（event + time）
 ^/api/issue-wakeups	M5	wakeup 列表
 ^/api/issue-wakeup-summaries	M5	wakeup 摘要
-^/api/chat/	M4	chat session / message / draft
-^/api/projects	M4	project + project resource
-^/api/squads	M4	squad briefing / 成员
 ^/api/daemon/	M3	daemon pair 协议
 ^/api/agent-builder	M3	agent builder session
 ^/api/agents	M3	agent CRUD / env / 生命周期
