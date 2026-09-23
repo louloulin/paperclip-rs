@@ -10,13 +10,14 @@
 //! | [`ChatTaskRepo::prioritize_queued_task`] | `PrioritizeQueuedChatTask`（`chat.sql:1402`）+ `GetAgentTask` 回读 |
 //! | [`ChatTaskRepo::clear_queued_tasks`] | `CancelQueuedAgentTasksForSession`（`agent.sql:1709`）+ `settleQueuedChatInput`（`task.go:3092`） |
 //!
-//! **有意偏离**（登记在 `docs/45` §`known_gap`）：`CancelQueuedChatTasks` 提交后的四步
-//! 副作用（`captureTaskCancelled` 埋点、`ReconcileAgentStatus`、`broadcastTaskEvent`、
-//! `notifyTasksFinished`）本片都不做 —— 前两个要 analytics / agent 状态汇总（不在本片
-//! 写集），后两个是 LUM-1506 的广播面。`SettleDeliveredDelegatedFailureRecoveries` 在
-//! chat 任务上恒为空操作（delegated-delivery 属 issue 面），登记为 no-op。
-//! `finalizeCancelledChatMessage` 只被「用户取消单条任务」的路径调用，不在本片的 10 条
-//! 路由里。
+//! **有意偏离**（登记在 `docs/45` §`known_gap` / `docs/53`）：`CancelQueuedChatTasks` 提交后的
+//! 四步副作用里，本模块**只提供物料**（返回被取消的整行），由 HTTP 面组装：`broadcastTaskEvent`
+//! 与 `notifyTasksFinished` 已由 M4-4-fu（LUM-1600）在 `routes/chat/task/**` 接上；
+//! `captureTaskCancelled` 埋点与 `ReconcileAgentStatus` 仍不做 —— 它们要 analytics / agent
+//! 状态汇总（M6 / LUM-1506 的写集），这里只返回行而不发事件，保证「谁发」只有一处。
+//! `SettleDeliveredDelegatedFailureRecoveries` 在 chat 任务上恒为空操作（delegated-delivery
+//! 属 issue 面），登记为 no-op。`finalizeCancelledChatMessage` 只被「用户取消单条任务」的
+//! 路径调用，不在本片的 10 条路由里。
 
 use uuid::Uuid;
 
@@ -159,8 +160,9 @@ impl ChatTaskRepo {
                    AND EXISTS (SELECT 1 FROM target)), \
              prioritized AS ( \
                  UPDATE agent_task_queue AS selected SET priority = 4 \
-                 FROM target WHERE selected.id = target.id RETURNING selected.id) \
-             SELECT prioritized.id AS task_id, \
+                 FROM target WHERE selected.id = target.id \
+                 RETURNING selected.id, selected.agent_id) \
+             SELECT prioritized.id AS task_id, prioritized.agent_id AS agent_id, \
                     (SELECT active.id FROM agent_task_queue AS active \
                      WHERE active.chat_session_id = $2 \
                        AND active.status IN ('dispatched', 'running', 'waiting_local_directory') \
@@ -209,8 +211,14 @@ impl ChatTaskRepo {
     /// 并逐条把它的输入批次结算掉：渠道来源的批次落一条 `"Stopped."` assistant 行，直聊
     /// 批次则删掉 user 行（先释放被它收养的 onboarding kickoff）。
     ///
-    /// 返回被取消的任务数（上游只用来决定是否 `ReconcileAgentStatus`）。
-    pub async fn clear_queued_tasks(&self, session_id: Uuid, agent_id: Uuid) -> Result<usize> {
+    /// 返回被取消的**行**（`RETURNING` 已是终态，`completed_at` 为本次取消时间）：
+    /// 上游用同一批行发四步副作用（`task.go:3000–3030`），所以这里返回行而不是计数 ——
+    /// 计数只是 `len()`，而广播/唤醒需要 `id` / `agent_id` / `runtime_id` / `chat_session_id`。
+    pub async fn clear_queued_tasks(
+        &self,
+        session_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Vec<ChatTaskRow>> {
         let mut tx = self.db().pool().begin().await.map_err(map_sqlx_err)?;
 
         // 上游：锁不到会话（已删）就整体 no-op（handler 仍 204）。
@@ -221,7 +229,7 @@ impl ChatTaskRepo {
                 .await
                 .map_err(map_sqlx_err)?;
         if locked.is_none() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
         sqlx::query("SELECT id FROM agent WHERE id = $1 FOR UPDATE")
             .bind(agent_id)
@@ -258,7 +266,7 @@ impl ChatTaskRepo {
         }
 
         tx.commit().await.map_err(map_sqlx_err)?;
-        Ok(cancelled.len())
+        Ok(cancelled)
     }
 
     /// 上游 `settleQueuedChatInput(task, "remove")`（`task.go:3092`，只保留 `remove` 分支）。

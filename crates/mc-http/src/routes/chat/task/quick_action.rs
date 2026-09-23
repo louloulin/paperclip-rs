@@ -26,6 +26,12 @@
 //! `mc_repos::chat_quick_action` 的两条**真 SQL**（`#[ignore]` 真库测试钉住），
 //! 后续波次只需把两者接起来。202 的响应形状（`{"message_id":"<uuid>"}`）一并登记在
 //! `docs/45`，届时再定义 DTO —— 现在定义它只会是一段无人构造的死代码。
+//!
+//! ⚠️ 生成收敛时的 `chat:quick_actions` 广播（上游 `service/chat_quick_actions.go:285`）：
+//! 帧面与调用入口已由 M4-4-fu（LUM-1600）备好 —— `super::broadcast::chat_quick_actions`
+//!（成功与**失败**两种收敛都要发；空数组是解开客户端骨架屏的终态），但本路由当前唯一
+//! 可达出口是 403 ⇒ **没有调用点**（登记在 `docs/53` G-1）。接上 provider 时在 202 之前
+//! 调它，**不要**另起一条广播路径（自动档与手工刷新共用同一条 `chat:quick_actions` 通道）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -115,7 +121,9 @@ pub(super) async fn regenerate_chat_quick_actions(
         // provider 接入后这里要接判定链：`latest_regenerable_reply`（无轮 / 不是普通消息轮
         // → 409 `no assistant reply to refresh yet`；不是 `expected_message_id` → 409
         // `a newer reply arrived …`）+ `has_active_chat_task_for_session`（→ 409
-        // `still working …`），成功则 202 `{"message_id":"<uuid>"}`。
+        // `still working …`），成功则先是
+        // `super::broadcast::chat_quick_actions(&state, ws, session.id, task_id, message_id,
+        //  actions, failed)`（成功与失败两种收敛都要发），再回 202 `{"message_id":"<uuid>"}`。
         // ⚠️ 不要在这里回 202：生成尚未实现（`docs/45` known_gap）。
         unreachable!("quick-actions provider 未接入（docs/45 known_gap）")
     } else {

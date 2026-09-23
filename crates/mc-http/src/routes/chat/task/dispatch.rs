@@ -9,8 +9,9 @@
 //! 理由写透了，本文件不重述，只在逐条分支上标出处行号。
 //!
 //! 跨波边界（`docs/42` §4.3）：
-//! 1. `SendChatMessage` 提交后的 `broadcastTaskEvent(EventTaskQueued)` + `NotifyTaskEnqueued`
-//!    以及 `publishChat(EventChatMessage)` 属 **LUM-1506**（ws 面）⇒ 本片不发事件。
+//! 1. 提交后的广播（`broadcastTaskEvent(EventTaskQueued)` / `NotifyTaskEnqueued` /
+//!    `publishChat(EventChatMessage)`；onboarding 只发后者）已由 M4-4-fu（LUM-1600）接上，
+//!    集中在 [`super::broadcast`] —— 本文件的职责只有「在正确位置调它、顺序与上游一致」。
 //! 2. `service.AgentReadiness` 的裁决分支（409 + `reason_code`）要 runtime 侧能力探测
 //!    （属 M6/M7）⇒ 本片**不做**：运行时不可用的发言照旧排队。登记为 `known_gap`。
 //! 3. LLM 自动标题（`maybeGenerateChatTitleAsync`）要模型层 ⇒ 本片只做**同步**的
@@ -34,6 +35,7 @@ use mc_repos::chat_task::{ChatSendError, ChatTaskRepo, DirectChatSend, StartOnbo
 use crate::error::ApiResult;
 use crate::state::AppState;
 
+use super::broadcast;
 use super::support::{
     bad_request, decode_body, dispatch_blocked, internal, parse_uuid_slice, repo_err, ts,
     ChatScope, REASON_INVOCATION_NOT_ALLOWED,
@@ -158,8 +160,23 @@ pub(super) async fn send_chat_message(
         )
     };
 
-    // ⚠️ 上游此处：`publishChat(EventChatMessage, …)` 广播 user 消息 + 首轮时的
-    // `maybeGenerateChatTitleAsync`（LLM 改名）。前者属 LUM-1506，后者需模型层 ⇒ 均不发。
+    // ⚠️ 上游此处：
+    // 1. `publishChat(EventChatMessage, …)`（广播 user 消息）—— 已接，见下（顺序在最后一条）；
+    // 2. `maybeGenerateChatTitleAsync`（LLM 改名）—— 要模型层 ⇒ 不发；同步的
+    //    `chattitle.Derive` 标题 CAS 已在仓储里做过。
+
+    // 提交后的三条，顺序逐字照上游 `SendDirectChatMessage` + handler：
+    // `broadcastTaskEvent(EventTaskQueued)` → `NotifyTaskEnqueued` → `publishChat(chat:message)`。
+    // 气泡**最后**出现：客户端收到 `chat:message` 时任务已可见。三条都是 best-effort
+    //（返回值即投递结果，没有错误通道）⇒ 任何一条没送到都不影响 201。
+    broadcast::task_queued(&state, scope.workspace_id().0, &sent.task);
+    broadcast::notify_task_enqueued(&state, &sent.task);
+    broadcast::chat_message(
+        &state,
+        scope.workspace_id().0,
+        &sent.message,
+        Some(sent.task.id),
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -326,8 +343,10 @@ pub(super) async fn start_mika_onboarding(
             Err(internal("failed to start Mika onboarding: chat session is archived").into())
         }
         StartOnboardingOutcome::Started(result) => {
-            // ⚠️ 上游此处 `publishChat(EventChatMessage, …)` 广播开场白给同会员的其他客户端
-            // （第二标签页 / 桌面端）。属 LUM-1506 ⇒ 本片不发。kickoff 行**永远**不广播。
+            // 提交后：把**可见的开场白**广播给同会员的其他客户端（第二标签页 / 桌面端）。
+            // ⚠️ `kickoff` 行**永远**不广播（它不是气泡，是喂给 agent 的产品指令）；上游
+            // `mika_onboarding.go:181` 给服务端开场白不带 TaskID ⇒ `task_id` 键在线上缺席。
+            broadcast::chat_message(&state, scope.workspace_id().0, &result.opening, None);
             Ok((
                 StatusCode::CREATED,
                 Json(StartMikaOnboardingResponse {

@@ -100,10 +100,16 @@ pub struct CreatorPendingChatTaskRow {
 }
 
 /// `PrioritizeQueuedChatTask` 的一行（CTE 的最终 `SELECT`）。
+///
+/// `agent_id` 是为了**广播载荷**（`task:queued` 的 `agent_id` 键，上游 `taskEvent` 取
+/// `task.AgentID`）：chat 任务的 agent 恒等于会话的 agent，但载荷按**同一行**取值而不是
+/// 由会话推导 —— 与上游 `BroadcastTaskQueued(ctx, queuedTask)` 的入参逐字对齐。
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
 pub struct PrioritizedChatTaskRow {
     /// 被提升的任务 id。
     pub task_id: Uuid,
+    /// 该任务的 agent（广播载荷取它，不做推导）。
+    pub agent_id: Uuid,
     /// 当前可见头任务 id（“send now”之后客户端要取消的那条）。
     pub active_task_id: Option<Uuid>,
 }

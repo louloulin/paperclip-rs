@@ -17,8 +17,13 @@
 //!
 //! **有意偏离**（登记在 `docs/45`）：`prioritize` 成功后上游再 `GetAgentTask` 回读一次
 //!（其失败分支是 500 `"failed to load prioritized task"`），本仓的 CAS 直接 `RETURNING`
-//! 出该行 ⇒ 那条 500 不可达（少一次往返，状态码面不变）。`BroadcastTaskQueued`
-//!（`chat.go:1743`）属 LUM-1506，本片不发。
+//! 出该行（连 `agent_id` 一起）⇒ 那条 500 不可达（少一次往返，状态码面不变）。
+//!
+//! 提交后的广播由 M4-4-fu（LUM-1600）接上，集中在 [`super::broadcast`]：
+//! * `prioritize` ⇒ `BroadcastTaskQueued`（`chat.go:1743`），载荷取 CAS 那一行；
+//! * `clear` ⇒ 上游 `BroadcastCancelledTasks`（`task.go:2722`）四步里的**后两步**：逐条
+//!   `broadcastTaskEvent(EventTaskCancelled)` + 合并的 `notifyTasksFinished`（前两步
+//!   `captureTaskCancelled` 埋点 / `ReconcileAgentStatus` 属 M6，仍为 gap）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,6 +41,7 @@ use mc_repos::chat_task::{ChatTaskRepo, PriorityOutcome};
 use crate::error::ApiResult;
 use crate::state::AppState;
 
+use super::broadcast;
 use super::support::{internal, parse_uuid_field, ts, ChatScope};
 
 // ---------------------------------------------------------------------------
@@ -272,13 +278,25 @@ pub(super) async fn prioritize_queued_chat_task(
         .map_err(|e| internal(e.to_string()))?;
 
     match outcome {
-        PriorityOutcome::Prioritized(row) => Ok((
-            StatusCode::OK,
-            Json(PrioritizeQueuedChatTaskResponse {
-                task_id: row.task_id.to_string(),
-                active_task_id: row.active_task_id.map(|id| id.to_string()),
-            }),
-        )),
+        PriorityOutcome::Prioritized(row) => {
+            // 提交后：`BroadcastTaskQueued`（`chat.go:1743`）—— 上游把它放在回读之后、响应之前。
+            // 提升改变了队列顺序，用户的其它客户端（以及 daemon 的队列视图）靠这一帧重排序。
+            // 载荷直接取 CAS `RETURNING` 的那一行（`agent_id` 也在上面，无需回读）。
+            broadcast::task_queued_for(
+                &state,
+                scope.workspace_id().0,
+                row.task_id,
+                row.agent_id,
+                Some(session.id),
+            );
+            Ok((
+                StatusCode::OK,
+                Json(PrioritizeQueuedChatTaskResponse {
+                    task_id: row.task_id.to_string(),
+                    active_task_id: row.active_task_id.map(|id| id.to_string()),
+                }),
+            ))
+        }
         // 目标还在队列里，但可见头尚未被认领 —— 没有活跃回复可替换（上游回读区分）。
         PriorityOutcome::NoActiveReply => Err(Error::Conflict {
             message: "there is no active reply to replace".into(),
@@ -306,11 +324,20 @@ pub(super) async fn clear_queued_chat_tasks(
     let tasks = ChatTaskRepo::new(state.db.clone());
     let session = scope.gate_public_session_for_user(&session_id).await?;
 
-    // 上游提交后的四步副作用（埋点 / agent 状态汇总 / 两条广播）不在本片写集，见模块头。
-    tasks
+    // 提交后：上游 `BroadcastCancelledTasks`（`task.go:2722`）四步里的后两步 —— 逐条
+    // `task:cancelled`（客户端据此把行从队列视图里去掉，且**必须逐条**：每条带自己的 task_id）
+    // + 一次合并的 `notifyTasksFinished`（按 runtime 去重、hint 不带任务 id）。
+    // ⚠️ 顺序：先逐条广播、再唤醒 —— 唤醒只是给 runtime 的 hint，客户端不应在队列视图更新
+    // 之前就听说「有活儿可以干了」。前两步（`captureTaskCancelled` 埋点 / `ReconcileAgentStatus`）
+    // 属 M6，登记在 `docs/53`。
+    let cancelled = tasks
         .clear_queued_tasks(session.id, session.agent_id)
         .await
         .map_err(|_| internal("failed to clear queued tasks"))?;
+    for row in &cancelled {
+        broadcast::task_cancelled(&state, scope.workspace_id().0, row);
+    }
+    broadcast::notify_tasks_finished(&state, &cancelled);
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
