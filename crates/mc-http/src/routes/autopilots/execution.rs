@@ -226,23 +226,7 @@ async fn trigger_autopilot(
             reserved,
             limit,
             reset_at,
-        }) => {
-            let retry_after = (reset_at - chrono::Utc::now()).num_seconds().max(1);
-            let mut response = Json(QuotaExceededBody {
-                reason_code: "quota_exceeded",
-                used,
-                reserved,
-                limit,
-                // 上游 `ResetAt.UTC().Format(time.RFC3339)`：秒精度 + `Z`。
-                reset_at: reset_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            })
-            .into_response();
-            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-            if let Ok(value) = HeaderValue::from_str(&retry_after.to_string()) {
-                response.headers_mut().insert(header::RETRY_AFTER, value);
-            }
-            return Ok(response);
-        }
+        }) => return Ok(quota_exceeded_response(used, reserved, limit, reset_at)),
         Err(err) => {
             // 固定文案 + 真实错误只进日志（MUL-6472，见模块文档）。
             tracing::error!(
@@ -260,6 +244,37 @@ async fn trigger_autopilot(
         resp.reason_code = Some(code.as_str().to_string());
     }
     Ok((StatusCode::OK, Json(resp)).into_response())
+}
+
+/// 配额拦下的 **429** 响应（上游 `writeAutopilotQuotaExceeded`）。
+///
+/// 独立成函数而不是写在 `match` 臂里：**这条响应体不是本仓标准错误体**（见模块文档），
+/// 它是 handler 唯一的「形状分叉」，所以把形状钉在一个可单测的位置上
+/// （`Retry-After` 与秒精度 `reset_at` 都在这里）。
+///
+/// `Retry-After` 向上取整到 **≥1 秒**（上游 `int(math.Ceil(...))` 且 `max(1)`）：到点就是 0 秒
+/// 会让客户端立刻重试，反而放大压力。
+pub(super) fn quota_exceeded_response(
+    used: i64,
+    reserved: i64,
+    limit: i64,
+    reset_at: chrono::DateTime<chrono::Utc>,
+) -> Response {
+    let retry_after = (reset_at - chrono::Utc::now()).num_seconds().max(1);
+    let mut response = Json(QuotaExceededBody {
+        reason_code: "quota_exceeded",
+        used,
+        reserved,
+        limit,
+        // 上游 `ResetAt.UTC().Format(time.RFC3339)`：秒精度 + `Z`。
+        reset_at: reset_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    })
+    .into_response();
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    if let Ok(value) = HeaderValue::from_str(&retry_after.to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// `GET /api/autopilots/:id/runs`（上游 `ListAutopilotRuns` 50 行）。

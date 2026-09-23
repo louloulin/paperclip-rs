@@ -10,9 +10,13 @@
 //! # 与上游的三处已知偏差（都记在 `docs/52`）
 //!
 //! 1. **入队时机**：上游建完 issue 后由 `TaskSvc.EnqueueTask*`（issue 事件链）在 **tx 之外**
-//!    入队；本地没有 autopilot-origin issue 的事件监听器，于是**在同一个 tx 里**建任务并同时
-//!    链上 `issue_id` 与 `autopilot_run_id`。副作用等价、少一个崩溃窗口；代价是 issue 建出后
-//!    「任务入队失败」不再是可恢复的中间态（整体回滚 ⇒ run 落 `skipped`，见下）。
+//!    入队（那条路径只认识 issue，所以 `EnqueueTaskForIssue` 落下来的任务
+//!    `autopilot_run_id` 是 NULL —— run 与 task 只经 `issue_id` 相连）；本地没有
+//!    autopilot-origin issue 的事件监听器，于是**在同一个 tx 里**建任务，但**保持上游的挂法**：
+//!    只链 `issue_id`，`autopilot_run_id` 留 NULL（否则 `sync_from_task` 会替
+//!    `sync_from_linked_issue_task` 抢收这条链路，与上游的收口归属不一致）。副作用等价、少一个
+//!    崩溃窗口；代价是 issue 建出后「任务入队失败」不再是可恢复的中间态（整体回滚 ⇒ run 落
+//!    `skipped`，见下）。
 //! 2. **归属判定提前**：上游在入队时（issue 已提交）才解析归属，归属不可问责会留下一个
 //!    没有任务的 issue；本地在 tx 前解析，拒绝即整体回滚（不产生孤儿 issue）。
 //! 3. **额度消费点**：上游在 tx 内 `settleAutopilotQuota(consume=true)`（issue 一旦存在就算
@@ -229,7 +233,7 @@ pub(crate) async fn dispatch_create_issue(
         }
     }
 
-    // ---- 入队任务（本地偏差 1：同 tx，且同时链 issue 与 run） ----
+    // ---- 入队任务（本地偏差 1：同 tx；挂法与上游一致，只链 issue） ----
     let (originator_source, evidence_kind, evidence_ref) = attribution.task_params();
     let new_task = NewAutopilotTask {
         id: Uuid::new_v4(),
@@ -237,7 +241,9 @@ pub(crate) async fn dispatch_create_issue(
         runtime_id: leader.agent.runtime_id,
         issue_id: Some(issue.id),
         priority: 0,
-        autopilot_run_id: Some(run.id),
+        // 上游 `EnqueueTaskForIssue` 不写这一列：create_issue 的 run 只经 `issue_id` 收口
+        // （`SyncRunFromLinkedIssueTask`），写进去会让 `SyncRunFromTask` 也来抢这条链路。
+        autopilot_run_id: None,
         trigger_summary: Some(truncate(&title, TRIGGER_SUMMARY_MAX_LEN)),
         originator_user_id: attribution.user_id,
         accountable_user_id: attribution.accountable_user_id,

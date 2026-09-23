@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use super::analytics;
 use super::{
-    db_err, is_run_complete, truncate, AutopilotDispatcher, AutopilotRunRow, DispatchError,
+    db_err, truncate, AutopilotDispatcher, AutopilotRunRow, DispatchError,
     ReasonCode, EVENT_AUTOPILOT_RUN_DONE, EVENT_AUTOPILOT_RUN_START, EVENT_RESOURCE,
     RUN_STATUS_COMPLETED, RUN_STATUS_FAILED,
 };
@@ -194,6 +194,12 @@ impl AutopilotDispatcher {
     /// `completed` ⇒ `result = result`；`failed` / `cancelled` ⇒ `failure_reason = error`，
     /// 为空则回落 `"task {status}"`。
     ///
+    /// ⚠️ 上游这里**没有**「已是终态就别再改」的前置判断（`completeAutopilotRun` /
+    /// `failAutopilotRun` 都是裸 `UPDATE`），本地**逐字照抄**：重复投递的回调会把终态再写一遍。
+    /// 别在这里加 `is_run_complete()` 闸门 —— 它对 `running`+`task_id` 的 run 返回 `true`，会把
+    /// 本该收口的回写整条吞掉（`isAutopilotRunComplete`536 是给 [super::is_run_complete] 的
+    /// 计划快路径用的，不是终态判据）。
+    ///
     /// # Errors
     ///
     /// 库错。
@@ -208,10 +214,6 @@ impl AutopilotDispatcher {
             return Ok(None);
         };
         let run = run_sql::get(&self.pool, run_id).await?;
-        if is_run_complete(&run) {
-            // 终态 run 不再改写（回调可能重复投递）。
-            return Ok(Some(run));
-        }
         let autopilot = run_sql::get_autopilot(&self.pool, run.autopilot_id).await?;
 
         match status {
