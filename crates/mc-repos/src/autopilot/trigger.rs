@@ -36,7 +36,7 @@
 //! | 写点 | 上游 | 本地 |
 //! | --- | --- | --- |
 //! | create / update / delete | 在 handler 的事务里（与 `autopilot_rule_version` 同事务） | 接 `&mut PgConnection` |
-//! | rotate / set_signing_secret | **无事务**（单语句 autocommit） | 接 `&PgPool` |
+//! | rotate / `set_signing_secret` | **无事务**（单语句 autocommit） | 接 `&PgPool` |
 //!
 //! # 已知缺口（**跨片登记**，见 `docs/46` 同族的 §5 偏离表）
 //!
@@ -172,7 +172,8 @@ impl AutopilotTriggerRepo {
     ///
     /// 行不存在 → [`RepoError::NotFound`]（handler 折 404 `trigger not found`）。
     pub async fn get_by_id(&self, id: Uuid) -> Result<super::AutopilotTriggerRow, RepoError> {
-        let sql = format!("SELECT {AUTOPILOT_TRIGGER_COLUMNS} FROM autopilot_trigger WHERE id = $1");
+        let sql =
+            format!("SELECT {AUTOPILOT_TRIGGER_COLUMNS} FROM autopilot_trigger WHERE id = $1");
         sqlx::query_as::<_, super::AutopilotTriggerRow>(&sql)
             .bind(id)
             .fetch_optional(self.db.pool())

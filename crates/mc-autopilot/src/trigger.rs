@@ -168,7 +168,9 @@ pub enum EventFilterError {
 /// # Errors
 ///
 /// 首个空字段 → [`EventFilterError`]（下标在文案里）。
-pub fn validate_webhook_event_filters(filters: &[WebhookEventFilter]) -> Result<(), EventFilterError> {
+pub fn validate_webhook_event_filters(
+    filters: &[WebhookEventFilter],
+) -> Result<(), EventFilterError> {
     for (index, filter) in filters.iter().enumerate() {
         if filter.event.trim().is_empty() {
             return Err(EventFilterError::EmptyEvent { index });
@@ -190,9 +192,7 @@ pub fn validate_webhook_event_filters(filters: &[WebhookEventFilter]) -> Result<
 /// 所以 `"actions":[]` 与字段缺失**存下来的字节不同**、行为相同；本地统一成缺失，
 /// 让「同一语义只有一种字节形态」，也让 `update` 的实质变更比对不会被 `[]` / 缺失的差异误报。
 #[must_use]
-pub fn encode_webhook_event_filters(
-    filters: &[WebhookEventFilter],
-) -> Option<serde_json::Value> {
+pub fn encode_webhook_event_filters(filters: &[WebhookEventFilter]) -> Option<serde_json::Value> {
     if filters.is_empty() {
         return None;
     }
@@ -218,10 +218,7 @@ fn to_jsonb(filters: &[WebhookEventFilter]) -> Option<serde_json::Value> {
         .iter()
         .map(|filter| WebhookEventFilter {
             event: filter.event.clone(),
-            actions: filter
-                .actions
-                .clone()
-                .filter(|actions| !actions.is_empty()),
+            actions: filter.actions.clone().filter(|actions| !actions.is_empty()),
         })
         .collect();
     serde_json::to_value(&normalized).ok()
@@ -233,7 +230,11 @@ fn to_jsonb(filters: &[WebhookEventFilter]) -> Option<serde_json::Value> {
 /// 放在本文件是因为它是 [`validate_webhook_event_filters`] 的对偶面：写入期校验过的形状，
 /// 入口期按同一份结构匹配。M5-5 的 ingress 直接调用它。
 #[must_use]
-pub fn webhook_event_filter_matches(filter: &WebhookEventFilter, event: &str, action: &str) -> bool {
+pub fn webhook_event_filter_matches(
+    filter: &WebhookEventFilter,
+    event: &str,
+    action: &str,
+) -> bool {
     if filter.event != event {
         return false;
     }

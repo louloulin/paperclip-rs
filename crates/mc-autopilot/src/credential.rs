@@ -76,7 +76,7 @@ pub fn redact_log_line(input: &str) -> String {
     redact_log(input)
 }
 
-/// 「这段文本里是否出现了这份凭据」—— 响应体 / 日志捕获的**共用判据**（DoD 的凭据断言）。
+/// 「这段文本里是否出现了这份凭据」—— 响应体 / 日志捕获的**共用判据**（`DoD` 的凭据断言）。
 ///
 /// `credential` 为空时恒 `false`：`str::contains("")` 为真，空值下的朴素 `contains` 会把
 /// 「本轮没有凭据」误判成泄露。写测试与断言时一律走这个函数，别自己写 `contains`。
@@ -106,7 +106,10 @@ mod tests {
             Err(CredentialError::SigningSecretTooShort)
         );
         let exactly = "x".repeat(MIN_SIGNING_SECRET_LEN);
-        assert_eq!(normalize_signing_secret(&exactly), Ok(Some(exactly.as_str())));
+        assert_eq!(
+            normalize_signing_secret(&exactly),
+            Ok(Some(exactly.as_str()))
+        );
     }
 
     #[test]

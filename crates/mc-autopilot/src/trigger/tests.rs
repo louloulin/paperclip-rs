@@ -1,4 +1,4 @@
-//! `mc_autopilot::trigger` 的用例（M5-3 专属：时区解包 / provider 闭集 / 事件过滤 / next_run_at）。
+//! `mc_autopilot::trigger` 的用例（M5-3 专属：时区解包 / provider 闭集 / 事件过滤 / `next_run_at`）。
 //!
 //! 这些用例是**语义钉**：每条断言对应上游 `handler/autopilot.go` 的一个可观察行为
 //! （`ValidateTimezone` / `isAllowedWebhookProvider` / `validateWebhookEventFilters` /
@@ -42,7 +42,10 @@ fn from_column_treats_none_and_empty_as_utc() {
     // 可空列（`timezone TEXT NULL DEFAULT 'UTC'`）与 NOT NULL 的 `issue_wakeup.timezone`
     // 语义不同：这里 `None` **不是**错误。
     assert_eq!(Timezone::from_column(None).expect("none").name(), "UTC");
-    assert_eq!(Timezone::from_column(Some("")).expect("empty").name(), "UTC");
+    assert_eq!(
+        Timezone::from_column(Some("")).expect("empty").name(),
+        "UTC"
+    );
     assert_eq!(
         Timezone::from_column(Some("America/New_York"))
             .expect("iana")
@@ -136,8 +139,14 @@ fn create_path_encodes_empty_as_null_but_always_variant_as_empty_array() {
 fn matcher_requires_event_equality_and_action_membership() {
     let open_only = filter("issues", Some(&["opened"]));
     assert!(webhook_event_filter_matches(&open_only, "issues", "opened"));
-    assert!(!webhook_event_filter_matches(&open_only, "issues", "closed"));
-    assert!(!webhook_event_filter_matches(&open_only, "pull_request", "opened"));
+    assert!(!webhook_event_filter_matches(
+        &open_only, "issues", "closed"
+    ));
+    assert!(!webhook_event_filter_matches(
+        &open_only,
+        "pull_request",
+        "opened"
+    ));
     // 事件相同但没写 actions ⇒ 该事件的全部动作都放行。
     assert!(webhook_event_filter_matches(
         &filter("push", None),
