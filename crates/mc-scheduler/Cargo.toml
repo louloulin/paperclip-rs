@@ -1,0 +1,29 @@
+[package]
+name = "mc-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M5 anchor scaffold 占位 — cron 调度租约内核（spec / manager / db_ops + jobs），由 M5-7 / M5-8 填充"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M5-0 anchor（LUM-1563 / docs/44-M5-PLAN.md §5.2）：依赖一次声明到位，此后 M5 各切片
+# **不得**再新增三方依赖（要加走 docs/15 §8.4 的仲裁，由集成方加）。
+# `tokio-util` 是 §5.2 列表**之外**的一项，故意加的：§5.4 第 3 项点名 M5-7 用
+# `CancellationToken` 接 main.rs 的 graceful shutdown，而它只能来自 `tokio-util`
+# （`sync` 模块在 0.7 里无条件导出，无需额外 feature）。提前声明免得 M5-7 去动 Cargo.lock。
+[dependencies]
+tokio = { workspace = true, features = ["rt", "time"] }
+tokio-util = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+mc-autopilot = { path = "../mc-autopilot" }
+mc-core = { path = "../mc-core" }
+mc-repos = { path = "../mc-repos" }

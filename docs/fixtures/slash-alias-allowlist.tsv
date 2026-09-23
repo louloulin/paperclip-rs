@@ -13,10 +13,10 @@
 # `LUM-1470`（M4-0 anchor）又把 M4 的 6 行（`GET|POST /api/chat/sessions`、`GET|POST /api/projects`、
 # `GET|POST /api/squads`）删除：M4-0 在同一个 PR 里预删了对应的 mount.rs M0 占位（docs/42 §5.2），
 # ⇒ 这 6 个键的 findings 直接消失（不再有可审计的形态）⇒ 残留即判 STALE。
+# `LUM-1563`（M5-0 anchor）把 M5 的 2 行（`GET|POST /api/autopilots`）删除：同一个 PR 里预删了
+# mount.rs 的两条 M0 占位（docs/44 §6.1 的 `local 292 → 290`），findings 随之消失，残留即 STALE。
 # ⚠️ M4 各切片此后**没有** allowlist 退路：上游 chi 的 `Mount` 两种形态都服务，切片必须
 # 两个形态一起注册（`docs/37` §15.1/§15.3）；漏注册形态会被判 `MISSING_ALIAS` 缺陷。
 METHOD	PATH	OWNER	WHY
-GET	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
-POST	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
 GET	/api/skills	M6	M0 占位（routes/mount.rs）；M6 skill 切片替换占位时必须两个形态一起注册，并删掉本行
 POST	/api/skills	M6	M0 占位（routes/mount.rs）；M6 skill 切片替换占位时必须两个形态一起注册，并删掉本行

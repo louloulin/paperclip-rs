@@ -2278,6 +2278,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-autopilot"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "mc-core",
+ "mc-realtime",
+ "mc-repos",
+ "mc-telemetry",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mc-chat"
 version = "0.1.0"
 dependencies = [
@@ -2612,6 +2630,21 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "mc-scheduler"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mc-autopilot",
+ "mc-core",
+ "mc-repos",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
