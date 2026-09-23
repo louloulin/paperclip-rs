@@ -324,6 +324,7 @@ async fn wakeup_upsert_bumps_revision_and_drops_receipts() {
 /// 4) `disable` 停用（含待处理收据作废）→ `enable` 带 revision 重新启用。
 #[tokio::test]
 #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+#[allow(clippy::too_many_lines)] // 端到端按 HTTP 调用顺序平铺，拆函数反而更难对照上游
 async fn wakeup_disable_then_enable() {
     let Some((app, pool, ws, user, issue_id, agent)) = seed_wakeup_world().await else {
         eprintln!("skipping: set MULTICA_TEST_DATABASE_URL");
