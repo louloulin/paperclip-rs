@@ -4612,3 +4612,14 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 4. D 波两片全合 ⇒ 晋升 **`LUM-1572`（M5-INT，`docs/56`）**；`LUM-1659` 仍在 `backlog`，只在 owner 回复 P0 后晋升。
 5. `LUM-1572` 落地（= M5 全合）后才按空位晋升 **`LUM-1665`（M6-0 anchor）**，且**不与 M5-INT 同轮并派**（§49.3 串行约束）。
 6. 汇报 ⑦ 时必须写**本轮**读数并扣掉 2 条 501 占位（`/api/skills`、`/api/plugins`，`mount.rs:52/56`）。
+
+### 49.7 本轮内追加观测（20:38Z）：`LUM-1652` 已交付 ⇒ 合并 PR #61，新 base `80d60a1`
+
+- **交付事实**：`LUM-1652` 20:33:08 推 `18e5617`、20:33:48 issue 转 `in_review`、**pid 7569 在 20:37Z 前退出**（run 终态）⇒ PR **#61**（head `18e5617`，base 记录 `eaba357`，API：`changed_files=2 / additions=778 / deletions=0 / commits=1`）。
+- **判据链**（base 此时已前移到 `587f429`）：
+  1. 预检 `git -c user.name=devbox5 -c user.email=devbox5@multica.local merge --no-ff --no-commit 18e5617` ⇒ `Automatic merge went well`；**staged stat `2 files changed, 778 insertions(+)` == PR API 逐字**；`Cargo.lock` staged **0** 条；staged 面 **100% `docs/**`**。
+  2. **合并树读数（不需要真库、不需要冷建）**：`bash scripts/gates.sh --only fmt,route-parity,file-size` ⇒ **3/3 绿 / 7s**；⑦ `local 328 / baseline 300 / implemented 264 / known_gap 192` 与 ⑩ `scanned=523 baseline=10 violations=0` 与 §49.2 同值（docs-only 改动不该动读数）；`slash_alias_audit.py --declared docs/fixtures/m6-declared-routes.tsv` = **3 缺陷 / 2 条 allowlist 豁免**，与 `docs/57` §0 自述的 `FAIL: 3` 一致（这 2 条正是 M6-0 要删的行）。
+  3. API `PUT /pulls/61/merge` 带 `"sha":"18e5617…"` 钉住 ⇒ merge commit **`80d60a1`**（parents `587f429` + `18e5617`）。
+  4. 复核：`tree(80d60a1)` = 预检 `git write-tree` = **`f6ed4d58fc211bc51f2586f09c5d5caa1575d35d`**（逐字相等）；`git diff 18e5617 origin/feat/multica-rs-initial` 只有 `docs/37`（= 本轮 §49 那次 docs-only 提交，符合预期）；认证 `pulls?state=open` = **0**。
+- **新 base = `80d60a1`**（= `eed6969`(#60) + `587f429`(§49) + `18e5617`(docs/57)）；代码树仍逐字等于 `eaba357`（两次合并全是 docs-only）⇒ §49.2 的 ⑥/⑨ 继承口径继续有效。
+- **槽位：`running = 2/3`**（cycle + `LUM-1570`）。这 1 个空位**仍不派发**：`LUM-1572`（M5-INT）要 M5-5 合；`LUM-1665`（M6-0）要「M5 全合」（`docs/57` §7.1）且与 M5-INT 串行（§49.3）；`LUM-1659`（M5-9）要 owner 的 P0 ⇒ **可派面被前置条件锁死，唯一的解锁器就是 `LUM-1570` 交 PR**。⇒ 下一轮第一优先级 = 收口 D 波（`LUM-1570`），随后立刻晋升 `LUM-1572`。
