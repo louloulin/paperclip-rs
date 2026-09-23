@@ -2479,6 +2479,7 @@ dependencies = [
  "hyper 1.11.1",
  "mc-auth",
  "mc-authz",
+ "mc-autopilot",
  "mc-chat",
  "mc-config",
  "mc-core",
