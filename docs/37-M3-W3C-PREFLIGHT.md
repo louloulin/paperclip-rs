@@ -3438,3 +3438,69 @@ implemented  231 real +   4 placeholder =  235 / 456   known_gap  221   unclaime
 3. B 波三片的写集已在 `docs/44` §3.2 一格一写者拆好（`mc-repos/src/autopilot/*` 7 文件分属三片），
    无需再仲裁；§32.2 已证明与 M4-4 **零交叠**。
 4. `LUM-1580`（⑦ 正则）保持 `backlog`：**不要**与 M5-INT 的基线刷新并行合并（同 R13 处置）。
+
+## 33. 20:00 cycle 落地记录（`LUM-1587`，2026-09-23 12:00Z / 20:00+08）—— 合并 `#50`（M5-0 anchor）⇒ base `e07e0f2`（合并树真库 **10/10** · 树等价复验）· 派 B 波首片 `M5-1`
+
+> 本轮唯一在飞的 M5 片（`LUM-1563` M5-0）已交 PR #50 ⇒ 本轮的工作是**把它按判据链合入 base**，
+> 然后把 M5 B 波的第一片排进并发位。并发账：本 cycle + `LUM-1475`（M4-4，仍在飞）+ 新派 `LUM-1564`（M5-1）= **3/3**。
+
+### 33.1 合并判据链（`#50`，逐条取证）
+
+| # | 判据 | 实测 |
+| --- | --- | --- |
+| 1 | PR 元数据 | `#50` open、`head=agent/devbox5/7cb444aefc3d @ b09ac47`、`base=feat/multica-rs-initial @ 515a7dd`、GitHub 当时 **仅此 1 个 open PR** |
+| 2 | 预检合并（`git merge --no-ff --no-commit`） | `Automatic merge went well`（**0 冲突**）；staged stat = **70 files, +2391/−102**，与 PR 自述的 70 / +2391 / −102 **逐字一致** |
+| 3 | 合并树真库门禁 | `bash scripts/gates.sh --with-db` → **10/10 绿，302s**（明细见 §33.2），日志 `../gates-1587-merge50.log` 全量 `tee` |
+| 4 | API 合并 | `PUT /repos/louloulin/paperclip-rs/pulls/50/merge`（`merge_method=merge`，`sha` 钉 `b09ac47`）⇒ `merged=true`，merge commit **`e07e0f243e697f9e7c185c87dea3024870d48d23`**，双亲 `515a7dd + b09ac47` |
+| 5 | 树等价复验 | `origin/feat/multica-rs-initial^{tree}` = **`be9dd8e7336416c0f9fb002397b2d9defc1ce93e`** = 预检树的 `git write-tree`；`git diff --stat <预检树> origin/feat/multica-rs-initial` **空** |
+
+- 合并提交标题沿用既有格式：`merge(#50): M5-0 anchor scaffold（LUM-1563）`。
+- 预检**没有**在本地留下 merge commit（`--no-commit` + 之后 `reset --hard`），远端 base 上只有一枚 merge commit。
+
+### 33.2 门禁全绿（合并树，真库）
+
+```
+①  fmt              PASS   1s      ②  build            PASS  77s
+③  clippy           PASS  40s      ④  clippy-test-util PASS  15s
+⑤  test             PASS  31s      ⑥  db               PASS  84s  (migrate=0, e2e=0)
+⑦  route-parity     PASS   0s      ⑧  schema-drift     PASS  25s
+⑨  conformance      PASS  29s      ⑩  file-size        PASS   0s
+overall: PASS — 10/10 gate(s) green in 302s
+```
+
+- **⑥** 的 `mc-migrate run --dir migrations` = **applied 0 migration(s)**（M5-0 未加迁移，12 张表早已在库）；
+  `--ignored` 真库 e2e 实测 **19 suites / 217 tests 全过**（0 failed）。
+- **⑦ 当轮读数（逐字取 gate 日志）**：`upstream 456 (commit f41fae6b08fb) | local 290 registered | baseline 290`；
+  `implemented 231 real + 2 placeholder = 233 / 456`；`known_gap 223` / `unclaimed 0` / `regression 0` / `local_only 11`。
+  即 M5-0 的预测行（`docs/44` §6.1）**逐字命中**：`242 → 290` 基线 + `local 292 → 290`（净删 2 键占位）。
+- 全仓口径提醒（§32.4）：讲全仓进度时 `implemented_real` 要**扣 13**（其中 M5 7 条要等 M5-6 落地才消失）。
+
+### 33.3 M4-INT 的基线刷新：**已是 no-op**（口径更正，交下一片）
+
+- M5-0 的基线提交**顺手吸收了 M4-1..M4-4 未进基线的 50 个键**（242 → **290**）⇒ base 现在的基线已覆盖 M4 全域。
+- 因此 `LUM-1476`（M4-INT）自述里的「⑦ 基线一次性刷新（189→234）」与 `docs/42` §3.3 的旧表**都已过期**：
+  它跑 `scripts/route_parity.py --write-baseline` 会是 **no-op**（不会产生 diff），DoD 里的数字请以**当轮 gate 日志**为准。
+- **R13 仍按原意执行**（两个「基线刷新片」不批进同一次合并、后合者重刷），但 M4-INT 的实际工作只剩
+  「10/10 门禁 + `docs/43` 之后的第一空号记录文件」；`docs/43` 已被 M3-7-fu 占用，M4-INT 的记录号须**顺延**。
+
+### 33.4 派发：B 波首片 `M5-1`（`LUM-1564`）
+
+- `LUM-1564` `backlog → todo`（stage 2，assignee 为本 agent）。选它当 B 波首片的原因：
+  它是 `docs/44` §4.2 明写「不要延后」的片 —— 交付的 `dto.rs` / `access.rs` / quota 模块是 **C 波 `M5-2/3/4` 的读取前置**，
+  且本片只挂 4 条路由（B 波三片里最小、最快能合）。
+- B 波另两片（`LUM-1565` M5-6 / `LUM-1566` M5-7）**保持 `backlog`**：并发位只剩 1（`LUM-1475` 在飞 + 本 cycle），
+  且磁盘只剩 17G —— 一次冷构建全 workspace ≈7.6G，同时开两片会把余量压到 ~2G。
+- **stage 屏障在本仓不会自动开闸**：stage 1 的子片（`LUM-1563`）按本仓惯例停在 `in_review`（终态才是 `done`/`cancelled`），
+  §32.9 期待的「合入 ⇒ 唤醒 `LUM-1561`」不会发生 ⇒ **波次推进必须由编排 cycle 手工 `backlog → todo`**（本轮即如此）。
+
+### 33.5 磁盘与真库
+
+- `df -h /`：**49G 总 / 31G 已用 / 17G 可用（65%）**。合并树跑完 10 门后本 cycle 的 `target/` 实测 **7.6G**，
+  在飞 `LUM-1475` 的 `target/` **1.9G**；交付后已 `rm -rf` 本 cycle 的 `target/`（回收 7.6G，只删构建缓存）。
+- 真库沿用 `multica_lum1563` / `mc_lum1563`（**有 CREATEDB**，⑧ 必需），本轮**未建**新库/角色。
+
+### 33.6 下一步（交下个 cycle）
+
+1. `LUM-1475`（M4-4）交 PR ⇒ 同 §33.1 判据链合并；它合并后 M4 波只剩 `LUM-1476`（M4-INT，见 §33.3 的口径更正）。
+2. `LUM-1564`（M5-1）合入后 ⇒ 放 B 波余下两片 `LUM-1565`（M5-6）/ `LUM-1566`（M5-7），凑满 3/3（派前先 `df`）。
+3. `LUM-1580`（⑦ 正则修复）保持 `backlog`：**不得**与 M5-INT 的基线刷新并行合并。
