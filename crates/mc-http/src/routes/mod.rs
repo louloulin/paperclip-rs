@@ -46,6 +46,14 @@ pub mod daemon;
 pub mod runtimes;
 pub mod tasks;
 
+// M4 anchor scaffold（LUM-1470 / docs/42-M4-PLAN.md §5.1 第 3 项）：三个空切片（project /
+// squad / chat）一次性声明，让 M4-1..M4-4 四个切片不再同时编辑本文件。`chat` 是目录切片
+// （`routes/chat/{session,message,bar,task}.rs`，由 M4-3 / M4-4 分写），其 `mod.rs` 自己
+// 聚合 4 个子 router。真实实现在各切片内，`mount.rs` 已接好 `mount_slice_{project,squad,chat}()`。
+pub mod chat;
+pub mod projects;
+pub mod squads;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

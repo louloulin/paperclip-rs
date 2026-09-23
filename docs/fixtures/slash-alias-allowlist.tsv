@@ -6,17 +6,16 @@
 #   · 格式：METHOD<TAB>路径（参数统一写 :param；尾斜杠由脚本自己规范化）<TAB>owner<TAB>说明。
 #   · 依据与逐键清单：docs/37-M3-W3C-PREFLIGHT.md §15.2/§15.3。
 #
-# owner 取值：M4/M5/M6 = 将来替换 mount.rs 占位的那一片。
+# owner 取值：M5/M6 = 将来替换 mount.rs 占位的那一片。
 #
 # 历史：`LUM-1458` 的 9 行（`/api/issues*` 4 + `/api/issue-statuses*` 3 + `/api/comments/:param` 2）
 # 已于 LUM-1458 修完并删除；再出现的同名键属**回归**，不要重新加回名单。
+# `LUM-1470`（M4-0 anchor）又把 M4 的 6 行（`GET|POST /api/chat/sessions`、`GET|POST /api/projects`、
+# `GET|POST /api/squads`）删除：M4-0 在同一个 PR 里预删了对应的 mount.rs M0 占位（docs/42 §5.2），
+# ⇒ 这 6 个键的 findings 直接消失（不再有可审计的形态）⇒ 残留即判 STALE。
+# ⚠️ M4 各切片此后**没有** allowlist 退路：上游 chi 的 `Mount` 两种形态都服务，切片必须
+# 两个形态一起注册（`docs/37` §15.1/§15.3）；漏注册形态会被判 `MISSING_ALIAS` 缺陷。
 METHOD	PATH	OWNER	WHY
-GET	/api/chat/sessions	M4	M0 占位（routes/mount.rs）；M4 chat-session 切片替换占位时必须两个形态一起注册，并删掉本行
-POST	/api/chat/sessions	M4	M0 占位（routes/mount.rs）；M4 chat-session 切片替换占位时必须两个形态一起注册，并删掉本行
-GET	/api/projects	M4	M0 占位（routes/mount.rs）；M4 project 切片替换占位时必须两个形态一起注册，并删掉本行
-POST	/api/projects	M4	M0 占位（routes/mount.rs）；M4 project 切片替换占位时必须两个形态一起注册，并删掉本行
-GET	/api/squads	M4	M0 占位（routes/mount.rs）；M4 squad 切片替换占位时必须两个形态一起注册，并删掉本行
-POST	/api/squads	M4	M0 占位（routes/mount.rs）；M4 squad 切片替换占位时必须两个形态一起注册，并删掉本行
 GET	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
 POST	/api/autopilots	M5	M0 占位（routes/mount.rs）；M5 autopilot 切片替换占位时必须两个形态一起注册，并删掉本行
 GET	/api/skills	M6	M0 占位（routes/mount.rs）；M6 skill 切片替换占位时必须两个形态一起注册，并删掉本行
