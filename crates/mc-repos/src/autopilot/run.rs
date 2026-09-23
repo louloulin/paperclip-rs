@@ -629,7 +629,8 @@ pub async fn load_trigger_principal(
 ) -> Result<Option<Uuid>> {
     sqlx::query_scalar(
         "SELECT t.created_by_id FROM autopilot_trigger t \
-         WHERE t.id = $1 AND t.autopilot_id = $2 AND t.workspace_id = $3 \
+         JOIN autopilot a ON a.id = t.autopilot_id \
+         WHERE t.id = $1 AND t.autopilot_id = $2 AND a.workspace_id = $3 \
            AND t.created_by_type = 'member' AND t.created_by_id IS NOT NULL \
            AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = $3 \
                        AND m.user_id = t.created_by_id) \
