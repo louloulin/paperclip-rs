@@ -3582,3 +3582,79 @@ overall: PASS — 10/10 gate(s) green in 138s
 2. `M5-1` 合入 ⇒ C 波（`M5-2` ∥ `M5-3` ∥ `M5-4`）的前置就绪（它们读 M5-1 的 `dto.rs`/`access.rs`/quota 模块）。
 3. R13 不变：`LUM-1580`（⑦ 正则）与 `M5-INT`（`LUM-1572`）**不得**与其他基线刷新片批进同一次合并；`LUM-1476`（M4-INT）的基线刷新仍是 **no-op**（见 §33.3）。
 4. 后续派发一律附带 §34.3 的「运行纪律」；发现 `completed` 但零 comment 的 run，先查 session 的 `compaction`/`context_edit` 次数再决定重派还是抢救。
+
+---
+
+## 35. 13:00 cycle 落地记录（`LUM-1602`，2026-09-23 13:00Z / 21:00+08）—— 满位轮：base 复验 4/4 · **更正 M4-INT 基线「no-op」误判（实测 +10）** · 补派 B 波第三片 `M5-7`
+
+> 本轮与 12:30 cycle（`LUM-1593`，§34）**重叠活着**：它 13:05 才交回 `in_review`，本 cycle 13:00 起跑 ⇒ §35.7 专门记这个节拍问题。
+> 本轮没有可合并的 PR（GH 0 open PR），主要产出三件：**base 复验**、**一处口径更正**（`LUM-1476` 基线刷新不是 no-op）、**补派 `M5-7`**。
+
+### 35.1 起手核对（13:00Z）
+
+- base 起手 `542e833`（= PR `#51` / M4-4 的 merge commit，§34.1 判据链已取证：预检 staged stat 逐字一致 → 合并树 `64cf1cb9…` 真库 **10/10**（138s）→ API 合并 → **base 树 == 预检树**、`git diff` 空）；本轮再 `git fetch`：head 已推进到 **`e75aca5`**（§34 文档提交，79 行 docs-only）。
+- GH **0 open PR**；`M4-0…M4-4` 全部在 base 里；M5 波：`M5-0` 已合（`#50`），`M5-1`/`M5-6` 在飞，其余 `backlog`。
+- ⑦ 起手读数（当轮 gate 日志）：`upstream 456 | local 300 | baseline 290` / `implemented 241 real + 2 placeholder` / `known_gap 213` / `unclaimed 0` / `regression 0` / `local_only 11`。
+
+### 35.2 base 复验 —— 为什么只跑 4 门（①⑦⑩⑧）而不是 10 门
+
+```
+MULTICA_TEST_DATABASE_URL='postgres://mc_lum1563:<pw>@127.0.0.1:5432/multica_lum1563' \
+  bash scripts/gates.sh --only fmt,route-parity,file-size,schema-drift
+①  fmt             PASS   1s     ⑦  route-parity  PASS   1s
+⑩  file-size       PASS   0s     ⑧  schema-drift  PASS  28s
+overall: PASS — 4/4 gate(s) green in 30s          （日志 `../gates-1602-base.log` 全量 tee）
+```
+
+- 编译面（②③④⑤⑥⑨）**不重跑**的理由不是省事，是**已被更弱的假设覆盖**：base 的**内容**就是 §34.1 判据 3 跑绿 10/10 的那棵树（树 hash 逐字相等 + `git diff` 空），而 `e75aca5` 相对它只多一个 `docs/**` 文件 —— ⑨ 快照与 ⑦ 基线都不在 `docs/37` 里。
+- 本轮还有**资源理由**：三片切片在飞，全量门禁的冷构建（≈7.6G/棵，§33.2 实测）会与它们抢 CPU/磁盘。**结论口径**：以后「base 复验」默认取这 4 门（覆盖不需要编译的漂移面 + ⑧ 真库 schema），把编译面留给合并树那一轮。
+
+### 35.3 更正：`LUM-1476`（M4-INT）的 ⑦ 基线刷新 **不是 no-op**（实测 `290 → 300`）
+
+`docs/37` §33.3 / §34.7 两处都写着「`LUM-1476` 的基线刷新仍是 **no-op**（M5-0 顺手吸收了 M4 未进基线的 50 键）」。**本轮实测推翻了它**：
+
+```
+$ python3 scripts/route_parity.py --write-baseline     # 在 base 542e833 上
+ docs/fixtures/route-parity-baseline.json | 10 ++++++++++
+ 1 file changed, 10 insertions(+)                       # 290 → 300
+$ git diff docs/fixtures/route-parity-baseline.json    # +10 键，逐条：
+  DELETE /api/chat/sessions/:param/queued-tasks      GET /api/chat/history
+  GET /api/chat/pending-tasks                        GET /api/chat/pending-tasks/has-any
+  GET /api/chat/sessions/:param/pending-task         GET /api/chat/thread
+  POST /api/chat/sessions/:param/messages            POST /api/chat/sessions/:param/onboarding
+  POST /api/chat/sessions/:param/queued-tasks/:param/prioritize
+  POST /api/chat/sessions/:param/quick-actions/regenerate
+```
+
+- **根因**：`--write-baseline` 只可能吸收**当刻树里注册过的键**。M5-0（`#50`，20:55 合入）刷新基线时，M4-4（`#51`，20:55:58 才合）的 10 条 chat 路由**还不在 base 上** ⇒ 它的吸收面只有 M4-0/1/2/3（`242 → 290`）。把「刷新过基线」读成「M4 全波的键都进基线了」是**对刷新语义的误推**。
+- **影响**：⑦ 不会因此变红（`regression` 只报「基线里有、当刻树里没有」），但**删除记忆丢了** —— 这 10 条 chat 路由若被后续切片误删，漂移门看不见。这正是 M4-INT 存在的理由之一，所以本片**不能**按「no-op」取消。
+- **处置**：① 本轮**不动**基线（`git checkout --` 已还原，刷新留给带 10/10 证据的集成片，符合「刷新属于集成片」的既有分工）；② `LUM-1476` 的标题与描述已按实测重写（旧文的 `189→234`、`docs/43`、M4-0 与 M3-7 的顺序讨论全过期），并写明「若届时已有 M5 片合入，按**当刻** `local` 刷新并逐键登记吸收面」；③ 记录号**不预设**（§34 的教训），`docs/46` 已被本轮派出的 M5-7 占用。
+
+### 35.4 在飞取证：`LUM-1564`（M5-1）的中毒 session 与被丢弃
+
+- 首轮 run `01a0ce2a-4e52`（12:07 起，35m16s、238 次 bash）与 12:59 的重派 run `01a0ce59-5c39`（80s）**复用了同一份 session** `/home/devbox/.multica/pi-sessions/20260923T120755.493586499.jsonl`（3MB / 首条 input 已 121k+ / 7 次 `compaction`）—— 平台侧 `resume_session=true reuse_workdir=true`；12:59 那次还额外建了一个**空目录** `lum-1564-55c0cf99231e`（只有 `.task_lock`/`.task_owner`），run 仍在旧 workdir 跑 ⇒ **工作目录名（= dispatch task id 后 12 位）并不保证换 run 就换 workdir**。
+- 12:30 cycle 的第三次重派（13:02:48，run `01a0ce5c-9292`）**被 daemon 主动丢弃旧 session**：`INF dropping prior session: session store not reachable from this run … prior_workdir == workdir, session_home_reachable=true` ⇒ 新 session `20260923T130249.753747614.jsonl`。**取证结论（写入派发纪律）**：重派同一片前先看 daemon 日志这一行，**没有** `dropping prior session` 就是又在续中毒上下文。
+- 上下文预算实测（两片起跑后 ~6 分钟）：`M5-1 cacheRead 110208 / total 111717 / 0 压缩`、`M5-6 cacheRead 106112 / total 106377 / 1 压缩`。**固定前缀（AGENTS.md + skills + docs 索引 + 记忆快照）就占 ~110k token** —— 这是「先写后读 / 上游每文件只读一次 / 用 span 不要 `cat`」纪律（§34.3）的量化依据，也是首轮 M5-1 死亡的真因。
+- 两片工作区 `git status` 为空、分支未推进（`e07e0f2` / `542e833`）：仍在**写前**阶段，健康（工具调用数 48 / 80）。
+
+### 35.5 并发账与派发：补 B 波第三片 `M5-7`（推翻 §34.4/§34.7 的「等两片合完再放」）
+
+- **口径**：用户的约束「一次最多三个任务运行」按**切片 run** 计价。12:30 cycle 13:05 交回 `in_review`（不再是并发占位）后，在飞切片 = `M5-1` + `M5-6` = **2/3** ⇒ 第三位空出来了。若把 cycle 自身也算进三个位，则任何 cycle 轮都只能跑 2 片，与 `docs/44` §5 设计的 B 波 `M5-1 ∥ M5-6 ∥ M5-7` 直接矛盾。
+- **推翻上一轮「等两片合完」的依据（逐条取证）**：① 该决定的两条理由之一是「并发位 3/3 已满」，现已不成立；② 另一条是磁盘担心，而当刻实测 `df -h /` = **38G 可用**（49G 盘），两片在飞 workdir 各 **~14M**、`find -name target` 为空（**两片都还没开始构建**），≈7.6G/片 ⇒ 三片同时构建 ≈23G 仍在余量内；③ `nproc 32` / load 5.7 有算力；④ **依赖关系上没有等待必要**：M5-7 的依赖是 `M5-0`（已合），它**不读** M5-1/M5-6 的任何新模块；⑤ **写集交集为空**（`docs/44` §3.2 矩阵，本轮逐文件复核）：本片只写 `crates/mc-scheduler/src/**`、`crates/mc-repos/src/scheduler.rs`、`apps/mc-server/src/main.rs`（仅 spawn 块）、`crates/mc-scheduler/tests/**`，且 `mc-scheduler/Cargo.toml` 的依赖已由 M5-0 一次声明到位（含为 `CancellationToken` 预置的 `tokio-util`）⇒ **零 `Cargo.toml`/`Cargo.lock` 改动**，与两片彻底不碰头。
+- **派发方式（防重复派发）**：先在本 issue 落「派发说明 + 运行纪律 + 真库建法（**自建一次性库/角色、密码自拟，不落明文**）」comment，再 `backlog → todo`；随后核对任务表 = **恰好 +1**：run `01a0ce60-fa30-7336-8b3d-e6b28b1a26b1`（13:07:37Z），daemon 记 **`resume_session=false`、新 workdir `lum-1566-e6b28b1a26b1`、`resume_reachable=false`**（干净起手）。**不加**外部依赖、不预设记录号以外的共享面。
+- 并发稳态 = `M5-1` + `M5-6` + `M5-7` = **3/3 切片位**，外加本 cycle 短暂的第 4 个进程（本轮结束即退出）。
+
+### 35.6 下一轮起手（交接）
+
+1. 起手 `df -h /`（**<12G 不派**），`git fetch origin feat/multica-rs-initial` 后按 base 实测取数；GH 先看 open PR。
+2. 交 PR ⇒ 判据链逐条取证（照 §34.1）：预检 `git merge --no-ff --no-commit` 后比对 staged stat 与 PR 自述**逐字一致** → 合并树 `bash scripts/gates.sh --with-db` **10/10** → API `PUT /pulls/N/merge`（`merge_method=merge` + 钉 head sha）→ fetch 后 **base 树 == 预检 `git write-tree`** 且 `git diff origin/feat/multica-rs-initial` 空。
+3. **R13（本轮更正后的版本）**：`LUM-1476`（M4-INT 基线刷新，实测 **+10**）、`LUM-1572`（M5-INT 基线刷新）、`LUM-1580`（⑦ 正则修复）三者**不得**批进同一次合并；后合者重刷。
+4. 切片位优先级：任一 M5 B 波片交付后，**C 波（`M5-2 ∥ M5-3 ∥ M5-4`，共 16 路由）**优先补位（前置是 M5-1 合入）；`M4-INT` 排在 C 波之后（它的刷新与门禁证据可被 M5-INT 替代，但缺它这段时间「删除记忆」是空的）。
+5. 重派纪律：重派前查 daemon 日志有无 `dropping prior session`；`resume_session=true` 且旧 session 压缩 ≥3 次时，别指望新 run 自己恢复（本轮 M5-1 就是这么连死两次的）。
+6. 门禁日志 `tee` 全量；⑦/⑨/⑩ 数字只取**当轮**日志（§34 的「数字纪律」）。
+
+### 35.7 系统性观察：autopilot 节拍 < cycle 真实耗时 ⇒ 必然重叠
+
+- 本轮实测：12:30 cycle 的 run 到 **13:05** 才交回（`in_review`），而 13:00 的 cycle 已起跑 ⇒ 有 5+ 分钟**两个 cycle 同时活着**，期间 `multica agent tasks` 里同时能看到 4 个活 run（2 片 + 2 cycle）。凡是「救援 + 合并 + 跑 10 门」的轮次，真实耗时（≥35 分钟）**必然超过** autopilot 的 30 分钟节拍。
+- 因此「≤3」只能按**切片 run** 计价才自洽；两个 cycle 同时活着时，**两边都可能派发同一片**（本轮规避方式：派发前先读该 issue 的状态与任务表，派发后立刻核对 run 数 = 恰好 +1）。
+- 本轮 4 门 base 复验（§35.2）也是这个节拍的产物：重叠期不做全量冷构建，避免和两片抢资源。
