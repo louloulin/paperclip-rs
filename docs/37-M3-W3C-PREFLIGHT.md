@@ -1947,6 +1947,10 @@ multica daemon status --output json | python3 -c "import json,sys;d=json.load(sy
 之后才能开（crate / repos 模块 / 路由文件 / `mount.rs` 挂载点都还是 anchor 现建的）。**若 15:00 时 anchor
 还没合**，就派 `LUM-1440`（execenv，与 anchor 只共享 `Cargo.lock`，且那时 anchor 已落地 ⇒ 连这一处也不撞）。
 
+另外两条 backlog 的排位（本 cycle 各自在 `LUM-1440` / `LUM-1506` 的正文里写明了写集与验收）：
+`LUM-1440`（M3-8-p0 execenv，99 文件 / 0 路由）**等 M4-0 合入后再派**（只共享 `Cargo.lock`，那时连这一处也不撞）；
+`LUM-1506`（M3-7-fu ws 收口）**等 M4 波落地后派**（第 3 条是 M4-4 的依赖，第 1/2 条是独立小口）。
+
 ### 22.4 ⑦ 预测重算（base 从 195 变 248 之后，docs/42 §3.3 的旧算术要作废）
 
 | 阶段 | registered | implemented | known_gap |
@@ -1961,8 +1965,9 @@ multica daemon status --output json | python3 -c "import json,sys;d=json.load(sy
 
 ### 22.5 新登记的 follow-up：`M3-7-fu`（ws 收口 3 项，backlog，**不**占并发位）
 
-本 cycle 顺带把三条已记录但**没有 issue 承载**的 ws 缺口登记成一片 backlog（`docs/39` §4.8、
-`docs/32` 偏离表），因为 **M4-4 依赖其中的「用户面进度广播」**（`chat:done` / task-queued）：
+本 cycle 顺带把三条已记录但**没有 issue 承载**的 ws 缺口登记成 **`LUM-1506`**（backlog，不占并发位；
+`docs/39` §4.8、`docs/32` 偏离表），因为 **M4-4（`LUM-1475`）依赖其中的「用户面进度广播」**
+（`chat:done` / task-queued，`docs/42` §4.3 依赖 2）：
 
 1. `/api/daemon/ws` 不解析上游的 `?runtime_id=` / `?runtime_ids=` 收窄（`lifecycle::ws` 只从 daemon token
    派生全集：`repo.runtime_ids_for_daemon(...)`）⇒ 缺显式收窄与 `runtime not found` 404；
