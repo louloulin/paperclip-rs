@@ -585,11 +585,7 @@ async fn pinned_agents_bar() {
         .await
         .expect("archive agent");
     let (_, b) = ctx.get(uri).await;
-    assert_eq!(
-        b.as_array().unwrap().len(),
-        5,
-        "{b}（归档 agent 仍算可见）"
-    );
+    assert_eq!(b.as_array().unwrap().len(), 5, "{b}（归档 agent 仍算可见）");
     sqlx::query("UPDATE agent SET archived_at = NULL WHERE id = $1")
         .bind(ctx.fx.agents[1])
         .execute(&ctx.pool)
