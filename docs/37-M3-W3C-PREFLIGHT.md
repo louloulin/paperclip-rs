@@ -4623,3 +4623,52 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
   4. 复核：`tree(80d60a1)` = 预检 `git write-tree` = **`f6ed4d58fc211bc51f2586f09c5d5caa1575d35d`**（逐字相等）；`git diff 18e5617 origin/feat/multica-rs-initial` 只有 `docs/37`（= 本轮 §49 那次 docs-only 提交，符合预期）；认证 `pulls?state=open` = **0**。
 - **新 base = `80d60a1`**（= `eed6969`(#60) + `587f429`(§49) + `18e5617`(docs/57)）；代码树仍逐字等于 `eaba357`（两次合并全是 docs-only）⇒ §49.2 的 ⑥/⑨ 继承口径继续有效。
 - **槽位：`running = 2/3`**（cycle + `LUM-1570`）。这 1 个空位**仍不派发**：`LUM-1572`（M5-INT）要 M5-5 合；`LUM-1665`（M6-0）要「M5 全合」（`docs/57` §7.1）且与 M5-INT 串行（§49.3）；`LUM-1659`（M5-9）要 owner 的 P0 ⇒ **可派面被前置条件锁死，唯一的解锁器就是 `LUM-1570` 交 PR**。⇒ 下一轮第一优先级 = 收口 D 波（`LUM-1570`），随后立刻晋升 `LUM-1572`。
+
+## §50 05:00 cycle（`LUM-1680`）：**合并 #62（M5-5）⇒ base `0fd96b4`，M5 代码片全合**；空位派 M5-INT（`LUM-1572`）+ chat 真库测试片（`LUM-1601`）；回收 19G 热 `target/`
+
+### 50.1 起手三连（20:59Z 实测）
+- 磁盘：`/` **18G 可用**（29G/49G，63%）—— `LUM-1570` 的 16G 热 `target/` 属在飞 ⇒ 不回收。
+- `git fetch origin feat/multica-rs-initial` = **`5b94d54`**（未动，与 §49.7 收尾值一致）。
+- 认证 GH `pulls?state=open` = **1** 条：**#62**（head `d6680fc6`，base 记录 `5b94d54`；API `changed_files=15 / additions=5384 / deletions=34`，`mergeable=true / mergeable_state=unstable`；title `feat(m5-5): autopilot webhook ingress（LUM-1570）`）。
+- checkout 坑复现（§49.1 lesson）：全新 cycle workdir 的 `multica repo checkout` 落 **`origin/main`**（pc-* 世代 `4fc96f3`）⇒ 显式 `git checkout -B cyc-1680 origin/feat/multica-rs-initial`。
+- 在飞采样：`LUM-1570` workdir `lum-1570-d27781eeb7ef` HEAD = `d6680fc6`、**工作树干净（0 未提交）**、`target/` 19G；pid 59859 **已退出**（run 终态）⇒ 只剩「PR 未合」一件事。
+
+### 50.2 PR #62（M5-5）合并判据链（逐条读数）
+1. **预检**：`git -c user.name=devbox5 -c user.email=devbox5@multica.local merge --no-ff --no-commit d6680fc6` ⇒ `Automatic merge went well`；staged `--numstat` 汇总 = **15 files / +5384 / −34**，与 PR API **逐字相等**。staged 面 = `mc-autopilot/src/webhook/**`（7 文件）+ `mc-http/src/routes/webhooks/autopilots.rs` + `mc-http/tests/autopilots/**`（4 文件）+ `mc-repos/src/autopilot/{ingress,run}.rs` + `docs/54-M5-5-WEBHOOK-INGRESS.md`；`Cargo.lock` staged **0 条**；共享锚点（`routes/mount.rs` / `routes/mod.rs` / 各 `lib.rs`）**0 触碰**。
+2. **base 祖先判定**：`git merge-base --is-ancestor 5b94d54 d6680fc6` ⇒ **真**（该片已把 base 合进分支：tip 是 merge 提交 `4378424` 之子）⇒ **PR 合并树 == 分支 tip 树** ⇒ 按 §42.2 直接在它自己的热 `target/` 跑门禁（免冷建）。
+3. **合并树门禁**（`lum-1570-d27781eeb7ef/workdir/paperclip-rs`，热 `target/`；一次性真库 `mc_cyc1680` / `multica_cyc1680`）：
+   `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ **10/10 绿 / 82s**（①fmt 1s ②build 0s ③clippy 1s ④clippy-test-util 0s ⑤test 33s ⑥db 15s ⑧schema-drift 26s ⑦route-parity 0s ⑨conformance 6s ⑩file-size 0s）。
+   ⑦ 读数（逐字取自当轮日志）：`upstream 456 (commit f41fae6b08fb) | local 329 registered | baseline 300`；`implemented 263 real + 2 placeholder = 265 / 456`、`known_gap 191`、**`unclaimed 0` / `regression 0`**、`local_only 11`。
+   ⇒ 与 §49.6 ③ 的预测**逐项命中**：`local 328 → 329`、`known_gap 192 → 191`、`owners.M5 1 → 0`（M5 缺口清零）。
+4. **钉 head 合并**：API `PUT /pulls/62/merge` 带 `"sha":"d6680fc6…"` ⇒ `merged=true`，merge commit = **`0fd96b4a2b1667084afd25aa504dafbccfd70e6a`**（提交前重取：`mergeable=true / mergeable_state=clean`）。
+5. **复核**：`git fetch` 后 `tree(origin/feat/multica-rs-initial)` = `tree(d6680fc6)` = **`24cec13c1908dc2509050d4ba7f6556c8357e35d`**（逐字相等）；`git diff origin/feat/multica-rs-initial d6680fc6` = **空**；认证 `pulls?state=open` = **0**。
+
+### 50.3 D 波收口：M5-0…M5-8 全合，M5 缺口归零
+- D 波两片（`LUM-1570` M5-5 / `LUM-1571` M5-8）**全部合并** ⇒ `docs/57` §7.1 里 M6-0 硬前置「M5 全合」的**代码面已满足**。
+- M5 唯一遗留 = **M5-INT（`LUM-1572`，⑦ 基线一次性刷新 + 落地文档 `docs/56`）** 与 **M5-9（`LUM-1659`，接线，挂 P0）**；M5 域跨波遗留 **D8（上游 worker 轮询循环无 owner）** 继续由 M5-INT 裁定登记。
+
+### 50.4 并发与派发：3/3 满位 —— 派 `LUM-1572`（M5-INT）+ `LUM-1601`（chat 真库测试）
+- 起手 `running_task_count = 1`（只有 cycle 自身）⇒ **2 个切片位**（`LUM-1570` 的 run 已终态，位是真空出来的）。
+- **晋升 ①：`LUM-1572`（M5-INT，stage 5，落点 `docs/56-M5-INTEGRATION.md`）** `backlog → todo`。晋升**前**给描述加「起手补充」块：把当轮 ⑦ 实测（`local 329 / implemented 265 / known_gap 191 / regression 0`）写进去、覆盖描述里过期的预演值（`319/255/201`），并注明「M5-0…M5-8 已全合、M5-9 不在本片范围」。
+- **晋升 ②：`LUM-1601`（chat 面 16 模块 `mc-repos` 真库测试，medium，测试专属写集）** `backlog → todo`（自 `LUM-1600` 交付以来第一次派）。它与 M5-INT **写集零交集**（只加 `crates/mc-repos/src/chat_*/tests/**`），且**不新增路由**。同样在晋升前加了「起手须知」块（记录号不新开 `docs/NN`，写 `docs/45` 续记节）。
+- **同轮并派的硬约束（本轮新增口径）**：M5-INT 第 1 步是 `route_parity.py --write-baseline`，它**快照当轮已注册路由集合** ⇒ **任何「新增路由」的片都不能与 M5-INT 同轮飞**（两个 PR 都要改 `docs/fixtures/route-parity-baseline.json`，后合者必冲突）。这是 `LUM-1665`（M6-0）不能与它同轮的**第二个理由**（§49.3 记的是「都写基线」同一件事的另一面：M6-0 还要删 2 行 allowlist）。
+  ⇒ 空位只能给 **0 路由的测试/文档片**；`LUM-1601` 是本轮唯一合格人选。
+- 派后 `running_task_count = **3/3**`（cycle + `LUM-1572`（workdir `lum-1572-43dcd6d6a0ed`）+ `LUM-1601`（workdir `lum-1601-7a6ee4061741`））。
+
+### 50.5 P0 / 看板 / 磁盘
+- **P0 仍开且不重复上报**：`LUM-1628` §4 的 member 提及（16:37Z）**至今 0 回复**（该 issue 现只有 1 条根注释、0 回复）；`apps/mc-server/Cargo.toml` 仍无 `mc-scheduler` 边 ⇒ `LUM-1659`（M5-9）**保持 `backlog`，不派**。
+- 看板：M6 十一子片 `LUM-1665`–`LUM-1675` **全 `backlog`**（stage 1:1 / 2:3 / 3:3 / 4:3 / 5:1），等 M6-0 前置；`LUM-1659` / `LUM-1580`（门 ⑦ 正则修复，R13 不同批）/ `LUM-1370`（M2-E label/property 定义目录，需迁移号段）保持 `backlog`；已合/在审片保持 `in_review`（`done` 归人工）。
+- 观察项（连续第 4 轮登记，**不动状态**）：`LUM-1521`（07:30Z 触发）/ `LUM-1533`（08:30Z 触发）两条 autopilot cycle issue 仍停在 `todo`、从未启动。
+- **磁盘回收**：`LUM-1570` 三判据齐（PR #62 已合 + run 终态 + `readlink /proc/*/cwd` 无该 workdir 进程）⇒ 整删其 `target/`（**19G**）⇒ `/` **37G 可用**（11G/49G，22%）。两个在飞片各需 ≈1 份构建空间，37G 充裕。
+
+### 50.6 下一轮起手
+1. 三连：`df -h /` → `git fetch` 取 base sha（本轮收尾 = 本 §50 的 docs-only 提交）→ 认证 `pulls?state=open` + `git ls-remote` 两片分支（`agent/devbox5/43dcd6d6a0ed` / `agent/devbox5/7a6ee4061741`，起手时**尚未推**，以 issue 自述为准）。
+2. `LUM-1572`（M5-INT）交 PR ⇒ 判据链按 §39.3/§42.2：预检 staged stat == PR API → **先判 base 是否仍是 head 祖先**（否则真合 base 再重跑门禁）→ API 钉 head sha → `tree(base) == tree(预检)` 且 `git diff` 空。它是**改基线/报告文件**的片 ⇒ 合并树的 ⑦/⑨/⑩ 读数**必须当场重跑**，不得继承本轮。
+3. `LUM-1601` 交 PR ⇒ 同为代码片，合并树 `--with-db` **10/10**；它可能改门 ⑥ 的 e2e 计数（新 `#[ignore]` 测试）⇒ 读数只从当轮日志取。
+4. 两片全合 ⇒ `docs/57` §7.1「M5 全合」成立 ⇒ **晋升 `LUM-1665`（M6-0 anchor，stage 1）**，**单独跑不并行**；其后按 `stage 2/3/4 各 ≤3 片 → `LUM-1675` INT` 次序推进。
+5. `LUM-1659` 只在 owner 回复 P0 后晋升；`LUM-1673`（M6-8）依赖 `LUM-1659` 合入，未合只交桩级证据 + 登记。
+
+### 50.7 本轮 lesson
+- **【记录号先定后派】** `LUM-1601` 描述允许「另开新记录文件」，而 `docs/56`（M5-INT）/`docs/58`（M6-10）都已预留 ⇒ 晋升**前**把「不要新开 `docs/NN`，写 `docs/45` 续记节」写进描述（§43 lesson 同型：**起手后再改描述，跑着的 session 不回读**）。
+- **【`multica issue status` 的 JSON 读法】** `multica issue status <id> <status> --output json` 会**先打印一行人类确认到 stdout**、再打印 JSON ⇒ `| python3 -c 'json.load(...)'` 会以 `Expecting value: line 1 column 1` 炸掉；用 `2>/dev/null | tail -n +2` 之类剥掉首行。本轮正是这一炸把 `&&` 链断掉、漏跑了第二片的晋升 ⇒ **同一条命令里不要用 `&&` 串「输出解析」**。
+- **【空位选择】** 「有 2 个空位」≠「能派 2 片」：M5-INT 的基线快照锁死同轮**所有加路由**的片，空位只能给 0 路由的测试/文档片。
