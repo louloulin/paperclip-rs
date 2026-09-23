@@ -8,7 +8,11 @@
 mod hub_support;
 
 use hub_support::*;
-use mc_ws::frames::{AgentStatusPayload, ChatDonePayload, TaskQueuedPayload};
+use mc_daemon_proto::messages::chat::ChatQuickAction;
+use mc_ws::frames::{
+    AgentStatusPayload, ChatDonePayload, ChatMessagePayload, ChatQuickActionsPayload,
+    TaskQueuedPayload,
+};
 use mc_ws::hub::{DeliveryOutcome, Hub};
 use serde_json::json;
 
@@ -120,4 +124,131 @@ async fn pure_daemon_workspace_connection_is_not_a_user_audience() {
         DeliveryOutcome::miss()
     );
     assert!(quiet_for(&mut daemon, QUIET).await);
+}
+
+/// 派发家族的三个新帧（M4-4-fu / LUM-1600）走**同一条**用户面过滤：只有同工作区的
+/// 用户连接收到，daemon 面连接与其他工作区都被排除 —— 与 `chat:done` 一条不差。
+///
+/// 帧字节逐字断言（键序 = 字典序，见 `docs/16` §11.5）：用户面帧的键集是契约的一部分，
+/// `task_id` / `failed` 两个 `omitempty` 键的**缺席**与 `quick_actions: []` 的**在场**
+/// 都是客户端分支的依据。
+#[tokio::test]
+async fn dispatch_family_frames_share_the_user_face_filter() {
+    let server = TestServer::start(Hub::new()).await;
+    let mut user = server
+        .connect(&TestIdentity::user("u-1").with_workspace("ws-1"))
+        .await;
+    // 同一工作区的 daemon 面连接：`workspace_id` 一致、`user_id` 为空 ⇒ 必须被排除。
+    let mut daemon = server
+        .connect(&TestIdentity::daemon("d-1", &["rt-1"]).with_workspace("ws-1"))
+        .await;
+    let mut other = server
+        .connect(&TestIdentity::user("u-2").with_workspace("ws-2"))
+        .await;
+    wait_until("三条连接就绪", || server.hub.connection_count() == 3).await;
+
+    // 1) `chat:message`（上游 `publishChat(EventChatMessage)`，`chat.go:992`）。
+    let message = ChatMessagePayload {
+        chat_session_id: "cs-1".to_owned(),
+        message_id: "msg-1".to_owned(),
+        role: "user".to_owned(),
+        content: "你好".to_owned(),
+        task_id: "task-1".to_owned(),
+        created_at: "2026-01-02T03:04:05Z".to_owned(),
+    };
+    assert_eq!(
+        server.hub.notify_chat_message("ws-1", &message),
+        DeliveryOutcome::hit()
+    );
+    assert_eq!(
+        expect_text(&mut user, WAIT).await,
+        r#"{"type":"chat:message","payload":{"chat_session_id":"cs-1","content":"你好","created_at":"2026-01-02T03:04:05Z","message_id":"msg-1","role":"user","task_id":"task-1"}}"#
+    );
+    assert!(
+        quiet_for(&mut daemon, QUIET).await,
+        "chat:message 正文不能投给 daemon 面连接"
+    );
+    assert!(
+        quiet_for(&mut other, QUIET).await,
+        "ws-2 不该收到 ws-1 的帧"
+    );
+
+    // 2) `chat:quick_actions`（上游 `service/chat_quick_actions.go:285`）：`quick_actions`
+    //    恒在（可为空数组）、`failed` 只在失败收敛时出现。
+    let actions = ChatQuickActionsPayload {
+        chat_session_id: "cs-1".to_owned(),
+        task_id: "task-1".to_owned(),
+        message_id: "msg-2".to_owned(),
+        quick_actions: vec![ChatQuickAction {
+            label: "换个说法".to_owned(),
+            prompt: "换一种说法重讲".to_owned(),
+            primary: true,
+        }],
+        failed: false,
+    };
+    assert_eq!(
+        server.hub.notify_chat_quick_actions("ws-1", &actions),
+        DeliveryOutcome::hit()
+    );
+    let text = expect_text(&mut user, WAIT).await;
+    assert_eq!(
+        text,
+        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","message_id":"msg-2","quick_actions":[{"label":"换个说法","primary":true,"prompt":"换一种说法重讲"}],"task_id":"task-1"}}"#
+    );
+    assert!(!text.contains("failed"), "成功收敛不该有 failed 键：{text}");
+    assert!(quiet_for(&mut daemon, QUIET).await);
+    assert!(quiet_for(&mut other, QUIET).await);
+
+    // 失败收敛：`failed: true` 出现，空数组仍然是 `[]` —— 这是解开客户端骨架屏的终态。
+    let failed = ChatQuickActionsPayload {
+        chat_session_id: "cs-1".to_owned(),
+        task_id: "task-1".to_owned(),
+        message_id: "msg-2".to_owned(),
+        quick_actions: Vec::new(),
+        failed: true,
+    };
+    assert_eq!(
+        server.hub.notify_chat_quick_actions("ws-1", &failed),
+        DeliveryOutcome::hit()
+    );
+    assert_eq!(
+        expect_text(&mut user, WAIT).await,
+        r#"{"type":"chat:quick_actions","payload":{"chat_session_id":"cs-1","failed":true,"message_id":"msg-2","quick_actions":[],"task_id":"task-1"}}"#
+    );
+    assert!(quiet_for(&mut daemon, QUIET).await);
+
+    // 3) `task:cancelled`（上游 `BroadcastCancelledTasks`）：与 `task:queued` 同一份
+    //    `taskEvent` 键集，只有 `status` 不同；chat 任务的 `issue_id` 是空串（键仍在）。
+    let cancelled = TaskQueuedPayload {
+        task_id: "task-9".to_owned(),
+        agent_id: "ag-1".to_owned(),
+        issue_id: String::new(),
+        status: "cancelled".to_owned(),
+        chat_session_id: Some("cs-1".to_owned()),
+    };
+    assert_eq!(
+        server.hub.notify_task_cancelled("ws-1", &cancelled),
+        DeliveryOutcome::hit()
+    );
+    assert_eq!(
+        expect_text(&mut user, WAIT).await,
+        r#"{"type":"task:cancelled","payload":{"agent_id":"ag-1","chat_session_id":"cs-1","issue_id":"","status":"cancelled","task_id":"task-9"}}"#
+    );
+    assert!(quiet_for(&mut daemon, QUIET).await);
+    assert!(quiet_for(&mut other, QUIET).await);
+
+    // 空工作区 = miss，且不产生任何帧（上游 `notifyWorkspaceFrame` 的 `""` 分支）。
+    assert_eq!(
+        server.hub.notify_chat_message("", &message),
+        DeliveryOutcome::miss()
+    );
+    assert_eq!(
+        server.hub.notify_chat_quick_actions("", &actions),
+        DeliveryOutcome::miss()
+    );
+    assert_eq!(
+        server.hub.notify_task_cancelled("", &cancelled),
+        DeliveryOutcome::miss()
+    );
+    assert!(quiet_for(&mut user, QUIET).await);
 }
