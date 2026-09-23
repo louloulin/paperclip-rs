@@ -5010,3 +5010,66 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【「有 3 个空位」要减掉 cycle 自己】** `一次最多三个任务运行` 里**本 cycle 占一个位** ⇒ 起手「2 个在飞」意味着**只有 1 个切片位**，而不是 2 个。§53.4 的「有空位即派 stage 2 三片」在本轮是**不可能的**：先数位、再选片。
 - **【空位选择 = 写集 ∩ lock，不只是「0 路由」】** `LUM-1659` 的 P0 已解除、写集与 M6 stage 2 零交集 —— 但它的 `Cargo.lock` 与在飞的 `LUM-1370` 相撞 ⇒ **仍然不能派**。判定顺序：① 有无硬前置价值；② 是否写 lock / 锚点冻结文件；③ 与**当前在飞**的每一片比文件交集。三条都过才发 `todo`。
 - **【派发前把「当轮读数」写进描述】** 描述里的预演值（`docs/57` 写在 `eaba357` 上）在 anchor 合入后已全部过期；晋升前把 §55.2 第 3 条的逐字读数 + 不变式写进「起手补充」，片才不会拿旧值当验收线（§50.7 同型）。
+
+---
+
+## §56 07:30 cycle（`LUM-1703`）：**合并 #66（M2-E 目录面）⇒ base `ee26c9c`**；`LUM-1666` 静默死亡 ⇒ **抢救 4.5k 行 + 重跑**；空位补 M5-9（`LUM-1659`）；回收 **30G** 热 `target/`
+
+### 56.1 起手三连（23:30Z 实测）
+- 磁盘：`/` **24G 可用**（25G/49G，51%）。
+- `git fetch origin feat/multica-rs-initial` = **`0bcf879`**（与 §55.6 收尾值一致）；认证 GH `pulls?state=open` = **0** 条。
+- 在飞采样（`/proc/*/cwd` 扫 `pi` 进程）：`LUM-1370`（M2-E，pid 11370，cwd = `lum-1370-fa83ddd3bdff/workdir`，**健在**）∥ `LUM-1666`（M6-1，pid 16462，`lum-1666-63133e110ef5/workdir`）∥ 本 cycle ⇒ 起手 **3/3 满载**，**0 个切片位**。
+- 位满 ⇒ 本轮**开头不派发**：先把两片收口（合 #66 + 处理 1666），再看空位。
+
+### 56.2 PR #66（M2-E，`LUM-1370`）合并判据链（逐条读数）
+1. **第一次采样**（23:33Z）：head `1ed9479b`、`changed_files 19 / +4627 / −45`、`mergeable=true / unstable`。随后该片自己的 session（**同一 run 内**）继续写 `docs/59` 对账 + 刷 ⑦ 快照 ⇒ **远端 head 仍在动** ⇒ 本 cycle **不抢合并、不抢它的 base merge**（抢了会与它在 `cargo`/`target` 上互锁，§55 同型风险）。
+2. **冻结确认**：`23:42` 它推 `d9752404` 并置 `in_review`、`23:43` 其 pid 11370 退出（run 终态）⇒ 才进判据链。
+3. **预检**（`git diff --numstat origin/feat/multica-rs-initial d9752404`）= **20 files / +4661 / −45**，与 PR API（`20 / +4661 / −45`）**逐字相等**。
+4. **base 祖先判定**：`git merge-base --is-ancestor 0bcf879 d9752404` ⇒ **真**（该片自己把 base merge 进了分支，冲突解答见其交付注释：`routes/mod.rs` 双方追加块按约定**保留双方**）⇒ **PR 合并树 == 分支 tip 树**；`git merge-tree --write-tree` 结果 = `d9752404^{tree}` = **`e7d8a6c58a1a4ada20dd8dfb5d99aab5252e279e`**（逐字相等）⇒ 按 §42.2 直接在该片的热 `target/` 跑门禁（免冷建）。
+5. **合并树门禁当场重跑**（`lum-1370-fa83ddd3bdff/workdir/paperclip-rs`，`HEAD = d9752404` 且 `git status --porcelain` **0 行**；cycle 一次性真库 `multica_cyc1703` / 角色 `mc_cyc1703`，**起手即带 `CREATEDB`**）：`MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ **10/10 PASS / 336s**（①1s ②64s ③31s ④21s ⑤33s ⑥115s ⑧26s ⑦0s ⑨45s ⑩0s）。
+   ⑦ 逐字：`upstream 456 (commit f41fae6b08fb) | local 344 registered | baseline 344`；`implemented 273 real + 0 placeholder = 273 / 456`、`known_gap 183`、**`unclaimed 0` / `regression 0`**、`local_only 9`；`OK: every upstream route is either implemented or owned`。
+   ⑤ = **1395 passed / 0 failed**（102 target）；⑥ = **380 passed / 0 failed**（22 target）；⑨ = `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`；⑩ = 0 违规。
+   ⚠️ **读数与 §55.2 不同是**「同树不同树」**的结果，不是回归**：本片 +14 条路由（9 新 + 2 条 501 转真 + 3 条接线）且按派发要求**当场刷了 ⑦ 快照** ⇒ `local 325→344`、`baseline 325→344`、`implemented 263→273`、`placeholder 2→0`、`known_gap 193→183`（不变式 `implemented + known_gap == 456` 保持）。
+6. **钉 head 合并**：提交前**重取** head = `d97524049a4d763e453fe7645fc74983aeadc606`、`mergeable=true / clean`；`PUT /pulls/66/merge` 带该 sha ⇒ `merged=true`，merge commit = **`ee26c9c571b71838bc6099d3104bd5d1644e9de1`**。
+7. **复核**：`tree(origin/feat/multica-rs-initial)` = **`e7d8a6c5…`**（与预检树逐字相等）；`git diff d9752404 ee26c9c5` = **空**；认证 `pulls?state=open` = **0**。
+
+### 56.3 ⑦ 快照的归属：本片刷新是**派发要求**，不是越权；下一次刷新归 M6-INT
+- `LUM-1370` 的派发说明（06:2x cycle 写入）明写「门 ⑦ 基线文件：本片合入时**必须**刷新 `docs/fixtures/route-parity-baseline.json` + `slash-alias-allowlist.tsv`」⇒ 325→344 是**授权动作**（`slash-alias-allowlist.tsv` 未动：anchor 已清空、审计 0 缺陷）。
+- ⇒ **M6 stage-2 各片（`LUM-1666`/`LUM-1667`/`LUM-1668`）一律不得跑 `route_parity.py --write-baseline`**（已写进 1666 的重跑交接与 1659 的起手补充）：M6 侧下一次刷新统一归 **M6-INT（`LUM-1675`）**，与 §54.5/§55.3 的「每波一次、由 INT 刷」口径一致。
+- 顺带确认一条**旧缺陷已随本片消解**：本片交付注释登记「`GET|DELETE /api/issues/:id/labels` 两条 `not_implemented` 501 曾被门 ⑦ 计进 `implemented_real`（缺陷 `LUM-1580`）」——本片把这两条换成真 handler ⇒ 现在 `placeholder 0` 名实相符。
+
+### 56.4 `LUM-1666`（M6-1）**静默死亡**：三条判据齐 ⇒ 走抢救链，不重跑
+- **判据（三条齐）**：① `.gc_meta.json` 有 `completed_at = 2026-09-23T23:47:11Z`（平台视其为「已完成」）；② `output/` 目录**空**（0 字节交付）；③ **0 提交 / 0 推送**（`git ls-remote` 无 `agent/devbox5/63133e110ef5`）+ **0 条注释**；另 ④ pid 16462 已退出、工作区**留下 8 个未提交面**（`git status --porcelain`）。
+  ⚠️ **与 ⑧ 旧条款的差异**：本运行时**不再在本机落 Pi session jsonl**（`~/.pi/agent/sessions/` 只有 2026-09-22 的两条旧档）⇒ 旧链条里的「隔离 session ⇒ 打 `.poisoned`」**没有操作对象**；判死改看 **workdir 的 `.gc_meta.json` + `output/` + 远端分支 + 注释数**。
+- **抢救**：`git add crates/mc-plugin-host` + 提交 ⇒ **`5f7394a3`**（父 `d62558b3`，**8 文件 +5673/−22**），推 `agent/devbox5/63133e110ef5`。
+- **抢救面实测**（`mc-plugin-host` 半区）：`bundle.rs` 1019 行 / `manifest.rs` 1664 / `credentials.rs` 704 / `token.rs` 515 / `capabilities.rs` 405 / `scope.rs` 340 + 新子模块 `bundle/js.rs`、`manifest/cron.rs`；**0 个 `todo!`/`unimplemented!`/`FIXME`**、**60 个 `#[test]`**（21/14/9/8/5/3）、224 个 `pub` 项。
+  剩余面（**一行未动**）：`crates/mc-mcp/src/{client,types,oauth,devorigin}.rs` + `crates/mc-openapi/src/v1.rs`（仍是 M6-0 骨架）⇒ 本片剩余 = 这 5 个文件 + 全部门禁。
+- **验证抢救「可继续」**：`cargo check -p mc-plugin-host --locked` ⇒ **通过 / 0.76s**（仅类型检查；**未跑门、未跑测试、未跑 clippy**）。这句硬事实写进了重跑交接，让下一个 run 敢直接 `cherry-pick`。
+- **交接 + 重跑**：描述追加「起手补充 · 第二个 run」（抢救 sha、剩余面、**base 已前移到 `ee26c9c`**、`routes/mod.rs` 现含 M2-E 注册块**一个字节都不许碰**、⑦ 五组读数必须逐项不变、M6 stage-2 不得刷快照、冻结文件清单、磁盘注意）⇒ `multica issue rerun LUM-1666` = run **`01a0d0b2-61a6-7597-aab9-776562d33243`**。
+
+### 56.5 并发与派发：空位 = 3 − 2 = 1 ⇒ 补 **M5-9（`LUM-1659`）**
+- 收口后位图：`LUM-1370` **run 终态 + PR 已合**（出位）、`LUM-1666` 重跑**重新占位**、本 cycle 占一位 ⇒ **1 个切片位**。
+- **晋升 `LUM-1659`（M5-9 接线，`backlog → todo`）**：上一轮（§55.4）它被「与在飞的 `LUM-1370` 同写 `Cargo.lock`」挡住；**该约束随 #66 合入解除** ⇒ 三条判定全过：① 硬前置价值（解除 M6-8 `LUM-1673` 的前置）；② 写 `apps/mc-server/Cargo.toml` + 根 `Cargo.lock` + `main.rs`（**锚点冻结面里它只碰 lock**，且 lock 现有唯一写者）；③ 与在飞的 `LUM-1666`（`crates/mc-plugin-host/src/**` + 待补 `mc-mcp`/`mc-openapi`）**零交集**。
+  晋升前写入描述「起手补充」：base **`ee26c9c5`**、当轮 10/10 与 ⑦/⑨ 逐字读数 + 不变式、写集与**不碰清单**、**`Cargo.lock` 只重新生成不手工合并**、一次性真库**起手带 `CREATEDB`**（否则 ⑧ 以 `0s/exit 2` 假红）。
+- 派后位图 = **3/3**：本 cycle ∥ `LUM-1666`（run `01a0d0b2…`）∥ `LUM-1659`。
+- `LUM-1691`（M2-A 尾）**仍不派**：它写 `routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock`，与 `LUM-1659` 的 lock + 与「M6 后续注册路由片」两面都撞 ⇒ 等 1659 合入后单独排。
+
+### 56.6 看板 / 磁盘 / 观察项
+- 看板：`LUM-1370` = **in_review**（已合，待验收）、`LUM-1666` = **in_progress**（重跑）、`LUM-1659` = **in_progress**（本轮派）、`LUM-1667`–`LUM-1675` = `backlog`、`LUM-1665`/`LUM-1652`/`LUM-1370` = `in_review`；`LUM-1691`/`LUM-1580` = `backlog`；`blocked` **0** 条。
+- 观察项（**连续第 5 轮**）：`LUM-1521` / `LUM-1533` 两条 autopilot cycle issue 仍停在 `todo`、从未启动（`/proc/*/cwd` 里无其 workdir）。
+- **磁盘（本轮最紧）**：起手 24G 可用 → 两片各自建/扩 `target/`（`LUM-1370` 跑了两轮门禁后其 `target/` 涨到 **30G**）⇒ 中途只剩 **4.6G（91%）**。收尾按三判据（**PR #66 已合 + 其 run 终态 + `/proc/*/cwd` 无该 workdir 进程**）整删该 `target/` ⇒ **34G 可用（28%）**。
+  **教训量化**：本卷 49G，**两个门禁跑热过的片就能吃满 75%** ⇒ 三片并飞的安全线是「回收完再派」，且每片交付后**当轮回收**，别攒到下一轮。
+
+### 56.7 下一轮起手
+1. 三连：`df -h /` → `git fetch` 取 base sha（本轮收尾 = 本 §56 的 docs-only 提交）→ 认证 `pulls?state=open` + `git ls-remote` 查两个在飞片的远端分支（`LUM-1666` 应从 `5f7394a3` 之后有新提交；`LUM-1659` 起手时尚未推）。
+2. **合并判据链照 §56.2（= §55.2）走**，但注意本轮新增的一条前置：**先判「片是否还在写」**（远端 head 是否在动 + 片进程是否健在）——片会自己 merge base、自己刷 ⑦ 快照，cycle **不要抢**；等它终态再预检。
+3. 空位分配（写集 ∩ lock）：`LUM-1659` 或 `LUM-1666` 合入 ⇒ 空位给 **M6 stage 2 的 `LUM-1667`（M6-2，12 路由 + 5 个双形态键全在它）→ `LUM-1668`（M6-3）**；两片**都不写 lock/manifest**（anchor 已冻结）⇒ 可与 `LUM-1659` 并行。M6-1 合入后 stage 3 的 `LUM-1670/1671`、M6-2 合入后 `LUM-1669` 可起手。
+4. `LUM-1673`（M6-8）的硬前置是 `LUM-1659` ⇒ 它合入前，M6-8 起手只交桩级证据 + 登记。
+5. 静默死亡的判据改用 workdir 三件套（`.gc_meta.json` 的 `completed_at` / `output/` 是否为空 / 远端分支 + 注释数），`~/.pi/agent/sessions/` 已不再提供本地 session 档。
+
+### 56.8 本轮 lesson
+- **【片自己会 merge base、自己刷快照 ⇒ cycle 的第一动作是「确认它停了」，不是「替它合并」】** 本轮 `LUM-1370` 的**同一个 run** 里完成了：`git merge origin/feat/multica-rs-initial`（解 1 处 `routes/mod.rs` 冲突，保留双方）→ 重跑门禁 → 刷 ⑦ 快照 → 推 `d9752404` → 置 `in_review`。若 cycle 抢先替它合并 base，两边会同时 `cargo` 抢同一个 `target/`（锁内串行、白烧时间），且可能在它未提交时移走它的工作树。**判据：远端 head 是否在动 + 该片 pid 是否健在 + 是否已置 `in_review`**；三条里任何一条没满足就继续等（本轮实际等了 ~9 分钟）。
+- **【静默死亡：平台把死 run 也记成 `completed` ⇒ 必须用三条判据，且别急着重跑】** `completed_at` 有值 + `output/` 空 + 推送/注释都为 0。本轮若直接 `rerun`，4,534 行（60 个测试）就白扔了；**抢救链**（提交 → 推分支 → 描述交接 → `rerun`）成本只有 ~2 分钟。另：**「隔离 session」这一步在本运行时已无对象**（本机不落 Pi session jsonl）——链条要按环境改写，不能照抄 ⑧ 的原文。
+- **【抢救后的第一件事是 `cargo check -p <crate>`】** 0.76s 换来一条可写进交接的硬事实（「编译通过、未跑门」），使下一个 run **敢**直接 `cherry-pick` 而不是重写。比在交接里写「大概能编译」有用得多。
+- **【磁盘要按「每片各自的 `target/`」预算，且交付即回收】** 一个跑了两次 `--with-db` 的片其 `target/` = **30G**（本轮实测），两个这样的片就能把 49G 卷打到 91%。三判据回收（PR 已合 / run 终态 / 无进程占 workdir）本轮释放 **30G**；**不要等下一轮**。
+- **【docs-only 直推 base 之前先确认门 ⑩ 的范围】** `scripts/file_size_check.py` 的注释逐字写着文档**故意不查**（只查 `crates/**`、`apps/**`、`scripts/**`、`.github/workflows/**`）⇒ cycle 报告追加进已 5,012 行的 `docs/37` **不触门**；反之**基线清单内的代码文件只减不增**（§54.6）。「要不要拆文件」必须先看门 ⑩ 的适用面，再看行数。
