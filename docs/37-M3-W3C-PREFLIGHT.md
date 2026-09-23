@@ -2130,3 +2130,35 @@ git fetch origin agent/devbox5/7cb27b4cfc6b && git diff --stat 78a7e2c FETCH_HEA
 M=<multica@f41fae6b>; sed -n '2064,2093p;2334,2374p' $M/server/cmd/server/router.go
 for f in chat squad project project_resource chat_pinned_agent; do grep -c '^-- name:' $M/server/pkg/db/queries/$f.sql; done  # 77 22 9 10 6
 ```
+
+### 23.8 补记（同一 cycle 内）：`LUM-1470` 的 PR **#42 已开** ⇒ 本 cycle 顺手合并，并派 `LUM-1472`
+
+§23.0/§23.2 写的是本 cycle **起手时**的观察（当时确实没有 PR）。就在预飞过程中 anchor 把 **PR #42** 交了上来
+（head `6711ea9`、base `78a7e2c`、`mergeable: true`，其自带门禁 10/10）⇒ 本 cycle 直接收掉它，不再留给 15:00：
+
+```bash
+git merge-base --is-ancestor defb6ec pr42; echo $?        # 1（base 已被本 cycle 推到 defb6ec）⇒ 不是快进
+git merge-tree --write-tree defb6ec pr42 | head -1        # c25f79f1… exit 0（零冲突）
+git checkout -b tmp/merge1507 defb6ec && git merge --no-ff pr42   # → fd3c81c
+```
+
+**合并树 `fd3c81c` 真库全门 10/10 绿（239s）**（`MULTICA_TEST_DATABASE_URL` 指向本次新建的 `mc_lum1507`/`gate_lum1507`，跑完已 drop）：
+
+| 门 | ① ② ③ ④ ⑤ | ⑥ db | ⑧ drift | ⑦ | ⑨ | ⑩ |
+| --- | --- | --- | --- | --- | --- | --- |
+| exit | 0 | 0（`migrate=0,e2e=0`） | 0 | 0 | 0 | 0 |
+| 耗时 | 0/51/36/14/19s | 73s | 25s | 0s | 21s | 0s |
+
+⑦ 实测（合并树，与 §22.4 的预测表**逐格相同**）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 242 registered | baseline 242
+implemented  196 real +   4 placeholder =  200 / 456   known_gap  256   unclaimed    0   regression   0   local_only   11
+gaps by owner: M6=55  M4=45  M9=33  M7=24  M8=24  M5=20  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
+```
+
+⑦ 第二条：`0 defect(s), 0 warning(s); 4 allowlisted`（`M5`×2 + `M6`×2）——M4 的 6 行退路已随 anchor 消失，
+而 §23.3 那 15 条双形态现在**全数转为待还的缺陷**（切片不注册就会被判红）。⑨ 快照未漂移。
+
+合并后 base 前移到含 anchor 的树 ⇒ `LUM-1472`（M4-1）的前置（「M4-0 anchor 已合」）成立，本 cycle 顺手把它
+从 `backlog` 提到 `todo` 开跑（并发位：`LUM-1471` + `LUM-1472` + 本 cycle = **3/3 满**，不再多派）。
