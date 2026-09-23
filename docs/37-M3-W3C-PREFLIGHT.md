@@ -4861,8 +4861,10 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 ### 54.1 交付面（自身分支 `679959b`；合并树 `6e99d87`）
 
 - **分支**：`agent/devbox5/356d10293a55`，起手 `7039718`（= §51 的 base `00034b7` + §51 docs-only）。
-  交付时 base 已前进到 **`75a317d`**（§52 合入 #64）⇒ **真合**（`merge --no-ff` 无冲突，`6e99d87`），
-  合并树门禁在**本片自己的热 `target/`** 上一次性跑完（不继承 §51.2/§52.2 的任何读数）。
+  交付时 base 已前进到 **`75a317d`**（§52 合入 #64）⇒ **真合**（`merge --no-ff`，本片第一版合并树 `6e99d87`）；
+  推 PR 后 base 又前进两次（`6087d46` §53 cycle / `fe0dde6` §53.3b，**均 docs-only**）⇒ **第二次真合** =
+  `96eb2f0`，仅 `docs/37` 冲突（两边都追加了新 §）：按 cycle 的 §53 在前、本片交付记录改号 **§54** 在后解决。
+  **门禁不继承**：两次合并树各自当场跑完 `--with-db`。
 - **提交面**：`79 files / +3062 / −453`。分区计数：`routes/**` 27、`mc-skill/**` 8、`mc-plugin-host/**` 8、
   `mc-repos/src/plugin/**` 8、`mc-mcp/**` 6、`mc-repos/src/skill/**` 5、`mc-plugin-protocol/**` **−5 文件**（整删）、
   锚点文件 `mount.rs`(+69/−8) / `routes/mod.rs`(+15) / `state.rs`(+155) / `Cargo.lock`(+338/−7)。
@@ -4873,10 +4875,13 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
   后续切片只填自己的文件，不再有人碰 `mount.rs` / `routes/mod.rs` / 各 `lib.rs` / 根 `Cargo.toml` /
   `Cargo.lock` / ⑦ 基线 / allowlist —— 这是「锚点独占共享写者」的全部意义。
 
-### 54.2 合并树门禁：**10/10 绿 / 245s**（真库 `multica_lum1665`，一次性角色 `mc_lum1665`）
+### 54.2 合并树门禁：**10/10 绿**（真库 `multica_lum1665`，一次性角色 `mc_lum1665`）
 
 `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ ①fmt 1s ②build 44s ③clippy 16s
-④clippy-test-util 17s ⑤test 33s ⑥db 68s ⑧schema-drift 31s ⑦route-parity 1s ⑨conformance 34s ⑩file-size 0s。
+④clippy-test-util 17s ⑤test 33s ⑥db 68s ⑧schema-drift 31s ⑦route-parity 1s ⑨conformance 34s ⑩file-size 0s
+（`overall: PASS — 10/10 gate(s) green in 245s`，树 = `6e99d87`）。
+**最终树 `96eb2f0` 当场重跑**（满足 §53.3b 的口径警告：docs-only 推 base 后合并树变了就必须重跑）：
+**10/10 绿 / 80s**（①2s ⑤33s ⑥13s ⑧25s ⑨6s，其余 0s —— 热 `target/`，读数与上轮**逐项同值**）。
 
 - ⑤ = **1378 passed / 0 failed**（101 target）；⑥ migrate 绿 + e2e = **372 passed / 0 failed**（21 target）。
 - ⑨（`--no-db`）= `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`、契约等价率 `5/365=1.4%`、
@@ -4925,6 +4930,11 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 
 ### 54.5 下一轮起手
 
+0. **本片已交 PR #65**（`base = fe0dde6`；`head` = 本分支最终提交，含本行所在提交），issue 置 `in_review`。
+   ⚠️ **并发硬约束（新，源自 §53.2 的 P0 解除）**：`LUM-1659`（M5-9）写集含**根 `Cargo.lock` 3 行** +
+   `apps/mc-server/**`；本 anchor 也写 `Cargo.lock`（+338/−7）⇒ **两者不可同轮在飞**：先合 #65（或先合 M5-9），
+   第二个合并时 `Cargo.lock` 若有冲突**只重新生成、不手工合**（`cargo metadata` + `--locked` 重建）。
+   `state.rs` / `routes/mount.rs` 等锚点冻结点与 M5-9 无交集，唯一的交集就是 `Cargo.lock`。
 1. `LUM-1665` 交 PR ⇒ 走 §39.3/§42.2 判据链（预检一 == PR API；base 已前进 ⇒ 真合；合并树**当场重跑**
    `--with-db`；`tree(base) == tree(预检)` 且 `git diff` 空）。
 2. 合入后 base 含 M6 骨架 ⇒ **stage 2 三片并行**：`LUM-1666`（M6-1 契约凭据）∥ `LUM-1667`（M6-2 skill 读写，
