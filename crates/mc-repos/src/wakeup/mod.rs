@@ -39,6 +39,7 @@ use crate::RepoError;
 
 pub mod issue;
 pub mod listing;
+pub mod lookup;
 pub mod receipt;
 
 #[cfg(test)]

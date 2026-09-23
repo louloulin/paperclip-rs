@@ -39,7 +39,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sqlx::{PgConnection, PgPool};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 use uuid::Uuid;
 
 use super::{
@@ -229,10 +229,13 @@ pub async fn ready_wakeups(pool: &PgPool) -> Result<Vec<WakeupRow>> {
 }
 
 /// `FindPendingWakeupTask`：该 wakeup 的待处理 task（`queued` / `dispatched`，取最早一条）。
-pub async fn find_pending_wakeup_task(
-    pool: &PgPool,
+pub async fn find_pending_wakeup_task<'e, E>(
+    ex: E,
     wakeup_id: Uuid,
-) -> Result<Option<WakeupTaskRow>> {
+) -> Result<Option<WakeupTaskRow>>
+where
+    E: PgExecutor<'e>,
+{
     sqlx::query_as::<_, WakeupTaskRow>(
         "SELECT id, status, issue_id, agent_id, runtime_id, dispatched_at, prepare_lease_expires_at, \
                 context, originator_user_id, handoff_note, created_at \
@@ -241,21 +244,24 @@ pub async fn find_pending_wakeup_task(
          ORDER BY created_at LIMIT 1",
     )
     .bind(wakeup_id.to_string())
-    .fetch_optional(pool)
+    .fetch_optional(ex)
     .await
     .map_err(map_wakeup_err)
 }
 
 /// `once` 重新武装前的活跃 run 判定（上游 `save` 的 enable 分支内联 SQL）：
 /// `status IN ('queued','deferred','dispatched','running','waiting_local_directory')`。
-pub async fn active_run_exists(pool: &PgPool, issue_id: Uuid, wakeup_id: Uuid) -> Result<bool> {
+pub async fn active_run_exists<'e, E>(ex: E, issue_id: Uuid, wakeup_id: Uuid) -> Result<bool>
+where
+    E: PgExecutor<'e>,
+{
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM agent_task_queue WHERE issue_id=$1 AND context->>'wakeup_id'=$2 \
          AND status IN ('queued','deferred','dispatched','running','waiting_local_directory'))",
     )
     .bind(issue_id)
     .bind(wakeup_id.to_string())
-    .fetch_one(pool)
+    .fetch_one(ex)
     .await
     .map_err(map_wakeup_err)
 }
@@ -264,7 +270,10 @@ pub async fn active_run_exists(pool: &PgPool, issue_id: Uuid, wakeup_id: Uuid) -
 ///
 /// 规范 key 直接由 `mc_core::status` 判定；自定义 key 查 `issue_status` 表。
 /// **找不到 key** ⇒ [`RepoError::NotFound`]（上游同样把未知 status 当错误，不是「视为活跃」）。
-pub async fn issue_is_active(pool: &PgPool, workspace_id: Uuid, status: &str) -> Result<bool> {
+pub async fn issue_is_active<'e, E>(ex: E, workspace_id: Uuid, status: &str) -> Result<bool>
+where
+    E: PgExecutor<'e>,
+{
     if let Some(known) = mc_core::status::IssueStatus::from_key(status) {
         return Ok(known.category() == mc_core::status::StatusCategory::Open);
     }
@@ -272,7 +281,7 @@ pub async fn issue_is_active(pool: &PgPool, workspace_id: Uuid, status: &str) ->
         sqlx::query_as("SELECT category FROM issue_status WHERE workspace_id=$1 AND key=$2")
             .bind(workspace_id)
             .bind(status)
-            .fetch_optional(pool)
+            .fetch_optional(ex)
             .await
             .map_err(map_wakeup_err)?;
     match row {
