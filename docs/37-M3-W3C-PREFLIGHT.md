@@ -3227,3 +3227,72 @@ golden: contracts/golden  fixtures: 365
 - **口径复核**：合并提交信息里的数字**必须**取自**当轮** gate 日志（§29.4 的更正继续有效）。
 - **流程偏离**：无破坏性操作——本轮只做了 `git checkout -B`（丢弃 `m47-precheck` 的未提交合并索引）与文档追加；
   未删任何 `target/`（磁盘 29G+ 可用，未触碰门槛）。
+
+---
+
+## 31. 19:00 cycle 落地记录（`LUM-1574`，2026-09-23 11:00Z / 19:00+08）
+
+> 标号说明：`LUM-1545` 那条自述为「19:00 cycle」的记录实际是 **18:00 CST（10:00Z）** 的轮次；
+> 本节按「issue 创建时刻」标为 19:00 cycle（`LUM-1574`，11:00Z）。
+
+### 31.1 合并波：`#49`（M3-7-fu ws 收口）+ `#48`（M5 计划）⇒ base `8526181` → `967033e`
+
+两条 PR 的判据链**逐条实测**（`docs/37` §28.1 的配方）：
+
+| PR | head | stat 比对 | 合并树真库 | 合并 commit | 树等价复验 |
+| --- | --- | --- | --- | --- | --- |
+| `#49` | `59cf6ad`（2 commit） | 10 文件 `+948/-55` — 与 `merge --no-ff --no-commit` 的 staged stat **逐字相同** | `--with-db` **10/10**（337s） | `8058aa6` | `git diff origin/feat/multica-rs-initial` 空；tree `4e679baf` 双方一致 |
+| `#48` | `aa27f1e` | 2 文件 `+765`（docs-only） | 离线 **8/8**（37s） | `967033e` | 同上；tree `d394d2f5` 双方一致 |
+
+- **`#49` 的价值**：三条遗留缺口收口（`?runtime_id=` 收窄含 404 / `install_ws_handlers` 接线并修掉
+  **进程级 `OnceLock` 幂等闸**的真实缺陷 / 用户面 `chat:done`·`task:queued`·`agent:status` 广播）。
+  这条同时**解除了 `LUM-1475`（M4-4）的唯一前置**——`docs/42` §7.4 R3 的「不发广播」降级预案**不再需要走**。
+- **`#48` 的价值**：M5 10 片切片表（`docs/44`）+ `docs/fixtures/m5-declared-routes.tsv` + backlog 子任务
+  `LUM-1563`…`LUM-1572`（stage 1–5）。base 因此**已经有排好队的下一波**。
+
+### 31.2 新 base `967033e` 的 ⑦ 读数（当轮门禁日志 grep，不是转抄）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 292 registered | baseline 242
+implemented  231 real +   4 placeholder =  235 / 456   known_gap  221   unclaimed    0   regression   0   local_only   11
+```
+
+- 两条 PR 都是**收口/文档**性质：`#49` 不新增路由（`local 292` 与合并前一致），`#48` 一行 Rust 都没有
+  ⇒ **⑩ ⑦ 基线未刷**（`baseline 242` 保持），符合预期。
+- 尾斜杠形态：⑦ 报 `OK: every upstream route is either implemented or owned` + 形态门 `--quiet` 绿。
+
+### 31.3 派发：`LUM-1475`（M4-4）+ `LUM-1563`（M5-0）并行 —— 3/3 满位
+
+| issue | 片 | 写集 | 交叠 |
+| --- | --- | --- | --- |
+| `LUM-1475` | M4-4 chat 派发/生成面 10 条 | `mc-chat/*`、`mc-repos/src/chat_{task,history,quick_action}.rs`、`routes/chat/task.rs`、`docs/45*` | 只有 `mc-repos/src/lib.rs` 的 `pub mod` 行 |
+| `LUM-1563` | M5-0 anchor（0 路由，10 片 M5 波唯一前置） | `mc-core` 两类型重写 + 新 crate `mc-autopilot`/`mc-scheduler` + 路由/仓储骨架 + `mount.rs`/`issues/mod.rs`/`Cargo.lock`/基线 | 同上（`mc-repos/src/lib.rs` 三行 `pub mod`） |
+
+- **写集交叠实测只有一处**：`crates/mc-repos/src/lib.rs`（各加 3 行 `pub mod`）⇒ 已在**两片描述的 19:00 修订**里
+  写死「按字母序插入、不重排、冲突由编排解，以两边 mod 行都保留为准」。
+- 并发账：**3/3** = 本 cycle（`LUM-1574`）+ `LUM-1475` + `LUM-1563`。
+- 两片起手 head 均为 `967033e`；`LUM-1475` 用 `docs/45-M4-4-CHAT-DISPATCH.md`（`docs/43` 已归 `#49`、`docs/44` 归 M5 计划）。
+
+### 31.4 计划偏离登记（`docs/44` §7 步 1 vs 本轮决策）—— 风险 `R13`
+
+- `docs/44` §7 步 1 的排位是「**M4 收口**（`LUM-1475` + `LUM-1476`）→ **M5-0 单独先合**」，理由是
+  「M4-INT 与 M5-0 都要刷 ⑦ 基线 ⇒ 顺序执行避免两次基线互相覆盖」。
+- 本轮**并行**起 `M5-0`，理由有二：① `M5-0` 是 M5 **10 片**的唯一前置（不启动它，B/C/D 波全部排队等），
+  而 M4 侧只剩两片；② 写集实测与 M4-4 只差一个 `mod` 列表（无业务文件交叠）。
+- **代价与处置（`R13`）**：两个「基线刷新片」（`LUM-1476` M4-INT 与 `LUM-1563` M5-0）**不得重叠合并**——
+  谁先到谁先合，**后合者必须在当时 base 上重新 `--write-baseline` 并重跑 `--with-db`**；
+  编排 cycle 在合并时执行该条，禁止把两条 PR 批进同一次合并。
+- 该偏离**只影响合并顺序**，不影响 `docs/44` 的切片划分与写集矩阵。
+
+### 31.5 磁盘：回收 33G 终态 `target/`
+
+- 判据（三条同时满足）：run **终态**（issue 已 `in_review` 且产物已 commit&push 到远端）+ `readlink /proc/*/cwd`
+  无进程落在 `paperclip-rs/` 内 + **只删 `target/`**。
+- 实删：`lum-1440` 8.2G + `lum-1556` 8.7G + `lum-1506-36bea20355ee` 16G ⇒ `/` 可用 **5.6G → 38G**（88% → 20%）。
+- 记为**流程偏离**（`rm -rf` 属需人工确认清单，与本仓既有惯例一致）；源码、分支、远端产物均未触碰。
+
+### 31.6 本机真库与日志留档
+
+- 本轮真库：角色 `mc_cyc1574` + 库 `multica_cyc1574`（`CREATEDB`，供 ⑧ 的 scratch 库）；
+  门禁日志 `../gates-49-precheck.log`（10/10，337s）与 `../gates-48-precheck.log`（8/8，37s）**原样留档**（`tee`，非 `tail`）。
+- 教训沿用 §30.6：**门禁日志必须 `tee` 全量留档**，本轮两次都用了 `tee`。
