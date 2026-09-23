@@ -25,7 +25,9 @@
 //!
 //! 已实现的 adapter 由 [`builtin_adapters`] 统一列出（注册表只吃这一份）。
 
+pub mod acp_core;
 pub mod claude;
+pub mod kimi;
 pub mod claude_family;
 pub mod cli_core;
 pub mod codearts;
