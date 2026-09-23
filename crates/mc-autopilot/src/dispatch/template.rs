@@ -179,7 +179,9 @@ pub(crate) fn build_issue_description(
     out.push_str(autopilot.description.as_deref().unwrap_or_default());
     out.push_str("\n\n---\n*Autopilot run triggered at ");
     out.push_str(&triggered_at);
-    out.push_str(". After starting work, rename this issue to accurately reflect what you are doing.*");
+    out.push_str(
+        ". After starting work, rename this issue to accurately reflect what you are doing.*",
+    );
 
     if run.source == "webhook" {
         if let Some(payload) = &run.trigger_payload {
@@ -188,10 +190,12 @@ pub(crate) fn build_issue_description(
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
                 .unwrap_or("webhook.received");
-            let pretty = payload
-                .get("eventPayload")
-                .map(prettify)
-                .unwrap_or_else(|| prettify(payload));
+            // 「有 `eventPayload` 就美化它，否则美化整个载荷」：用 `match` 而不是
+            // `map(..).unwrap_or_else(..)`（后者会被 `clippy::map_unwrap_or` 拦下）。
+            let pretty = match payload.get("eventPayload") {
+                Some(event_payload) => prettify(event_payload),
+                None => prettify(payload),
+            };
             out.push_str("\n\nWebhook event: ");
             out.push_str(event);
             out.push_str("\n\nWebhook payload:\n```json\n");

@@ -38,6 +38,7 @@ use super::{
 ///
 /// [`SideEffectError::Skipped`]：leader 在准入之后变得不可解析、归属不可问责、任务栅栏拒写；
 /// [`SideEffectError::Failed`]：库错。
+#[allow(clippy::too_many_lines)] // 108 行：上游 dispatchRunOnly 981 的解析+建任务+回链三段
 pub(crate) async fn dispatch_run_only(
     pool: &PgPool,
     autopilot: &AutopilotRow,
@@ -88,7 +89,11 @@ pub(crate) async fn dispatch_run_only(
                 ReasonCode::AttributionBlocked,
             ))
         }
-        Err(err) => return Err(SideEffectError::failed(format!("resolve attribution: {err}"))),
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "resolve attribution: {err}"
+            )))
+        }
     };
 
     let mut conn = match pool.acquire().await {
@@ -126,7 +131,11 @@ pub(crate) async fn dispatch_run_only(
                 ReasonCode::TargetUnavailable,
             ))
         }
-        Err(err) => return Err(SideEffectError::failed(format!("create autopilot task: {err}"))),
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "create autopilot task: {err}"
+            )))
+        }
     };
 
     let updated = match run_sql::update_running(&mut tx, run.id, task_id).await {

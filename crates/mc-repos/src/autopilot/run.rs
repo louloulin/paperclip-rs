@@ -110,8 +110,8 @@ pub struct NewAutopilotRun {
     ///
     /// `pending` **不在此列**：迁移 `043` 把 CHECK 收窄成 `(issue_created, running,
     /// completed, failed)`、`079` 只把 `skipped` 加回来（`043` 的注释就是「修孤儿 pending
-    /// 行」，而不是保留它）。所以新 run 只有两种起始态：create_issue 线 `issue_created`、
-    /// run_only 线 `running`。
+    /// 行」，而不是保留它）。所以新 run 只有两种起始态：`create_issue` 线 `issue_created`、
+    /// `run_only` 线 `running`。
     pub status: String,
     pub trigger_payload: Option<Value>,
     pub squad_id: Option<Uuid>,
@@ -122,10 +122,7 @@ pub struct NewAutopilotRun {
 }
 
 /// `CreateAutopilotRun`：插一行 run。
-pub async fn create_run(
-    conn: &mut PgConnection,
-    new: &NewAutopilotRun,
-) -> Result<AutopilotRunRow> {
+pub async fn create_run(conn: &mut PgConnection, new: &NewAutopilotRun) -> Result<AutopilotRunRow> {
     sqlx::query_as::<_, AutopilotRunRow>(&format!(
         "INSERT INTO autopilot_run (id, autopilot_id, trigger_id, source, status, \
              trigger_payload, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, \
@@ -288,7 +285,7 @@ pub async fn list(
     .map_err(map_sqlx_err)
 }
 
-/// `UpdateAutopilotRunIssueCreated`：create_issue 线把 issue 链进 run（同 tx）。
+/// `UpdateAutopilotRunIssueCreated`：`create_issue` 线把 issue 链进 run（同 tx）。
 pub async fn update_issue_created(
     conn: &mut PgConnection,
     run_id: Uuid,
@@ -305,7 +302,7 @@ pub async fn update_issue_created(
     .map_err(map_sqlx_err)
 }
 
-/// `UpdateAutopilotRunRunning`：run_only 线把 task 链进 run。
+/// `UpdateAutopilotRunRunning`：`run_only` 线把 task 链进 run。
 pub async fn update_running(
     conn: &mut PgConnection,
     run_id: Uuid,
@@ -459,7 +456,7 @@ pub async fn find_active_by_issue(
 }
 
 /// `FailAutopilotRunsByIssue`：issue 被删（`ON DELETE SET NULL` 之前）时把在飞的 run 判失败，
-/// 并释放**仍为 reserved** 的预留（create_issue 的预留早在建 issue 时就 consume 了，不再退）。
+/// 并释放**仍为 reserved** 的预留（`create_issue` 的预留早在建 issue 时就 consume 了，不再退）。
 pub async fn fail_by_issue(
     conn: &mut PgConnection,
     issue_id: Uuid,
@@ -544,8 +541,8 @@ pub async fn update_autopilot_last_run_at(pool: &PgPool, autopilot_id: Uuid) -> 
 
 /// `CreateAutopilotTask` 的入参。
 ///
-/// `issue_id`：create_issue 线是新建的 issue（上游那条链路是 issue 监听器入队，本地没这条流，
-/// 于是由派发自己建任务并同时链上 issue 与 run —— 见 `docs/44` §8 偏差）；run_only 线是 `None`
+/// `issue_id`：`create_issue` 线是新建的 issue（上游那条链路是 issue 监听器入队，本地没这条流，
+/// 于是由派发自己建任务并同时链上 issue 与 run —— 见 `docs/44` §8 偏差）；`run_only` 线是 `None`
 /// （上游该类任务是**纯 run 任务**，不挂 issue）。
 #[derive(Debug, Clone)]
 pub struct NewAutopilotTask {
@@ -568,7 +565,7 @@ pub struct NewAutopilotTask {
 ///
 /// 归属栅栏 `lock_task_owner_rows(agent_id, issue_id, runtime_id)`（迁移 284）在**本语句自己的
 /// WHERE 里**被调用 ⇒ workspace 正在拆除时写零行，返回 `None`（而不是把任务留在一个刚被删掉的
-/// workspace 里）。这是全仓「写 agent_task_queue 归属必须过栅栏」的硬约束。
+/// workspace 里）。这是全仓「写 `agent_task_queue` 归属必须过栅栏」的硬约束。
 pub async fn create_task(conn: &mut PgConnection, new: &NewAutopilotTask) -> Result<Option<Uuid>> {
     sqlx::query_scalar(
         "INSERT INTO agent_task_queue ( \
@@ -650,7 +647,9 @@ pub async fn workspace_prefix(pool: &PgPool, workspace_id: Uuid) -> Result<Strin
         .fetch_optional(pool)
         .await
         .map_err(map_sqlx_err)?;
-    Ok(crate::issue::issue_prefix_from_slug(slug.as_deref().unwrap_or("")))
+    Ok(crate::issue::issue_prefix_from_slug(
+        slug.as_deref().unwrap_or(""),
+    ))
 }
 
 /// 归属降级用：某个 member 现在是否仍在这个工作区（上游 `GetMemberByUserAndWorkspace`）。
@@ -700,7 +699,7 @@ pub async fn get_autopilot(pool: &PgPool, autopilot_id: Uuid) -> Result<Autopilo
 
 /// `GetAutopilotTaskByRun` 的**反向**：task → 它挂的 run（`SyncRunFromTask` 的第一步）。
 ///
-/// 与 [`find_task_id_by_run`] 成对：那条修「run 没写上 task_id」，这条从 task 反查 run。
+/// 与 [`find_task_id_by_run`] 成对：那条修「run 没写上 `task_id`」，这条从 task 反查 run。
 pub async fn find_run_id_by_task(pool: &PgPool, task_id: Uuid) -> Result<Option<Uuid>> {
     sqlx::query_scalar("SELECT autopilot_run_id FROM agent_task_queue WHERE id = $1")
         .bind(task_id)

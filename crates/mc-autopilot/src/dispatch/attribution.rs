@@ -227,7 +227,7 @@ pub(crate) async fn resolve_run_attribution(
     match run_sql::workspace_attribution_fail_closed(pool, autopilot.workspace_id).await {
         Ok(Some(false)) => {}
         // 读不到策略 / fail-closed 工作区：**拒绝**，不静默跑一条无人问责的任务。
-        Ok(Some(true)) | Ok(None) | Err(_) => return Ok(Err(AttributionBlocked::FailClosed)),
+        Ok(Some(true) | None) | Err(_) => return Ok(Err(AttributionBlocked::FailClosed)),
     }
     let fallback = precise.owner_fallback(leader_owner_id);
     if fallback.source == SOURCE_UNATTRIBUTED {

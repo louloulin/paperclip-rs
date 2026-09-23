@@ -18,7 +18,7 @@ use crate::Result;
 // create_issue 线：编号 / 重复守卫 / issue 插入 / 订阅者扇出
 // ---------------------------------------------------------------------------
 
-/// 一段 issue（create_issue 线要用到的列）。
+/// 一段 issue（`create_issue` 线要用到的列）。
 #[derive(Debug, Clone, FromRow)]
 pub struct AutopilotIssueRow {
     pub id: Uuid,

@@ -35,7 +35,7 @@
 //!    并发策略分支。于是本次交付的三种结果是上游真正存在的那三种：**`skipped`（准入闸）/
 //!    新建 run+task / `reused`（幂等命中，`reused = true`）**。
 //! 2. **`AgentReadiness` + `autopilotAdmitInvoke` 不在本波**（runtime 就绪面与私有 squad 调用闸
-//!    依赖 M6/M7，`docs/52` known_gap）⇒ 准入闸简化为「assignee 解析得出来 + agent 未归档 +
+//!    依赖 M6/M7，`docs/52` `known_gap`）⇒ 准入闸简化为「assignee 解析得出来 + agent 未归档 +
 //!    squad 未归档」。
 //! 3. **`create_issue` 的 task 入队在本切片内**：上游那条链是「建 issue → 发 issue 事件 →
 //!    监听器 `EnqueueTaskForIssue` 入队」。本地没有 issue→task 监听链（daemon loop 属 M3-7），
@@ -48,7 +48,7 @@
 //!
 //! `SyncRunFrom*`（[`AutopilotDispatcher::sync_from_issue_status`] /
 //! [`AutopilotDispatcher::sync_from_task`]）交付为**可调用的服务 API + 真库用例**；生产触发链
-//! （daemon / task 终态回调）由 M5-7/M5-8 接（known_gap 已登记）。
+//! （daemon / task 终态回调）由 M5-7/M5-8 接（`known_gap` 已登记）。
 
 pub mod admission;
 pub mod analytics;
@@ -384,7 +384,7 @@ pub enum DispatchError {
         /// 人读信息。
         message: String,
     },
-    /// 入参不合法（`dispatch_for_plan` 缺 trigger / planned_at）。
+    /// 入参不合法（`dispatch_for_plan` 缺 trigger / `planned_at`）。
     #[error("invalid dispatch request: {0}")]
     Invalid(String),
     /// 库错。
@@ -519,7 +519,10 @@ impl AutopilotDispatcher {
         let Some(trigger_id) = req.trigger_id else {
             return Err(DispatchError::Invalid("trigger_id is required".to_string()));
         };
-        if let Some(outcome) = self.resume_planned_run(&req, trigger_id, planned_at).await? {
+        if let Some(outcome) = self
+            .resume_planned_run(&req, trigger_id, planned_at)
+            .await?
+        {
             return Ok(outcome);
         }
         let mut req = req;
@@ -551,8 +554,8 @@ impl AutopilotDispatcher {
         planned_at: DateTime<Utc>,
     ) -> Result<Option<DispatchOutcome>, DispatchError> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        let Some(run) = run_sql::find_by_trigger_and_planned(&mut conn, trigger_id, planned_at)
-            .await?
+        let Some(run) =
+            run_sql::find_by_trigger_and_planned(&mut conn, trigger_id, planned_at).await?
         else {
             return Ok(None);
         };
@@ -703,10 +706,9 @@ impl AutopilotDispatcher {
         )
         .await
     }
-
 }
 
-/// `isAutopilotRunComplete`536：`(trigger_id, planned_at)` 上已有 run 时，能不能直接复用。
+/// `isAutopilotRunComplete`536：(`trigger_id`, `planned_at`) 上已有 run 时，能不能直接复用。
 ///
 /// 「完整」有三类（**不是**只有终态）：
 ///
@@ -727,6 +729,7 @@ pub fn is_run_complete(run: &AutopilotRunRow) -> bool {
 }
 
 /// `sqlx::Error` → [`DispatchError`]（`mc-repos` 的 `map_sqlx_err` 是 `pub(crate)`，拿不到）。
+#[allow(clippy::needless_pass_by_value)] // 按值收 error 才能 `.map_err(db_err)` 直传
 pub(crate) fn db_err(err: sqlx::Error) -> DispatchError {
     DispatchError::Repo(RepoError::Db(err.to_string()))
 }

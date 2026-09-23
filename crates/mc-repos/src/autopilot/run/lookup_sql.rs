@@ -44,7 +44,7 @@ pub enum AssigneeLeader {
 /// `resolveAutopilotLeader`：把 autopilot 的 assignee 解析成**真正跑活的 agent**。
 ///
 /// `""` / `agent` ⇒ 直连 agent；`squad` ⇒ 先看 squad 是否归档，再取 leader agent。
-/// 两次查询都带 `workspace_id` 限定（跨租户的 assignee_id 选不出行）。
+/// 两次查询都带 `workspace_id` 限定（跨租户的 `assignee_id` 选不出行）。
 pub async fn resolve_assignee_leader(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -63,13 +63,14 @@ pub async fn resolve_assignee_leader(
             })
         }
         "squad" => {
-            let squad: Option<(Option<DateTime<Utc>>, Uuid)> =
-                sqlx::query_as("SELECT archived_at, leader_id FROM squad WHERE id = $1 AND workspace_id = $2")
-                    .bind(assignee_id)
-                    .bind(workspace_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(map_sqlx_err)?;
+            let squad: Option<(Option<DateTime<Utc>>, Uuid)> = sqlx::query_as(
+                "SELECT archived_at, leader_id FROM squad WHERE id = $1 AND workspace_id = $2",
+            )
+            .bind(assignee_id)
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_sqlx_err)?;
             let Some((archived_at, leader_id)) = squad else {
                 return Ok(AssigneeLeader::Missing { squad: true });
             };
@@ -163,13 +164,11 @@ pub async fn workspace_attribution_fail_closed(
     pool: &PgPool,
     workspace_id: Uuid,
 ) -> Result<Option<bool>> {
-    sqlx::query_scalar(
-        "SELECT attribution_fail_closed FROM workspace WHERE id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(map_sqlx_err)
+    sqlx::query_scalar("SELECT attribution_fail_closed FROM workspace WHERE id = $1")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_sqlx_err)
 }
 
 /// `GetActiveAutopilotRuleVersion`（`task.go:600` 的 `ruleOwnerAttribution`）：

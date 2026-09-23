@@ -10,10 +10,10 @@
 //! # 两条容易写错的形状
 //!
 //! 1. **列表投影**（上游 `ListWebhookDeliveriesByAutopilot`）刻意丢掉
-//!    `raw_body` / `selected_headers` / `response_body`：一页 100 行 × 256 KiB 的 raw_body
+//!    `raw_body` / `selected_headers` / `response_body`：一页 100 行 × 256 KiB 的 `raw_body`
 //!    就是 25 MiB，纯粹为了在 JSON 编码器里被丢掉。详情才取整行。所以行结构有两个：
 //!    [`WebhookDeliverySlimRow`]（23 列）与 [`WebhookDeliveryRow`]（28 列）。
-//! 2. **replay 不复用原 dedupe_key**（上游注释逐字）：复用会撞上
+//! 2. **replay 不复用原 `dedupe_key`**（上游注释逐字）：复用会撞上
 //!    `idx_webhook_delivery_dedupe` 这个部分唯一索引，把 replay 静默折叠回原投递。
 //!    replay 的幂等性靠另一对键：`(replayed_from_delivery_id, replay_idempotency_key)`
 //!    —— 同一 `Idempotency-Key` 的 API 重试返回同一个 replay 行。
@@ -21,7 +21,7 @@
 //! 顺带记一条**有意偏离**：上游 replay 会用 `normalizeWebhookPayload` + `inferEvent`
 //! 从 `raw_body` 重新推断事件名（`handler/webhook_delivery.go:283-292`）。那对函数属于 M5-5 的
 //! 入站归一化，本切片不重复实现，改为**沿用原投递的 `event`**（同一 body 的事件名只可能由同一份
-//! 归一化逻辑得出，语义等价），但保留「raw_body 必须仍是合法 JSON」的校验，以维持上游
+//! 归一化逻辑得出，语义等价），但保留「`raw_body` 必须仍是合法 JSON」的校验，以维持上游
 //! `stored body no longer parses: …` 的 400 契约。
 
 use chrono::{DateTime, Utc};
@@ -199,10 +199,7 @@ pub struct NewReplayDelivery {
 /// `dedupe_key` 为 `NULL`（绕过 provider 去重）。
 ///
 /// `attempt_count` / `dispatch_attempts` 走 DDL 默认值（1 / 0），与上游一致。
-pub async fn create_replay(
-    pool: &PgPool,
-    new: &NewReplayDelivery,
-) -> Result<WebhookDeliveryRow> {
+pub async fn create_replay(pool: &PgPool, new: &NewReplayDelivery) -> Result<WebhookDeliveryRow> {
     sqlx::query_as::<_, WebhookDeliveryRow>(&format!(
         "INSERT INTO webhook_delivery (id, workspace_id, autopilot_id, trigger_id, provider, \
              event, dedupe_key, signature_status, status, selected_headers, content_type, \

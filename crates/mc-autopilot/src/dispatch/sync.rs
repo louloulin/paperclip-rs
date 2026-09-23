@@ -142,7 +142,8 @@ impl AutopilotDispatcher {
         &self,
         issue_id: Uuid,
     ) -> Result<Option<AutopilotRunRow>, DispatchError> {
-        let Some((origin_type, raw_status)) = run_sql::load_issue_origin(&self.pool, issue_id).await?
+        let Some((origin_type, raw_status)) =
+            run_sql::load_issue_origin(&self.pool, issue_id).await?
         else {
             return Ok(None);
         };
@@ -159,7 +160,8 @@ impl AutopilotDispatcher {
 
         let autopilot = run_sql::get_autopilot(&self.pool, run.autopilot_id).await?;
         let effective =
-            run_sql::effective_issue_status(&self.pool, autopilot.workspace_id, &raw_status).await?;
+            run_sql::effective_issue_status(&self.pool, autopilot.workspace_id, &raw_status)
+                .await?;
 
         match effective.as_str() {
             "done" | "in_review" => {
@@ -173,14 +175,7 @@ impl AutopilotDispatcher {
             "cancelled" | "blocked" => {
                 let reason = format!("issue {raw_status}");
                 let updated = self
-                    .settle_with_quota(
-                        run.id,
-                        RUN_STATUS_FAILED,
-                        None,
-                        Some(&reason),
-                        None,
-                        false,
-                    )
+                    .settle_with_quota(run.id, RUN_STATUS_FAILED, None, Some(&reason), None, false)
                     .await?;
                 analytics::run_failed(&autopilot, &updated, source_of(&updated), &reason);
                 self.publish_run_done(&autopilot, &updated);
@@ -231,14 +226,7 @@ impl AutopilotDispatcher {
             "failed" | "cancelled" => {
                 let reason = task_failure_reason(status, error);
                 let updated = self
-                    .settle_with_quota(
-                        run.id,
-                        RUN_STATUS_FAILED,
-                        None,
-                        Some(&reason),
-                        None,
-                        false,
-                    )
+                    .settle_with_quota(run.id, RUN_STATUS_FAILED, None, Some(&reason), None, false)
                     .await?;
                 analytics::run_failed(&autopilot, &updated, source_of(&updated), &reason);
                 self.publish_run_done(&autopilot, &updated);
@@ -292,14 +280,7 @@ impl AutopilotDispatcher {
         let autopilot = run_sql::get_autopilot(&self.pool, run.autopilot_id).await?;
         let reason = task_failure_reason("failed", error);
         let updated = self
-            .settle_with_quota(
-                run.id,
-                RUN_STATUS_FAILED,
-                None,
-                Some(&reason),
-                None,
-                false,
-            )
+            .settle_with_quota(run.id, RUN_STATUS_FAILED, None, Some(&reason), None, false)
             .await?;
         tracing::warn!(
             run_id = %updated.id,

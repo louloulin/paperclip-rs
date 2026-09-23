@@ -7,10 +7,10 @@
 //!
 //! # 本地形态（偏差已登记）
 //!
-//! 上游这 92 行全是 PostHog（`obsmetrics.RecordEvent` + `analytics.AutopilotRun*`），本地**没有**
+//! 上游这 92 行全是 `PostHog`（`obsmetrics.RecordEvent` + `analytics.AutopilotRun*`），本地**没有**
 //! 分析平面：既没有 `mc-analytics` crate，也没有事件出口（`docs/44` §1.2 / §8）。
 //! 于是这里落成 **`tracing` 结构化事件**（`target = "mc_autopilot::dispatch::analytics"`），
-//! 字段名与上游 PostHog 属性对齐，供将来的分析接线直接复用；`error_type` 这类上游的私有分类
+//! 字段名与上游 `PostHog` 属性对齐，供将来的分析接线直接复用；`error_type` 这类上游的私有分类
 //! （`autopilotErrorType`）**不猜**，只带原始 reason。
 //!
 //! 上游逐个逐字对应的函数：
@@ -65,7 +65,7 @@ pub(crate) fn run_completed(autopilot: &AutopilotRow, run: &AutopilotRunRow) {
     );
 }
 
-/// `captureIssueCreatedFromAutopilot`：create_issue 线建出 issue 后记一次
+/// `captureIssueCreatedFromAutopilot`：`create_issue` 线建出 issue 后记一次
 /// （上游把执行 agent（squad leader）作为 `agent_id`，好让 per-agent 计数与 daemon 上报对齐）。
 pub(crate) fn issue_created_from_autopilot(
     autopilot: &AutopilotRow,

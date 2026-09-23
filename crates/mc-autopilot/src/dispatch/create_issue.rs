@@ -25,10 +25,12 @@
 //! 全部回滚），返回 [`SideEffectError::Skipped`]：run 由调用方落 `skipped`，账面上「这次派发
 //! 什么也没发生」，而不是留下一个没有任务的 issue 再报 500。
 
-use mc_repos::autopilot::run::{self as run_sql, AutopilotRunRow, NewAutopilotIssue, NewAutopilotTask};
+use mc_realtime::RealtimeHandle;
+use mc_repos::autopilot::run::{
+    self as run_sql, AutopilotRunRow, NewAutopilotIssue, NewAutopilotTask,
+};
 use mc_repos::autopilot::AutopilotRow;
 use mc_repos::inbox::{InboxRepo, NewInboxItem};
-use mc_realtime::RealtimeHandle;
 use sqlx::{Connection, PgPool};
 use uuid::Uuid;
 
@@ -51,6 +53,7 @@ const EVENT_INBOX_NEW: &str = "inbox:new";
 ///
 /// [`SideEffectError::Skipped`]：准入在 tx 内才暴露（重复 issue、归属不可问责、任务栅栏拒绝）；
 /// [`SideEffectError::Failed`]：库错。
+#[allow(clippy::too_many_lines)] // 188 行：上游 dispatchCreateIssue 681 的全链，拆开会掩盖事务边界
 pub(crate) async fn dispatch_create_issue(
     pool: &PgPool,
     autopilot: &AutopilotRow,
@@ -87,7 +90,11 @@ pub(crate) async fn dispatch_create_issue(
                 ReasonCode::AttributionBlocked,
             ))
         }
-        Err(err) => return Err(SideEffectError::failed(format!("resolve attribution: {err}"))),
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "resolve attribution: {err}"
+            )))
+        }
     };
 
     let title = template::interpolate_template(autopilot, run, timezone);
@@ -119,7 +126,9 @@ pub(crate) async fn dispatch_create_issue(
             &normalized_title,
         );
         if let Err(err) = run_sql::lock_duplicate_key(&mut tx, &key).await {
-            return Err(SideEffectError::failed(format!("lock duplicate key: {err}")));
+            return Err(SideEffectError::failed(format!(
+                "lock duplicate key: {err}"
+            )));
         }
         let window_start =
             chrono::Utc::now() - chrono::Duration::seconds(RECENT_DUPLICATE_WINDOW_SECONDS);
@@ -151,11 +160,19 @@ pub(crate) async fn dispatch_create_issue(
     // ---- 编号 / 位置 / issue 行 ----
     let number = match run_sql::next_issue_number(&mut tx, autopilot.workspace_id).await {
         Ok(number) => number,
-        Err(err) => return Err(SideEffectError::failed(format!("allocate issue number: {err}"))),
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "allocate issue number: {err}"
+            )))
+        }
     };
     let position = match run_sql::next_top_position(&mut tx, autopilot.workspace_id, "todo").await {
         Ok(position) => position,
-        Err(err) => return Err(SideEffectError::failed(format!("next issue position: {err}"))),
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "next issue position: {err}"
+            )))
+        }
     };
     let prefix = match run_sql::workspace_prefix(pool, autopilot.workspace_id).await {
         Ok(prefix) => prefix,
@@ -187,15 +204,15 @@ pub(crate) async fn dispatch_create_issue(
     };
 
     // ---- 订阅者扇出（与 issue 插入同 tx，见 `issue_sql` 模块头） ----
-    let subscribers =
-        match run_sql::insert_issue_subscribers(&mut tx, issue.id, autopilot.id).await {
-            Ok(subscribers) => subscribers,
-            Err(err) => {
-                return Err(SideEffectError::failed(format!(
-                    "add autopilot subscribers: {err}"
-                )))
-            }
-        };
+    let subscribers = match run_sql::insert_issue_subscribers(&mut tx, issue.id, autopilot.id).await
+    {
+        Ok(subscribers) => subscribers,
+        Err(err) => {
+            return Err(SideEffectError::failed(format!(
+                "add autopilot subscribers: {err}"
+            )))
+        }
+    };
 
     // ---- 回链 run ----
     let updated = match run_sql::update_issue_created(&mut tx, run.id, issue.id).await {
@@ -205,9 +222,7 @@ pub(crate) async fn dispatch_create_issue(
 
     // ---- 消费预留（上游 `settleAutopilotQuota(..., true)`：issue 一存在就计入用量） ----
     if let Some(reservation_id) = run.quota_reservation_id {
-        if let Err(err) =
-            mc_repos::autopilot::quota::consume(&mut *tx, reservation_id).await
-        {
+        if let Err(err) = mc_repos::autopilot::quota::consume(&mut *tx, reservation_id).await {
             return Err(SideEffectError::failed(format!(
                 "consume quota reservation: {err}"
             )));
