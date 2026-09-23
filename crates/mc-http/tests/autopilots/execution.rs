@@ -66,10 +66,7 @@ async fn keyed_trigger(
         .unwrap();
     let res = app.clone().oneshot(request).await.expect("router call");
     let status = res.status();
-    (
-        status,
-        super::support::body_json(res.into_body()).await,
-    )
+    (status, super::support::body_json(res.into_body()).await)
 }
 
 /// 缺 `X-Multica-User-Id` → 401（三条路由都要，且**在同方法**上探）。
@@ -338,11 +335,12 @@ async fn trigger_returns_200_with_a_skipped_run_when_the_assignee_is_gone() {
     )
     .await;
     assert_eq!(status, 200, "{body}");
-    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM autopilot_run WHERE autopilot_id = $1")
-        .bind(autopilot)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let runs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM autopilot_run WHERE autopilot_id = $1")
+            .bind(autopilot)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(runs, 2, "两次手动触发应是两条 run");
 
     cleanup(&pool, ws, &[owner]).await;
@@ -418,11 +416,7 @@ async fn list_runs_is_slim_ordered_and_bounded() {
         .collect::<Vec<_>>();
     assert_eq!(
         ids,
-        vec![
-            newest.to_string(),
-            middle.to_string(),
-            oldest.to_string()
-        ],
+        vec![newest.to_string(), middle.to_string(), oldest.to_string()],
         "created_at DESC"
     );
     // slim：键存在但值是 null（不是缺键 —— 上游 `RunResponse.TriggerPayload` 无 omitempty）。
@@ -624,7 +618,15 @@ async fn trigger_on_a_missing_autopilot_is_not_found() {
     assert_eq!(upstream_message(&body), "autopilot");
 
     // 路径参数不是 uuid → 400（早于「查不到」）。
-    let (status, body) = call(&app, "POST", "/api/autopilots/nope/trigger", ws, owner, None).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/autopilots/nope/trigger",
+        ws,
+        owner,
+        None,
+    )
+    .await;
     assert_eq!(status, 400, "{body}");
     assert_eq!(upstream_message(&body), "autopilot id must be a valid uuid");
 
@@ -657,4 +659,3 @@ async fn empty_run_list_is_an_empty_array_with_zero_total() {
 
     cleanup(&pool, ws, &[owner]).await;
 }
-

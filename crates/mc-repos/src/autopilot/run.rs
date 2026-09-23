@@ -541,9 +541,13 @@ pub async fn update_autopilot_last_run_at(pool: &PgPool, autopilot_id: Uuid) -> 
 
 /// `CreateAutopilotTask` 的入参。
 ///
-/// `issue_id`：`create_issue` 线是新建的 issue（上游那条链路是 issue 监听器入队，本地没这条流，
-/// 于是由派发自己建任务并同时链上 issue 与 run —— 见 `docs/44` §8 偏差）；`run_only` 线是 `None`
-/// （上游该类任务是**纯 run 任务**，不挂 issue）。
+/// `issue_id`：`create_issue` 线是新建的 issue；`run_only` 线是 `None`（上游该类任务是**纯 run
+/// 任务**，不挂 issue）。两线都**只链一端**：`create_issue` 只链 `issue_id`（`autopilot_run_id`
+/// 为 NULL，与上游 `EnqueueTaskForIssue` 一致），`run_only` 只链 `autopilot_run_id`。
+///
+/// `runtime_id` 不能为 `None`：`agent_task_queue` 有 CHECK
+/// `runtime_id IS NOT NULL OR completed_at IS NOT NULL`，而 autopilot 入队的任务都是
+/// `queued`。调用方（`dispatch` 服务层）在 leader agent 未绑 runtime 时已经提前跳过。
 #[derive(Debug, Clone)]
 pub struct NewAutopilotTask {
     pub id: Uuid,

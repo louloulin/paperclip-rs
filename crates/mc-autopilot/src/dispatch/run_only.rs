@@ -11,6 +11,9 @@
 //!    本地沿用同一口径：**运行时不可用的派发照旧入队**。前提是准入闸
 //!    （[`super::admission::should_skip_dispatch`]）已经把「agent 已归档 / squad 已归档 /
 //!    主体消失」判掉，这里放过的只是「agent 在线与否」。
+//!    **唯一例外**是 `agent.runtime_id IS NULL`：`agent_task_queue` 的 CHECK
+//!    `runtime_id IS NOT NULL OR completed_at IS NOT NULL` 让这条路径在本地写不进去，
+//!    所以由 [`admission::require_bound_runtime`] 提前判成上游那条 `agent_runtime_required`。
 //! 2. **`autopilotAdmitInvoke`**（squad 私有 leader 的调用授权）：同属私有可见性授权面，
 //!    本波没有 principal/授权读面。squad 线先按「准入已过即放行」处理。
 //!
@@ -56,12 +59,17 @@ pub(crate) async fn dispatch_run_only(
         Err(err) => return Err(SideEffectError::failed(format!("resolve leader: {err}"))),
     };
 
-    // `AgentReadiness`：见模块头第 1 条（M6/M7 的能力，本波不实现）。
+    // 只落了 `agent_ready.go:143` 那一条（无 runtime 绑定的 agent），理由见
+    // `admission::require_bound_runtime`：本地 schema 不允许无 runtime 的 `queued` 任务。
     tracing::debug!(
         autopilot_id = %autopilot.id,
         agent_id = %leader.agent.id,
         "agent readiness probe skipped (known_gap: runtime capability probe is M6/M7)"
     );
+    let runtime_id = match admission::require_bound_runtime(autopilot, &leader) {
+        Ok(runtime_id) => runtime_id,
+        Err(skip) => return Err(SideEffectError::skipped(skip.reason, skip.code)),
+    };
     if leader.squad {
         // `autopilotAdmitInvoke`：见模块头第 2 条。squad 线**本应**在这里验授权，本波只留痕。
         tracing::debug!(
@@ -109,7 +117,7 @@ pub(crate) async fn dispatch_run_only(
     let new_task = NewAutopilotTask {
         id: Uuid::new_v4(),
         agent_id: leader.agent.id,
-        runtime_id: leader.agent.runtime_id,
+        runtime_id: Some(runtime_id),
         // run_only 不挂 issue（上游逐字：`issue_id` 为空，任务只挂在 run 上）。
         issue_id: None,
         priority: 0,

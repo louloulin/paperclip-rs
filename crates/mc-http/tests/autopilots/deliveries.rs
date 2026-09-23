@@ -23,8 +23,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::support::{
-    app_with_db, call, cleanup, connect, err_message, seed_autopilot, seed_outsider, seed_schedule_trigger,
-    seed_user, seed_webhook_trigger, seed_workspace,
+    app_with_db, call, cleanup, connect, err_message, seed_autopilot, seed_outsider,
+    seed_schedule_trigger, seed_user, seed_webhook_trigger, seed_workspace,
 };
 use super::triggers::upstream_message;
 
@@ -389,10 +389,7 @@ async fn list_is_slim_ordered_and_omits_the_detail_fields() {
     // slim：三个详情专属字段**整个缺席**（`omitempty`），其余字段即使在库里是 NULL 也照发 `null`。
     for row in rows {
         for absent in ["selected_headers", "raw_body", "response_body"] {
-            assert!(
-                row.get(absent).is_none(),
-                "slim 不该带 `{absent}`: {row}"
-            );
+            assert!(row.get(absent).is_none(), "slim 不该带 `{absent}`: {row}");
         }
         for present in ["dedupe_key", "error", "reason_code", "response_status"] {
             assert!(
@@ -583,6 +580,7 @@ async fn delivery_from_another_autopilot_is_not_found() {
 }
 
 /// replay 的**判负阶梯**：五道闸按上游顺序，各自一句文案。
+#[allow(clippy::too_many_lines)] // 127 行：五道闸各自要造自己的前置状态（raw_body / 状态 / trigger）
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn replay_gate_ladder_matches_upstream_order() {
@@ -601,9 +599,8 @@ async fn replay_gate_ladder_matches_upstream_order() {
         .execute(&pool)
         .await
         .expect("disable trigger");
-    let replay_uri = |delivery: Uuid| {
-        format!("/api/autopilots/{autopilot}/deliveries/{delivery}/replay")
-    };
+    let replay_uri =
+        |delivery: Uuid| format!("/api/autopilots/{autopilot}/deliveries/{delivery}/replay");
 
     // ① 签名失败（`status='rejected'`）→ 400。
     let rejected = seed_delivery(
@@ -722,14 +719,8 @@ async fn replay_gate_ladder_matches_upstream_order() {
         "1 hour",
     )
     .await;
-    let (status, body) = keyed_replay(
-        &app,
-        &replay_uri(long_key),
-        ws,
-        owner,
-        &"k".repeat(256),
-    )
-    .await;
+    let (status, body) =
+        keyed_replay(&app, &replay_uri(long_key), ws, owner, &"k".repeat(256)).await;
     assert_eq!(status, 400, "{body}");
     assert_eq!(upstream_message(&body), "Idempotency-Key is too long");
 
@@ -760,7 +751,6 @@ async fn replay_is_202_and_idempotent_per_key() {
             raw_body: Some(br#"{"action":"opened","payload":{"n":1}}"#),
             response_body: Some("upstream 500"),
             selected_headers: json!({"content-type": "application/json"}),
-            ..DeliverySpec::new()
         },
         "1 hour",
     )

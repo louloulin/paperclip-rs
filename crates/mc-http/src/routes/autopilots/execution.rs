@@ -329,3 +329,102 @@ async fn get_autopilot_run(
     };
     Ok(Json(run_to_response(&run)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 429 的**形状**是这一面唯一的非标准响应体（`{reason_code,used,reserved,limit,reset_at}`
+    /// + `Retry-After`），且它没法走 e2e：装配额平面是**进程级先到先得**
+    /// （`mc_autopilot::quota::install_policy_provider` 的 `OnceLock`），而 `autopilots` 是一个
+    /// 测试二进制 —— 在这里装会在 M5-1 的 `usage.rs` 之前抢位、把它的 off/observe/enforce
+    /// 断言打红（那是别人的写集，改不得）。于是形状钉在这个纯函数上。
+    #[tokio::test]
+    async fn quota_exceeded_body_is_the_upstream_shape() {
+        let reset_at = chrono::Utc::now() + chrono::Duration::seconds(90);
+        let response = quota_exceeded_response(7, 2, 9, reset_at);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // `Retry-After` = `ceil(reset_at - now)`，且 ≥1（到点给 0 会诱发立刻重试的风暴）。
+        let retry_after: i64 = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .expect("retry-after header")
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((88..=90).contains(&retry_after), "{retry_after}");
+
+        // `reset_at` 用秒精度 RFC3339（上游 `ResetAt.UTC().Format(time.RFC3339)`）⇒ 结尾是 `Z`。
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["reason_code"], "quota_exceeded");
+        assert_eq!(json["used"], 7);
+        assert_eq!(json["reserved"], 2);
+        assert_eq!(json["limit"], 9);
+        let reset = json["reset_at"].as_str().unwrap();
+        assert!(reset.ends_with('Z'), "{reset}");
+        assert_eq!(reset.len(), 20, "秒精度：2026-09-23T18:00:00Z");
+        assert!(reset.starts_with(&reset_at.format("%Y-%m-%dT%H:%M:%S").to_string()));
+    }
+
+    /// 已过期的 `reset_at` 仍然要给出 `>=1` 的 `Retry-After`（上游 `max(1)`）。
+    #[tokio::test]
+    async fn quota_exceeded_retry_after_never_goes_below_one() {
+        let response = quota_exceeded_response(
+            0,
+            0,
+            0,
+            chrono::Utc::now() - chrono::Duration::seconds(3600),
+        );
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response.headers().get(header::RETRY_AFTER).unwrap(),
+            "1",
+            "过去的 reset_at 也要给 1 秒"
+        );
+    }
+
+    /// `strconv.Atoi` 三态（缺省 / 解析失败 ⇒ 默认；`limit>100` ⇒ 夹到 100）逐条钉死。
+    #[test]
+    fn parse_limit_offset_matches_strconv_atoi_semantics() {
+        let q = |pairs: &[(&str, &str)]| -> (i64, i64) {
+            let map: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect();
+            parse_limit_offset(&map)
+        };
+        // 缺省 / 空 / 垃圾 / 0 / 负数 ⇒ 默认（Go 里 `Atoi` 失败或 `<= 0` 都不覆盖默认值）。
+        assert_eq!(q(&[]), (20, 0));
+        assert_eq!(q(&[("limit", ""), ("offset", "")]), (20, 0));
+        assert_eq!(q(&[("limit", "abc"), ("offset", "abc")]), (20, 0));
+        assert_eq!(q(&[("limit", "0")]), (20, 0));
+        assert_eq!(q(&[("limit", "-5")]), (20, 0));
+        assert_eq!(q(&[("offset", "-1")]), (20, 0));
+        // 刻意不 trim：Go 的 `Atoi(" 12")` 也是失败 ⇒ 回默认值。
+        assert_eq!(q(&[("limit", " 12"), ("offset", " 3")]), (20, 0));
+        // `i32` 溢出与 Go 的 `Atoi` 同归「失败」。
+        assert_eq!(
+            q(&[("limit", "2147483648"), ("offset", "9999999999999")]),
+            (20, 0)
+        );
+        // 正常值与两个边界。
+        assert_eq!(q(&[("limit", "5"), ("offset", "40")]), (5, 40));
+        assert_eq!(q(&[("limit", "100")]), (100, 0));
+        assert_eq!(q(&[("limit", "101")]), (100, 0), ">100 是夹紧不是 400");
+        assert_eq!(q(&[("limit", "2147483647")]), (100, 0));
+        assert_eq!(q(&[("offset", "2147483647")]), (20, 2_147_483_647));
+    }
+
+    /// matchit 0.7 路径冲突在**构建期** panic ⇒「能构建」本身就是断言；同时钉住这三条路由
+    /// 各只有一个注册键（本波 6 条路由全部单形态，无尾斜杠别名）。
+    #[test]
+    fn execution_routes_build_without_path_conflicts() {
+        let _ = router();
+        let _ = super::super::router();
+    }
+}

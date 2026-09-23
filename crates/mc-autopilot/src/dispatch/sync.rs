@@ -24,9 +24,9 @@ use uuid::Uuid;
 
 use super::analytics;
 use super::{
-    db_err, truncate, AutopilotDispatcher, AutopilotRunRow, DispatchError,
-    ReasonCode, EVENT_AUTOPILOT_RUN_DONE, EVENT_AUTOPILOT_RUN_START, EVENT_RESOURCE,
-    RUN_STATUS_COMPLETED, RUN_STATUS_FAILED,
+    db_err, truncate, AutopilotDispatcher, AutopilotRunRow, DispatchError, ReasonCode,
+    EVENT_AUTOPILOT_RUN_DONE, EVENT_AUTOPILOT_RUN_START, EVENT_RESOURCE, RUN_STATUS_COMPLETED,
+    RUN_STATUS_FAILED,
 };
 
 impl AutopilotDispatcher {
@@ -197,7 +197,7 @@ impl AutopilotDispatcher {
     /// ⚠️ 上游这里**没有**「已是终态就别再改」的前置判断（`completeAutopilotRun` /
     /// `failAutopilotRun` 都是裸 `UPDATE`），本地**逐字照抄**：重复投递的回调会把终态再写一遍。
     /// 别在这里加 `is_run_complete()` 闸门 —— 它对 `running`+`task_id` 的 run 返回 `true`，会把
-    /// 本该收口的回写整条吞掉（`isAutopilotRunComplete`536 是给 [super::is_run_complete] 的
+    /// 本该收口的回写整条吞掉（`isAutopilotRunComplete`536 是给 [`super::is_run_complete`] 的
     /// 计划快路径用的，不是终态判据）。
     ///
     /// # Errors

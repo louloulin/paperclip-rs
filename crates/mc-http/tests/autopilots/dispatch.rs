@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use mc_autopilot::dispatch::{AutopilotDispatcher, DispatchRequest, DispatchOutcome, ReasonCode};
+use mc_autopilot::dispatch::{AutopilotDispatcher, DispatchOutcome, DispatchRequest, ReasonCode};
 use mc_repos::autopilot::run::get_autopilot;
 use mc_repos::autopilot::AutopilotRow;
 
@@ -56,6 +56,23 @@ async fn seed_agent(pool: &PgPool, workspace_id: Uuid, owner_id: Uuid) -> Uuid {
     .expect("insert agent")
 }
 
+/// 铺一个 **未绑 runtime** 的 agent（`agent.runtime_id IS NULL`）：上游 `AgentReadiness`
+/// （`agent_ready.go:143`）判它 `agent_runtime_required`，本地 schema 又不允许无 runtime 的
+/// `queued` 任务 ⇒ 派发必须**提前成 skip**，不能变成 500。
+async fn seed_unbound_agent(pool: &PgPool, workspace_id: Uuid, owner_id: Uuid) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO agent (workspace_id, name, runtime_mode, status, kind, runtime_id, owner_id, \
+             permission_mode) \
+         VALUES ($1, $2, 'local', 'idle', 'user', NULL, $3, 'private') RETURNING id",
+    )
+    .bind(workspace_id)
+    .bind(format!("itest-ap-unbound-{}", Uuid::new_v4()))
+    .bind(owner_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert unbound agent")
+}
+
 /// 铺一条可派发的 autopilot（`support::seed_autopilot` 把 `execution_mode` 钉死在 `run_only`，
 /// 这一条是那个函数的本地加宽版；`support.rs` 是 M5-1 的写集，不能改）。
 async fn seed_dispatchable_autopilot(
@@ -84,9 +101,7 @@ async fn seed_dispatchable_autopilot(
 
 /// 读回 `AutopilotRow`（派发入参要整行）。
 async fn load_autopilot(pool: &PgPool, id: Uuid) -> AutopilotRow {
-    get_autopilot(pool, id)
-        .await
-        .expect("load autopilot row")
+    get_autopilot(pool, id).await.expect("load autopilot row")
 }
 
 /// 清场：任务 → issue 订阅/收件箱 → issue → agent(runtime) → autopilot/workspace/user。
@@ -114,8 +129,7 @@ async fn create_issue_dispatch_links_the_issue_and_the_task() {
     };
     let (ws, owner) = seed_workspace(&pool, "owner").await;
     let agent = seed_agent(&pool, ws, owner).await;
-    let autopilot_id =
-        seed_dispatchable_autopilot(&pool, ws, "create_issue", agent, owner).await;
+    let autopilot_id = seed_dispatchable_autopilot(&pool, ws, "create_issue", agent, owner).await;
     let autopilot = load_autopilot(&pool, autopilot_id).await;
 
     let dispatcher = AutopilotDispatcher::new(pool.clone());
@@ -132,13 +146,12 @@ async fn create_issue_dispatch_links_the_issue_and_the_task() {
     assert!(outcome.run.task_id.is_none(), "{outcome:?}");
 
     // issue：`origin_type='autopilot'` + 回指 autopilot，标题来自模板（无 `{date}` 变量 ⇒ 原样）。
-    let issue: (String, String, String, Uuid) = sqlx::query_as(
-        "SELECT origin_type, title, status, origin_id FROM issue WHERE id = $1",
-    )
-    .bind(issue_id)
-    .fetch_one(&pool)
-    .await
-    .expect("load issue");
+    let issue: (String, String, String, Uuid) =
+        sqlx::query_as("SELECT origin_type, title, status, origin_id FROM issue WHERE id = $1")
+            .bind(issue_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load issue");
     assert_eq!(issue.0, "autopilot");
     assert_eq!(issue.1, autopilot.title);
     assert_eq!(issue.2, "todo");
@@ -155,15 +168,19 @@ async fn create_issue_dispatch_links_the_issue_and_the_task() {
     .await
     .expect("load task");
     assert_eq!(task.1, Some(issue_id));
-    assert!(task.2.is_none(), "create_issue 的任务不该挂 run（上游挂法）");
+    assert!(
+        task.2.is_none(),
+        "create_issue 的任务不该挂 run（上游挂法）"
+    );
     assert_eq!(task.3, "queued");
     assert_eq!(task.4.as_deref(), Some("direct_human"));
     // 任务确实落在 leader（= assignee 解析出来的那个 agent）名下。
-    let task_agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM agent_task_queue WHERE id = $1")
-        .bind(task.0)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let task_agent: Uuid =
+        sqlx::query_scalar("SELECT agent_id FROM agent_task_queue WHERE id = $1")
+            .bind(task.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(task_agent, agent);
 
     // 重复守卫：60s 窗口内同标题第二次派发 ⇒ run 落 `skipped` + `already_active`，
@@ -293,13 +310,11 @@ async fn sync_from_task_settles_the_run_once() {
         .await
         .expect("dispatch #3");
     let task3 = third.run.task_id.expect("task_id #3");
-    assert!(
-        dispatcher
-            .sync_from_task(task3, "running", None, None)
-            .await
-            .expect("sync running")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_task(task3, "running", None, None)
+        .await
+        .expect("sync running")
+        .is_none());
     let still: (String,) = sqlx::query_as("SELECT status FROM autopilot_run WHERE id = $1")
         .bind(third.run.id)
         .fetch_one(&pool)
@@ -345,13 +360,11 @@ async fn sync_from_issue_status_settles_the_create_issue_run() {
     assert_eq!(settled.id, done.run.id);
 
     // 终态 run 不再被回调改写（`find_active_by_issue` 只看见在飞的）。
-    assert!(
-        dispatcher
-            .sync_from_issue_status(done_issue)
-            .await
-            .expect("sync done twice")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_issue_status(done_issue)
+        .await
+        .expect("sync done twice")
+        .is_none());
 
     // `cancelled` → failed，`failure_reason` 里保留**原始** issue.status。
     let cancelled = dispatcher
@@ -378,13 +391,11 @@ async fn sync_from_issue_status_settles_the_create_issue_run() {
         .await
         .expect("dispatch open");
     let open_issue = open.run.issue_id.expect("issue_id");
-    assert!(
-        dispatcher
-            .sync_from_issue_status(open_issue)
-            .await
-            .expect("sync todo")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_issue_status(open_issue)
+        .await
+        .expect("sync todo")
+        .is_none());
 
     // 非 autopilot 来源的 issue：立刻 `None`（连 run 都不查）。
     let foreign_issue: Uuid = sqlx::query_scalar(
@@ -397,13 +408,11 @@ async fn sync_from_issue_status_settles_the_create_issue_run() {
     .fetch_one(&pool)
     .await
     .expect("insert foreign issue");
-    assert!(
-        dispatcher
-            .sync_from_issue_status(foreign_issue)
-            .await
-            .expect("sync foreign")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_issue_status(foreign_issue)
+        .await
+        .expect("sync foreign")
+        .is_none());
 
     cleanup_all(&pool, ws, &[owner]).await;
 }
@@ -435,13 +444,11 @@ async fn sync_from_linked_issue_task_waits_for_active_tasks() {
         .expect("create_issue task");
 
     // 任务还在 `queued` ⇒ 有活跃任务 ⇒ 等（`None`），run 不动。
-    assert!(
-        dispatcher
-            .sync_from_linked_issue_task(issue_id, task_id, "failed", Some("early"))
-            .await
-            .expect("sync with active task")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_linked_issue_task(issue_id, task_id, "failed", Some("early"))
+        .await
+        .expect("sync with active task")
+        .is_none());
     let open: (String,) = sqlx::query_as("SELECT status FROM autopilot_run WHERE id = $1")
         .bind(outcome.run.id)
         .fetch_one(&pool)
@@ -450,13 +457,11 @@ async fn sync_from_linked_issue_task_waits_for_active_tasks() {
     assert_eq!(open.0, "issue_created");
 
     // 非 `failed` 一律不管（`cancelled` 不走这条）。
-    assert!(
-        dispatcher
-            .sync_from_linked_issue_task(issue_id, task_id, "cancelled", None)
-            .await
-            .expect("sync cancelled")
-            .is_none()
-    );
+    assert!(dispatcher
+        .sync_from_linked_issue_task(issue_id, task_id, "cancelled", None)
+        .await
+        .expect("sync cancelled")
+        .is_none());
 
     // 任务转终态失败 ⇒ 没有活跃任务了 ⇒ run 判失败。
     sqlx::query("UPDATE agent_task_queue SET status = 'failed' WHERE id = $1")
@@ -479,13 +484,53 @@ async fn sync_from_linked_issue_task_waits_for_active_tasks() {
         .dispatch(DispatchRequest::manual(&run_only, None, None, Some(owner)))
         .await
         .expect("dispatch run_only");
-    assert!(
-        dispatcher
-            .sync_from_linked_issue_task(issue_id, ro.run.task_id.expect("task"), "failed", None)
+    assert!(dispatcher
+        .sync_from_linked_issue_task(issue_id, ro.run.task_id.expect("task"), "failed", None)
+        .await
+        .expect("sync linked for run_only")
+        .is_none());
+
+    cleanup_all(&pool, ws, &[owner]).await;
+}
+
+/// 无 runtime 绑定的 agent：两条线都必须在建任务之前跳过（`agent_runtime_required`），
+/// 而不是把 `agent_task_queue` 的 CHECK 撞成 500。
+#[tokio::test]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+async fn unbound_agent_is_skipped_before_the_task_insert() {
+    let Some((pool, _db)) = connect().await else {
+        println!("skip unbound_agent_is_skipped_before_the_task_insert: no env");
+        return;
+    };
+    let (ws, owner) = seed_workspace(&pool, "owner").await;
+    let agent = seed_unbound_agent(&pool, ws, owner).await;
+    let dispatcher = AutopilotDispatcher::new(pool.clone());
+
+    for mode in ["run_only", "create_issue"] {
+        let autopilot_id = seed_dispatchable_autopilot(&pool, ws, mode, agent, owner).await;
+        let autopilot = load_autopilot(&pool, autopilot_id).await;
+        let outcome = dispatcher
+            .dispatch(DispatchRequest::manual(&autopilot, None, None, Some(owner)))
             .await
-            .expect("sync linked for run_only")
-            .is_none()
-    );
+            .expect("dispatch");
+        assert!(outcome.is_skipped(), "{mode}: {outcome:?}");
+        assert_eq!(outcome.reason_code, Some(ReasonCode::AgentRuntimeRequired));
+        assert_eq!(outcome.run.status, "skipped", "{mode}: {outcome:?}");
+        assert_eq!(
+            outcome.run.failure_reason.as_deref(),
+            Some("assignee agent has no runtime bound"),
+            "{mode}"
+        );
+        assert!(outcome.run.task_id.is_none(), "{mode}: {outcome:?}");
+        assert!(outcome.run.issue_id.is_none(), "{mode}: {outcome:?}");
+        let tasks: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM agent_task_queue WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(&pool)
+                .await
+                .expect("count tasks");
+        assert_eq!(tasks, 0, "{mode}: 不该留下任务行");
+    }
 
     cleanup_all(&pool, ws, &[owner]).await;
 }

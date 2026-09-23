@@ -144,6 +144,32 @@ pub(crate) async fn should_skip_dispatch(
     }
 }
 
+/// `AgentReadiness`（`agent_ready.go:143`）里**schema 逼我们必须落**的那一条：
+/// `agent.runtime_id IS NULL` → `agent_runtime_required`。
+///
+/// 上游完整探测（agent 归档 / 私有 runtime 的 owner 绑定 / 在线与否 / 离线可修复性）属
+/// M6/M7（`docs/45` G5 对同一个上游调用也是这个口径，见 `run_only.rs` 模块头），本地仍不做。
+/// 但 `agent_task_queue` 的 CHECK `runtime_id IS NOT NULL OR completed_at IS NOT NULL`
+/// 让「无 runtime 的 agent」在本地**根本写不进去**：照着上游放行只会换来一个 500，而不是
+/// 一条可读的 skip。所以把上游那一条判定提前到建任务之前。
+///
+/// 消息走 [`format_admission_reason`]，与准入闸里同一条判定的措辞逐字一致。
+///
+/// # Errors
+///
+/// leader agent 没有绑 runtime。
+pub(crate) fn require_bound_runtime(
+    autopilot: &AutopilotRow,
+    leader: &LeaderAgent,
+) -> Result<Uuid, DispatchSkipped> {
+    leader.agent.runtime_id.ok_or_else(|| {
+        DispatchSkipped::new(
+            format_admission_reason(autopilot, "agent has no runtime bound"),
+            ReasonCode::AgentRuntimeRequired,
+        )
+    })
+}
+
 /// `sqlx::Error` → [`CreateRunError`] 的池错分支。
 #[allow(clippy::needless_pass_by_value)] // 按值收 error 才能 `.map_err(pool_err)` 直传
 pub(crate) fn pool_err(err: sqlx::Error) -> CreateRunError {

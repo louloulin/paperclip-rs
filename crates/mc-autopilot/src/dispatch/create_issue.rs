@@ -77,6 +77,12 @@ pub(crate) async fn dispatch_create_issue(
         }
         Err(err) => return Err(SideEffectError::failed(format!("resolve leader: {err}"))),
     };
+    // 无 runtime 绑定的 agent 在建任务时会被 `agent_task_queue` 的 CHECK 拒（见
+    // `admission::require_bound_runtime`）⇒ 提前成一条可读的 skip，而不是 500。
+    let runtime_id = match admission::require_bound_runtime(autopilot, &leader) {
+        Ok(runtime_id) => runtime_id,
+        Err(skip) => return Err(SideEffectError::skipped(skip.reason, skip.code)),
+    };
     let attribution = match attribution::resolve_run_attribution(
         pool,
         autopilot,
@@ -238,7 +244,7 @@ pub(crate) async fn dispatch_create_issue(
     let new_task = NewAutopilotTask {
         id: Uuid::new_v4(),
         agent_id: leader.agent.id,
-        runtime_id: leader.agent.runtime_id,
+        runtime_id: Some(runtime_id),
         issue_id: Some(issue.id),
         priority: 0,
         // 上游 `EnqueueTaskForIssue` 不写这一列：create_issue 的 run 只经 `issue_id` 收口
