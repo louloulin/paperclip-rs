@@ -34,7 +34,7 @@
 //!   不可能分叉成两套判定（它们读的是同一个 [`policy_for`]）。
 //!
 //! 这条接缝也是本片唯一能给 `usage` 的 `observe`/`enforce` 分支做**端到端**测试的手段
-//! （见 `crates/mc-http/tests/autopilots.rs` 里装 stub 平面的那条用例）——把 `false` 写死
+//! （见 `crates/mc-http/tests/autopilots/usage.rs` 里装 stub 平面的那条用例）——把 `false` 写死
 //! 就等于把响应的一半形状变成不可测。
 
 use std::collections::BTreeMap;
@@ -192,7 +192,7 @@ pub fn is_enabled(workspace_id: Id) -> bool {
 /// **不是** `skip_serializing_if` 的省略 —— `AutopilotQuotaUsageResponse` 的字段全带 `Option`
 /// 而**不带** `omitempty`（上游 struct 也没有），所以关掉时客户端看到的是显式 `null`
 /// （`blocked_counts` 也是 `null`，不是 `{}`）。这条差异有专门的用例锁
-/// （`mc-http/tests/autopilots.rs::usage_off_by_default`）。
+/// （`mc-http/tests/autopilots/usage.rs::usage_off_by_default_and_policy_shapes_from_real_db`）。
 #[must_use]
 pub fn off_usage() -> AutopilotQuotaUsageResponse {
     AutopilotQuotaUsageResponse {

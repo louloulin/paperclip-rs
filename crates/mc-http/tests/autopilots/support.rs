@@ -229,7 +229,7 @@ pub(crate) async fn seed_autopilot(
 }
 
 /// 建 webhook 触发器。`filters_jsonb` 是**原始 JSON 文本**（`None` = `event_filters` 为 NULL），
-/// 这样可以造出「解不开的 event_filters」用例。
+/// 这样可以造出「解不开的 `event_filters`」用例。
 pub(crate) async fn seed_webhook_trigger(
     pool: &PgPool,
     autopilot_id: Uuid,

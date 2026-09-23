@@ -31,7 +31,7 @@ async fn preview(
 
 /// 每 15 分钟：3 个递增、秒精度 `Z` 结尾、分针落在 0/15/30/45。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn preview_returns_three_future_occurrences() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip preview_returns_three_future_occurrences: no env");
@@ -71,7 +71,7 @@ async fn preview_returns_three_future_occurrences() {
 
 /// 时区参与计算：`0 9 * * *` 在 `Asia/Shanghai` 是 UTC 01:00，缺省（UTC）是 09:00。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn preview_applies_timezone_and_defaults_to_utc() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip preview_applies_timezone_and_defaults_to_utc: no env");
@@ -108,7 +108,7 @@ async fn preview_applies_timezone_and_defaults_to_utc() {
 
 /// 四种 400 的 `code` 与**扁平错误体**；同时钉住「expr 空 → tz 非法 → expr 非法」的判定顺序。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn preview_error_codes_and_flat_body() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip preview_error_codes_and_flat_body: no env");
@@ -159,7 +159,7 @@ async fn preview_error_codes_and_flat_body() {
 
 /// 语法合法但永不触发（2 月 31 日）⇒ 200 + **空数组**（编辑器靠这个区分「永不开跑」与「写错」）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn preview_never_firing_expression_is_empty_array() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip preview_never_firing_expression_is_empty_array: no env");

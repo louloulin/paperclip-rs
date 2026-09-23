@@ -1,7 +1,7 @@
 //! 鉴权与可见性：`/api/autopilots*` 的 401 / 400 / 404 三档（M5-1）。
 //!
 //! 上游口径（`requireWorkspaceMember`）是「非成员 → **404**，成员但无权 → 403」。
-//! 本仓读面只有成员能过，因此对外可见的只有 404 这一档 —— 这条**取代**了 DoD 里
+//! 本仓读面只有成员能过，因此对外可见的只有 404 这一档 —— 这条**取代**了 `DoD` 里
 //! 「非成员 403」的写法，理由见 `docs/46-M5-1-READ-FACE.md` §5。
 //!
 //! 401 来自 `AuthUser` 提取器（M1 dev-mode：缺 `X-Multica-User-Id`）；
@@ -22,7 +22,7 @@ const READ_URIS: [&str; 4] = [
 
 /// 缺用户头 → 401（四条路由都要）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn missing_user_header_is_401_on_every_read_route() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip missing_user_header_is_401_on_every_read_route: no env");
@@ -40,7 +40,7 @@ async fn missing_user_header_is_401_on_every_read_route() {
 
 /// 有用户头但缺 `X-Workspace-ID` → 400（四条路由都要）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn missing_workspace_header_is_400_on_every_read_route() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip missing_workspace_header_is_400_on_every_read_route: no env");
@@ -76,7 +76,7 @@ async fn missing_workspace_header_is_400_on_every_read_route() {
 
 /// 非成员（跨工作区）→ **404**，不是 403：上游 `requireWorkspaceMember` 用 404 掩盖存在性。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn non_member_gets_404_not_403() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip non_member_gets_404_not_403: no env");
@@ -117,7 +117,7 @@ async fn non_member_gets_404_not_403() {
 
 /// 另一个工作区的成员看本工作区的 autopilot：同 404（`get_in_workspace` 把跨区当不存在）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn cross_workspace_id_is_404() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip cross_workspace_id_is_404: no env");
@@ -158,7 +158,7 @@ async fn cross_workspace_id_is_404() {
 
 /// 路径参数非 UUID → 400（`parse_uuid`），且**先于**任何库查询。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn non_uuid_path_id_is_400() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip non_uuid_path_id_is_400: no env");

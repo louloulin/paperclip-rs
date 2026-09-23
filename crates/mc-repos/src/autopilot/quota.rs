@@ -397,11 +397,10 @@ pub async fn list_recoverable<'c, E>(
 where
     E: sqlx::PgExecutor<'c>,
 {
-    let sql = format!(
-        // 上游就是 `SELECT r.*`（`ListRecoverableAutopilotQuotaReservations`）。这里**不能**用
-        // [`QUOTA_RESERVATION_COLUMNS`]：`autopilot_run` 也有 `id` / `created_at`，展开成不限定
-        // 的列名会 `column reference "id" is ambiguous`（真库用例抓到的）。
-        "SELECT r.* FROM autopilot_quota_reservation r \
+    // 上游就是 `SELECT r.*`（`ListRecoverableAutopilotQuotaReservations`）。这里**不能**用
+    // [`QUOTA_RESERVATION_COLUMNS`]：`autopilot_run` 也有 `id` / `created_at`，展开成不限定
+    // 的列名会 `column reference "id" is ambiguous`（真库用例抓到的）。
+    let sql = "SELECT r.* FROM autopilot_quota_reservation r \
            LEFT JOIN autopilot_run ar ON ar.quota_reservation_id = r.id \
           WHERE r.state = 'reserved' \
             AND ((r.created_at < $1 \
@@ -412,9 +411,8 @@ where
                           OR (ar.status = 'running' AND ar.task_id IS NULL)) \
                      AND NOT EXISTS (SELECT 1 FROM agent_task_queue task \
                                       WHERE task.autopilot_run_id = ar.id))) \
-          ORDER BY r.created_at LIMIT $3"
-    );
-    sqlx::query_as::<_, QuotaReservationRow>(&sql)
+          ORDER BY r.created_at LIMIT $3";
+    sqlx::query_as::<_, QuotaReservationRow>(sql)
         .bind(terminal_created_before)
         .bind(partial_created_before)
         .bind(row_limit)

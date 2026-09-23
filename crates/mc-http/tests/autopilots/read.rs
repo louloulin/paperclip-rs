@@ -16,7 +16,7 @@ use super::support::{
 /// 列表：默认排除 `archived`，派生三列 + 订阅者 + `can_write` 全在一条响应里；
 /// `can_manage_access` **不在列表上**（上游只在详情盖章）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn list_excludes_archived_and_carries_derived_columns() {
     let Some((pool, db)) = super::support::connect().await else {
         println!(
@@ -109,7 +109,7 @@ async fn list_excludes_archived_and_carries_derived_columns() {
 /// `can_write` 的三条腿：role（owner/admin）、创建者（**仅当 `created_by_type='member'`**）、
 /// 协作者。列表上还要验证：协作者集合是「按人取一次」而不是按行查。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn list_can_write_covers_role_creator_and_collaborator() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip list_can_write_covers_role_creator_and_collaborator: no MULTICA_TEST_DATABASE_URL");
@@ -158,7 +158,7 @@ async fn list_can_write_covers_role_creator_and_collaborator() {
 
 /// 详情：`autopilot` + `triggers` + `collaborators` 一次取齐；写者拿得到 webhook 凭据。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn detail_returns_triggers_collaborators_and_credentials_for_writer() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip detail_returns_triggers_collaborators_and_credentials_for_writer: no env");
@@ -238,7 +238,7 @@ async fn detail_returns_triggers_collaborators_and_credentials_for_writer() {
 /// `has_signing_secret` / `signing_secret_hint` **保留**（hint 不是凭据），
 /// 且 `can_write=false` / `can_manage_access=false`（显式 false，不是省略）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn detail_redacts_webhook_credentials_for_non_writer() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip detail_redacts_webhook_credentials_for_non_writer: no env");
@@ -328,7 +328,7 @@ async fn detail_redacts_webhook_credentials_for_non_writer() {
 /// 空工作区 / 没有订阅者的行：`subscribers` 是 `[]`（MUL-6680），`trigger_kinds` 等三个
 /// 列表专属键**缺席**（`omitempty`）。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn list_omits_empty_derived_columns_but_keeps_subscribers_array() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip list_omits_empty_derived_columns_but_keeps_subscribers_array: no env");

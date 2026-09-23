@@ -23,7 +23,7 @@ use crate::RepoError;
 
 /// 读面：没有周期行 → `None`；`ensure_period` 之后可读，且重复 `ensure` 不清零计数。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn period_is_absent_until_ensured_and_ensure_keeps_counts() {
     let Some(fixture) = setup().await else {
         println!("skip period_is_absent_until_ensured_and_ensure_keeps_counts: no env");
@@ -80,7 +80,7 @@ async fn period_is_absent_until_ensured_and_ensure_keeps_counts() {
 /// 预留生命周期：幂等键冲突 → `Conflict`；`consume` 把 `reserved` 转成 `used` 且**只生效一次**；
 /// 已消费的行不能再 `release`。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn reservation_consume_is_monotonic_and_not_releasable() {
     let Some(fixture) = setup().await else {
         println!("skip reservation_consume_is_monotonic_and_not_releasable: no env");
@@ -157,7 +157,7 @@ async fn reservation_consume_is_monotonic_and_not_releasable() {
 
 /// `release` 归还额度并**释放幂等键**（同一 key 可以再建预留）——这是重试语义，不是漏洞。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn release_returns_quota_and_frees_idempotency_key() {
     let Some(fixture) = setup().await else {
         println!("skip release_returns_quota_and_frees_idempotency_key: no env");

@@ -32,7 +32,11 @@ impl QuotaPolicyProvider for StaticPlane {
 
 /// `off`（未装平面）→ 装平面后的 `observe` / `enforce` / 无周期行三种形态。
 #[tokio::test]
-#[ignore]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+// 四种策略形态（off / observe / enforce / 无周期行）刻意放在**同一个**用例里：`install_policy_provider`
+// 是进程级首次生效的 `OnceLock`，拆成多个用例就会互相污染（第二个用例只能拿到第一个装的平面）。
+// 代价是函数长 —— 允许，但每段都用注释标出它在钉哪条语义。
+#[allow(clippy::too_many_lines)]
 async fn usage_off_by_default_and_policy_shapes_from_real_db() {
     let Some((pool, db)) = super::support::connect().await else {
         println!("skip usage_off_by_default_and_policy_shapes_from_real_db: no env");
