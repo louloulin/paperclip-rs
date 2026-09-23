@@ -2160,5 +2160,11 @@ gaps by owner: M6=55  M4=45  M9=33  M7=24  M8=24  M5=20  M3+=16  M2-A=14  M3=11 
 ⑦ 第二条：`0 defect(s), 0 warning(s); 4 allowlisted`（`M5`×2 + `M6`×2）——M4 的 6 行退路已随 anchor 消失，
 而 §23.3 那 15 条双形态现在**全数转为待还的缺陷**（切片不注册就会被判红）。⑨ 快照未漂移。
 
-合并后 base 前移到含 anchor 的树 ⇒ `LUM-1472`（M4-1）的前置（「M4-0 anchor 已合」）成立，本 cycle 顺手把它
-从 `backlog` 提到 `todo` 开跑（并发位：`LUM-1471` + `LUM-1472` + 本 cycle = **3/3 满**，不再多派）。
+合并后 base 前移到含 anchor 的树（`defb6ec` → 合并树 `fd3c81c` → 本补记 `e55ac90`）⇒ `LUM-1472`/`LUM-1474` 的前置（「M4-0 anchor 已合」）
+成立，本 cycle 顺手把两片从 `backlog` 提到 `todo` 开跑（`06:18:22Z` / `06:18:23Z`）。
+
+**并发位账（本 cycle 末尾实测）**：`LUM-1470` `completed`（已合）、`LUM-1471` 最新 attempt **`failed`**
+（`06:16:39Z`，错误是 `Concurrency limit exceeded for user, please retry later` —— **基础设施/并发限制**，不是工作失败；
+它已经产过 `i4-out/**` fixture，issue 仍是 `todo`）
+⇒ 真正在跑的是 `LUM-1472` + `LUM-1474` + 本 cycle = **3/3 满位**，所以只派这两片；
+`LUM-1473`（M4-2 squad）与 `LUM-1471` 的重试留给 15:00 cycle（那时 `LUM-1470`/本 cycle 都已退出，至少能开一片）。
