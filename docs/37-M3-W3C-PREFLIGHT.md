@@ -3771,3 +3771,79 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
    §34.3 的运行纪律 + 自建一次性库。
 4. ⑦ 基线仍等集成片刷新（`local 300 / baseline 290`）；**不要在非集成轮动基线**（§35.3）。
 5. 门禁日志 `tee` 全量；⑦/⑨/⑩ 数字只取当轮日志。
+
+## §37 22:00 cycle（`LUM-1609`）：合并 #52（M5-7 调度租约内核）⇒ base `659f19e`；M5-1 静默死亡诊断 + WIP 抢救重派；空位派 M4-INT
+
+### 37.1 PR #52 合并判据链（逐条读数）
+
+- **GH open PR = 1**（只有 #52；M5-1 与 M5-6 都**没有**开 PR —— 与 §36 的预期相反，见 §37.2）。
+- 预检：`git merge --no-ff --no-commit origin/agent/devbox5/e6b28b1a26b1`（head `7758ac9e`，PR 自述
+  `changed_files 11 / +3542 / −8`）⇒ 暂存 stat **11 files changed, 3542 insertions(+), 8 deletions(-)** 逐字一致；
+  自动合并干净。`--is-ancestor` 为**假**：head 基于 `e75aca5`（落后 base 两笔 docs，`§34/§35/§36`）——docs 面零冲突。
+- 预检树 = `git write-tree` = **`3d8199afb389d7da08d278139bef6a86d923d254`**。
+- **合并树全门**：`bash scripts/gates.sh --with-db`（真库 `multica_lum1607`）⇒ **10/10 PASS / 316s**：
+  ①fmt 1s ②build 91s ③clippy 36s ④clippy-test-util 16s ⑤test 30s ⑥db 87s（migrate=0,e2e=0）⑧schema-drift 25s
+  ⑦route-parity 1s ⑨conformance 29s ⑩file-size 0s。日志 `../logs/gates-1609-merged-pr52.log`（`tee` 全量）。
+- **内核真库加核**：`cargo test -p mc-scheduler --test lease_db -- --ignored --test-threads=1` ⇒ **7 passed / 0 failed**
+  （门 ⑥ 不收集 `mc-scheduler`，见 `docs/48` §7.2）；⑥ 内部已带 M5-7 的 SQL 层 4 条
+  （`mc-repos/tests/scheduler_lease_db.rs` = 当轮 ⑥ 的「4 passed」）。
+- **API 合并**：`PUT /pulls/52/merge`（`merge_method=merge` + 钉 head sha `7758ac9e`）⇒ merge commit **`659f19e5`**。
+- **合并后校验**：`origin/feat/multica-rs-initial^{tree}` == 预检树 `3d8199af…`；工作树 `git diff origin/feat/multica-rs-initial` = **0 行**。
+  ⇒ base 树与「跑绿 10/10 的那棵树」**逐字节同一**，无需再跑 base 复验。
+- 当轮 ⑦/⑨/⑩ 读数（只取本轮日志）：⑦ `upstream 456 | local 300 registered | baseline 290`、
+  `implemented 241 real + 2 placeholder = 243 / 456`、`known_gap 213`、`unclaimed 0`、`regression 0`、`local_only 11`
+  （M5-7 是 0 路由片，读数与 §36 一致）；⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`、
+  契约等价率 `5/365 = 1.4%`；⑩ 0。
+- **磁盘**：起手 `df -h /` = **12G 可用**（低于「<12G 不派」阈值）⇒ 回收 M5-7 workdir 的 `target/`
+  （17G；其 run 13:58 已终态、分支 `agent/devbox5/e6b28b1a26b1` 已推、PR 已开、`readlink /proc/*/cwd` 无该目录下进程）
+  ⇒ 28G 可用；合并树 target 7.9G。**流程偏离登记**：本 cycle 唯一的破坏性动作，只删 build 缓存（可重建），
+  不删工作树、不删提交。
+
+### 37.2 M5-1（`LUM-1564`）静默死亡诊断 + WIP 抢救（本 cycle 最重要的一条）
+
+- 两个 run 都是「**completed 但零交付**」：`01a0ce59-5c39`（12:07:55→13:00:38）、`01a0ce5c-9292`
+  （13:02:49→13:31:39，`result.output` 空、`delivered_comment_ids` 空、无 PR、无交付评论）。
+  第二个 run 的 session `20260923T130249.753747614.jsonl` = **2.45MB / 15 次压缩** ⇒ 典型中毒上下文（§34.3）。
+- workdir `lum-1564-334607c0bcb3` 里工作**没丢，但从未推远程**：2 提交
+  （`e16f601`：`mc-autopilot/src/cron.rs` 539 + `cron/tests.rs` 279 + `mc-repos/src/autopilot/mod.rs` +419 +
+  `mc-repos/src/autopilot/quota.rs` 641；`2764904`：cron 解析/推算修正 +78/−25）**+ 444 行未提交**
+  （`mc-autopilot/src/dto.rs` +280、`error.rs` +155、`mc-http/Cargo.toml` +9 的 `mc-autopilot` path 边）。
+  `git branch -r` 里**没有** `agent/devbox5/334607c0bcb3`。
+- 抢救动作：把这 444 行落成 **`96ee46d`**（WIP 提交，只为本片续做）→ 推 `agent/devbox5/334607c0bcb3`
+  ⇒ 三提交齐远程，重派即使换 workdir 也不会丢。
+- 随后：隔离中毒 session（`…jsonl.poisoned`）+ `multica issue rerun`（task `01a0ce9b-0ef5`，14:11:03）
+  ⇒ 全新会话（daemon 应打 `dropping prior session`）；剩余面 = `routes/autopilots/list.rs` 的 4 条路由实现 +
+  `access.rs`/`dto.rs` 共享面 + `docs/46`。派发说明（WIP 交接、禁重做项、记录号、base 前进、运行纪律）写进 issue 描述。
+- **可复用教训**：判断「片是否真的没产出」不能只看 status。要看三处：`result.output` 是否为空、
+  **远端是否存在该分支**、workdir 里有无未提交 diff。**「completed 且零输出」的片，WIP 常常还躺在 workdir 里
+  —— 先抢救（提交 + 推分支）再重派**，否则重派换 workdir 就是二次丢弃。
+
+### 37.3 空位派发：M4-INT（`LUM-1476`）
+
+- 并发账：切片位 = M5-6（在飞）+ M5-1（重派）+ M4-INT = **3/3**；cycle 自身不占位（§35.5 口径）。
+- **C 波不可派**：`docs/44` §7 第 4 条要求 C 波在 **B 波全部合入后**才派，§4.3 更点明「M5-1 只放 4 条路由
+  但交付 `dto/access/quota` 三个共享面，所以它是 C 波的前置」；当刻 B 波只合了 M5-7 ⇒ 空位顺位给 M4-INT
+  （§36.7 的「等有片可集成」条件已满足；它本身排在 C 波之后，是因为 C 波先占位，不是因为不可并行）。
+- 派发说明写进 `LUM-1476` 描述：base `659f19e`、当刻 ⑦ 读数（`local 300 / baseline 290`）、
+  **禁碰**在飞两片的写集、记录文件号 `docs/49`（46/47/48 已被 M5-1/M5-6/M5-7 占）、R13、
+  「`--write-baseline` 只吸收当刻树里的键」、运行纪律与真库建法。
+- **R13 不变**：`LUM-1476`（M4-INT）/ `LUM-1572`（M5-INT）/ `LUM-1580`（⑦ 正则）三者**不得批进同一次合并**，后合者重刷。
+
+### 37.4 遗留（owner 决策 / 下一轮）
+
+1. **P0 未决**：`apps/mc-server` 仍缺 `mc-scheduler` 依赖边 ⇒ 调度内核**没有调用方**。ready-to-apply 在
+   `docs/48` §7.1（`Cargo.toml` 一条 + `main.rs` 两处 + `Cargo.lock` 必须同提交，否则门 ② `--locked` 红）。
+   `docs/48` 标它为【P0，需 owner】：要么单派一小片接线，要么留给 M5-8（D 波）。
+2. 门 ⑥ 加 `-p mc-scheduler` 的一行建议（`docs/48` §7.2）待 owner 批；在那之前内核 7 条真库用例靠**手工跑**
+   （本轮已跑 7/7，不是静默跳过：拿不到 `MULTICA_TEST_DATABASE_URL` 会 panic）。
+3. M5 记录号已按 §36.5 分配：`46=M5-1`、`47=M5-6`、`48=M5-7`（M5-7 已改名并同步 4 处代码引用）。
+
+### 37.5 下一轮起手（交接）
+
+1. `df -h /` → `git fetch origin feat/multica-rs-initial` → GH `pulls?state=open`：M5-1 / M5-6 / M4-INT 任一交 PR
+   就走 §34.1 判据链；**M5-1 额外加核 `Cargo.lock`**（新增 `mc-http → mc-autopilot` path 边，base lock 无该条目
+   ⇒ 门 ② `--locked` 必红）。
+2. **B 波三片全合 ⇒ 放 C 波** `M5-2 ∥ M5-3 ∥ M5-4`（3/3）；派发必带 §36.6 两条 DoD
+   （私有错误/形状放自己文件；进 `mc-autopilot/src/error.rs` 只准尾部追加）。
+3. M4-INT 交 PR 时按 R13 与 `LUM-1572`/`LUM-1580` 错开合并；⑦ 基线只在集成片刷新（非集成轮不动基线）。
+4. 门禁日志 `tee` 全量；⑦/⑨/⑩ 数字只取当轮日志。
