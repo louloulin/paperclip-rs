@@ -224,16 +224,20 @@ pub fn register_all(manager: &mut Manager, ports: &JobPorts) -> SchedulerResult<
 
 真库用例一律 `#[ignore]`，按本仓统一口径：拿不到 `MULTICA_TEST_DATABASE_URL` 就 panic，不会静默跳过。
 
-### 5.2 门禁证据（本片 HEAD，base 已真合 `e796c5d`）
+### 5.2 门禁证据（本片 HEAD `bbc4263`，base 已真合到 `e796c5d`）
 
 ```console
 # 真库（566 迁移，本地 multica_lum1571）
-$ bash scripts/gates.sh --with-db
+$ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1571_dburl)" bash scripts/gates.sh --with-db
 ① fmt PASS  ② build PASS  ③ clippy PASS  ④ clippy-test-util PASS  ⑤ test PASS
 ⑥ db PASS (migrate=0,e2e=0)  ⑧ schema-drift PASS  ⑦ route-parity PASS
 ⑨ conformance PASS  ⑩ file-size PASS
-overall: PASS — 10/10 gate(s) green in 77s
+overall: PASS — 10/10 gate(s) green in 76s
 ```
+
+> 该轮跑在**合并树**上（base 前移到 `e796c5d`，docs-only；`git merge-base HEAD base` = `e796c5d` ⇒ base 是
+> 本分支的祖先）。合并前后两次 `--with-db` 的逐门读数一致 —— 按 `docs/37` §46 的 lesson，base 后移后
+> 必须真合 base 再重跑门禁，旧一轮的 10/10 不能直接沿用。
 
 | 门 | 本轮读数 |
 | --- | --- |
