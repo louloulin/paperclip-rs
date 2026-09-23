@@ -35,9 +35,17 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 futures-util = "0.3"
 
 # HTTP / Web
-axum = { version = "0.7", features = ["macros", "ws"] }
+# M6-0 anchor（docs/57-M6-PLAN.md §5）：`multipart` 是 M6-3/M6-5 的归档上传要用的
+# body 抽取器，在此一次打开，免得后续切片再动这份 manifest。
+axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit", "fs"] }
+# M6-7 的两档限流（`/v1` 面）。**版本停在 0.4**（不是最新的 0.8）：0.8 的 `axum`
+# feature 拉的是 axum **0.8**（外加 tonic 0.14），会让 lock 里出现第二个 axum 大版本 ——
+# `GovernorError → Response<Body>` 的 `From` 就落在别人的 `Body` 上，本仓的 axum 0.7
+# `Router::layer` 直接编译不过（已实测）。0.4.3 依赖 axum 0.7 / tower 0.5 / http 1，与
+# 本仓同代；且 0.4 没有 `tonic` 依赖。
+tower_governor = { version = "0.4", default-features = false, features = ["axum"] }
 hyper = "1"
 http = "1"
 http-body-util = "0.1"
@@ -54,6 +62,15 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid"
 # Serialization / Schema
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# M6-2 的 SKILL.md frontmatter。⚠️ serde_yaml 已被上游归档（发布号带 `+deprecated` 后缀）；
+# 本波沿用 docs/57 §2.5 的选型（已冻结可用），换维护中的 fork 属集成方仲裁事项。
+serde_yaml = "0.9"
+
+# Archive（M6-1 的 bundle 校验 / M6-3 的 skill 归档导入）。default-features 关掉：只要
+# deflate，不要 bzip2 / lzma / zstd / zopfli / aes-crypto 那一串后端（它们的 C 依赖会拖慢冷构建，
+# 而 skill / plugin 包都是我们自己的 deflate 包）。**版本停在 2**：zip 6 的 MSRV 是 1.83、
+# zip 8 是 1.88，都高于本仓 `rust-version = 1.80`。
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Time / ID
 chrono = { version = "0.4", features = ["serde"] }

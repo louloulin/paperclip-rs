@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 
 pub const OPENAPI_VERSION: &str = "3.1.0";
 
+/// 公开 Action API（`/v1/*`）的片段声明（M6-1 落地 9 个 Operation；M6-7 的 route 表对齐它）。
+pub mod v1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenApiSpec {
     pub openapi: String,

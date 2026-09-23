@@ -1022,10 +1022,7 @@ mod tests {
         let state = AppState {
             db,
             runtime: RuntimeHandles { actors, adapters },
-            // M3 anchor scaffold（LUM-1406）：本处只显式给两个「随测试参数变化」的字段
-            // （`port: 0` = 系统分配；`dev_mode` / `session_ttl_secs` 由调用方传入），
-            // 其余与 `ConfigSnapshot::default()` 逐字相同 —— 改成 `..Default::default()`
-            // 是纯语法收敛，行为不变（host/cookie 头/两个 TTL/限速均等于默认值）。
+            // M3 anchor（LUM-1406）：仅显式给 `port` / `dev_mode` / `session_ttl_secs`，其余同默认。
             config: ConfigSnapshot {
                 port: 0,
                 dev_mode,
@@ -1043,6 +1040,9 @@ mod tests {
             google_oauth,
             daemon_hub: std::sync::Arc::new(mc_ws::hub::Hub::new()),
             daemon_requests: std::sync::Arc::new(crate::daemon_requests::RequestStore::new()),
+            // M6 anchor（LUM-1665）：插件部署配置显式 `None`；解析口径见 `state.rs` 的用例。
+            plugin_key: None,
+            plugin_surface_origin: None,
         };
         Arc::new(state)
     }

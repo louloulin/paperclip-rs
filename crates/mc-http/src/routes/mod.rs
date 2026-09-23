@@ -63,6 +63,21 @@ pub mod autopilots;
 pub mod issue_wakeups;
 pub mod webhooks;
 
+// M6 anchor scaffold（LUM-1665 / docs/57-M6-PLAN.md §3.1 / §5）：五个面一次性声明，让
+// M6-1..M6-9 九个切片不再同时编辑本文件。
+// - `skills` / `plugins` / `plugin_bridge` 是目录切片（各自的 `mod.rs` 自己聚合子 router）；
+// - `v1` 是目录切片，`mod.rs` 在合并点之后套一层 `policy::apply`（anchor 期是恒等）；
+// - `surfaces` 是**单文件**（`GET /plugin-surfaces/:token`，注意**不在 `/api` 前缀下**）。
+// `/api/agents/{id}/skills*` 那 6 条不在本块：它们由 M6-4 在 `routes/agents.rs` 内部加
+// `mod skills;` + `merge`（见 docs/32 §9 的文件→写者表）。
+// 真实实现在各切片内，`mount.rs` 已接好五个 `mount_slice_*()`（anchor 期全为空
+// `Router::new()` ⇒ 合并本片后**注册键只少 4 个**：下面那两条 M0 占位）。
+pub mod plugin_bridge;
+pub mod plugins;
+pub mod skills;
+pub mod surfaces;
+pub mod v1;
+
 // M2-E（LUM-1370）：标签目录 + property 定义目录。两个面各自一个独立文件；
 // `/api/issues/:id/labels*` 那 3 条注册在 `issues/mod.rs` 里指向 `labels.rs` 的
 // `pub(crate)` handler（注册留在原地，避免同 path+method 重复注册 panic）。

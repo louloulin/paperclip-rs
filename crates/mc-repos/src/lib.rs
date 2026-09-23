@@ -25,6 +25,15 @@
 //! （空 stub，与 M2/M3/M4 同手法）——`autopilot`（7 个文件）/ `wakeup`（3 个文件）/ `scheduler`
 //! （单文件）。**本文件自本片起对 M5 是只读的**：M5-1..M5-8 只填自己那格的文件，不再编辑本
 //! `lib`。写法与前几波一致：按字母序插入，不重排既有行（M4-4 与 M5-0 同时在飞）。
+//!
+//! M6 anchor scaffold（LUM-1665 / docs/57-M6-PLAN.md §5）：M6 的 2 个模块一次性声明 ——
+//! `plugin`（7 个文件）/ `skill`（4 个文件）。**本文件自本片起对 M6 是只读的**：M6-1..M6-9
+//! 只填自己那格的文件（各文件的写者在 `skill/mod.rs` 与 `plugin/mod.rs` 的表里），不再编辑
+//! 本 `lib`。
+//!
+//! ⚠️ 两个模块名与 `mc-core` 的同名模块**不冲突**：`mc_repos::skill` 是**表访问**（`skill` /
+//! `skill_file` / `agent_skill` / `skill_to_label`），`mc_core::skill` 是**列投影**；既有的每一波
+//! 都是这样一层对一层（`mc_repos::autopilot` ↔ `mc_core::autopilot`），不要为了「名字重复」改名。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -51,12 +60,14 @@ pub mod issue_table;
 pub mod label;
 pub mod member;
 pub mod pat;
+pub mod plugin;
 pub mod project;
 pub mod project_resource;
 pub mod property;
 pub mod runtime;
 pub mod scheduler;
 pub mod share_link;
+pub mod skill;
 pub mod squad;
 pub mod subscriber;
 pub mod task;
