@@ -27,7 +27,8 @@
 use std::path::Path;
 
 use super::acp_core::{
-    AcpAuth, AcpFlavor, AcpPromptFields, AcpProvider, AcpResume, AcpToolAliases,
+    AcpAuth, AcpFlavor, AcpModelSelection, AcpPromptFields, AcpProvider, AcpResume,
+    AcpResumeParams, AcpToolAliases,
 };
 use super::cli_core::CliCoreConfig;
 use super::qoder_family;
@@ -47,6 +48,11 @@ pub static FLAVOR: AcpFlavor = AcpFlavor {
     prompt_fields: AcpPromptFields::Prompt,
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kimi,
+
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// 组装 argv（见 [`super::qoder_family::build_args`]）。

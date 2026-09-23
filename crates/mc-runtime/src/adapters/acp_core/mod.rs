@@ -2,8 +2,9 @@
 //!
 //! # 为什么单独抽一层
 //!
-//! 批 2 的 8 个 provider 里有 6 个说 **同一套线协议**（ACP/JSON-RPC 2.0 over
-//! stdio）：kimi、kiro、qoder、qoderclicn、traecli、grok。它们的差别只有五处：
+//! 批 2 / 批 3 的 **12 个** provider 说 **同一套线协议**（ACP/JSON-RPC 2.0 over
+//! stdio）：kimi、kiro、qoder、qoderclicn、traecli、grok（批 2）+ hermes、reasonix、
+//! dim、mcode、zeroclaw、qwenpaw（批 3）。它们的差别只有八处：
 //!
 //! | 差异点 | 取值 |
 //! |---|---|
@@ -11,7 +12,13 @@
 //! | 会话恢复方法 | [`AcpResume`]（`session/resume` 或 `session/load`） |
 //! | `initialize` 后是否先 `authenticate` | [`AcpAuth`]（只有 grok） |
 //! | `session/prompt` 的块字段名 | [`AcpPromptFields`]（kiro 额外带 `content`） |
-//! | 推理等级怎么下发 | [`AcpFlavor::thinking_config`]（只有 kimi 有） |
+//! | 推理等级怎么下发 | [`AcpFlavor::thinking_config`]（kimi / hermes / reasonix / dim） |
+//! | 模型怎么选 | [`AcpFlavor::model_selection`]（`set_model` / 会话参数 / 不支持） |
+//! | 会话参数要不要带 `_meta` | [`AcpFlavor::session_meta_key`]（只有 qwenpaw） |
+//! | 建会话后要不要先下发固定配置 | [`AcpFlavor::session_configs`]（只有 dim） |
+//!
+//! 另有 [`AcpFlavor::resume_params`]：恢复会话的 params 形状（zeroclaw 只发
+//! `{sessionId}`，其余发 `{cwd,sessionId,mcpServers}`）。
 //!
 //! 于是"握手 → 建会话 → 选模型 → 发 prompt → 收通知 → 收终态"这条状态机只写
 //! **一份**（[`client::AcpDecoder`]），每个 provider 只提供一张
@@ -74,18 +81,32 @@ pub const ID_SET_CONFIG: i64 = 5;
 /// 第六帧：`session/prompt`。
 pub const ID_PROMPT: i64 = 6;
 
+/// **固定配置链**的帧 id 起点（`session/set_config_option`）。
+///
+/// 链上第 `i` 步的 id = `ID_SESSION_CONFIG_BASE + i`。用 50 起跳是为了与
+/// 1..=6 的握手序号明显分开：抓到 `"id":50` 就知道这是配置链而不是握手。
+pub const ID_SESSION_CONFIG_BASE: i64 = 50;
+
+/// 固定配置链上第 `index` 步的帧 id。
+pub const fn id_session_config(index: usize) -> i64 {
+    // 静态配置链最多几条（`dim` 2 条）；`usize` 转 `i64` 在这里不可能溢出。
+    #[allow(clippy::cast_possible_wrap)]
+    let id = ID_SESSION_CONFIG_BASE + index as i64;
+    id
+}
+
 /// `terminal/*` 一族请求的拒绝理由（fail-closed；上游 `hermes.go` L1152 同串）。
 pub const TERMINAL_NOT_ENABLED: &str = "terminal capability is not enabled";
 /// 没有任何"可安全自动选中"的权限选项时的拒绝理由（上游 L1368 同串）。
 pub const NO_PERMISSION_OPTION: &str = "no auto-selectable permission option offered";
 
-/// 会话恢复用哪个方法（上游逐 provider 实测：kimi/qoder 是 `session/resume`，
-/// kiro/traecli/grok 是 `session/load`）。
+/// 会话恢复用哪个方法（上游逐 provider 实测：kimi/qoder/hermes/reasonix/zeroclaw 是
+/// `session/resume`，kiro/traecli/grok/qwenpaw/dim/mcode 是 `session/load`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpResume {
-    /// `session/resume`（kimi / qoder / qoderclicn / hermes）。
+    /// `session/resume`（kimi / qoder / qoderclicn / hermes / reasonix / zeroclaw）。
     Resume,
-    /// `session/load`（kiro / traecli / grok）。
+    /// `session/load`（kiro / traecli / grok / qwenpaw / dim / mcode）。
     Load,
 }
 
@@ -102,7 +123,8 @@ impl AcpResume {
 /// `initialize` 之后要不要先 `authenticate`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpAuth {
-    /// 不需要（kimi / kiro / qoder / qoderclicn / traecli）。
+    /// 不需要（除 grok 外的全部 ACP provider：kimi / kiro / qoder / qoderclicn /
+    /// traecli / qwenpaw / hermes / reasonix / dim / mcode / zeroclaw）。
     None,
     /// 按 xAI 的规则从 `initialize` 的 `authMethods` 里挑一个（grok）。
     ///
@@ -115,12 +137,12 @@ pub enum AcpAuth {
 ///
 /// ACP 的 `title` 是给人看的标签（`"Read file: /x"` / `"Run command: ls"`），
 /// hermes 那张表只认小写冒号前缀，所以每家还要再归一一次：kimi/qoder/
-/// qoderclicn/traecli/grok 共用 `kimiToolNameFromTitle`，kiro 自己一张（多
-/// `"code"` 与 `"todo list"` 两个别名）。两张表都对没认出来的名字做
+/// qoderclicn/traecli/grok **以及批 3 的 6 家**共用 `kimiToolNameFromTitle`，
+/// kiro 自己一张（多 `"code"` 与 `"todo list"` 两个别名）。两张表都对没认出来的名字做
 /// "小写 + 空格转下划线"，所以对已归一的名字是幂等的。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpToolAliases {
-    /// kimi / qoder / qoderclicn / traecli / grok 的表。
+    /// kimi / qoder / qoderclicn / traecli / grok 与批 3 六家的表。
     Kimi,
     /// kiro 的表。
     Kiro,
@@ -129,10 +151,40 @@ pub enum AcpToolAliases {
 /// `session/prompt` 里 prompt 块的字段名。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpPromptFields {
-    /// 只有 `prompt`（kimi / qoder / qoderclicn / traecli / grok / hermes）。
+    /// 只有 `prompt`（除 kiro 外的全部 ACP provider）。
     Prompt,
     /// `prompt` + `content` 各一份（kiro 两种键都读，上游两个都发）。
     PromptAndContent,
+}
+
+/// 模型怎么下发给 ACP 对端。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpModelSelection {
+    /// 建会话后发 `session/set_model`（失败**致命**）。
+    ///
+    /// kimi / kiro / qoder / qoderclicn / traecli / grok / dim / reasonix。
+    SetModel,
+    /// 把模型塞进 `session/new` 的 params，**从不**发 `set_model`（hermes）。
+    ///
+    /// 上游 `hermes.go` 两者都做（`buildHermesSessionParams` 带 `model`，另发一帧
+    /// `set_model`，但带一个"当前模型已等价就跳过"的闸门）。本 crate 不解析
+    /// 会话的 `configOptions` / 当前模型 ⇒ 那道闸门永远跳过 ⇒ 只保留会话参数这条
+    /// 下发路径（恢复会话因此保持原模型，见 `docs/33` §11 的偏离表）。
+    SessionParam,
+    /// 完全不支持选模型（qwenpaw / mcode / zeroclaw）。
+    ///
+    /// 既不发 `set_model`，也不把模型塞进会话参数；用量归属回落到 provider label
+    /// （上游这三家同样是 `"unknown"`）。
+    Unsupported,
+}
+
+/// 恢复会话时 `session/resume` / `session/load` 的 params 形状。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpResumeParams {
+    /// `{cwd, sessionId, mcpServers}`（除 zeroclaw 外的全部 provider）。
+    SessionAndCwd,
+    /// 只有 `{sessionId}`（上游 `zeroclaw.go` 的 resume 原样如此）。
+    SessionOnly,
 }
 
 /// 一个 ACP provider 的差异点（`static` 一张表 + 一个泛型客户端）。
@@ -150,11 +202,42 @@ pub struct AcpFlavor {
     pub prompt_fields: AcpPromptFields,
     /// 推理等级走 `session/set_config_option` 时用的 `configId`（`None` = 不支持）。
     ///
-    /// 只有 kimi 有（上游 kimi.go L357 硬编码 `configId: "thinking"`）；grok 的
-    /// 推理等级走 argv 的 `--effort`，其余 provider 忽略 `LaunchRequest::thinking_level`。
+    /// kimi 是 `"thinking"`（上游硬编码）；dim / hermes 是 `"thought_level"`；
+    /// reasonix 是 `"effort"`。上游 `applyACPEffortOption` 是**发现式**的（从会话
+    /// 应答的 `configOptions` 里找 category 为 `thought_level`/`effort` 的那一项），
+    /// 本 crate 不解析那份清单，改用静态 id —— 与批 2 kimi 同一取舍（`docs/33` §6.2）。
     pub thinking_config: Option<&'static str>,
     /// 工具名后处理用哪张表。
     pub tool_aliases: AcpToolAliases,
+    /// 模型怎么选（见 [`AcpModelSelection`]）。
+    pub model_selection: AcpModelSelection,
+    /// 会话帧（`session/new` / `session/load`）params 里要不要带一个 `_meta` 键。
+    ///
+    /// 只有 qwenpaw 有：`"qwenpaw.coding_project_dir"`，值是 cwd，且**仅在
+    /// `cwd != "."` 时**才带（上游 `qwenpaw.go` 的门）；其余 provider 是 `None`。
+    pub session_meta_key: Option<&'static str>,
+    /// 建完会话、选完模型之后要**依次**下发的固定配置（`session/set_config_option`）。
+    ///
+    /// 只有 dim 有：`[("permission", "full-access"), ("mode", "agent")]`（上游的
+    /// 只读预设 → 放开；新会话与恢复会话都要重下发，因为恢复不保留）。链上任一步
+    /// 失败都是**致命**的（与 `thinking_config` 的"失败仅告警"不同）。
+    pub session_configs: &'static [(&'static str, &'static str)],
+    /// 恢复会话的 params 形状（见 [`AcpResumeParams`]）。
+    pub resume_params: AcpResumeParams,
+}
+
+impl AcpFlavor {
+    /// 用量归属的回落标签。
+    ///
+    /// 不支持选模型的 provider（[`AcpModelSelection::Unsupported`]）统一落到
+    /// `"unknown"` —— 上游 mcode / qwenpaw / zeroclaw 从不给 `opts.Model`，
+    /// 用量归因就是字面量 `"unknown"`。
+    pub const fn usage_label(&self) -> &'static str {
+        match self.model_selection {
+            AcpModelSelection::Unsupported => "unknown",
+            _ => self.label,
+        }
+    }
 }
 
 /// 一个 ACP provider 需要提供的三件事（其余全由 [`AcpDecoder`] 负责）。
@@ -279,10 +362,36 @@ pub fn conformance_success_stdout(session_id: &str, text: &str, with_auth: bool)
     out
 }
 
+/// 一致性套件用的 ACP 回放，带**固定配置链**（dim 型）。
+///
+/// 帧序与 [`conformance_success_stdout`] 相同，只在 `id=3` 的会话应答之后插入
+/// `session_configs.len()` 条 `id=50+i` 的 `session/set_config_option` 应答：
+/// 逐帧回放是**按客户端实际发的帧**推进的，多一条应答就会死等，所以需要配置链的
+/// provider 必须用这一份而不是通用那份。
+pub fn conformance_config_stdout(session_id: &str, text: &str, session_configs: usize) -> String {
+    use serde_json::json;
+
+    let mut out = conformance_success_stdout(session_id, text, false);
+    // 在 `id=3` 应答之后、正文通知之前插入配置链应答。
+    let anchor = format!(
+        "{}\n",
+        json!({"jsonrpc": "2.0", "id": ID_SESSION, "result": {"sessionId": session_id}})
+    );
+    let mut injected = String::new();
+    for index in 0..session_configs {
+        push_json(
+            &mut injected,
+            json!({"jsonrpc": "2.0", "id": id_session_config(index), "result": {}}),
+        );
+    }
+    out = out.replacen(&anchor, &format!("{anchor}{injected}"), 1);
+    out
+}
+
 /// 一致性套件用的脏数据回放：非 JSON 横幅 + 未知 `sessionUpdate` + 一条正文通知。
 ///
 /// 解码器是**按行**驱动的状态机（通知不依赖握手阶段），所以这段流单独喂给
-/// `decoder()` 也能解出 `text`。`label` 只用来拼那句横幅（六个 ACP provider 共用
+/// `decoder()` 也能解出 `text`。`label` 只用来拼那句横幅（十二个 ACP provider 共用
 /// 同一个回放，横幅带上自己的名字才像真的）。
 pub fn conformance_junk_stdout(label: &str, text: &str) -> String {
     use serde_json::json;

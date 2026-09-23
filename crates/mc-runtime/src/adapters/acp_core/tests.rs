@@ -5,7 +5,7 @@
 
 use super::{
     client::AcpDecoder, conformance_junk_stdout, conformance_success_stdout, AcpAuth, AcpFlavor,
-    AcpPromptFields, AcpResume, AcpToolAliases,
+    AcpModelSelection, AcpPromptFields, AcpResume, AcpResumeParams, AcpToolAliases,
 };
 use crate::adapter::{EventDecoder, LaunchRequest, RuntimeEvent};
 use crate::adapters::cli_core::CliDecoder;
@@ -20,6 +20,10 @@ static KIMI: AcpFlavor = AcpFlavor {
     prompt_fields: AcpPromptFields::Prompt,
     thinking_config: Some("thinking"),
     tool_aliases: AcpToolAliases::Kimi,
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// kiro：`session/load` + 两种 prompt 键。
@@ -31,6 +35,10 @@ static KIRO: AcpFlavor = AcpFlavor {
     prompt_fields: AcpPromptFields::PromptAndContent,
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kiro,
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// grok：`session/load` + 先认证。
@@ -42,6 +50,10 @@ static GROK: AcpFlavor = AcpFlavor {
     prompt_fields: AcpPromptFields::Prompt,
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kimi,
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 fn success_lines() -> Vec<String> {

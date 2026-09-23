@@ -196,6 +196,17 @@ impl FakeCli {
         fake
     }
 
+    /// 等 `after` 出现 → 整段回放 → 0 退出。
+    ///
+    /// 与 [`FakeCli::live_replaying`] 的区别是**没有第二道退出门**：适合"客户端只发
+    /// 一帧"的长连接协议（`dsh`）。那种协议等不到第二帧，`until` 会把 run 顶到超时。
+    pub fn live_gated(transcript: &str, after: &str) -> Self {
+        let fake = Self::allocate("live-gated");
+        let payload = fake.payload("transcript.txt", transcript);
+        fake.install(&fake.live_script(after, Some(&payload), "exit 0\n"));
+        fake
+    }
+
     /// 等 `after` 出现 → 回放 → 写 stderr → 以 `exit_code` 退出。
     pub fn live_failing(transcript: &str, exit_code: i32, stderr: &str, after: &str) -> Self {
         let fake = Self::allocate("live-failing");

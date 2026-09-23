@@ -42,14 +42,15 @@ impl AdapterRegistry {
     }
 
     /// 注册本片已实现的**内置 adapter**：`pi`（M3-2）+ M3-8 批 1 的 7 项 +
-    /// 批 2（本片）的 8 项。
+    /// 批 2 的 8 项 + 批 3（本片）的最后 9 项 —— 也就是 `AgentType::ALL` 的
+    /// **全部 25 个类型**（M3-8 的收口口径）。
     ///
     /// 构造这些 adapter **不会**探测/执行对应 CLI（探测是
     /// [`RuntimeAdapter::probe_version`] 的事），所以机器上没装它们也能安全装配 ——
     /// 真正的可用性由 probe 结果决定。
     ///
-    /// 其余 9 项（`ACP` 6 + `qwen` + 未归类的 `openclaw`/`dsh`）由 M3-8 批 3 继续
-    /// 注册；注册表是开放集合，`kinds()` 按白名单顺序输出，加项不会改变已有顺序。
+    /// 注册表是开放集合，`kinds()` 按白名单顺序输出，加项不会改变已有顺序；
+    /// `docs/33` §10 记录了到批 3 为止的覆盖收口。
     pub fn with_builtin_adapters() -> Self {
         let registry = Self::new();
         for adapter in builtin_adapters() {
@@ -203,49 +204,15 @@ mod tests {
     }
 
     #[test]
-    fn builtin_registry_holds_pi_and_the_m3_8_adapters_without_probing() {
+    fn builtin_registry_covers_every_whitelisted_kind_without_probing() {
         let registry = AdapterRegistry::with_builtin_adapters();
         // 名单顺序 = 白名单顺序（`builtin_adapters()` 的注释里写了理由）。
-        assert_eq!(
-            registry.names(),
-            vec![
-                "claude",
-                "codebuddy",
-                "codex",
-                "copilot",
-                "opencode",
-                "codearts",
-                "deveco",
-                "pi",
-                "cursor",
-                "kimi",
-                "kiro",
-                "antigravity",
-                "qoder",
-                "qoderclicn",
-                "traecli",
-                "grok",
-            ]
-        );
-        assert_eq!(registry.len(), 16);
-        for kind in [
-            AgentType::Claude,
-            AgentType::Codebuddy,
-            AgentType::Codex,
-            AgentType::Copilot,
-            AgentType::Opencode,
-            AgentType::Codearts,
-            AgentType::Deveco,
-            AgentType::Pi,
-            AgentType::Cursor,
-            AgentType::Kimi,
-            AgentType::Kiro,
-            AgentType::Antigravity,
-            AgentType::Qoder,
-            AgentType::QoderCliCn,
-            AgentType::TraeCli,
-            AgentType::Grok,
-        ] {
+        // 这里直接对着 `AgentType::ALL` 断言，因此"白名单里还有没有落下的类型"
+        // 不需要另一份人工名单来对账。
+        let expected: Vec<&str> = AgentType::ALL.iter().map(|kind| kind.as_str()).collect();
+        assert_eq!(registry.names(), expected);
+        assert_eq!(registry.len(), AgentType::ALL.len());
+        for kind in AgentType::ALL {
             let adapter = registry
                 .get(kind)
                 .unwrap_or_else(|| panic!("{kind} 没注册"));
@@ -254,11 +221,8 @@ mod tests {
             let caps = adapter.capabilities();
             assert_ne!(caps.protocol, ProtocolFamily::Opaque, "{kind}");
             assert_eq!(caps.launch_header, kind.launch_header(), "{kind}");
+            assert_eq!(caps.protocol, kind.protocol_family(), "{kind}");
         }
-        // 没落地的类型依旧拿不到 adapter（不是“随便给个句柄”）。
-        assert!(registry.get(AgentType::Qwen).is_none());
-        assert!(registry.get(AgentType::Openclaw).is_none());
-        assert!(registry.get(AgentType::Dsh).is_none());
     }
 
     #[test]

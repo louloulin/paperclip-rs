@@ -26,7 +26,8 @@
 use std::path::Path;
 
 use super::acp_core::{
-    AcpAuth, AcpFlavor, AcpPromptFields, AcpProvider, AcpResume, AcpToolAliases,
+    AcpAuth, AcpFlavor, AcpModelSelection, AcpPromptFields, AcpProvider, AcpResume,
+    AcpResumeParams, AcpToolAliases,
 };
 use super::cli_core::args::{filter_extra_args, ArgPolicy, ArgValueMode};
 use super::cli_core::CliCoreConfig;
@@ -73,6 +74,11 @@ pub static FLAVOR: AcpFlavor = AcpFlavor {
     // 推理等级无 ACP 旋钮（上游不传 thinking）。
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kiro,
+
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// 组装 argv（上游 `kiro.go` L64：`["acp", "--trust-all-tools"] ++ custom_args`）。

@@ -9,8 +9,9 @@
 //! ← {"jsonrpc":"2.0","id":2,"result":{}}
 //! → {"jsonrpc":"2.0","id":3,"method":"session/resume"|"session/load"|"session/new",…}
 //! ← {"jsonrpc":"2.0","id":3,"result":{"sessionId":"…"}}           ← 会话 id
-//! → {"jsonrpc":"2.0","id":4,"method":"session/set_model",…}      ← 请求带模型时
-//! → {"jsonrpc":"2.0","id":5,"method":"session/set_config_option",…} ← 只有 kimi + 推理等级
+//! → {"jsonrpc":"2.0","id":50,"method":"session/set_config_option",…} ← 固定配置链（只有 dim）
+//! → {"jsonrpc":"2.0","id":4,"method":"session/set_model",…}      ← 请求带模型且该 provider 支持时
+//! → {"jsonrpc":"2.0","id":5,"method":"session/set_config_option",…} ← 推理等级（kimi / hermes / reasonix / dim）
 //! → {"jsonrpc":"2.0","id":6,"method":"session/prompt","params":{sessionId,prompt:[…]}}
 //! ← {"jsonrpc":"2.0","method":"session/update","params":{"update":{…}}}   ← 正文/思维/工具/用量
 //! ← {"jsonrpc":"2.0","id":6,"result":{"stopReason":"end_turn","usage":{…}}}
@@ -57,9 +58,9 @@ use super::decode::{
     tool_output,
 };
 use super::{
-    AcpAuth, AcpFlavor, AcpPromptFields, CLIENT_NAME, CLIENT_VERSION, ID_AUTHENTICATE,
-    ID_INITIALIZE, ID_PROMPT, ID_SESSION, ID_SET_CONFIG, ID_SET_MODEL, NO_PERMISSION_OPTION,
-    PROTOCOL_VERSION, TERMINAL_NOT_ENABLED,
+    id_session_config, AcpAuth, AcpFlavor, AcpModelSelection, AcpPromptFields, AcpResumeParams,
+    CLIENT_NAME, CLIENT_VERSION, ID_AUTHENTICATE, ID_INITIALIZE, ID_PROMPT, ID_SESSION,
+    ID_SET_CONFIG, ID_SET_MODEL, NO_PERMISSION_OPTION, PROTOCOL_VERSION, TERMINAL_NOT_ENABLED,
 };
 use crate::adapter::{EventDecoder, LaunchRequest, RuntimeEvent, TokenUsage};
 
@@ -120,17 +121,30 @@ pub struct AcpDecoder {
     pending_tools: BTreeMap<String, PendingTool>,
     /// 按模型逐桶取最大值后的用量。
     usage: BTreeMap<String, TokenUsage>,
+    /// 在飞的是配置链的哪一步（`None` = 不在配置链上，可能是推理等级那帧）。
+    ///
+    /// 固定配置链（[`AcpFlavor::session_configs`]）每步一个 id
+    /// （[`id_session_config`]），推理等级那帧用 [`ID_SET_CONFIG`] —— 两者共用
+    /// [`Phase::AwaitSetConfig`]，靠这个下标区分"在等哪一帧"。
+    config_index: Option<usize>,
 }
 
 impl AcpDecoder {
     /// 按一次 run 的请求构造（会话参数、模型、推理等级都从请求里取）。
     pub fn new(flavor: &'static AcpFlavor, request: &LaunchRequest) -> Self {
+        // 不支持选模型的 provider（qwenpaw / mcode / zeroclaw）：连请求里的模型也丢掉，
+        // 用量因此回落到 `"unknown"`（上游同款），不会因为 `LaunchRequest` 带了个模型
+        // 就凭空多出一个 set_model 帧。
+        let model = match flavor.model_selection {
+            AcpModelSelection::Unsupported => None,
+            _ => non_empty(request.model.as_deref()),
+        };
         Self {
             flavor,
             state: DecoderState::default(),
             phase: Phase::Start,
             prompt: request.prompt.clone(),
-            model: non_empty(request.model.as_deref()),
+            model,
             thinking_level: non_empty(request.thinking_level.as_deref()),
             resume_session: non_empty(request.resume_session.as_deref()),
             // 上游 kimi.go 只在 cwd 为空时才回落到 "."：这里统一按同一回落。
@@ -146,6 +160,7 @@ impl AcpDecoder {
             outbox: Vec::new(),
             pending_tools: BTreeMap::new(),
             usage: BTreeMap::new(),
+            config_index: None,
         }
     }
 
@@ -172,34 +187,90 @@ impl AcpDecoder {
 
     fn queue_session_frame(&mut self) {
         self.phase = Phase::AwaitSession;
-        let (method, params) = match self.resume_session.as_deref() {
-            Some(session_id) => (
-                self.flavor.resume.method(),
-                json!({"cwd": self.cwd, "sessionId": session_id, "mcpServers": []}),
-            ),
-            None => ("session/new", json!({"cwd": self.cwd, "mcpServers": []})),
+        let mut params = serde_json::Map::new();
+        params.insert("cwd".to_owned(), json!(self.cwd));
+        params.insert("mcpServers".to_owned(), json!([]));
+        let (method, resumed) = match self.resume_session.clone() {
+            Some(session_id) => {
+                params.insert("sessionId".to_owned(), json!(session_id));
+                // zeroclaw 的上游 resume params 只有 `{sessionId}`。
+                if self.flavor.resume_params == AcpResumeParams::SessionOnly {
+                    params.remove("cwd");
+                    params.remove("mcpServers");
+                }
+                (self.flavor.resume.method(), true)
+            }
+            None => ("session/new", false),
         };
-        self.outbox.push(request_frame(ID_SESSION, method, params));
+        // hermes 型：模型塞进 **新会话** 的 params（恢复会话不带模型，上游
+        // `session/resume` 的 params 里没有 `model`）。
+        if !resumed && self.flavor.model_selection == AcpModelSelection::SessionParam {
+            if let Some(model) = self.model.clone() {
+                params.insert("model".to_owned(), json!(model));
+            }
+        }
+        // qwenpaw：`_meta` 里带工程目录，且只在 cwd 不是回落的 "." 时才带。
+        if let Some(key) = self.flavor.session_meta_key {
+            if self.cwd != "." {
+                params.insert("_meta".to_owned(), json!({key: self.cwd}));
+            }
+        }
+        self.outbox
+            .push(request_frame(ID_SESSION, method, Value::Object(params)));
     }
 
-    /// 会话之后的下一步：先选模型，再下发推理等级，最后才发 prompt。
+    /// 会话之后的下一步：固定配置链 → 选模型 → 推理等级 → prompt。
     fn queue_after_session(&mut self) -> Vec<RuntimeEvent> {
-        if let Some(model) = self.model.clone() {
-            let Some(session_id) = self.state.session_id().map(str::to_owned) else {
-                return self.fail(format!("{} 没有会话 id，无法切换模型", self.flavor.label));
-            };
-            self.phase = Phase::AwaitSetModel;
-            self.outbox.push(request_frame(
-                ID_SET_MODEL,
-                "session/set_model",
-                json!({"sessionId": session_id, "modelId": model}),
+        if !self.flavor.session_configs.is_empty() {
+            return self.queue_session_config(0);
+        }
+        self.queue_after_configs()
+    }
+
+    /// 固定配置链的第 `index` 步（只有 dim 有链）。
+    fn queue_session_config(&mut self, index: usize) -> Vec<RuntimeEvent> {
+        let Some((config_id, value)) = self.flavor.session_configs.get(index).copied() else {
+            // 链走完了：交给后续步骤。
+            self.config_index = None;
+            return self.queue_after_configs();
+        };
+        let Some(session_id) = self.state.session_id().map(str::to_owned) else {
+            return self.fail(format!(
+                "{} 没有会话 id，无法下发会话配置",
+                self.flavor.label
             ));
-            return Vec::new();
+        };
+        self.phase = Phase::AwaitSetConfig;
+        self.config_index = Some(index);
+        self.outbox.push(request_frame(
+            id_session_config(index),
+            "session/set_config_option",
+            json!({"sessionId": session_id, "configId": config_id, "value": value}),
+        ));
+        Vec::new()
+    }
+
+    /// 配置链走完之后：先选模型，再下发推理等级，最后才发 prompt。
+    fn queue_after_configs(&mut self) -> Vec<RuntimeEvent> {
+        let send_set_model = self.flavor.model_selection == AcpModelSelection::SetModel;
+        if send_set_model {
+            if let Some(model) = self.model.clone() {
+                let Some(session_id) = self.state.session_id().map(str::to_owned) else {
+                    return self.fail(format!("{} 没有会话 id，无法切换模型", self.flavor.label));
+                };
+                self.phase = Phase::AwaitSetModel;
+                self.outbox.push(request_frame(
+                    ID_SET_MODEL,
+                    "session/set_model",
+                    json!({"sessionId": session_id, "modelId": model}),
+                ));
+                return Vec::new();
+            }
         }
         self.queue_after_model()
     }
 
-    /// 模型这一步之后的下一步：推理等级（只有 kimi 有）→ prompt。
+    /// 模型这一步之后的下一步：推理等级（kimi / hermes / reasonix / dim）→ prompt。
     fn queue_after_model(&mut self) -> Vec<RuntimeEvent> {
         if let (Some(config_id), Some(level)) =
             (self.flavor.thinking_config, self.thinking_level.clone())
@@ -211,6 +282,7 @@ impl AcpDecoder {
                 ));
             };
             self.phase = Phase::AwaitSetConfig;
+            self.config_index = None;
             self.outbox.push(request_frame(
                 ID_SET_CONFIG,
                 "session/set_config_option",
@@ -268,9 +340,21 @@ impl AcpDecoder {
             }
             ID_SESSION if self.phase == Phase::AwaitSession => self.on_session(object),
             ID_SET_MODEL if self.phase == Phase::AwaitSetModel => self.on_set_model(object),
-            ID_SET_CONFIG if self.phase == Phase::AwaitSetConfig => self.on_set_config(object),
+            // 配置链与推理等级共用 `AwaitSetConfig`，靠 `is_in_flight_config` 分辨
+            // "在等哪一帧"：认不出当前帧的应答一律丢弃（对端乱序/提前应答不推进状态机）。
+            _ if self.phase == Phase::AwaitSetConfig && self.is_in_flight_config(id) => {
+                self.on_set_config(object)
+            }
             ID_PROMPT if self.phase == Phase::AwaitPrompt => self.on_prompt(object),
             _ => Vec::new(),
+        }
+    }
+
+    /// 当前在等的是不是 `id` 这一帧 `session/set_config_option`。
+    fn is_in_flight_config(&self, id: i64) -> bool {
+        match self.config_index {
+            Some(index) => id == id_session_config(index),
+            None => id == ID_SET_CONFIG,
         }
     }
 
@@ -336,14 +420,27 @@ impl AcpDecoder {
         self.queue_after_model()
     }
 
+    /// 固定配置链（dim）与推理等级共用的应答分支。
+    ///
+    /// 两种语义**刻意不同**：
+    ///
+    /// * 固定配置链（`config_index != None`）失败是**致命**的 —— 链上的
+    ///   `permission` / `mode` 是上游为了"放开只读预设"而下发的，没生效就等于整轮
+    ///   白跑（上游 `dim.go` 同款判死）；
+    /// * 推理等级（`config_index == None`）失败只记 warning（上游 kimi.go L363）。
     fn on_set_config(&mut self, object: &Map<String, Value>) -> Vec<RuntimeEvent> {
-        // 推理等级下发失败**不阻断**本轮（上游 kimi.go 只记 warning）。
-        let events = match rpc_error_message(self.flavor.label, "session/set_config_option", object)
-        {
-            Some(message) => self.state.emit_error(format!("推理等级未生效：{message}")),
-            None => Vec::new(),
-        };
-        events.into_iter().chain(self.queue_prompt()).collect()
+        let error = rpc_error_message(self.flavor.label, "session/set_config_option", object);
+        match (self.config_index, error) {
+            (Some(_), Some(message)) => {
+                self.fail(format!("{} 无法下发会话配置：{message}", self.flavor.label))
+            }
+            (Some(index), None) => self.queue_session_config(index + 1),
+            (None, Some(message)) => {
+                let events = self.state.emit_error(format!("推理等级未生效：{message}"));
+                events.into_iter().chain(self.queue_prompt()).collect()
+            }
+            (None, None) => self.queue_prompt(),
+        }
     }
 
     fn on_prompt(&mut self, object: &Map<String, Value>) -> Vec<RuntimeEvent> {
@@ -483,7 +580,7 @@ impl AcpDecoder {
 
     /// 用量合并：按模型逐桶取最大值（单调；同一快照重复到达不会翻倍）。
     fn merge_usage(&mut self, usage: TokenUsage) -> Vec<RuntimeEvent> {
-        let model = model_for_usage(self.model.as_deref(), self.flavor.label);
+        let model = model_for_usage(self.model.as_deref(), self.flavor.usage_label());
         let entry = self.usage.entry(model.clone()).or_default();
         entry.input = entry.input.max(usage.input);
         entry.output = entry.output.max(usage.output);

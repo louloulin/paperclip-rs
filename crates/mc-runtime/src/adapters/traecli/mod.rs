@@ -26,7 +26,8 @@
 use std::path::Path;
 
 use super::acp_core::{
-    AcpAuth, AcpFlavor, AcpPromptFields, AcpProvider, AcpResume, AcpToolAliases,
+    AcpAuth, AcpFlavor, AcpModelSelection, AcpPromptFields, AcpProvider, AcpResume,
+    AcpResumeParams, AcpToolAliases,
 };
 use super::cli_core::args::{filter_extra_args, ArgPolicy, ArgValueMode};
 use super::cli_core::CliCoreConfig;
@@ -72,6 +73,11 @@ pub static FLAVOR: AcpFlavor = AcpFlavor {
     prompt_fields: AcpPromptFields::Prompt,
     thinking_config: None,
     tool_aliases: AcpToolAliases::Kimi,
+
+    model_selection: AcpModelSelection::SetModel,
+    session_meta_key: None,
+    session_configs: &[],
+    resume_params: AcpResumeParams::SessionAndCwd,
 };
 
 /// 组装 argv（上游 `traecli.go` L110）。

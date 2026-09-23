@@ -1,4 +1,4 @@
-//! M3-8 批 1 / 批 2 的 adapter：走**公开 API** 验证注册表 + 真实 argv + 真实事件流。
+//! M3-8 批 1 / 批 2 / 批 3 的 adapter：走**公开 API** 验证注册表 + 真实 argv + 真实事件流。
 //!
 //! 分工与 `pi_local_e2e.rs` 一致：
 //!
@@ -10,6 +10,12 @@
 //! 批 2 的 ACP 5 项（kimi / kiro / qoder / qoderclicn / traecli）加 grok 共 6 个
 //! provider 走**同一套**握手，所以这里用同一个逐帧回放用例一次性证它们：
 //! 差异只允许出现在 argv 与差异表（resume 方法 / 认证 / prompt 字段）上。
+//!
+//! 批 3 收口（本片）：最后 9 项落地后，注册表 = `AgentType::ALL` 全员 25 项，且
+//! 每一项的协议族都已归类（`Opaque` 清零）—— 这两条断言就是 M3-8 的收口口径。
+//! 批 3 里 6 个 ACP provider 复用同一套逐帧回放（`dim` 多两条配置链应答）；
+//! `qwen` 复用 claude 的 stream-json 形态；`openclaw`（`agent --json`）与 `dsh`
+//! （`--stdio` 上的版本化 JSONL）分别是自己的线协议。
 //!
 //! 假 CLI 现场生成，不依赖机器上装了任何一个 provider。
 
@@ -46,6 +52,32 @@ const BATCH2: [AgentType; 8] = [
     AgentType::Grok,
 ];
 
+/// 批 3 的 9 个新类型（按上游白名单顺序）。
+const BATCH3: [AgentType; 9] = [
+    AgentType::Openclaw,
+    AgentType::Hermes,
+    AgentType::Reasonix,
+    AgentType::Dsh,
+    AgentType::Qwen,
+    AgentType::QwenPaw,
+    AgentType::Mcode,
+    AgentType::Dim,
+    AgentType::Zeroclaw,
+];
+
+/// 批 3 里共享 ACP 骨架的 6 个 provider：`(类型, 会话 id)`。
+///
+/// 六家都是 `auth: None`（回放里没有 `id=2`），`dim` 之外都没有静态配置链；
+/// 六家的 argv 都是 `acp` 开头（reasonix 后面还钉了一串沙箱开关）。
+const ACP_FAMILY_B3: [(AgentType, &str); 6] = [
+    (AgentType::QwenPaw, "acp-int-qwenpaw"),
+    (AgentType::Hermes, "acp-int-hermes"),
+    (AgentType::Reasonix, "acp-int-reasonix"),
+    (AgentType::Dim, "acp-int-dim"),
+    (AgentType::Mcode, "acp-int-mcode"),
+    (AgentType::Zeroclaw, "acp-int-zeroclaw"),
+];
+
 /// 批 2 里共享 ACP 骨架的 6 个 provider：`(类型, 会话 id, 要不要先认证)`。
 ///
 /// 只有 grok 的 `AcpAuth` 不是 `None`，所以只有它的回放里带 `id=2` 的
@@ -59,7 +91,7 @@ const ACP_FAMILY: [(AgentType, &str, bool); 6] = [
     (AgentType::Grok, "acp-int-grok", true),
 ];
 
-/// 这个类型是不是批 2 里共享 ACP 骨架的那 6 个（kimi 在批 1 落地，同骨架）。
+/// 这个类型是不是共享 ACP 骨架的那批（kimi 在批 1 落地，同骨架）。
 fn is_acp_family(kind: AgentType) -> bool {
     matches!(
         kind,
@@ -69,6 +101,12 @@ fn is_acp_family(kind: AgentType) -> bool {
             | AgentType::QoderCliCn
             | AgentType::TraeCli
             | AgentType::Grok
+            | AgentType::QwenPaw
+            | AgentType::Hermes
+            | AgentType::Reasonix
+            | AgentType::Dim
+            | AgentType::Mcode
+            | AgentType::Zeroclaw
     )
 }
 
@@ -92,37 +130,37 @@ fn adapter_for(kind: AgentType, cli: &FakeCli) -> Arc<dyn RuntimeAdapter> {
         AgentType::Grok => Arc::new(mc_runtime::Grok::with_executable(path)),
         AgentType::Cursor => Arc::new(mc_runtime::Cursor::with_executable(path)),
         AgentType::Antigravity => Arc::new(mc_runtime::Antigravity::with_executable(path)),
-        other => panic!("{other} 不在批 1 / 批 2"),
+        // 批 3（本片）：6 个 ACP + qwen（stream-json）+ openclaw / dsh（自定义 JSONL）。
+        AgentType::QwenPaw => Arc::new(mc_runtime::Qwenpaw::with_executable(path)),
+        AgentType::Hermes => Arc::new(mc_runtime::Hermes::with_executable(path)),
+        AgentType::Reasonix => Arc::new(mc_runtime::Reasonix::with_executable(path)),
+        AgentType::Dim => Arc::new(mc_runtime::Dim::with_executable(path)),
+        AgentType::Mcode => Arc::new(mc_runtime::Mcode::with_executable(path)),
+        AgentType::Zeroclaw => Arc::new(mc_runtime::Zeroclaw::with_executable(path)),
+        AgentType::Qwen => Arc::new(mc_runtime::Qwen::with_executable(path)),
+        AgentType::Openclaw => Arc::new(mc_runtime::Openclaw::with_executable(path)),
+        AgentType::Dsh => Arc::new(mc_runtime::Dsh::with_executable(path)),
+        AgentType::Pi => panic!("pi 的用例在 pi_local_e2e.rs"),
     }
 }
 
-/// 注册表里的 16 项（按上游白名单顺序）—— 顺序本身是断言的一部分。
+/// 注册表里的 **25 项**（按上游白名单顺序 = `AgentType::ALL`）—— 顺序本身是断言的一部分。
+///
+/// 这是 M3-8 的收口断言：批 3 落地后 `AgentType::ALL` 全员都有 adapter，且没有任何
+/// 一项还留在 `Opaque`。
 #[test]
-fn registry_exposes_every_processed_kind_in_whitelist_order() {
+fn registry_exposes_every_whitelisted_kind_in_whitelist_order() {
     let registry = AdapterRegistry::with_builtin_adapters();
-    assert_eq!(
-        registry.names(),
-        vec![
-            "claude",
-            "codebuddy",
-            "codex",
-            "copilot",
-            "opencode",
-            "codearts",
-            "deveco",
-            "pi",
-            "cursor",
-            "kimi",
-            "kiro",
-            "antigravity",
-            "qoder",
-            "qoderclicn",
-            "traecli",
-            "grok",
-        ]
-    );
-    assert_eq!(registry.len(), 16);
-    for kind in BATCH2 {
+    let expected: Vec<String> = AgentType::ALL
+        .iter()
+        .map(|kind| kind.as_str().to_owned())
+        .collect();
+    assert_eq!(registry.names(), expected, "注册表顺序 = 上游白名单顺序");
+    assert_eq!(registry.len(), 25);
+    assert_eq!(registry.len(), AgentType::ALL.len());
+
+    // 白名单 25 项：每项都能取到 adapter，且协议族已归类（`Opaque` 清零）。
+    for kind in AgentType::ALL {
         assert!(registry.get(kind).is_some(), "{kind} 应已注册");
         assert_ne!(
             kind.protocol_family(),
@@ -130,17 +168,20 @@ fn registry_exposes_every_processed_kind_in_whitelist_order() {
             "{kind} 的协议族不该还是 Opaque"
         );
     }
-    // 批 3 的类型还没注册（不是“随便给个句柄”）。
-    for kind in [AgentType::Qwen, AgentType::Openclaw, AgentType::Dsh] {
-        assert!(registry.get(kind).is_none(), "{kind} 还没落地");
+    // 批 1 / 批 2 / 批 3 的 24 个新类型一个不少（`pi` 见 `pi_local_e2e.rs`）。
+    for kind in BATCH1.into_iter().chain(BATCH2).chain(BATCH3) {
+        assert!(registry.get(kind).is_some(), "{kind} 应已注册");
     }
 }
 
 /// adapter 自报的协议族必须与 `catalog` 的映射一致，且**都不是 `Opaque`**。
+///
+/// 收口后这里遍历 `AgentType::ALL` 全员：25 项都得有 adapter、协议族都要归类、
+/// header 都要与 catalog 逐字一致 —— 少一项就会在这里红。
 #[test]
 fn every_processed_adapter_declares_a_classified_protocol_family() {
     let registry = AdapterRegistry::with_builtin_adapters();
-    for kind in BATCH1.into_iter().chain(BATCH2) {
+    for kind in AgentType::ALL {
         let adapter = registry
             .get(kind)
             .unwrap_or_else(|| panic!("{kind} 未注册"));
@@ -154,7 +195,7 @@ fn every_processed_adapter_declares_a_classified_protocol_family() {
     }
 }
 
-/// ACP 家族（批 1 的 kimi + 批 2 的 5 项）共享同一套能力声明。
+/// ACP 家族（批 1 的 kimi + 批 2 的 5 项 + 批 3 的 6 项）共享同一套能力声明。
 ///
 /// 这是“共享骨架”在公开面上的证据：协议族、流式、thinking、工具事件、用量、
 /// 会话恢复六项全开是 `AcpDecoder` 的契约，而不是各家自己填的。
@@ -168,6 +209,12 @@ fn acp_family_shares_one_capability_shape() {
         AgentType::QoderCliCn,
         AgentType::TraeCli,
         AgentType::Grok,
+        AgentType::QwenPaw,
+        AgentType::Hermes,
+        AgentType::Reasonix,
+        AgentType::Dim,
+        AgentType::Mcode,
+        AgentType::Zeroclaw,
     ] {
         let caps = registry.get(kind).expect("ACP 项已注册").capabilities();
         assert_eq!(caps.protocol, ProtocolFamily::Acp, "{kind}");
@@ -678,3 +725,5 @@ async fn antigravity_passes_the_prompt_on_argv_and_reads_both_stream_shapes() {
     assert!(argv.contains("--add-dir"), "{argv:?}");
     assert!(cli.recorded_stdin().is_empty(), "argv 传输不该写 stdin");
 }
+
+mod batch3;
