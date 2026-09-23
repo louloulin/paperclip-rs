@@ -98,6 +98,47 @@ async fn route_paths_are_mounted() {
     }
 }
 
+/// M4-4（chat 派发与生成面）10 条路由的**存在性守卫**（无需数据库，理由同上一条）。
+///
+/// 会话参数一律 `:sessionId`：matchit 0.7 在同一位置不允许两个不同的参数名，M4-4 早期
+/// 写的 `:id` 与 M4-1..M4-3 的 `:sessionId` 冲突 ⇒ `router()` 直接 panic（门 ⑤⑥⑨ 全红
+/// 的根因）；路径写错则掉 404 兜底。`history` / `thread` 走的是另一套凭证
+/// （`X-Actor-Source: task_token` + `X-Task-ID`，见 `routes/chat/task/history.rs`）⇒
+/// 缺凭证是 **403**，不是 401。
+#[tokio::test]
+async fn m4_4_task_route_paths_are_mounted() {
+    let app = support::lazy_app();
+    let (sid, tid) = (Uuid::new_v4().to_string(), Uuid::new_v4().to_string());
+    let authed: Vec<(&str, String)> = vec![
+        ("POST", format!("{SESSIONS}/{sid}/messages")),
+        ("POST", format!("{SESSIONS}/{sid}/onboarding")),
+        ("POST", format!("{SESSIONS}/{sid}/quick-actions/regenerate")),
+        ("GET", format!("{SESSIONS}/{sid}/pending-task")),
+        ("DELETE", format!("{SESSIONS}/{sid}/queued-tasks")),
+        (
+            "POST",
+            format!("{SESSIONS}/{sid}/queued-tasks/{tid}/prioritize"),
+        ),
+        ("GET", "/api/chat/pending-tasks".to_string()),
+        ("GET", "/api/chat/pending-tasks/has-any".to_string()),
+    ];
+    for (method, path) in authed {
+        let (s, b) = support::call(&app, method, &path, None, None, None).await;
+        assert_eq!(s, SC::UNAUTHORIZED, "{method} {path} → {b}");
+        let (s, b) = support::call(&app, method, &path, Some(Uuid::new_v4()), None, None).await;
+        assert_eq!(s, SC::BAD_REQUEST, "{method} {path} → {b}");
+        assert_eq!(msg(&b), "validation error: invalid workspace id");
+    }
+    for path in ["/api/chat/history", "/api/chat/thread"] {
+        let (s, b) = support::call(&app, "GET", path, None, None, None).await;
+        assert_eq!(s, SC::FORBIDDEN, "GET {path} → {b}");
+        assert_eq!(
+            msg(&b),
+            "forbidden: chat history is only available from within an agent task"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 2. 创建 / 读取 / 列表可见性
 // ---------------------------------------------------------------------------
