@@ -4790,9 +4790,75 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 
 ---
 
-## §53 M6-0 anchor（`LUM-1665`）交付：共享骨架落定、M0 占位预删、⑦ 基线 329→325
+## §53 06:30 cycle（`LUM-1695`）：**P0 解除（owner 批准 M5-9 接线）** + M6-0 anchor 已提交（**未推送**）、合并树门禁在跑；3/3 满载 ⇒ 空位刻意不派
 
-### 53.1 交付面（自身分支 `679959b`；合并树 `6e99d87`）
+### 53.1 起手三连（22:30Z 实测）
+- 磁盘：`/` **23G 可用**（25G/49G，53%）；在飞两个 `target/` 合计 **13.2G**（anchor **9.1G** + `LUM-1370` **4.1G**）。
+- `git fetch origin feat/multica-rs-initial` = **`8d33080`**（未动，与 §52 收尾值逐字一致）。
+- 认证 GH `pulls?state=open` = **0**（§52 的 #64 已合；anchor 尚未开 PR）。
+- 在飞采样（只读）：
+  - **`LUM-1665`（M6-0 anchor）**：workdir `lum-1665-356d10293a55`、pid **2850 活跃**（起于 21:38Z，采样时 52min）；HEAD = **`6e99d87`** = 本地提交 `679959b` + 合入 base `8d33080`；本地提交面 = **60 新增 / 5 删除**（`mc-plugin-protocol` 5 文件全删）；`target/` **9.1G**；**22:30Z 起在跑合并树门禁** `--with-db`，采样时 ①–⑧ 已全 `EXIT=0`。
+  - **`LUM-1370`（M2-E label/property）**：workdir `lum-1370-fa83ddd3bdff`、pid **11370 活跃**（起于 22:25Z）；HEAD = base `8d33080`、**0 提交**、工作树干净、`target/` **4.1G**（冷建期）。
+  - **远端判定**：`git ls-remote origin 'refs/heads/agent/devbox5/*'` **无** `agent/devbox5/356d10293a55` ⇒ anchor 的两个提交**只在本机**。§52.3 登记的「静默死亡会丢整个骨架」风险**仍成立**；本轮**不介入**（workdir 属该片独占写权，且门禁正在跑）。
+
+### 53.2 **P0 解除**：owner 批准「`apps/mc-server` 三条边」（22:30:38Z 评论 `01a0d064-7280`，落 `LUM-1659`）
+chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关闭**，批准范围与成本：
+
+| 项 | 内容 | 本轮独立复核 |
+| --- | --- | --- |
+| 1 | `apps/mc-server/Cargo.toml` 加 `mc-repos` / `mc-autopilot` / `mc-scheduler` 三条边 | ✅ 实测 base 的 `[dependencies]` 21 条里**确无**这三条 |
+| 2 | `Cargo.lock` 只需 **3 行插入**（不重新解析） | ✅ `mc-scheduler` 已是 lock 独立 package，deps = `mc-autopilot`/`mc-repos`/`mc-core`/`chrono`/`tokio`/`uuid`…（**无 sqlx**）；`mc-server` 的 lock deps 列表里确无这三者 |
+| 3 | 门 ⑥ 加 `-p mc-scheduler`（`scripts/gates.sh` 3 处） | ✅ 现状 `gates.sh:223/232` 只跑 `-p mc-repos -p mc-http` ⇒ `mc-scheduler` 的 6 个真库 `#[ignore]` 用例**从未进过任何门**，本片合入后 ⑥ 应恰 **+6** |
+
+零编译实证（该评论所附，口径可复算）：只改 manifest ⇒ `cargo metadata --locked --offline` **exit 101**；manifest + 恰好 3 行 lock ⇒ **exit 0**。
+⇒ **「Cargo.lock 手工合并风险」从 P0 里划掉**；`LUM-1659` 由「等 owner 裁决」变为**纯排期问题**，触发条件 = anchor 合入后立即派（两者同争 `Cargo.lock` / `state.rs`，同飞只能重生成 lock）。
+
+### 53.3 anchor 独立复核（本轮新增，4 条逐项实测 —— 全部用 `git show` 对 base 比，不采信提交自述）
+1. **⑦ 基线下降 = 预删占位，非回归**：`diff <(git show 8d33080:docs/fixtures/route-parity-baseline.json) <(git show 679959b:…)` = **恰好 4 行删除**，且正是两条 M0 占位路径 × 两方法：`GET|POST /api/plugins`、`GET|POST /api/skills`。**没有第 5 个键被动到** ⇒ `local 329 → 325` 的差值逐键可归因。
+2. **allowlist 豁免已真删**：`slash-alias-allowlist.tsv` 数据行 **2 → 0**（仅余表头行；注释行 19 → 24，删依据写进同文件）⇒ `slash_alias_audit.py --declared` `3 → 5` 的前提成立（**非回归**，是退路被删）。
+3. **「0 路由」成立**：26 个新路由文件虽是**真文件**（每个带行号路由账注释），但叶子 `router()` 全是 `Router::new()`、**0 条 `.route(`** ⇒ `local` 不因 26 个文件而上涨，⑦ `local 325 = baseline 325` 自洽。
+4. **anchor 冻结点做对了**：`mount.rs` 的 `mount_slice_{skill,plugin,plugin_bridge,plugin_surface,v1}()` 一律**转发**到 `super::<面>::router()` ⇒ 后续切片只写叶子文件 + 各自 `mod.rs`（`skills/mod.rs` 已冻结合并点并写明「不要直接改这里」）⇒ **M6-1…M6-9 不需要碰 `mount.rs`**；与提交史一致（`mount.rs` 最近一次改动者只有 anchor：`b09ac47` / `6711ea9` / …）。
+   - 仍待复核项（留给下一轮，需合并树门禁日志）：commit 自述的 10/10 与 ⑦ 三元组 `implemented 263 real + 0 placeholder` / `known_gap 193` / `owners.M6 57` / `local_only 9`、⑩ `routes/auth.rs 1704 = 基线`。**自述不当前置证据**。
+
+### 53.4 并发与空位：**3/3 满载 ⇒ 本轮不派**
+- `running_task_count` = **3**（`LUM-1665` ∥ `LUM-1370` ∥ cycle 自身）⇒ 空位 **0**。（计数口径沿用 §52.4：cycle 自身占一个槽。）
+- **下一轮晋升顺序（anchor 合入后）**：
+  1. **stage 2 三片并行**：`LUM-1666`（M6-1 契约/凭据，0 路由）∥ `LUM-1667`（M6-2 skill 读写，12 路由）∥ `LUM-1668`（M6-3 skill 导入，2 路由）。三者写集互不相交、且都不写 `mount.rs` / 根 `Cargo.toml` / `Cargo.lock` / ⑦ 基线（53.3 第 4 条 + `Cargo.lock` 由 anchor 一次性声明）。
+  2. **`LUM-1659`（M5-9 接线）紧随**：P0 已解，写集 = `apps/mc-server/{Cargo.toml,src/*}` + `scripts/gates.sh` + `Cargo.lock` **3 行**，与 stage 2 三片**零交集** ⇒ 一旦有空位即可与 stage 2 同轮并行（不必等 stage 2 收口）。
+  3. **`LUM-1691`（M2-A 尾 12 路由，06:25 chat 侧立项）不得与 `LUM-1370` 同飞**：两者同写 `routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock`（M2 线是**同一条线的两段**）；M2 线与 M6 线之间的 `mount.rs` 冲突是**尾部相邻**、可仲裁，但同轮两片 M2 写同一批聚合点必撞。
+- 磁盘前置（派前必测）：三片冷 `target/` 各 5–9G ⇒ 需 anchor 合并后按 §52.6 判据回收其 **9.1G**（回收后 ≈32G 可用）才够 3 片并行；否则本轮只派 2 片。
+
+### 53.5 看板 / 磁盘
+- 看板：M6 十一子片 = `LUM-1665` `in_progress`（本轮唯一在飞 M6 片），`LUM-1666`–`LUM-1675` 全 `backlog`（stage 2:3 / 3:3 / 4:3 / 5:1）；`LUM-1370` `in_progress`；`LUM-1659` / `LUM-1691` / `LUM-1580` `backlog`；`LUM-1572` / `LUM-1601` 已合但仍 `in_review`（`done` 归人工）。
+- 回收判据：三条本轮**两条不满足**（`LUM-1665` PR 未开、run 在飞；`LUM-1370` 在飞）⇒ **不回收**，`df` 由 23G 起、23G 末（anchor 门禁重编译消耗被其既有热 target 吸收）。
+
+### 53.6 下一轮起手
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §53 的 docs-only 提交）→ 认证 `pulls?state=open`；只读采样 anchor 的 HEAD / 远端分支 / `target/` / pid 活性。
+2. `LUM-1665` 交 PR ⇒ 判据链：预检一（`git diff --numstat <merge-base> HEAD` == PR API 逐字）→ base 祖先判定 → 合并树**当场重跑** `--with-db` 10/10 并逐项比对 §53.3 的待复核项 → `cargo metadata` 必过（3 新 crate + 删 `mc-plugin-protocol`）→ API 钉 sha → `tree(base_after_merge) == tree(预检)` 且 `git diff` 空。
+3. 若 anchor 仍无远端分支且 pid 消失 ⇒ 按 §43 处置链**先固化未提交 + 推 `agent/devbox5/356d10293a55`**，再 `rerun`；抢救优先级 = 3 个新 crate + `mc-core` 两个重写 stub。
+4. anchor 合入 ⇒ 回收其 `target/`（9.1G）⇒ 按 §53.4 顺序派 stage 2 三片（`LUM-1659` 有空位即并行）。
+5. `LUM-1673`（M6-8）依赖 `LUM-1659` 合入；未合时只交桩级证据 + 登记。
+
+### 53.7 本轮 lesson
+- **【「文件数 ≠ 注册键数」必须用 `.route(` 计数独立验】** 26 个新路由文件（每个还带行号路由账）看着像"路由面已经建好"，但叶子 `router()` 全是 `Router::new()` ⇒ ⑦ `local` 一动不动。判「0 路由」要看**注册调用计数**，不是文件/目录数。
+- **【基线下降的复核方法：diff 两份 baseline，不要信门禁的 `regression 0`】** 门禁比的是「新基线 vs 新代码」，**天然看不见"基线与代码在同一提交里一起被删"**。唯一硬证据 = `diff` 前一份 vs 后一份 baseline，确认被删键**恰好**等于同提交预删的占位键集合（本轮 4 = 2 路径 × 2 方法，多一个即回归）。
+- **【本地有 commit ≠ 已推送】** 判「有没有远端备份」的唯一硬证据是 `git ls-remote origin 'refs/heads/agent/devbox5/*'` 里有没有该 workdir 的短 id 分支；`git log` 只说明工作在本机。anchor 起跑 52min、本地两个提交、远端 0 分支 ⇒ 静默死亡的损失面 = 全部骨架，§43 抢救链的前提条件必须每轮重测。
+- **【P0 可以用「零编译证据」关闭】** `cargo metadata --locked --offline` 的 `exit 101 → exit 0` 差分，把「lock 手工合并」这种听起来很贵的事项降级为「3 行、可逐字复核」；**不需要编译、不产生 `target/`**。给 owner 的决策包应尽量用这类零成本实证把选项收敛成"批/不批"。
+
+### 53.3b 复核**闭合**（22:35Z，同一轮内 —— anchor 的合并树门禁跑完了）
+- 门禁汇总（`/tmp/gmerged.log`，本轮只读采样）：**`overall: PASS — 10/10 gate(s) green in 245s`**（①1s ②44s ③16s ④17s ⑤33s ⑥68s ⑧31s ⑦1s ⑨34s ⑩0s，**全 `exit 0`**）。
+- **53.3 的待复核项逐条命中**（⑦ 日志原文，非自述）：
+  ```
+  upstream 456 (commit f41fae6b08fb) | local 325 registered | baseline 325
+    implemented  263 real +   0 placeholder =  263 / 456   known_gap  193   unclaimed    0   regression   0   local_only    9
+  OK: every upstream route is either implemented or owned
+  ```
+  ⇒ 与 §6.1 预测（`local 325` / `implemented 263 real + 0 placeholder` / `known_gap 193` / `local_only 9`）**逐字一致**；`unclaimed 0` 说明 `owners.M6 57` 已落在 `docs/fixtures/m6-declared-routes.tsv`（该行输出不含 owners 分列）。
+- ⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306` = 与 M5-INT（§52.5）**逐字不变**（骨架是 0 路由片 ⇒ 预期；**非回归**）；⑩ `violations=0`。
+- ⚠️ **口径警告（下一轮必读）**：这次 10/10 跑在 `merge(8d33080)` 的树上，而本 cycle 的 docs-only `6087d46` **在其之后**才推上 base ⇒ **该合并树 ≠ 未来 base 树**（差一个 `docs/37`）。下一轮合并前**仍须当场重跑**（热 ≈245s）才可当判据 —— 这就是 §52.6 第 2 条「合并树当场重跑」的理由；也是 anchor 自己在合入 `8d33080` 后重跑一次的原因。
+## §54 M6-0 anchor（`LUM-1665`）交付：共享骨架落定、M0 占位预删、⑦ 基线 329→325
+
+### 54.1 交付面（自身分支 `679959b`；合并树 `6e99d87`）
 
 - **分支**：`agent/devbox5/356d10293a55`，起手 `7039718`（= §51 的 base `00034b7` + §51 docs-only）。
   交付时 base 已前进到 **`75a317d`**（§52 合入 #64）⇒ **真合**（`merge --no-ff` 无冲突，`6e99d87`），
@@ -4807,7 +4873,7 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
   后续切片只填自己的文件，不再有人碰 `mount.rs` / `routes/mod.rs` / 各 `lib.rs` / 根 `Cargo.toml` /
   `Cargo.lock` / ⑦ 基线 / allowlist —— 这是「锚点独占共享写者」的全部意义。
 
-### 53.2 合并树门禁：**10/10 绿 / 245s**（真库 `multica_lum1665`，一次性角色 `mc_lum1665`）
+### 54.2 合并树门禁：**10/10 绿 / 245s**（真库 `multica_lum1665`，一次性角色 `mc_lum1665`）
 
 `MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db` ⇒ ①fmt 1s ②build 44s ③clippy 16s
 ④clippy-test-util 17s ⑤test 33s ⑥db 68s ⑧schema-drift 31s ⑦route-parity 1s ⑨conformance 34s ⑩file-size 0s。
@@ -4822,7 +4888,7 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 - ③/④ 的内容首跑（热 target）各 16s/17s；本片新 crate 的 `doc_markdown`（pedantic）命中
   `dev_mode` / `IdP` / `DoD` 三处 ⇒ 加反引号即过（`-D warnings` 下 pedantic 等效 deny，见 §8）。
 
-### 53.3 与 §51.4 / §52.3 预测**逐项比对**（全部命中）
+### 54.3 与 §51.4 / §52.3 预测**逐项比对**（全部命中）
 
 | 读数 | §51.4/§52.3 预测 | 本轮实测 |
 | --- | --- | --- |
@@ -4842,7 +4908,7 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 **0 条 `#[ignore]`** —— 与 §52.7 的「⑥ delta 可当不变式」互补：**删 crate 会连带删测试**，
 所以 ⑤ 的「不变」只在「不增删 crate 且不增删用例」时成立。
 
-### 53.4 归位判断与偏离登记（M6-1…M6-9 按这两处读）
+### 54.4 归位判断与偏离登记（M6-1…M6-9 按这两处读）
 
 - `docs/32-M3-DAEMON-FACE.md` **§9**（新增）：文件→写者表（含锚点冻结的 10 个共享文件）、
   4 处归位判断、`mc-core` 的「不做什么」、依赖版本 MSRV 依据、本片门禁读数。
@@ -4857,7 +4923,7 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
   **不 trim、不 panic、不用零密钥**。`MULTICA_PLUGIN_SURFACE_ORIGIN` = `TrimSpace` 后去尾 `/`，空 ⇒ `None`
   （origin 合法性校验归 M6-6，不是锚点的事）。两条都有 `#[cfg(test)]` 单测锁口径（含「不 trim」的反例）。
 
-### 53.5 下一轮起手
+### 54.5 下一轮起手
 
 1. `LUM-1665` 交 PR ⇒ 走 §39.3/§42.2 判据链（预检一 == PR API；base 已前进 ⇒ 真合；合并树**当场重跑**
    `--with-db`；`tree(base) == tree(预检)` 且 `git diff` 空）。
@@ -4866,9 +4932,9 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
    且都不再碰锚点文件 ⇒ **M6 代码片之间的 ⑦ 基线争用到此解除**（下一次刷新归 M6-INT `LUM-1675`）。
 3. `LUM-1659`（M5-9）仍只在 owner 回复 P0 后晋升；`LUM-1673`（M6-8）依赖它 ⇒ 未合时只交桩级证据 + 登记。
 4. `LUM-1673` 的另一个前置已解：`routes/plugins/hooks_job.rs` 与 `plugin_bridge/hooks.rs` 的落点争议
-   由本锚点裁定（见 §53.4 ②），M6-8 可直接开工。
+   由本锚点裁定（见 §54.4 ②），M6-8 可直接开工。
 
-### 53.6 本轮 lesson
+### 54.6 本轮 lesson
 
 - **【「贴线」文件里加代码 = 先做行数账】** 门 ⑩ 的基线**只减不增**，所以在基线记录内的文件（`routes/auth.rs` 1704）
   里每加一行都必须同文件省一行；本轮加 5 行（2 字段 + 3 注释）直接变红，压缩注释后回到 1704。
