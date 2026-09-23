@@ -4844,3 +4844,15 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【基线下降的复核方法：diff 两份 baseline，不要信门禁的 `regression 0`】** 门禁比的是「新基线 vs 新代码」，**天然看不见"基线与代码在同一提交里一起被删"**。唯一硬证据 = `diff` 前一份 vs 后一份 baseline，确认被删键**恰好**等于同提交预删的占位键集合（本轮 4 = 2 路径 × 2 方法，多一个即回归）。
 - **【本地有 commit ≠ 已推送】** 判「有没有远端备份」的唯一硬证据是 `git ls-remote origin 'refs/heads/agent/devbox5/*'` 里有没有该 workdir 的短 id 分支；`git log` 只说明工作在本机。anchor 起跑 52min、本地两个提交、远端 0 分支 ⇒ 静默死亡的损失面 = 全部骨架，§43 抢救链的前提条件必须每轮重测。
 - **【P0 可以用「零编译证据」关闭】** `cargo metadata --locked --offline` 的 `exit 101 → exit 0` 差分，把「lock 手工合并」这种听起来很贵的事项降级为「3 行、可逐字复核」；**不需要编译、不产生 `target/`**。给 owner 的决策包应尽量用这类零成本实证把选项收敛成"批/不批"。
+
+### 53.3b 复核**闭合**（22:35Z，同一轮内 —— anchor 的合并树门禁跑完了）
+- 门禁汇总（`/tmp/gmerged.log`，本轮只读采样）：**`overall: PASS — 10/10 gate(s) green in 245s`**（①1s ②44s ③16s ④17s ⑤33s ⑥68s ⑧31s ⑦1s ⑨34s ⑩0s，**全 `exit 0`**）。
+- **53.3 的待复核项逐条命中**（⑦ 日志原文，非自述）：
+  ```
+  upstream 456 (commit f41fae6b08fb) | local 325 registered | baseline 325
+    implemented  263 real +   0 placeholder =  263 / 456   known_gap  193   unclaimed    0   regression   0   local_only    9
+  OK: every upstream route is either implemented or owned
+  ```
+  ⇒ 与 §6.1 预测（`local 325` / `implemented 263 real + 0 placeholder` / `known_gap 193` / `local_only 9`）**逐字一致**；`unclaimed 0` 说明 `owners.M6 57` 已落在 `docs/fixtures/m6-declared-routes.tsv`（该行输出不含 owners 分列）。
+- ⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306` = 与 M5-INT（§52.5）**逐字不变**（骨架是 0 路由片 ⇒ 预期；**非回归**）；⑩ `violations=0`。
+- ⚠️ **口径警告（下一轮必读）**：这次 10/10 跑在 `merge(8d33080)` 的树上，而本 cycle 的 docs-only `6087d46` **在其之后**才推上 base ⇒ **该合并树 ≠ 未来 base 树**（差一个 `docs/37`）。下一轮合并前**仍须当场重跑**（热 ≈245s）才可当判据 —— 这就是 §52.6 第 2 条「合并树当场重跑」的理由；也是 anchor 自己在合入 `8d33080` 后重跑一次的原因。
