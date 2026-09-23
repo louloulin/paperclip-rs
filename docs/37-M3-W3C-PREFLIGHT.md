@@ -4550,3 +4550,65 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 4. `LUM-1652`（M6 计划）在飞 ⇒ 它交 PR 后按同一条链合并（docs-only，门禁 8/8 即可）；其 §4 切片表产出的 M6 代码片建为 `backlog` 子任务，**由 cycle 按空位晋升**。
 5. 汇报 ⑦ 时必须写**本轮**读数并扣掉 2 条 501 占位（`/api/skills`、`/api/plugins`）。
 6. 存活判据仍是三看：`~/.multica/pi-sessions/*.jsonl` mtime + workdir `target/` 增长 + `git status` 写集变化。
+
+---
+
+## §49 04:30 cycle（`LUM-1664`）：base 复核 4/4（`eaba357` 未动、GH 0 PR）；并发 3/3 满位不派发；`LUM-1570` 只读体检全绿（⑩ 0 违规 + 9 条硬 e2e 齐备）；`LUM-1652` 已推 `18e5617`（M6 计划 + 11 个 backlog 切片 issue 落地）
+
+### 49.1 起手三连（20:30Z）
+
+- `df -h /`：**21G 可用** / 49G（57% 用；比 §48 的 35G 少 14G —— 差额 = `LUM-1570` 的 `target/` 从 1.9G 涨到 **16G** 的在飞构建）。
+- base `origin/feat/multica-rs-initial` = **`eaba357`**（= §48 收尾值，**自 04:00 起未动**；它与 `eed6969` 的差异只有一个 docs-only 提交）。
+- 认证 GH `pulls?state=open` = **0**。
+- `git ls-remote`：`agent/devbox5/d27781eeb7ef`（M5-5）**未推** ⇒ 尚未交 PR；`agent/devbox5/9bee7b69c5c9`（M6 计划）= **`18e5617`**（20:33:08 推送，见 §49.3）。
+- `running_task_count = 3`（cycle 自身 + `LUM-1570` + `LUM-1652`）⇒ 起手可派位 **0**。
+- **【本轮 lesson · 起手】全新 cycle workdir 里 `multica repo checkout` 落的是仓库默认分支，不是 `feat/multica-rs-initial`**：本轮首落在 `4fc96f3`（`origin/main`，pc-* 世代，`docs/` 里是 `90-…99-ROUND*`）⇒ 起手必须显式 `git fetch && git checkout -B <cycle-branch> origin/feat/multica-rs-initial`，否则 ①/⑦/⑩/门禁全部对着**另一个世代**的树跑。识别信号就是 `docs/` 的世代与 `git log -1`。
+
+### 49.2 base 复核（4/4 绿 / 36s）
+
+- 命令：`bash scripts/gates.sh --only fmt,route-parity,file-size,schema-drift`（本 cycle 一次性真库 `mc_cyc1664` / `multica_cyc1664`，跑完即删）⇒ **4/4 绿 / 36s**（① 2s、⑦ 0s、⑩ 0s、⑧ 34s；⑧ 比 §45 的 94s 快，因本轮 scratch 库是新起的空库、且没有并发 ⑧ 争用）。
+- ⑦ 当轮读数：`upstream 456 (commit f41fae6b08fb) | local 328 registered | baseline 300`、`implemented 262 real + 2 placeholder = 264/456`、`known_gap 192` · `unclaimed 0` · `regression 0` · `local_only 11` —— 与 §46/§47/§48 **逐字一致**（base 未动 ⇒ 本就不该动）。`slash_alias_audit.py --quiet` 绿。
+- ⑦ 缺口归属板（当轮）：`M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5  M5=1`（M5=1 = `POST /api/webhooks/autopilots/{token}`，即 `LUM-1570` 的唯一路由）。
+- ⑩：`file_size_check: limit=800  scanned=523  baseline=10  violations=0`。
+- ⑥/⑨ **本轮不重跑**：base 的**代码树**逐字等于 §48 的合并树（`eaba357` = `eed6969` + docs-only）⇒ 继承 §48 读数（⑤ 97 二进制 / 1354 passed / 0 failed / 128 ignored；⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`）。这条口径与 §48.2 的「base 是 head 祖先 ⇒ 合并树 == tip 树」同源，只是方向反过来用。
+
+### 49.3 在飞体检（20:34Z 采样，只读）
+
+| 片 | workdir / 分支 | HEAD | 未提交写集 | 存活证据 |
+| --- | --- | --- | --- | --- |
+| `LUM-1570`（M5-5） | `lum-1570-d27781eeb7ef` / `agent/devbox5/d27781eeb7ef`（**未推**） | `d2fc6c9` | **9 改 + 3 未跟踪**（`webhook/{mod,provider,ratelimit,signature,admission}.rs`、`routes/webhooks/autopilots.rs`、`tests/autopilots/main.rs`、`autopilot/{ingress,run}.rs`；新增 `webhook/worker.rs` + `tests/autopilots/{webhook,webhook_worker}.rs`） | pid `59859`（19:13 起）、session `20260923T191305.438831186` **5.6MB / 20:32:32 仍在写** |
+| `LUM-1652`（M6 计划） | `lum-1652-9bee7b69c5c9` / `agent/devbox5/9bee7b69c5c9` | **`18e5617`（已推）** | 0（已提交） | pid `7569`（20:07 起）、session `20260923T200700.725903663` **1.9MB / 20:34:14 在写** |
+
+- **`LUM-1570` 只读体检结论（全绿）**：
+  - **⑩ 在它自己的树**：`scanned=520  baseline=10  violations=0`（用它 workdir 那份 `scripts/file_size_check.py`；注意脚本按**自己所在仓**扫描，用 cycle 的脚本跨目录调它会扫错树）。
+  - **共享锚点 0 触碰**：`git status` 里没有 `mount.rs` / `routes/mod.rs` / 任何 `lib.rs` / `Cargo.{toml,lock}`。
+  - **DoD 硬 e2e 齐备**（`tests/autopilots/webhook.rs` 28 测试 / 24 `#[ignore]` 真库）：`unknown_token_leaks_nothing_and_rotated_tokens_die_immediately`、`spending_the_bad_credential_budget_turns_into_a_429_with_retry_after`、`duplicate_dedupe_key_is_idempotent_and_only_bumps_the_attempt_counter`、`body_over_the_cap_is_rejected_with_413_before_any_persistence`、`unnormalizable_bodies_are_rejected_with_400_and_persist_nothing`、`missing_and_invalid_signatures_are_rejected_with_401`、`event_scope_filter_ignores_the_delivery_without_creating_a_run`、`disabled_trigger_and_inactive_autopilot_are_ignored_with_200`、`secrets_and_tokens_are_never_echoed_back`；`webhook_worker.rs` 24 测试 / 12 `#[ignore]`。
+  - **凭据面**：写集内只有 2 处 `tracing`（`autopilots.rs:122` 无 `ConnectInfo` 的降级告警、`:160` body 读取失败），**均不含 token/secret**；`mc-autopilot` 已依赖 `mc-telemetry`；「不回显」由上面那条测试守着。
+  - **写集漂移（只登记，不算违规）**：相对 §48.3 登记面新增 `webhook/worker.rs`（新文件）、`mc-repos/src/autopilot/run.rs`（1 行 SQL 作用域修正：`load_trigger_principal` 改为 `JOIN autopilot a … a.workspace_id = $3`）、以及两个新测试文件 ⇒ 与另一在飞片（`LUM-1652`，**100% docs**）零交集，不构成并发风险。
+  - ⚠️ 它 **落后 base 两轮**（HEAD `d2fc6c9` = C 波后；base 已含 #60 与 §48）⇒ 交 PR 时按 §46 lesson **真合 base 再重跑门禁**（在它自己的热 `target/` 里跑即可）。
+- **`LUM-1652` 快照**：`18e5617 docs(57): M6（W6 扩展性）切片计划 + 声明路由 fixture + 11 个 backlog 子 issue`（20:33:08；parents 只有 `eaba357` ⇒ 起手就落在最新 base）；diff 面 = `docs/57-M6-PLAN.md`（672 行，§0–§11）+ `docs/fixtures/m6-declared-routes.tsv`（106 行 / 57 键 + 表头），**0 个 `crates/**` 文件**；20:35Z 采样时 GH PR **尚未开**。
+- **子 issue 已落地（11 个，全 `backlog`，stage 1–5）**：`LUM-1665`（M6-0 anchor）/ `1666`（M6-1 契约与凭据）/ `1667`（M6-2）/ `1668`（M6-3）/ `1669`（M6-4）/ `1670`（M6-5）/ `1671`（M6-6）/ `1672`（M6-7）/ `1673`（M6-8）/ `1674`（M6-9）/ `1675`（M6-10 INT）。
+- **【本轮 lesson · 采样】对活动中的 worktree 做只读体检会撞上中间态**：20:33Z 首采 `webhook/provider.rs` = **803 行**（若照此上报，⑩ 会「红」），3 分钟后复采 = **484 行**（该片自己在拆文件，⑩ 复算 `violations=0`）⇒ **在飞片的任何「违规」读数必须复采确认后才能写进记录**（§45.7「快照 ≠ 终态」的更强版本）。
+- **【本轮 lesson · 串行】`LUM-1665`（M6-0 anchor）与 `LUM-1572`（M5-INT）都写 `docs/fixtures/route-parity-baseline.json`**（前者 `--write-baseline` 300→296 + 删 `slash-alias-allowlist.tsv` 里 M6 的 2 行；后者一次性刷新基线）⇒ **两者必须串行、不可同轮并派**。`docs/57` §7.1 已把 M6-0 的硬前置写成「M5 全合」⇒ 按计划走即不会撞车。
+
+### 49.4 并发与派发：3/3 满位，本轮 0 派发
+
+- `running_task_count = 3` ⇒ **0 空位**，本轮不派发新片。
+- `LUM-1572`（M5-INT）**仍不晋升**：硬依赖是 M5-0…M5-8 全合，而 `LUM-1570`（M5-5）尚未交 PR。
+- `LUM-1659`（M5-9 接线）**仍不晋升**：挂在 `LUM-1628` §4 的 P0（member 提及 16:37Z 发出，**至今 0 回复**；本轮复核 `apps/mc-server/Cargo.toml` 仍无 `mc-scheduler` 边）⇒ 本轮**不重复 @**。
+- **M6 代码片也不提前晋升**：`docs/57` §7.1 明写 M6-0 的 baseline/读数要按 M5 收口后的 base 取 ⇒ 计划片刚落地就派 M6-0 会踩 §49.3 的串行约束。空位应给 `LUM-1572`。
+
+### 49.5 看板 / P0 / 磁盘
+
+- 看板：`LUM-1572` / `LUM-1659` / `LUM-1665`–`LUM-1675` 全 `backlog`；`LUM-1570` / `LUM-1652` `in_progress`；`LUM-1571` 仍 `in_review`（`done` 归人工验收）。
+- 观察项（不动状态，连续第 3 轮登记）：`LUM-1521`（07:30Z 触发）/ `LUM-1533`（08:30Z 触发）两条 autopilot cycle issue 仍停在 `todo`、各 1 条注释、从未启动。
+- 磁盘：**21G 可用**（27G / 49G）；workspace 19G，其中 `LUM-1570` 的 `target/` **16G 属在飞运行 ⇒ 不回收**；**无其它可回收 `target/`**（`LUM-1571` 的 15G 已在 §48.5 回收，其余 workdir 无 `target/`）。⚠️ 21G 只够「一份冷建 + 一份在飞构建」⇒ 下一轮若在飞 `target/` 再涨，先按三判据回收已合片的 `target/`。
+
+### 49.6 下一轮起手
+
+1. 三连：`df -h /` → `git fetch` 取 base sha → 认证 `pulls?state=open` + `git ls-remote` 两条在飞分支；**checkout 后先确认 `git log -1` 属 `feat/multica-rs-initial` 世代**（§49.1 lesson）。
+2. `LUM-1652` 交 PR（docs-only；head `18e5617` 或其后再推的 sha）⇒ 判据链：预检 staged stat == PR API 逐字 + `Cargo.lock` 空 → `merge-base --is-ancestor <base> <head>` ⇒ 合并树 == tip 树 → **diff 面 100% `docs/**` ⇒ 代码树逐字等于 `eaba357` ⇒ 门禁读数继承，不需要冷建** → API 钉 sha → 复核 `tree(base)`、open PR = 0。
+3. `LUM-1570` 交 PR ⇒ 它落后 base 两轮，**先真合 base**（`-c user.name/-c user.email`），再在其热 `target/` 跑 `--with-db` **10/10**；⑦ 预期 `local 328 → 329`、`known_gap 192 → 191`、`owners.M5 1 → 0`（**以当轮 gate 日志为准**）。
+4. D 波两片全合 ⇒ 晋升 **`LUM-1572`（M5-INT，`docs/56`）**；`LUM-1659` 仍在 `backlog`，只在 owner 回复 P0 后晋升。
+5. `LUM-1572` 落地（= M5 全合）后才按空位晋升 **`LUM-1665`（M6-0 anchor）**，且**不与 M5-INT 同轮并派**（§49.3 串行约束）。
+6. 汇报 ⑦ 时必须写**本轮**读数并扣掉 2 条 501 占位（`/api/skills`、`/api/plugins`，`mount.rs:52/56`）。
