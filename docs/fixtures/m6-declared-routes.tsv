@@ -1,0 +1,106 @@
+# m6-declared-routes.tsv — M6（W6 可扩展面：skill 20 / workspace plugin 17 / 公开 API+bridge+surface 20）的
+#   **声明路由**，57 条。
+#
+# 用途：M6 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m6-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M6 各切片**必须两形态一起注册**的键（逐键清单与实测见 docs/57-M6-PLAN.md §1.4）。
+#   与 docs/fixtures/{m3-6,m4,m5}-declared-routes.tsv 同性质：这是**输入**，不是本地已注册路由的快照。
+#   注意：预测模式**故意**带 `FAIL: …` 且 exit 1（「若按此实现就会欠 N 个形态」才是预期输出，
+#   不是本地已经判红）；本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 owner=M6 行（method + path + router.go 行号，
+#   57/57 实测逐条相等）。上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M6"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空（下表按「skill 读写 → skill 导入 → agent/bundle → plugin 生命周期
+#     → plugin 运行时面 → 公开 API/bridge/surface → hook」分组，行序不同）：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M6"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m6-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   本波带尾斜杠的键共 **5 个**（`/api/skills/` GET|POST、`/api/skills/{id}/` GET|PUT|DELETE）：
+#   上游 chi 的 `r.Route("/api/skills", …)` 是 Mount，子路由写 `"/"` 时两种形态都服务 ——
+#   axum 0.7 对另一形态是 404（不是 307），漏注册一个是 `MISSING_ALIAS` 缺陷。
+#   这 5 键全部落在 **M6-2（skill 读写面）**；其中前 2 键现在挂在
+#   docs/fixtures/slash-alias-allowlist.tsv（M0 占位期的欠账），M6-0 anchor 删占位时**同一 PR** 删掉那 2 行。
+#   其余 52 键上游都是 plain 注册（无尾斜杠形态）。
+#
+# 切片归属（每行恰好一片；本表保持 2 列，归属见 docs/57-M6-PLAN.md §4.2 逐片要点）：
+#   M6-2 skill 读写面 12 · M6-3 skill 导入/刷新 2 · M6-4 skill 供给面 6 ·
+#   M6-5 plugin 生命周期与包管理 13 · M6-6 插件运行时面 4 · M6-7 公开 Action API+bridge 19 ·
+#   M6-8 hook 引擎 1；M6-1/M6-9 为 0 路由片（契约层 / daemon 执行面）。
+METHOD	PATH
+# —— M6-2 skill 读写面（12）——
+GET	/api/skills/
+POST	/api/skills/
+GET	/api/skills/search
+GET	/api/skills/{id}/
+PUT	/api/skills/{id}/
+DELETE	/api/skills/{id}/
+GET	/api/skills/{id}/files
+PUT	/api/skills/{id}/files
+DELETE	/api/skills/{id}/files/{fileId}
+GET	/api/skills/{id}/labels
+POST	/api/skills/{id}/labels
+DELETE	/api/skills/{id}/labels/{labelId}
+# —— M6-3 skill 导入/刷新（2）——
+POST	/api/skills/import
+POST	/api/skills/{id}/refresh
+# —— M6-4 skill 供给面：agent 绑定 + runtime-skills 开关（6）——
+GET	/api/agents/{id}/skills
+PUT	/api/agents/{id}/skills
+POST	/api/agents/{id}/skills/add
+PUT	/api/agents/{id}/skills/{skillId}/enabled
+DELETE	/api/agents/{id}/skills/{skillId}
+PUT	/api/agents/{id}/runtime-skills/enabled
+# —— M6-5 plugin 生命周期与包管理 + 安装令牌（13）——
+GET	/api/workspaces/{id}/plugins
+POST	/api/workspaces/{id}/plugins
+POST	/api/workspaces/{id}/plugins/preview
+GET	/api/workspaces/{id}/plugins/packages
+POST	/api/workspaces/{id}/plugins/packages
+POST	/api/workspaces/{id}/plugins/packages/local
+DELETE	/api/workspaces/{id}/plugins/packages/{packageId}
+PUT	/api/workspaces/{id}/plugins/{installationId}/config
+POST	/api/workspaces/{id}/plugins/{installationId}/enable
+POST	/api/workspaces/{id}/plugins/{installationId}/disable
+DELETE	/api/workspaces/{id}/plugins/{installationId}
+POST	/api/workspaces/{id}/plugins/{installationId}/token
+DELETE	/api/workspaces/{id}/plugins/{installationId}/token
+# —— M6-6 插件运行时面：调用记录 / MCP 采纳 / surface 发放（4）——
+GET	/api/workspaces/{id}/plugins/{installationId}/invocations
+GET	/api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools
+PUT	/api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools
+GET	/api/workspaces/{id}/plugins/{installationId}/surfaces/{surfaceKey}/launch
+# —— M6-7 公开 Action API v1 + plugin-bridge + surface 承载（19）——
+# 上游把**同一批 handler** 注册两次：`/v1/*`（middleware.PluginBearerOnly + PluginRateLimit）
+# 与 `/api/plugin-bridge/v1/*`（middleware.Auth 会话，router.go:1582/1595）——同一切片拥有两个挂载点。
+GET	/v1/context
+GET	/v1/issues/{issue_ref}
+PATCH	/v1/issues/{issue_ref}
+GET	/v1/issues/{issue_ref}/comments
+POST	/v1/issues/{issue_ref}/comments
+GET	/v1/storage/{scope}
+GET	/v1/storage/{scope}/{key}
+PUT	/v1/storage/{scope}/{key}
+DELETE	/v1/storage/{scope}/{key}
+GET	/api/plugin-bridge/v1/context
+GET	/api/plugin-bridge/v1/issues/{issue_ref}
+PATCH	/api/plugin-bridge/v1/issues/{issue_ref}
+GET	/api/plugin-bridge/v1/issues/{issue_ref}/comments
+POST	/api/plugin-bridge/v1/issues/{issue_ref}/comments
+GET	/api/plugin-bridge/v1/storage/{scope}
+GET	/api/plugin-bridge/v1/storage/{scope}/{key}
+PUT	/api/plugin-bridge/v1/storage/{scope}/{key}
+DELETE	/api/plugin-bridge/v1/storage/{scope}/{key}
+GET	/plugin-surfaces/{token}
+# —— M6-8 hook 引擎（1）——
+# 上游唯一的插件**出站回调**入口：凭据是 manifest 里声明的 hook key + HMAC 签名，
+# 不是安装令牌（与 /v1 的凭据面不同片，见 docs/57 §2.4）。
+POST	/api/plugin-bridge/v1/hooks/{key}
