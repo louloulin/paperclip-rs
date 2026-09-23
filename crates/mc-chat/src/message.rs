@@ -234,7 +234,8 @@ mod tests {
         .expect("paired cursor");
         let cursor = paired.cursor.expect("cursor present");
         assert_eq!(cursor.id, id);
-        assert_eq!(cursor.created_at.timestamp(), 1_789_470_436);
+        // 纳秒精度必须原样保留（上游 `time.Parse(time.RFC3339Nano)`）。
+        assert_eq!(cursor.created_at.to_rfc3339(), "2026-09-23T06:27:16.123456789+00:00");
 
         assert_eq!(
             parse_page_params(Some("10"), Some("2026-09-23T06:27:16Z"), None).unwrap_err(),
