@@ -42,6 +42,9 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
 | `crates/mc-http/tests/label_property.rs` | 753（新） | 2 例 e2e（真库 + 真 router） |
 | `crates/mc-http/tests/issues/auth.rs` | +5 / −4 | 501 canary 换端点（D18） |
 | `crates/mc-http/tests/issues/reactions.rs` | +7 / −16 | properties 块改断言（D18） |
+| `docs/fixtures/route-parity-baseline.json` | +19 | 回归快照 `325 → 344`（本片新增的 19 个注册键；见 §1） |
+| `docs/10-M2-PLAN.md` | +16 / −3 | §5.1 过期结论更正 + §5.2 两行改「已交付」 |
+| `docs/11-M2-ISSUE.md` | +9 / −3 | §2.4 的 501 清单 + §6 两行 + 测试清单 |
 
 合计 **16 文件 +4249 / −39**（`git diff --numstat 8d33080 -- crates`）。
 含文档后 vs 新 base（`origin/feat/multica-rs-initial...HEAD`）为 **19 文件 +4604 / −45**
@@ -53,6 +56,13 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
 `pub mod project_resource;` 之后**各插入若干新行**（`git diff` 里只有 `+`，无 `−`）。
 两片合并顺序 = anchor 先、本片后；万一 git 报冲突，**保留双方的新增行**即可。
 （**已实测**：anchor 先合入 base 后本片 merge 只撞中 `routes/mod.rs` 一处，按此方式解决。）
+
+**两个 ⑦ 夹具文件的处置**：`docs/fixtures/route-parity-baseline.json` **在本片刷新**
+（`325 → 344`，+19 行）—— 这是晋升派发评论明确要求的「合入时刷新」，也是 gate ⑦
+「丢路由即回归」的口径；刷新前后各跑一次，`regression` 均为 **0**。
+`docs/fixtures/slash-alias-allowlist.tsv` **未动**（anchor 已把它清空为只剩表头）：
+`slash_alias_audit.py` 实测 `shapes OK: every registered upstream key matches the form
+upstream serves ⇒ 0 defect(s), 0 warning(s)`，即目录面的双形态**不需要**欠账名单。
 `issues/mod.rs` / `issues/dto.rs` / `issues/extras.rs` 不在 anchor 写集内 ⇒ 自由编辑。
 
 ## 1. 路由与注册键
@@ -109,16 +119,20 @@ M2 的**最后一块端到端前置**：上游的 **label 目录**（`/api/label
 **合并 M6-0 anchor（base → `0bcf879`）后的复测（权威读数）**：
 
 ```
-upstream 456 | local 344 registered | baseline 325 | slash_aliases 62
+upstream 456 | local 344 registered | baseline 325 → 344（本片刷新） | slash_aliases 62
 implemented 273 real + 0 placeholder = 273/456 | known_gap 183 | unclaimed 0 | regression 0
 local_only 9 (placeholder 1) | owners: M6 57 / M9 33 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5
 → OK: every upstream route is either implemented or owned
+→ slash_alias_audit.py: shapes OK ⇒ 0 defect(s), 0 warning(s)
 ```
 
 与 `docs/57` §6.1 的 anchor 后预测（`local 325 / implemented 263 real + 0 placeholder /
 known_gap 193 / owners.M6 57 / local_only 9`）**逐项相加对齐**：`325 + 19 = 344`、
 `263 + 10 = 273`、`193 − 10 = 183`；`owners.M2-E` 条目消失、`owners.M2-A 14 → 13`。
-注：`baseline 325` 是 anchor 写下的快照，**不由切片重写**，只用来卡回归（本片在其上**加**键）。
+**一处与预告不符（已对账）**：晋升评论预测 `local 329 → 339 (+10)`，实测 **+19** ——
+差的 9 个就是目录面的**尾斜杠双形态**（每条 canonical 各多一个别名注册，`slash_aliases`
+53 → 62 正好 +9）。上游 chi `Mount` 两种形态都服务，少注册一个就是
+`slash_alias_audit.py` 的 `MISSING_ALIAS` 缺陷 ⇒ +19 是**形态对齐的必然结果**，非多注册。
 
 ## 2. 数据模型与迁移（为什么零迁移）
 
@@ -342,9 +356,10 @@ MULTICA_TEST_DATABASE_URL="$(cat ~/.mc_lum1370_dburl)" \
    登记，不在本片修复（改脚本属 `LUM-1580`）。
 3. **M6-0（`LUM-1665`）已合入 base（`0bcf879`，PR #65）**，本片已把它 merge 进来并解掉
    唯一冲突（`routes/mod.rs` 的双方向追加块，见头部「基线」段）。本片对 `mount.rs` /
-   `routes/mod.rs` / `mc-repos/src/lib.rs` 只有**新增行**（`git diff` 无 `−` 行，插入点见 §0 注），
-   `docs/fixtures/route-parity-baseline.json` 与 `slash-alias-allowlist.tsv` 一行未改
-   （`baseline 325` 仍由 anchor 写下的快照决定）。
+   `routes/mod.rs` / `mc-repos/src/lib.rs` 只有**新增行**（`git diff` 无 `−` 行，插入点见 §0 注）。
+   `docs/fixtures/route-parity-baseline.json` 已刷新到 **344**（本片读数的快照）——
+   **下一个 cycle 注意**：该文件现在是 344，非 325；若别的切片先合入，按惯例在合并点重刷即可。
+   `docs/fixtures/slash-alias-allowlist.tsv` 一行未改（已空，审计 0 缺陷）。
 4. **M6 的 skill 面可以直接复用**：`LabelRepo`（`resource_type = "skill"`）与 `PropertyRepo`
    的价值在 M6-2（skill 读写）会再遇到；`/api/skills/{id}/labels` 那 3 条只需在
    `issues/mod.rs` 之外新开一个 slice router。
