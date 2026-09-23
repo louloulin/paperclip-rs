@@ -35,6 +35,7 @@ use serde_json::Value;
 use sqlx::{FromRow, PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::autopilot::{AutopilotRow, AUTOPILOT_COLUMNS};
 use crate::workspace::map_sqlx_err;
 use crate::Result;
 
@@ -675,4 +676,35 @@ pub fn normalize_title(title: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+// ---------------------------------------------------------------------------
+// 派发链的邻表直读（`SyncRunFrom*` / 计划快路径用）
+// ---------------------------------------------------------------------------
+
+/// `GetAutopilot`（按 id 直读，**不带** workspace 限定）。
+///
+/// 只给服务层内部路径用：调用方手里已经有一个**由 workspace 限定的读**（run 或 issue）得到的
+/// `autopilot_id`，这里只是把 autopilot 行取回来喂 analytics / 事件（上游
+/// `SyncRunFromIssue` 同样先 `GetAutopilot`）。对外的读面一律走
+/// [`crate::autopilot::AutopilotRepo::get_in_workspace`]。
+pub async fn get_autopilot(pool: &PgPool, autopilot_id: Uuid) -> Result<AutopilotRow> {
+    sqlx::query_as::<_, AutopilotRow>(&format!(
+        "SELECT {AUTOPILOT_COLUMNS} FROM autopilot WHERE id = $1"
+    ))
+    .bind(autopilot_id)
+    .fetch_one(pool)
+    .await
+    .map_err(map_sqlx_err)
+}
+
+/// `GetAutopilotTaskByRun` 的**反向**：task → 它挂的 run（`SyncRunFromTask` 的第一步）。
+///
+/// 与 [`find_task_id_by_run`] 成对：那条修「run 没写上 task_id」，这条从 task 反查 run。
+pub async fn find_run_id_by_task(pool: &PgPool, task_id: Uuid) -> Result<Option<Uuid>> {
+    sqlx::query_scalar("SELECT autopilot_run_id FROM agent_task_queue WHERE id = $1")
+        .bind(task_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_sqlx_err)
 }

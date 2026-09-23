@@ -12,7 +12,8 @@
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use mc_repos::autopilot::run as run_sql;
-use mc_repos::autopilot::{AutopilotRow, AutopilotRunRow};
+use mc_repos::autopilot::run::AutopilotRunRow;
+use mc_repos::autopilot::AutopilotRow;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;

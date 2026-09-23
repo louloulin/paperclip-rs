@@ -61,17 +61,13 @@ pub mod template;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use mc_core::autopilot::RunSource;
-use mc_core::Id;
-use mc_realtime::{EventEnvelope, RealtimeHandle};
-use mc_repos::autopilot::quota as quota_repo;
-use mc_repos::autopilot::run::{self as run_sql, AutopilotRunRow, NewAutopilotRun};
+use mc_realtime::RealtimeHandle;
+use mc_repos::autopilot::run::{self as run_sql, AutopilotRunRow};
 use mc_repos::autopilot::AutopilotRow;
 use mc_repos::RepoError;
 use serde_json::Value;
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
-
-use crate::quota as quota_policy;
 
 /// `autopilot_recent_duplicate_window`（`autopilot.go:51`）：60s 内同 key 视为重复 issue。
 pub(crate) const RECENT_DUPLICATE_WINDOW_SECONDS: i64 = 60;
@@ -457,10 +453,10 @@ impl AutopilotDispatcher {
             });
         }
         // ② 建 run（配额准入与 insert 同事务）。
-        let initial = initial_status(req.autopilot.execution_mode.as_str());
+        let initial = admission::initial_status(req.autopilot.execution_mode.as_str());
         let (run, reused) = match self.create_run_with_quota(&req, initial).await {
             Ok(pair) => pair,
-            Err(CreateRunError::QuotaExceeded {
+            Err(admission::CreateRunError::QuotaExceeded {
                 used,
                 reserved,
                 limit,
@@ -488,7 +484,7 @@ impl AutopilotDispatcher {
                     reset_at,
                 });
             }
-            Err(CreateRunError::Repo(err)) => return Err(DispatchError::Repo(err)),
+            Err(admission::CreateRunError::Repo(err)) => return Err(DispatchError::Repo(err)),
         };
         if reused {
             let reason_code = run.reason_code.as_deref().and_then(ReasonCode::parse);
@@ -523,6 +519,9 @@ impl AutopilotDispatcher {
         let Some(trigger_id) = req.trigger_id else {
             return Err(DispatchError::Invalid("trigger_id is required".to_string()));
         };
+        if let Some(outcome) = self.resume_planned_run(&req, trigger_id, planned_at).await? {
+            return Ok(outcome);
+        }
         let mut req = req;
         req.source = RunSource::Schedule;
         req.planned_at = Some(planned_at);
@@ -531,6 +530,74 @@ impl AutopilotDispatcher {
             planned_at.to_rfc3339_opts(SecondsFormat::Nanos, true)
         );
         self.dispatch(req).await
+    }
+
+    /// `DispatchAutopilotForPlan`440 的幂等快路径（`uq_autopilot_run_trigger_planned`）。
+    ///
+    /// 四态（顺序与上游逐字一致，**先修 task 链、再回收**）：
+    ///
+    /// 1. 已有**完整** run ⇒ 原样返回（`reused = true`，不重复任何副作用）。
+    /// 2. `run_only` + `task_id` 为空 ⇒ `repairAutopilotRunTaskLink`384：task 已经提交、只是
+    ///    `run.task_id` 没写上（窄崩溃窗口），补链后返回。
+    /// 3. 半成品 ⇒ [`run_sql::recover_partial_run`]（标 `failed` + 清 `planned_at` 腾出唯一索引槽
+    ///    位 + 释放预留），回收成功则落到下面走全新派发。
+    /// 4. 半成品但**回收不动**（有人在并发改这一行）⇒ [`DispatchError::Failed`]，让调度器重试。
+    ///
+    /// 上游这里没有 `reason_code` 的概念（计划线无人可展示原因），本地沿用行的 `reason_code`。
+    async fn resume_planned_run(
+        &self,
+        req: &DispatchRequest<'_>,
+        trigger_id: Uuid,
+        planned_at: DateTime<Utc>,
+    ) -> Result<Option<DispatchOutcome>, DispatchError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        let Some(run) = run_sql::find_by_trigger_and_planned(&mut conn, trigger_id, planned_at)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        if is_run_complete(&run) {
+            let reason_code = run.reason_code.as_deref().and_then(ReasonCode::parse);
+            return Ok(Some(DispatchOutcome {
+                run,
+                reason_code,
+                reused: true,
+            }));
+        }
+
+        if req.autopilot.execution_mode == "run_only" && run.task_id.is_none() {
+            if let Some(task_id) = run_sql::find_task_id_by_run(&self.pool, run.id).await? {
+                let repaired = run_sql::update_running(&mut conn, run.id, task_id).await?;
+                tracing::warn!(
+                    run_id = %repaired.id,
+                    task_id = %task_id,
+                    "autopilot dispatch for plan: repaired missing run/task link"
+                );
+                return Ok(Some(DispatchOutcome {
+                    run: repaired,
+                    reason_code: None,
+                    reused: true,
+                }));
+            }
+        }
+
+        tracing::warn!(
+            run_id = %run.id,
+            trigger_id = %trigger_id,
+            status = %run.status,
+            issue_set = run.issue_id.is_some(),
+            task_set = run.task_id.is_some(),
+            "autopilot dispatch for plan: recovering partial run"
+        );
+        if !run_sql::recover_partial_run(&mut conn, run.id).await? {
+            return Err(DispatchError::Failed {
+                run_id: run.id,
+                reason_code: ReasonCode::InternalError,
+                message: "partial run changed concurrently; retry".to_string(),
+            });
+        }
+        Ok(None)
     }
 
     /// 执行一条**已经存在**的 run（`dispatchAutopilot`556）。
@@ -558,6 +625,7 @@ impl AutopilotDispatcher {
                     run,
                     &timezone,
                     actor_user_id,
+                    self.events.as_ref(),
                 )
                 .await
             }
@@ -636,291 +704,31 @@ impl AutopilotDispatcher {
         .await
     }
 
-    /// `UpdateAutopilotRunTerminalWithQuota` 的单条封装：终态 + 预留结算同一事务。
-    async fn settle_with_quota(
-        &self,
-        run_id: Uuid,
-        status: &str,
-        result: Option<Value>,
-        failure_reason: Option<&str>,
-        reason_code: Option<&str>,
-        consume: bool,
-    ) -> Result<AutopilotRunRow, DispatchError> {
-        let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        let row = run_sql::update_terminal_with_quota(
-            &mut conn,
-            run_id,
-            status,
-            result,
-            failure_reason,
-            reason_code,
-            consume,
-        )
-        .await?;
-        Ok(row)
-    }
-
-    /// `failRun`1296：把 run 落 `failed`（**尽力而为** —— 失败路径上的失败只记日志）。
-    async fn fail_run(&self, run_id: Uuid, message: &str) {
-        let reason = truncate(message, 2000);
-        match self
-            .settle_with_quota(
-                run_id,
-                RUN_STATUS_FAILED,
-                None,
-                Some(&reason),
-                Some(ReasonCode::InternalError.as_str()),
-                false,
-            )
-            .await
-        {
-            Ok(_) => {}
-            Err(err) => tracing::warn!(
-                run_id = %run_id,
-                error = %err,
-                "failed to mark autopilot run as failed"
-            ),
-        }
-    }
-
-    /// `UpdateAutopilotLastRunAt`：尽力而为（上游同样只记日志）。
-    async fn touch_last_run_at(&self, autopilot: &AutopilotRow) {
-        if let Err(err) = run_sql::update_autopilot_last_run_at(&self.pool, autopilot.id).await {
-            tracing::warn!(
-                autopilot_id = %autopilot.id,
-                error = %err,
-                "failed to update autopilot last_run_at"
-            );
-        }
-    }
-
-    /// `EventAutopilotRunStart`（尽力而为：没有 realtime 出口就静默）。
-    fn publish_run_start(&self, autopilot: &AutopilotRow, run: &AutopilotRunRow, source: RunSource) {
-        let payload = serde_json::json!({
-            "run_id": run.id,
-            "autopilot_id": autopilot.id,
-            "source": source.as_str(),
-            "status": run.status,
-        });
-        self.publish(EVENT_AUTOPILOT_RUN_START, autopilot, payload);
-    }
-
-    /// `EventAutopilotRunDone`（终态）。
-    pub(crate) fn publish_run_done(&self, autopilot: &AutopilotRow, run: &AutopilotRunRow) {
-        let payload = serde_json::json!({
-            "run_id": run.id,
-            "autopilot_id": autopilot.id,
-            "status": run.status,
-        });
-        self.publish(EVENT_AUTOPILOT_RUN_DONE, autopilot, payload);
-    }
-
-    /// 信封构造：`resource = "workspace"`，`resource_id = workspace_id`
-    /// （本地 `/live-events` 的订阅单位是 workspace；`autopilot_id` 在载荷里）。
-    fn publish(&self, event_type: &str, autopilot: &AutopilotRow, payload: Value) {
-        let Some(handle) = &self.events else {
-            return;
-        };
-        let envelope = EventEnvelope::new(
-            EVENT_RESOURCE,
-            autopilot.workspace_id.to_string(),
-            None,
-            payload,
-        )
-        .with_type(event_type);
-        handle.publish(envelope);
-    }
-
-    /// `createAutopilotRunWithQuota`（`autopilot_quota.go`）的本地形态：幂等快路径 → `admit`
-    /// →（预留成功时）insert run，**同一事务**。
-    async fn create_run_with_quota(
-        &self,
-        req: &DispatchRequest<'_>,
-        initial_status: &str,
-    ) -> Result<(AutopilotRunRow, bool), CreateRunError> {
-        let autopilot = req.autopilot;
-        let mut new = NewAutopilotRun {
-            id: Uuid::new_v4(),
-            autopilot_id: autopilot.id,
-            trigger_id: req.trigger_id,
-            source: req.source.as_str().to_string(),
-            status: initial_status.to_string(),
-            trigger_payload: req.payload.clone(),
-            squad_id: squad_attribution(autopilot),
-            planned_at: req.planned_at,
-            webhook_delivery_id: req.webhook_delivery_id,
-            quota_reservation_id: None,
-            reason_code: None,
-        };
-        let Some(policy) = quota_policy::policy_for(Id(autopilot.workspace_id)) else {
-            // 配额没装（默认 `NoEntitlementPlane`）⇒ 不经预留表，唯一索引承担幂等。
-            let mut conn = self.pool.acquire().await.map_err(pool_err)?;
-            if let Some(existing) = find_existing_run(&mut conn, req).await? {
-                return Ok((existing, true));
-            }
-            match run_sql::create_run(&mut conn, &new).await {
-                Ok(row) => Ok((row, false)),
-                Err(RepoError::Conflict(_)) => match find_existing_run(&mut conn, req).await? {
-                    Some(existing) => Ok((existing, true)),
-                    None => Err(CreateRunError::Repo(RepoError::Db(
-                        "autopilot run insert conflicted but no existing run found".to_string(),
-                    ))),
-                },
-                Err(err) => Err(CreateRunError::Repo(err)),
-            }
-        } else {
-            let mut tx = self.pool.begin().await.map_err(pool_err)?;
-            let existing = quota_repo::get_reservation_by_key(
-                &mut *tx,
-                autopilot.workspace_id,
-                policy.period_start.as_datetime(),
-                policy.period_end.as_datetime(),
-                &req.idempotency_key,
-            )
-            .await?;
-            let existing_has_run = match &existing {
-                Some(reservation) => run_sql::find_by_quota_reservation(&mut *tx, reservation.id)
-                    .await?
-                    .is_some(),
-                None => false,
-            };
-            let outcome = quota_repo::admit(
-                &mut tx,
-                &quota_repo::AdmitInput {
-                    workspace_id: autopilot.workspace_id,
-                    period_start: policy.period_start.as_datetime(),
-                    period_end: policy.period_end.as_datetime(),
-                    source: req.source.as_str().to_string(),
-                    idempotency_key: req.idempotency_key.clone(),
-                    policy_revision: policy.policy_revision,
-                    subscription_version: policy.subscription_version,
-                    limit: Some(policy.limit),
-                    enforce: policy.action == quota_policy::QuotaAction::Enforce,
-                    reason_code: ReasonCode::QuotaExceeded.as_str().to_string(),
-                },
-                existing_has_run,
-            )
-            .await?;
-            match outcome {
-                quota_repo::AdmitOutcome::Replayed { reservation_id } => {
-                    let run = run_sql::find_by_quota_reservation(&mut *tx, reservation_id)
-                        .await?
-                        .ok_or_else(|| {
-                            CreateRunError::Repo(RepoError::Db(
-                                "quota reservation replayed without an autopilot run".to_string(),
-                            ))
-                        })?;
-                    tx.commit().await.map_err(pool_err)?;
-                    Ok((run, true))
-                }
-                quota_repo::AdmitOutcome::Denied {
-                    used,
-                    reserved,
-                    limit,
-                } => {
-                    // 被拒也要提交：这次尝试已经记进额度账（`blocked_counts`）。
-                    tx.commit().await.map_err(pool_err)?;
-                    Err(CreateRunError::QuotaExceeded {
-                        used,
-                        reserved,
-                        limit,
-                        reset_at: policy.reset_at.as_datetime(),
-                    })
-                }
-                quota_repo::AdmitOutcome::Reserved {
-                    reservation_id,
-                    would_block,
-                } => {
-                    if would_block {
-                        tracing::warn!(
-                            autopilot_id = %autopilot.id,
-                            idempotency_key = %req.idempotency_key,
-                            "autopilot quota reservation would block (observe mode)"
-                        );
-                    }
-                    new.quota_reservation_id = Some(reservation_id);
-                    let run = run_sql::create_run(&mut *tx, &new).await?;
-                    tx.commit().await.map_err(pool_err)?;
-                    Ok((run, false))
-                }
-            }
-        }
-    }
 }
 
-/// 建 run 的两类非成功出口。
-enum CreateRunError {
-    /// 配额拒绝。
-    QuotaExceeded {
-        /// 已用。
-        used: i64,
-        /// 已占位。
-        reserved: i64,
-        /// 上限。
-        limit: i64,
-        /// 重置时刻。
-        reset_at: DateTime<Utc>,
-    },
-    /// 库错。
-    Repo(RepoError),
-}
-
-impl From<RepoError> for CreateRunError {
-    fn from(err: RepoError) -> Self {
-        Self::Repo(err)
-    }
-}
-
-/// 幂等快路径：计划线看 `(trigger_id, planned_at)`，webhook 线看投递 id
-/// （本地 `autopilot_run` 没有 `idempotency_key` 列，这两处唯一索引就是幂等主键）。
-async fn find_existing_run(
-    conn: &mut PgConnection,
-    req: &DispatchRequest<'_>,
-) -> Result<Option<AutopilotRunRow>, RepoError> {
-    if let (Some(trigger_id), Some(planned_at)) = (req.trigger_id, req.planned_at) {
-        if let Some(run) = run_sql::find_by_trigger_and_planned(conn, trigger_id, planned_at).await?
-        {
-            return Ok(Some(run));
-        }
-    }
-    if let Some(delivery_id) = req.webhook_delivery_id {
-        if let Some(run) = run_sql::find_by_webhook_delivery(conn, delivery_id).await? {
-            return Ok(Some(run));
-        }
-    }
-    Ok(None)
-}
-
-/// 新 run 的初始状态：`run_only` 直接开跑，`create_issue` 等 issue 建出来才算「已建」。
-fn initial_status(execution_mode: &str) -> &'static str {
-    match execution_mode {
-        "run_only" => "running",
-        _ => "issue_created",
-    }
-}
-
-/// `squad_id` 归属：只有 `assignee_type = 'squad'` 才带上（`autopilotSquadAttribution`1488）。
-fn squad_attribution(autopilot: &AutopilotRow) -> Option<Uuid> {
-    (autopilot.assignee_type == "squad").then_some(autopilot.assignee_id)
-}
-
-/// `isAutopilotRunComplete`：终态判定（幂等快路径用）。
+/// `isAutopilotRunComplete`536：`(trigger_id, planned_at)` 上已有 run 时，能不能直接复用。
+///
+/// 「完整」有三类（**不是**只有终态）：
+///
+/// - 终态（`completed` / `failed` / `skipped`）：下游没别的活了，原样返回。
+/// - `issue_created` **且** `issue_id` 有值：issue 已经存在，后续 task 由 issue 事件监听器接管。
+/// - `running` **且** `task_id` 有值：任务已入队，监听器会在任务终态时收口 run。
+///
+/// 其余（尤其是 `issue_created`/`running` 但下游 id 还是 NULL，以及短暂的 `pending`）都是
+/// **半成品**：run 行写下去了、下游资源还没建出来，重试**必须**走回收而不是当成完整。
 #[must_use]
 pub fn is_run_complete(run: &AutopilotRunRow) -> bool {
-    matches!(
-        run.status.as_str(),
-        RUN_STATUS_COMPLETED | RUN_STATUS_FAILED | RUN_STATUS_SKIPPED
-    )
+    match run.status.as_str() {
+        RUN_STATUS_COMPLETED | RUN_STATUS_FAILED | RUN_STATUS_SKIPPED => true,
+        "issue_created" => run.issue_id.is_some(),
+        "running" => run.task_id.is_some(),
+        _ => false,
+    }
 }
 
 /// `sqlx::Error` → [`DispatchError`]（`mc-repos` 的 `map_sqlx_err` 是 `pub(crate)`，拿不到）。
 pub(crate) fn db_err(err: sqlx::Error) -> DispatchError {
     DispatchError::Repo(RepoError::Db(err.to_string()))
-}
-
-/// `sqlx::Error` → [`CreateRunError`] 的池错分支。
-fn pool_err(err: sqlx::Error) -> CreateRunError {
-    CreateRunError::Repo(RepoError::Db(err.to_string()))
 }
 
 /// `RepoError` 直通（子模块里 `?` 用）。

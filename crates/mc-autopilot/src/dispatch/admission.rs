@@ -28,13 +28,19 @@
 //! 不存在 —— 简化后对离线 runtime **一律放行**，这与上游对 `create_issue` 的宽松口径同向，
 //! 对 `run_only` 偏松（上游会跳过），已在 §8 记为已知缺口。
 
+use chrono::{DateTime, Utc};
+use mc_core::Id;
 use mc_repos::agent::AgentRow;
-use mc_repos::autopilot::run::{self as run_sql, AssigneeLeader};
+use mc_repos::autopilot::quota as quota_repo;
+use mc_repos::autopilot::run::{self as run_sql, AssigneeLeader, AutopilotRunRow, NewAutopilotRun};
 use mc_repos::autopilot::AutopilotRow;
 use mc_repos::RepoError;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
 
-use super::{DispatchError, DispatchSkipped, ReasonCode};
+use crate::quota as quota_policy;
+
+use super::{AutopilotDispatcher, DispatchError, DispatchRequest, DispatchSkipped, ReasonCode};
 
 /// `formatAdmissionReason`1419：把「通用就绪原因」改写成准入话术。
 ///
@@ -180,4 +186,197 @@ mod tests {
             "agent runtime is offline at dispatch time"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 建 run + 配额准入（`createAutopilotRunWithQuota`，`autopilot_quota.go`）
+// ---------------------------------------------------------------------------
+//
+// 这一块从 `mod.rs` 拆出来只为门 ⑩ 的 800 行（`docs/44` §6.3）；语义零改动。
+// 放在 `admission.rs` 是因为它**就是**准入：配额闸与「assignee 可用性」闸是同一层的两道门，
+// 前者拦「额度用尽」，后者拦「跑也是白跑」。
+
+/// 建 run 的两类非成功出口。
+pub(crate) enum CreateRunError {
+    /// 配额拒绝。
+    QuotaExceeded {
+        /// 已用。
+        used: i64,
+        /// 已占位。
+        reserved: i64,
+        /// 上限。
+        limit: i64,
+        /// 重置时刻。
+        reset_at: DateTime<Utc>,
+    },
+    /// 库错。
+    Repo(RepoError),
+}
+
+impl From<RepoError> for CreateRunError {
+    fn from(err: RepoError) -> Self {
+        Self::Repo(err)
+    }
+}
+
+impl AutopilotDispatcher {
+    /// `createAutopilotRunWithQuota`（`autopilot_quota.go`）的本地形态：幂等快路径 → `admit`
+    /// →（预留成功时）insert run，**同一事务**。
+    ///
+    /// 幂等键的承担者按「有没有额度面」分工：没装额度面（默认 `NoEntitlementPlane`）时靠
+    /// `uq_autopilot_run_trigger_planned` / `uq_autopilot_run_webhook_delivery` 的唯一索引；装了
+    /// 额度面时靠 `autopilot_quota_reservation` 的 `(workspace, period, idempotency_key)`。
+    pub(crate) async fn create_run_with_quota(
+        &self,
+        req: &DispatchRequest<'_>,
+        initial_status: &str,
+    ) -> Result<(AutopilotRunRow, bool), CreateRunError> {
+        let autopilot = req.autopilot;
+        let mut new = NewAutopilotRun {
+            id: Uuid::new_v4(),
+            autopilot_id: autopilot.id,
+            trigger_id: req.trigger_id,
+            source: req.source.as_str().to_string(),
+            status: initial_status.to_string(),
+            trigger_payload: req.payload.clone(),
+            squad_id: squad_attribution(autopilot),
+            planned_at: req.planned_at,
+            webhook_delivery_id: req.webhook_delivery_id,
+            quota_reservation_id: None,
+            reason_code: None,
+        };
+        let Some(policy) = quota_policy::policy_for(Id(autopilot.workspace_id)) else {
+            // 配额没装 ⇒ 不经预留表，唯一索引承担幂等。
+            let mut conn = self.pool.acquire().await.map_err(pool_err)?;
+            if let Some(existing) = find_existing_run(&mut conn, req).await? {
+                return Ok((existing, true));
+            }
+            // let-else 的 else 块必须发散 ⇒ 这里直接 `return` 无额度分支的结果。
+            return match run_sql::create_run(&mut conn, &new).await {
+                Ok(row) => Ok((row, false)),
+                Err(RepoError::Conflict) => match find_existing_run(&mut conn, req).await? {
+                    Some(existing) => Ok((existing, true)),
+                    None => Err(CreateRunError::Repo(RepoError::Db(
+                        "autopilot run insert conflicted but no existing run found".to_string(),
+                    ))),
+                },
+                Err(err) => Err(CreateRunError::Repo(err)),
+            };
+        };
+        let mut tx = self.pool.begin().await.map_err(pool_err)?;
+            let existing = quota_repo::get_reservation_by_key(
+                &mut *tx,
+                autopilot.workspace_id,
+                policy.period_start.as_datetime(),
+                policy.period_end.as_datetime(),
+                &req.idempotency_key,
+            )
+            .await?;
+            let existing_has_run = match &existing {
+                Some(reservation) => {
+                    run_sql::find_by_quota_reservation(&mut *tx, reservation.id)
+                        .await?
+                        .is_some()
+                }
+                None => false,
+            };
+            let outcome = quota_repo::admit(
+                &mut tx,
+                &quota_repo::AdmitInput {
+                    workspace_id: autopilot.workspace_id,
+                    period_start: policy.period_start.as_datetime(),
+                    period_end: policy.period_end.as_datetime(),
+                    source: req.source.as_str().to_string(),
+                    idempotency_key: req.idempotency_key.clone(),
+                    policy_revision: policy.policy_revision,
+                    subscription_version: policy.subscription_version,
+                    limit: Some(policy.limit),
+                    enforce: policy.action == quota_policy::QuotaAction::Enforce,
+                    reason_code: ReasonCode::QuotaExceeded.as_str().to_string(),
+                },
+                existing_has_run,
+            )
+            .await?;
+            match outcome {
+                quota_repo::AdmitOutcome::Replayed { reservation_id } => {
+                    let run = run_sql::find_by_quota_reservation(&mut *tx, reservation_id)
+                        .await?
+                        .ok_or_else(|| {
+                            CreateRunError::Repo(RepoError::Db(
+                                "quota reservation replayed without an autopilot run".to_string(),
+                            ))
+                        })?;
+                    tx.commit().await.map_err(pool_err)?;
+                    Ok((run, true))
+                }
+                quota_repo::AdmitOutcome::Denied {
+                    used,
+                    reserved,
+                    limit,
+                } => {
+                    // 被拒也要提交：这次尝试已经记进额度账（`blocked_counts`）。
+                    tx.commit().await.map_err(pool_err)?;
+                    Err(CreateRunError::QuotaExceeded {
+                        used,
+                        reserved,
+                        limit,
+                        reset_at: policy.reset_at.as_datetime(),
+                    })
+                }
+                quota_repo::AdmitOutcome::Reserved {
+                    reservation_id,
+                    would_block,
+                } => {
+                    if would_block {
+                        tracing::warn!(
+                            autopilot_id = %autopilot.id,
+                            idempotency_key = %req.idempotency_key,
+                            "autopilot quota reservation would block (observe mode)"
+                        );
+                    }
+                    new.quota_reservation_id = Some(reservation_id);
+                    let run = run_sql::create_run(&mut *tx, &new).await?;
+                    tx.commit().await.map_err(pool_err)?;
+                    Ok((run, false))
+                }
+            }
+    }
+}
+
+/// 幂等快路径：计划线看 `(trigger_id, planned_at)`，webhook 线看投递 id
+/// （本地 `autopilot_run` 没有 `idempotency_key` 列，这两处唯一索引就是幂等主键）。
+pub(crate) async fn find_existing_run(
+    conn: &mut PgConnection,
+    req: &DispatchRequest<'_>,
+) -> Result<Option<AutopilotRunRow>, RepoError> {
+    if let (Some(trigger_id), Some(planned_at)) = (req.trigger_id, req.planned_at) {
+        if let Some(run) = run_sql::find_by_trigger_and_planned(conn, trigger_id, planned_at).await?
+        {
+            return Ok(Some(run));
+        }
+    }
+    if let Some(delivery_id) = req.webhook_delivery_id {
+        if let Some(run) = run_sql::find_by_webhook_delivery(conn, delivery_id).await? {
+            return Ok(Some(run));
+        }
+    }
+    Ok(None)
+}
+
+/// 新 run 的初始状态：`run_only` 直接开跑，`create_issue` 等 issue 建出来才算「已建」。
+pub(crate) fn initial_status(execution_mode: &str) -> &'static str {
+    match execution_mode {
+        "run_only" => "running",
+        _ => "issue_created",
+    }
+}
+
+/// `squad_id` 归属：只有 `assignee_type = 'squad'` 才带上（`autopilotSquadAttribution`1488）。
+pub(crate) fn squad_attribution(autopilot: &AutopilotRow) -> Option<Uuid> {
+    (autopilot.assignee_type == "squad").then_some(autopilot.assignee_id)
+}
+
+/// `sqlx::Error` → [`CreateRunError`] 的池错分支。
+pub(crate) fn pool_err(err: sqlx::Error) -> CreateRunError {
+    CreateRunError::Repo(RepoError::Db(err.to_string()))
 }

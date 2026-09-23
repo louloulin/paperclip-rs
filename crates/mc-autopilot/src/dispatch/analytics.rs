@@ -19,7 +19,8 @@
 //! `autopilotRunDurationMS`（`completed_at - triggered_at`，负值归 0）。
 
 use mc_core::autopilot::RunSource;
-use mc_repos::autopilot::{AutopilotRow, AutopilotRunRow};
+use mc_repos::autopilot::run::AutopilotRunRow;
+use mc_repos::autopilot::AutopilotRow;
 
 /// 事件字段：run 的时长（ms）。无效组合（还没终态 / 时钟回拨）归 0，与上游一致。
 #[must_use]
