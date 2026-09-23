@@ -3658,3 +3658,116 @@ $ git diff docs/fixtures/route-parity-baseline.json    # +10 键，逐条：
 - 本轮实测：12:30 cycle 的 run 到 **13:05** 才交回（`in_review`），而 13:00 的 cycle 已起跑 ⇒ 有 5+ 分钟**两个 cycle 同时活着**，期间 `multica agent tasks` 里同时能看到 4 个活 run（2 片 + 2 cycle）。凡是「救援 + 合并 + 跑 10 门」的轮次，真实耗时（≥35 分钟）**必然超过** autopilot 的 30 分钟节拍。
 - 因此「≤3」只能按**切片 run** 计价才自洽；两个 cycle 同时活着时，**两边都可能派发同一片**（本轮规避方式：派发前先读该 issue 的状态与任务表，派发后立刻核对 run 数 = 恰好 +1）。
 - 本轮 4 门 base 复验（§35.2）也是这个节拍的产物：重叠期不做全量冷构建，避免和两片抢资源。
+
+---
+
+## 36. 13:30 cycle 落地记录（`LUM-1607`，2026-09-23 13:30Z / 21:30+08）—— 满位轮：base 复验 4/4 · 在飞三片体检 · 三条**新的合并期风险**取证（无 PR 可合，不派发）
+
+> 本轮与 13:00 cycle（`LUM-1602`，§35）**部分重叠**：它的 run 在 13:30 起跑时仍活着（§35.7 的节拍问题再次出现）。
+> 本轮 GH **0 open PR**、三片切片全在飞 ⇒ 没有合并可做；产出是**复验 + 体检 + 把三条会在合并期爆的风险提前钉死**。
+
+### 36.1 起手核对（13:30Z）
+
+- base `4780b33`（§35 的 docs-only 提交，`git fetch` 后无新提交）。GH open PR = **0**（`pulls?state=open` 返回 `[]`）。
+- 活 run = **4**（`multica daemon status`：`active_task_count=4` / `running_task_count=4`）= 本 cycle + 三片切片，
+  切片位 **3/3 满** ⇒ 本轮**不派发**（口径见 §35.5：`≤3` 只按切片 run 计价）。
+- 资源：`df -h /` = 49G 总 / 21G 已用 / **26G 可用**；`uptime` load 1.88（32 核，算力充裕）。
+- 三片 workdir 的 `target/` 实测 `6.1G + 2.7G + 2.2G = 11.0G`（都在构建中，非冷启动）；按 §33.2 的 7.6G/棵估算
+  峰值 ≈23G ⇒ 26G 余量够，但**下一轮跑合并树的 `--with-db` 全量门禁前必须重新取 `df`**（那条链要再吃一棵树）。
+
+### 36.2 base 复验 —— 4 门（沿用 §35.2 口径）
+
+```
+MULTICA_TEST_DATABASE_URL=postgres://mc_lum1607:<pw>@127.0.0.1:5432/multica_lum1607 \
+  bash scripts/gates.sh --only fmt,route-parity,file-size,schema-drift
+①  fmt 0/1s  ⑦  route-parity 0/1s  ⑩  file-size 0/0s  ⑧  schema-drift 0/24s
+overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-base.log` 全量 tee）
+```
+
+- ⑦ 当轮读数（只取本轮日志）：`upstream 456 (commit f41fae6b08fb) | local 300 registered | baseline 290` /
+  `implemented 241 real + 2 placeholder = 243/456` / `known_gap 213` / `unclaimed 0` / **`regression 0`** / `local_only 11`。
+  与 §35.1 逐字一致 ⇒ B 波三片的 WIP **没有**把键写进 base（基线与本地读数不变），也再次确认 §35.3 的
+  `baseline 290` 缺口（10 条 M4-4 chat 键仍不在基线里）——**本轮同样不动基线**（留给集成片）。
+- 真库：本轮**新建一次性** `multica_lum1607` / 角色 `mc_lum1607`（`CREATEDB`，⑧ 需要）。**不复用**
+  `multica_lum1563`：本轮实测 `pg_stat_activity` 里 `multica_lum1566`（M5-7 的库）正在被使用，说明
+  「各片自建一次性库」的派发纪律**真的被执行了**（不是纸面纪律），那就不要用共享库去插一脚。
+
+### 36.3 在飞三片体检（只读，未触碰任何 workdir）
+
+| 片 | issue | workdir / run | HEAD | 未提交 | 已提交净增 | 会话 |
+| --- | --- | --- | --- | --- | --- | :-: |
+| M5-1 | `LUM-1564` | `lum-1564-334607c0bcb3` / `01a0ce5c-9292` | `2764904` | `dto.rs` `error.rs` `mc-http/Cargo.toml` | 5 文件 / +1939 | 干净起手（daemon `dropping prior session`） |
+| M5-6 | `LUM-1565` | `lum-1565-dbfe130cf0b8` / `01a0ce59-6856` | `388086e` | 无 | 8 文件 / +2632 | `resume_session=false` |
+| M5-7 | `LUM-1566` | `lum-1566-e6b28b1a26b1` / `01a0ce60-fa30` | `33f6a0e` | `mc-repos/src/scheduler.rs`、`tests/` | 8 文件 / +2330 | `resume_session=false` |
+
+- **写集实测零交集**（与 §3.2 矩阵一致，逐文件复核）：M5-1 = `mc-autopilot/{cron.rs,cron/tests.rs,lib.rs,dto.rs,error.rs}` + `mc-repos/src/autopilot/**`；
+  M5-6 = `mc-autopilot/src/wakeup/**` + `mc-repos/src/wakeup/**`；M5-7 = `mc-repos/src/{scheduler.rs}` + `mc-scheduler/**`。
+  三片都**还没有**动 `mc-http` 的路由文件（`autopilots/list.rs` 等仍为空 router）⇒ 中段尚无冲突面。
+- 阶段：三片都过了「仓储层 + 纯单测」阶段（各自 2 个提交），正在写服务层/路由层。M5-1 进度最靠后
+  （`mc-http` 侧 0 行），M5-6 的提交树是干净的（处在两次提交之间的检查点）。
+- 耐久快照：上面三个 sha 是本轮结束时的可恢复点；若某片 session 再中毒，从这些 sha 续，不必重跑仓储层。
+
+### 36.4 新发现①（**合并期会红**）：`Cargo.lock` 已落后于 M5-1 的 `mc-http/Cargo.toml` 改动
+
+- 事实：M5-1 的未提交改动给 `crates/mc-http/Cargo.toml` 加了 `mc-autopilot = { path = "../mc-autopilot" }`
+  （理由写在注释里：`cron-preview` 要用 `mc_autopilot::cron`、`usage` 要用 `mc_autopilot::quota`；这是对
+  `docs/44` §3.1 的**补一条边** —— anchor 只声明了两个新 crate，漏了 `mc-http → mc-autopilot`）。
+- 但 base 的 `Cargo.lock` 里 `mc-http` 的 `dependencies` **没有** `mc-autopilot`（本轮逐行核对）。
+  ⇒ 一旦这条依赖生效，`Cargo.lock` 必须同步更新，否则**门 ② 直接红**：`cargo build --workspace --all-targets --locked`
+  对「lock 未更新」是硬失败（不是警告）。
+- 影响面（实测）：**只有 M5-1 会碰 `Cargo.lock`** —— M5-6 / M5-7 的提交与未提交 diff 里都没有任何
+  `Cargo.toml` / `Cargo.lock` 改动 ⇒ B 波**无锁文件碰撞**（R13 不适用于锁文件）。但 C/D 波要照同一判据复核。
+- **写进合并判据链（新增一条，硬性）**：M5-1 的 PR 进合并前必须核 `git show --stat` 含 `Cargo.lock`
+  且门 ② `--locked` 绿；若作者改用「把它算进 `mc-http` 的既有依赖」以外的绕法（例如把 `cron-preview`
+  解析搬到 `mc-autopilot` 内部不让 `mc-http` 依赖它）**也可以**，但**不能两者都不做**。
+- 附注：anchor `lib.rs` 的纪律是「`Cargo.lock` 由 M5-0 独占写、各切片不得再新增三方依赖」。本片加的是
+  **workspace 内 path 依赖**（非三方），方向无环（`mc-autopilot` 只依赖 `mc-core/mc-realtime/mc-repos/mc-telemetry`），
+  ⇒ 属于对 §3.1 的**补边**而非违反依赖纪律；`docs/46` M5-1 自己也登记了这条偏离（本轮已读其工作区）。
+
+### 36.5 新发现②（**约定破口**）：记录号 `docs/46` 被**两片同时占用**
+
+- M5-1 的代码注释指向 `docs/46-M5-1-READ-FACE.md`；M5-7 的 `crates/mc-repos/src/scheduler.rs:239` 指向
+  `docs/46-M5-7-SCHEDULER.md`（两片各自的文件都还没落地，§35.3 已预告「`docs/46` 已被 M5-7 占用」，
+  但 M5-1 的派发更早/更靠前的波内顺序让它也写了 46）。
+- git 层面**不冲突**（路径不同，两个文件能同时存在），⑩ 也不看 `docs/**` ⇒ 这是**纯约定破口**：
+  「一号一记录」被破坏，之后每个 cycle 的「取空号」都会算错。
+- **处置（本轮定死，合并时由 cycle 执行）**：按 B 波顺序（§4.3）分配 `46 = M5-1`、`47 = M5-6`、`48 = M5-7`。
+  即 **M5-7 的 PR 改名 `docs/46-M5-7-SCHEDULER.md → docs/48-M5-7-SCHEDULER.md`**，并同步改
+  `crates/mc-repos/src/scheduler.rs:239` 里那一处引用（若 M5-1 的 PR 先合，则由 cycle 在其后合 M5-7 时直接改；
+  若 M5-7 先合，则 M5-1 顺势用 47，规则同构 —— **先合者按上表占号，后合者让位**）。
+  `LUM-1476`（M4-INT）/ `LUM-1572`（M5-INT）/ `LUM-1580` 的记录号**仍不预设**（§34 的教训，落地当刻取空号）。
+
+### 36.6 新发现③（**C 波会撞**）：`mc-autopilot/src/error.rs` 是矩阵没登记的并发热点
+
+- anchor 已经把「`src/lib.rs` / `src/error.rs` / `src/dto.rs` 矩阵里没有对应行」这件事自己判给了 M5-1
+  （`src/lib.rs` 的表格 + `src/error.rs` 的「写者：M5-1（框架）」），**但同一段又写着**：「其余切片加自己的
+  错误变体时**只准加变体**，不改既有签名」⇒ 语义上是**多写者**。
+- B 波没事（只有 M5-1 写它：M5-1 未提交 diff = `error.rs +155`，M5-6/M5-7 不碰）。**C 波是 3 片真并行**
+  （`M5-2 ∥ M5-3 ∥ M5-4`），三片都需要「写面/trigger/dispatch」的错误语义（400/403/404/409），
+  最省事的做法就是各自往同一个 enum 尾部加变体 + 往同一个 `AutopilotError → ApiError` 映射里加 match 臂
+  ⇒ **三次同文件追加，PR 层必然文本冲突**（哪怕只是 enum 尾行与 match 尾臂）。
+- 同样模式的还有 `mc-http/…/autopilots/dto.rs`：矩阵判给 M5-1「**W**」、其余「读」⇒ 这条**已经**是单写者，
+  无需修；需要修的是 `error.rs`（以及 `dto.rs` 里「各片私有的形状」这条边界）。**C 波派发前必须把下面两条
+  写进每片的 DoD**：
+  1. **私有错误/形状放自己的文件**（anchor 已要求）；只有**跨切片共享**的变体才进 `mc-autopilot/src/error.rs`。
+  2. 若确实要进：**只在文件末尾追加**变体与 match 臂，**禁止**重排、重命名、改既有行（让冲突退化为「尾行相邻」，
+     由 cycle 在合并判据链里仲裁）。
+- 附：`docs/44` §3.2 已补一条「补记」指向本节（矩阵本体不改，避免与在飞 PR 的 docs 改动撞车）。
+
+### 36.7 并发账与「为什么本轮不派发」
+
+- 三片在飞 = **3/3**。用户约束「一次最多三个任务运行」的计价口径见 §35.5（切片 run）；本 cycle 自己的进程
+  不占切片位。**没有空位 ⇒ 不派发**，也不以「cycle 不算」为由塞第四片。
+- 后续就绪条件（下一轮起手照此判断）：① C 波前置是 **M5-1 合入**（它交付 `dto/access/quota` 三个共享面）；
+  ② `M4-INT`（`LUM-1476`）前置是「有片可集成」，且按 §35.6 第 4 条**排在 C 波之后**；
+  ③ `LUM-1580`（⑦ 正则修复）改的是门禁检测器语义，**不得**与任何基线刷新片批进同一次合并（R13）。
+
+### 36.8 下一轮起手（交接）
+
+1. 起手 `df -h /`（**<12G 不派**）→ `git fetch origin feat/multica-rs-initial` → GH `pulls?state=open`：
+   只要有 PR 就走 §34.1 判据链；**M5-1 的 PR 额外加核 §36.4 的 `Cargo.lock` / `--locked` 一条**。
+2. 合并顺序：先合者先占 `docs/46..48`（§36.5）；M5-7 若后合，改名 + 同步代码注释里那一处引用。
+3. 三片都合完 ⇒ 放 C 波 `M5-2 ∥ M5-3 ∥ M5-4`（3/3），派发 comment 必须带 §36.6 的两条 DoD 规则 +
+   §34.3 的运行纪律 + 自建一次性库。
+4. ⑦ 基线仍等集成片刷新（`local 300 / baseline 290`）；**不要在非集成轮动基线**（§35.3）。
+5. 门禁日志 `tee` 全量；⑦/⑨/⑩ 数字只取当轮日志。
