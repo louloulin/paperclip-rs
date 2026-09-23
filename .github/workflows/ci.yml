@@ -108,7 +108,7 @@ jobs:
         run: bash scripts/gates.sh --only db
 
       # ⑧ 与 ⑥ 的语义分工：⑥ 回答「迁移能跑 + e2e 能过」，⑧ 回答「跑出来的 schema 还是不是上游那份」。
-      # ⑧ 需要 `psql` 客户端（它对着上面的库 URL 建/删自己的 scratch 库 `schema_probe_w0b_drift`），
+      # ⑧ 需要 `psql` 客户端（它对着上面的库 URL 建/删自己的 scratch 库 `schema_probe_w0b_drift_<PID>`），
       # 而 ⑥ 只用 Rust 侧的 sqlx；ubuntu-latest 镜像自带 psql，这里只是把「镜像是精简版」的情形补上，
       # 不足则装 —— 让 ⑧ 因为「没 psql」而红，会把环境问题错报成 schema 问题。
       - name: "⑧ deps — psql client + python3 for schema-drift"

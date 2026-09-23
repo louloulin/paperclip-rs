@@ -14,6 +14,8 @@
 #   ⑤ test             cargo test --workspace                      （**不带** MULTICA_TEST_DATABASE_URL）
 #   ⑥ db               mc-migrate run --dir migrations + cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored
 #   ⑦ route-parity     python3 scripts/route_parity.py --quiet
+#                      + python3 scripts/slash_alias_audit.py --quiet（尾斜杠形态：⑦ 折叠 `/x` 与 `/x/`，
+#                        所以「只注册了带斜杠那一形态」它看不见；⑨ 的 fixture 里 0/58 用尾斜杠，同样看不见）
 #   ⑧ schema-drift     python3 scripts/schema_drift.py --quiet      （**需要** MULTICA_TEST_DATABASE_URL）
 #   ⑨ conformance      cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
 #   ⑩ file-size        python3 scripts/file_size_check.py --quiet    （R7 单文件 800 行硬上限）
@@ -44,10 +46,16 @@
 #     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库
 #     `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
 #     否则脚本 exit 2 → 本脚本记 FAIL（绝不静默跳过）。
+#     ✅ 那个 scratch 库名**默认带本进程 PID**（LUM-1463 修）⇒ 同一台 PG 上并发跑两个 ⑧ 各建各的库、不再互踩。
+#     ⚠️ 只有显式传同一个 `--db-name` 时才仍会互踩；写死名时代并发两片是 2/2 红（实测见 docs/37 §17）。
 #   * ⑩ 只看**跟踪的代码文件**（`git ls-files`，不含 `docs/**`），并把存量违规钉在
 #     `scripts/file_size_baseline.tsv` 里：清单外的文件不得超过 800 行，清单内的只允许变短，
 #     已达标或已消失的条目必须从清单里删掉。刷新清单用 `--write-baseline`（基线只减不增）。
 #     拆分大文件时 **改动会同时打到 mc-http 的热点文件**：拆完先跑 `--only file-size` 确认。
+#   * ⑦ 第二条命令（`slash_alias_audit.py`）的欠账钉在 `docs/fixtures/slash-alias-allowlist.tsv`：
+#     名单里的键只报不红（都是已知欠账，理由写在行尾），名单外的缺陷（MISSING_ALIAS /
+#     MISSING_EXACT）直接判红；**条目对应的键修好后必须删行**，残留的行会被当缺陷（exit 1），
+#     否则它会掩盖同一键的下一次回归。查清单外的缺口用 `--no-allowlist`。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -278,7 +286,8 @@ for gate in $SELECTED; do
                             cargo test --workspace ;;
         db)             run_db_gate ;;
         schema-drift)   run_schema_drift_gate ;;
-        route-parity)   run_gate route-parity python3 scripts/route_parity.py --quiet ;;
+        route-parity)   run_gate route-parity bash -c \
+                            'python3 scripts/route_parity.py --quiet && python3 scripts/slash_alias_audit.py --quiet' ;;
         # ⑨ 显式 --no-db + 剥掉库变量：见文件顶部「已知坑」。判据是 --check 的退出码
         # （report.json 逐字节比对，漂移 → 1，见 crates/mc-conformance/src/main.rs）。
         conformance)    run_gate conformance env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL \

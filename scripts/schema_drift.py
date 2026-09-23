@@ -84,7 +84,9 @@ from schema_snapshot import (  # noqa: E402  (path juggling is deliberate)
 
 ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_DB_NAME = "schema_probe_w0b_drift"
+#: 默认名带本进程 PID：写死名在同一台 PG 上并发跑两个 ⑧ 必互踩（后到者 `CREATE DATABASE` 撞重名 / 或把对方的库 DROP 掉）
+#: ⇒ 180ms 内 exit 2，而 exit 2 在门 ⑧ 里记 FAIL ⇒ **假红**。实测与修法见 docs/37 §17。
+DEFAULT_DB_NAME = f"schema_probe_w0b_drift_{os.getpid()}"
 DEFAULT_MIGRATIONS = "migrations"
 DEFAULT_UPSTREAM_MIGRATIONS = "migrations/upstream"
 DEFAULT_UPSTREAM_SCHEMA = "contracts/upstream-schema.json"
@@ -620,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
         "is created next to it (env: MULTICA_TEST_DATABASE_URL).  The password reaches the psql "
         "child through PGPASSWORD, never through its argv, so it cannot show up in `ps`.",
     )
-    ap.add_argument("--db-name", default=DEFAULT_DB_NAME, help="name of the scratch database")
+    ap.add_argument("--db-name", default=DEFAULT_DB_NAME, help="scratch database name (default: base + PID)")
     ap.add_argument("--migrations", default=str(ROOT / DEFAULT_MIGRATIONS))
     ap.add_argument("--upstream-migrations", default=str(ROOT / DEFAULT_UPSTREAM_MIGRATIONS))
     ap.add_argument("--upstream-schema", default=str(ROOT / DEFAULT_UPSTREAM_SCHEMA))

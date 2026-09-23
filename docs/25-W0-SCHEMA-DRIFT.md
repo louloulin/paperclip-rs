@@ -164,7 +164,7 @@ side B（上游）  contracts/upstream-schema.json （入库的 baseline；CI �
 
 ### 4.5 对账环境
 
-`scripts/schema_drift.py` 自己建 scratch 库（默认 `schema_probe_w0b_drift`，`--db-name` 可改），跑完自动 drop。
+`scripts/schema_drift.py` 自己建 scratch 库（默认 `schema_probe_w0b_drift_<本进程 PID>`，`--db-name` 可改；带 PID 是为了并发跑两份不互踩），跑完自动 drop。
 
 ```bash
 python3 scripts/schema_drift.py --db-url …            # 人读报告，exit 0/1/2

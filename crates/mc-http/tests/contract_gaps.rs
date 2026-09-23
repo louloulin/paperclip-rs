@@ -1,6 +1,6 @@
 //! M1-E（LUM-1362）契约缺口补齐的端到端测试。
 //!
-//! 覆盖上游 `server/cmd/server/router.go` 与 M1 合并树之间的 5 个差异：
+//! 覆盖上游 `server/cmd/server/router.go` 与 M1 合并树之间的 6 个差异：
 //!
 //! | # | 差异 | 本文件中的用例 |
 //! | --- | --- | --- |
@@ -9,6 +9,7 @@
 //! | 3 | 缺 `DELETE /api/workspaces/{id}/members/{memberId}` | `delete_member_*` |
 //! | 4 | PAT 路径偏离（`/api/me/pats` → `/api/tokens`） | `tokens_*` |
 //! | 5 | 多出 `POST /api/auth/{login,session}` 幽灵占位 | `ghost_auth_placeholders_are_gone` |
+//! | 6 | 尾斜杠形态（chi `Mount` 两种形态都服务，axum 只注册一个就 404） | `trailing_slash_alias_forms_are_mounted` |
 //!
 //! PAT 用例**同样需要真实 PG**：M1-F（LUM-1375）起 `/api/tokens*` 直连
 //! `personal_access_token` 表（`mc_repos::pat::PatRepo`），不再走 `InMemoryPatStore`，
@@ -367,6 +368,68 @@ async fn ghost_auth_placeholders_are_gone() {
             res.status()
         );
     }
+}
+
+// ===========================================================================
+// 差异 6：尾斜杠形态（LUM-1456 / `docs/37` §15）（无 DB）
+// ===========================================================================
+
+/// 上游 chi 的 `r.Route(P, fn)` 走 `Mount`，对 `<P>` 与 `<P>/` **都**服务；axum 0.7 不做
+/// 归一化，少注册一个键就把上游合法路径变成 404（matchit 0.7.3 `MissingTrailingSlash`
+/// → axum 0.7.9 并成 `Err` → 404，**不是** 307 重定向）。
+///
+/// 判据是「两种形态状态码相同 **且** 主形态不是 404」：别名没挂时就是「主形态 401 / 别名
+/// 404」，所以本用例在没有别名的树上必红（本 PR 之前实测如此）。⑦ 与 ⑨ 结构上看不见这
+/// 一类：⑦ 把 `/x` 与 `/x/` 折叠成同一个键，⑨ 的 58 条 fixture 里一条都没用尾斜杠。
+///
+/// 为何带 `#[ignore]`：本文件整体 `#![cfg(feature = "test-util")]`，而门禁里 ⑤ 不带该
+/// feature、⑥ 只跑 `--ignored` —— 不加 `#[ignore]` 的同文件用例在门禁里根本不会执行。
+/// 本用例自己**不需要**库（`Db::placeholder()`），挂 `#[ignore]` 纯粹是为了被 ⑥ 跑到。
+///
+/// `comments.rs` 的 `PUT|DELETE /api/comments/{id}/` 不在表里：那个文件已顶到 gate ⑩ 的
+/// 基线（831/831），补键必须与拆分同 PR，已连同 `issues/mod.rs` 的 7 键记在
+/// `docs/fixtures/slash-alias-allowlist.tsv`（owner `LUM-1458`）。
+#[tokio::test]
+#[ignore = "在 test-util 门控的集成测试文件里；门禁中只有 ⑥（--ignored）会执行它"]
+async fn trailing_slash_alias_forms_are_mounted() {
+    let app = app(Db::placeholder());
+    let ws = format!("/api/workspaces/{}", Uuid::new_v4());
+    let member = format!("{ws}/members/{}", Uuid::new_v4());
+    for (method, primary) in [
+        ("GET", "/api/workspaces".to_string()),
+        ("POST", "/api/workspaces".to_string()),
+        ("GET", ws.clone()),
+        ("PATCH", ws.clone()),
+        ("PUT", ws.clone()),
+        ("DELETE", ws.clone()),
+        ("PATCH", member.clone()),
+        ("DELETE", member.clone()),
+        ("GET", "/api/tokens".to_string()),
+        ("POST", "/api/tokens".to_string()),
+    ] {
+        let alias = format!("{primary}/");
+        let primary_status = status_of(&app, method, &primary).await;
+        let alias_status = status_of(&app, method, &alias).await;
+        assert_ne!(
+            primary_status,
+            StatusCode::NOT_FOUND,
+            "{method} {primary} 本身就没挂（404）—— 这条用例的前提不成立"
+        );
+        assert_eq!(
+            alias_status, primary_status,
+            "{method} {primary} → {primary_status}，但 {alias} → {alias_status}：尾斜杠别名没注册"
+        );
+    }
+}
+
+/// 不带任何凭据的请求：`AuthUser` 提取器在触库之前就 401，所以 `Db::placeholder()` 够用。
+async fn status_of(app: &Router, method: &str, uri: &str) -> StatusCode {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap().status()
 }
 
 // ===========================================================================

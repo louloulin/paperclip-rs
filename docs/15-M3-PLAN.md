@@ -646,7 +646,13 @@ python3 scripts/route_parity.py --json | python3 -c "import json,sys;r=json.load
 3. **W3a 三片**（M3-1/2/3）同时以 `backlog` 建 issue，带 §4 的字段；晋升为 `todo` 时逐个 `multica issue rerun <id>`（`multica issue assign --to-id` **只记归属、不排 run**）。
 4. **W3b 三片**在 **W0-B2（LUM-1387）合入后**立项（M3-6 另需 M3-3 合入）。
 5. **W3c 两片**串行：M3-7 合入后 M3-8 的批 1 才能起（M3-8 的三批各自独立 PR 与晋升）。
+   **2026-09-23 07:15 就地修订**：**只对批 1 解除**该前置 —— 批 1（`LUM-1441`，写集 `crates/mc-runtime/**`）与 M3-7 零文件相交，
+   且 §37 §5.4 实测「`AgentType → ProtocolFamily` 映射不存在」而 M3-7 的 hub 协商要按族决策 ⇒ 该表是 M3-7 的**前置**，
+   先落批 1 是拆前置。`LUM-1440`（execenv，与 M3-7 共用 `mc-daemon/src/lib.rs` + `Cargo.toml`）与批 2/3 仍按本条串行。
+   依据与实测见 `docs/37-M3-W3C-PREFLIGHT.md` §16.1。
 6. **M3 集成 cycle**：按 §8.3 出门禁 → 一次性刷新 parity baseline → 写 `docs/34-M3-INTEGRATION.md`（照 `docs/21-M2-INTEGRATION-RECIPE.md` 的配方）→ 契约等价率按 §8.5 口径提升。
+   **2026-09-23 新增纪律**（见 `docs/37` §16.2）：**切片 PR 不刷 `docs/fixtures/route-parity-baseline.json`** —— 一次性刷新就是本条的活；
+   切片各刷一遍会让每两个改路由的切片 PR 必冲突（PR #31 × #32 实测同一 JSON 列表尾部相邻追加）。切片只跑门禁：⑦ 是**下界锁**，只对**丢**路由判红。
 
 ### 10.3 本 issue（LUM-1357）范围说明
 

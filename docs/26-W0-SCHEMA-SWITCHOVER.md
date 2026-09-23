@@ -205,10 +205,12 @@ OK — every difference is registered
 * **`assignee_id` 形态校验已由 LUM-1410 落地**：`routes/issues/helpers.rs::validate_assignee_target` 移植了上游
   `validateAssigneePair`（形态非法 → 400，且在写库之前）；本片在 rebase 后跑门 ⑥ 时发现其中 `squad` 分支读的是旧列
   `leader_agent_id`（上游 `leader_id`）⇒ 见下方越界条目；
-* **⑧ drift 的固定名 scratch 库在并发下会假红**：`schema_snapshot.ScratchDatabase` 进入时 `DROP DATABASE IF EXISTS
-  schema_probe_w0b_drift` + `CREATE`，两个 drift 进程同时跑会互相把对方的 scratch 库删掉，对端读到半成品 schema ⇒ 报
-  "未登记差异"、exit 1。本片遇到过一次，单独复跑 ⑧ 与整轮 `--with-db` 都是 exit 0（已 10/10）；
-  修法（未做，属 `scripts/schema_snapshot.py`，该文件已在 800 行上限）＝ scratch 名带上 PID；
+* **⑧ drift 的固定名 scratch 库在并发下会假红 —— 已修（LUM-1463）**：`schema_snapshot.ScratchDatabase` 进入时 `DROP DATABASE IF EXISTS
+  schema_probe_w0b_drift` + `CREATE`，两个 drift 进程同时跑会互相把对方的 scratch 库删掉 ⇒ 对端读到半成品 schema 而报“未登记差异”。
+  本片当时遇到的症状就是 exit 1（单独重跑 ⑧ 与整轮 `--with-db` 都是 exit 0，已 10/10）；LUM-1463 把并发复现出来，拿到两种更早的症状：
+  后到者在 `CREATE DATABASE` 上撞重名（0.6s exit 2），先到者在 `002_agent_config.up.sql` 上撞 `FATAL: database … does not exist`（24s exit 2）。
+  **修法**：只改默认值——`scripts/schema_drift.py::DEFAULT_DB_NAME = f"schema_probe_w0b_drift_{os.getpid()}"`（`--db-name` 仍可显式覆盖；
+  该文件 797 → 799 行 ≤ 800，**没碰**已在 800 行上限的 `schema_snapshot.py`，也没给它加白名单）。实测修前 2/2 红、修后 2/2 绿（`docs/37` §17.1）；
 * **越界最小改动**（都不在 `mc-repos/**`、`migrations/**`、`mc-db`、`mc-migrate` 写集内，但被上游 `NOT NULL`/类型逼出来，
   已逐条在 PR 里说明）：
   * `crates/mc-http/src/routes/auth.rs`：`#[ignore]` 测试夹具的 `verification_code.code_hash` → `code`；
