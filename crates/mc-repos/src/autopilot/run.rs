@@ -25,9 +25,10 @@
 //!
 //! `CreateAutopilotTask` 的 `originator_*` / `accountable_*` / `rule_version_id` 三件套由
 //! `mc-autopilot::dispatch` 判定后传进来；本文件只负责绑参。见 `docs/44` §8 的偏差登记：
-//! 本仓**没有** `autopilot_rule_version` 的发布链（MUL-4302 §3.4），因此 `rule_version_id`
-//! 恒为 `NULL`，`originator_source` 取值 `direct_human` / `trigger_owner` / `rule_owner` /
-//! `unattributed`。
+//! 本仓**没有** `autopilot_rule_version` 的写入链（MUL-4302 §3.4 的发布链不属 M5）
+//! ⇒ [`lookup_sql::load_active_rule_version`] 实测恒空，`rule_version_id` 遂恒为 `NULL`；
+//! 读写两条路都已就位，发布链一到位归属立刻生效。`originator_source` 取值
+//! `direct_human` / `trigger_owner` / `rule_owner` / `owner_fallback` / `unattributed`。
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -595,7 +596,14 @@ pub async fn create_task(conn: &mut PgConnection, new: &NewAutopilotTask) -> Res
     .await
     .map_err(map_sqlx_err)
 }
-// `create_issue` 线的 SQL 拆到子模块 `run/issue_sql.rs`（R7 800 行硬上限；拆法见该文件头）。
+// 派发链的**只读**邻表查询拆到子模块 `run/lookup_sql.rs`（R7 800 行硬上限；拆法见该文件头）。
+mod lookup_sql;
+pub use lookup_sql::{
+    effective_issue_status, load_active_rule_version, load_agent, load_issue_origin,
+    load_project_binding, load_trigger_timezone, resolve_assignee_leader,
+    workspace_attribution_fail_closed, AssigneeLeader, AutopilotProjectBinding,
+};
+// `create_issue` 线的 SQL 拆到子模块 `run/issue_sql.rs`（同上）。
 mod issue_sql;
 pub use issue_sql::{
     find_recent_duplicate_issue, insert_issue, insert_issue_subscribers, lock_duplicate_key,
