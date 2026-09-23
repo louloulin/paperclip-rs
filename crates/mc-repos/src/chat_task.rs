@@ -1,27 +1,78 @@
-//! M4 anchor scaffold（LUM-1470）：`chat_task` 仓储 —— **占位，无实现**。
+//! M4-4（LUM-1475）：`chat_task` 仓储 —— chat 派发面的任务队列读写。
 //!
-//! 归属：M4-4（`docs/42-M4-PLAN.md` §4.2 写集矩阵）。填充内容 = 派发面的任务队列读写：
-//! `SendChatMessage` → `EnqueueChatTask`（上游 `chat.go:1728`）、pending / queued 的查询与
-//! `queued-tasks{clear,prioritize}`，覆盖 `router.go` #8–#9、#13–#15、#19–#20。
+//! 覆盖 10 条 M4-4 路由里**需要落库**的那些：
 //!
-//! ⚠️ 跨波依赖（`docs/42` §4.3 第 1/2 条，必须登记）：
-//! 1. 本模块**读写的是 M3 的表** `agent_task_queue`（领域层 `mc-task` 已合、任务队列用户面
-//!    M3-6 已合）。⇒ 状态取值与列必须对齐 `mc_task::status::TaskStatus` 与上游迁移的
-//!    CHECK 约束；**本仓 `migrations/0001_init.up.sql:230` 的 CHECK 是错的**，不能当契约
-//!    （见 `crates/mc-task/src/lib.rs` 的模块文档）。
-//! 2. ws 广播（`BroadcastTaskQueued` / `chat:done`）属 M3-7 的 notifier —— 本模块只负责
-//!    落库与读回，**不自己发事件**（发事件在 `mc-http` 的路由层）。
+//! | 路由 | 上游 handler | 本模块入口 |
+//! | --- | --- | --- |
+//! | `POST /api/chat/sessions/:id/messages` | `chat.go:800` | [`ChatTaskRepo::send_direct_chat_message`] |
+//! | `POST /api/chat/sessions/:id/onboarding` | `mika_onboarding.go` | [`ChatTaskRepo::start_mika_onboarding`] |
+//! | `GET /api/chat/sessions/:id/pending-task` | `chat.go:1610` | [`ChatTaskRepo::pending_tasks_for_session`] |
+//! | `DELETE /api/chat/sessions/:id/queued-tasks` | `chat.go:1738` | [`ChatTaskRepo::clear_queued_tasks`] |
+//! | `POST /api/chat/sessions/:id/queued-tasks/:taskId/prioritize` | `chat.go:1650` | [`ChatTaskRepo::prioritize_queued_task`] |
+//! | `GET /api/chat/pending-tasks` | `chat.go:1494` | [`ChatTaskRepo::pending_tasks_by_creator`] |
+//! | `GET /api/chat/pending-tasks/has-any` | `chat.go:1550` | [`ChatTaskRepo::has_pending_tasks_by_creator`] |
 //!
-//! 上游真值：`server/pkg/db/queries/chat.sql` 的 task/queue 部分 +
-//! `task_message.sql`（98 行 / 5 条 query，`task_message` 只读）。
+//! 上游真值：`server/pkg/db/queries/chat.sql`（task 面）+ `agent.sql:1696/1709` 的取消族
+//! + `attachment.sql:115/173` 的附件绑定族 + `service/task.go` 的四个事务
+//! （`SendDirectChatMessage` / `OpenMikaOnboardingChat` / `CancelQueuedChatTasks` /
+//! `PrioritizeQueuedChatTask` 的 handler 事务）。
 //!
-//! 约定与 M1/M2/M3 各 Repo 保持一致（见 `crate::task` / `crate::agent`）：
-//! - `Row` 用原始 `Uuid`/`String` 字段 + `Id` / 领域类型访问器，手写 `sqlx::FromRow`
-//!   （`mc_core::Id` 没有 sqlx impl）
+//! ⚠️ 跨波依赖（`docs/42` §4.3 第 1/2 条）：
+//! 1. 本模块**读写 M3 的表** `agent_task_queue`（领域层 `mc-task`、用户面 M3-6 都已合）。
+//!    状态取值对齐上游 CHECK（`contracts/upstream-schema.sql:1056`）；
+//!    **本仓 `migrations/0001_init.up.sql:230` 的 CHECK 是错的**，不能当契约。
+//! 2. ws 广播（`BroadcastTaskQueued` / `chat:done` / `agent:status`）属 **LUM-1506**
+//!    （M3-7-fu）—— 本模块只落库与读回，**不发事件**；`chat:message` 广播同样登记为 gap
+//!    （`docs/45` §known_gap）。
+//!
+//! 约定与 M1/M2/M3 各 Repo 一致（见 `crate::task` / `crate::agent`）：
+//! - `Row` 用原始 `Uuid`/`String` 字段（`mc_core::Id` 没有 sqlx impl ⇒ 手写 `FromRow`）
 //! - 错误统一走 `crate::workspace::map_sqlx_err`
 //! - Pg 实现 + `#[ignore]` 的 PG 集成测试（`MULTICA_TEST_DATABASE_URL`，不允许静默跳过）
 //!
-//! 硬约束：**不引入本仓自造列**（尤其 `mc-task` 模块文档列出的 8 个自造列）；不加迁移；
-//! `idx_one_pending_task_per_issue` 这类部分唯一索引若被本片触及，必须在 DB 测试里**真实触发**。
+//! 硬约束：**不引入本仓自造列**；不加迁移；锁顺序照上游（`chat_session` → `agent` →
+//! `agent_task_queue`）。
 //!
-//! scaffold 阶段本文件只有文档注释，避免 M4-3 / M4-4 同时编辑 `crate::lib`。
+//! 文件切分（每个文件都远低于 800 行门）：`support.rs` 共享投影与错误、
+//! `send.rs` 发送事务、`queue.rs` pending / prioritize / clear、`onboarding.rs` Mika 引路。
+
+mod onboarding;
+mod queue;
+mod send;
+mod support;
+
+pub use onboarding::UserOnboardingRow;
+pub use support::{
+    ChatSendError, ChatTaskRow, CreatorPendingChatTaskRow, DirectChatSend, DirectChatSendResult,
+    OnboardingOpenResult, PendingChatTaskRowData, PrioritizedChatTaskRow, PriorityError,
+    PriorityOutcome, StartOnboardingOutcome,
+};
+
+use mc_db::Db;
+
+use crate::RepoWithDb;
+
+/// chat 任务的固定优先级（上游 `service/task.go` 的 `priorityToInt("medium")`）。
+///
+/// 与 `mc_chat::task::PRIORITY_CHAT` 同值；本仓储不引 `mc-chat` 依赖边
+/// （`crate::chat_session` 的先例），所以各自持有一份字面量。
+pub const PRIORITY_CHAT: i32 = 2;
+
+/// chat 派发面的仓储句柄。
+#[derive(Debug, Clone)]
+pub struct ChatTaskRepo {
+    db: Db,
+}
+
+impl ChatTaskRepo {
+    /// 用连接池构造。
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
+}
+
+impl RepoWithDb for ChatTaskRepo {
+    fn db(&self) -> &Db {
+        &self.db
+    }
+}
