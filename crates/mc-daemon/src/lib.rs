@@ -16,8 +16,11 @@
 //!
 //! ## 不在本切片
 //!
-//! - **执行环境**（`src/execenv/`，上游 99 文件）：M3-8（`LUM-1440`），与本模块共用
-//!   这个 `lib.rs` 与 `Cargo.toml`，所以两者是**串行**关系，不能并行开工。
+//! - **执行环境**（`src/execenv/`，上游 99 文件 / 47,336 行）：M3-8-p0（`LUM-1440`）
+//!   已落地**隔离与生命周期内核**（路径守卫 / `.task_lock` / task 临时目录与 GC /
+//!   prepare 的 RAII 回滚），未落地的 provider 配置与 skill 子域逐条记在
+//!   `docs/33-M3-ADAPTERS.md`。该片与本模块共用这个 `lib.rs` 与 `Cargo.toml`，
+//!   所以两者是**串行**关系，不能并行开工。
 //! - **WS 客户端**（`daemon:rpc_request` 帧）：本 crate 的 `tokio-tungstenite` 依赖是
 //!   给 M3-8 的连接管理预声明的；M3-7 只实现 HTTP 腿。RPC 腿要做的就是再写一个
 //!   [`DaemonTransport`] 实现 —— 客户端逻辑一行不改。
@@ -30,6 +33,7 @@
 //! 侧 DTO 重复定义、D-10 `reqwest` 依赖等），不在代码里静默省略。
 
 pub mod client;
+pub mod execenv;
 pub mod state;
 pub mod transport;
 pub mod wire;

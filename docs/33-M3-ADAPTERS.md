@@ -862,3 +862,115 @@ overall: PASS — 8/8 gate(s) green in 98s
   `acp_core` **内部**的（批 2 的 6 家与 `pi_local` 零改动）。
 - 不改 `docs/fixtures/route-parity-baseline.json`、不改 `crates/mc-conformance/report.json`。
 - 不改 `docs/16` 的协议冻结常量、不改 `docs/15` §6 的名单（批 3 这 9 项本来就是名单成员）。
+
+---
+
+## 12. M3-8-p0 落地记录（`LUM-1440`）—— execenv 隔离与生命周期内核
+
+上游面实测（只读 clone `louloulin/multica` @ `90e0bdf`，`server/internal/daemon/execenv/`）：
+**99 个文件 = 42 个非测试文件 / 17,413 行 + 57 个测试文件 / 29,923 行**。上游这一层同时承担
+「provider 配置生成」「skill 落盘与剥离」「会话/记忆」「worktree/身份」「Windows 面」五件事，
+单片全部移植既不可能也不该做（写集与并发都撑不住）。本片按 `docs/15` §6 M3-8 的意图，先落地
+**所有 provider 都必须站在上面的那块地基**：隔离、锁、每 task 临时目录、prepare 的清理语义。
+
+### 12.1 上游文件 → 本地模块映射
+
+| 上游 | 行 | 本地 | 状态 |
+|------|----|------|------|
+| `isolation.go` | 299 | `crates/mc-daemon/src/execenv/path.rs` | 路径守卫部分已落地（子进程准备助手协议未落地） |
+| `isolation_unix.go` | 39 | `execenv/path.rs` / `execenv/lock.rs` | 已落地（`flock` 语义，见 D-1） |
+| `reclaimable.go` | 16 | `execenv/mod.rs`（`managed_reclaimable_artifact_subpaths`） | 已落地 |
+| `task_temp.go` | 332 | `execenv/temp.rs` | 已落地（前缀 / 内容优先删除 / 死者 GC / legacy TTL） |
+| `envlock_unix.go` | 37 | `execenv/lock.rs` | 已落地（`.task_lock`，claim→rename 发布） |
+| `gitroot_lock.go` | 249 | `execenv/lock.rs` | 锁原语已落地；git root 的具体挂载点归 p3 |
+| `execenv.go` | 1672 | `execenv/guard.rs` | 仅 `defer` 清理语义已落地（`PreparedEnv` 事务）；provider 装配归 p1/p3 |
+| 其余 35 个非测试文件（≈ 15.0k 行） | | — | **未落地**，分组见 §12.5 |
+
+本片产出 638 行 Rust（`mod.rs` 80 + `path.rs` 131 + `lock.rs` 140 + `temp.rs` 240 + `guard.rs` 84 ≈ 675 含测试），
+对应上游约 780 行（`isolation*.go` + `task_temp.go` + `reclaimable.go` + `envlock_unix.go` + 锁原语部分）。
+
+### 12.2 issue 的三条硬约束落在哪
+
+1. **先 canonical 化再判前缀，绝不直接拼用户输入**：`EnvRoot::join_checked` 先做语法层拒绝
+   （绝对路径、任何 `..`），再由 `EnvRoot::assert_inside` 做语义层复核——**逐段解析符号链接**，
+   每一跳都要求仍在 root 内。两个容易写漏的形态各有一条单测钉住：指向 root 外的链接要拒（含
+   `canonicalize` 失败的**悬空链接**——只解析「最深已存在祖先」的实现会把它误放行），指向 root
+   **之内**的链接要放行（上游 `codex_home_link.go` 依赖这个形态）。测试：
+   `join_checked_rejects_traversal_and_absolute_paths`、`join_checked_resolves_symlinks_before_prefix_check`。
+2. **凭据只经 `mc-telemetry` 的 redaction 通道**：本片**没有**引入任何凭据注入代码路径
+   （上游承载它的 `codex_shell_env.go` / `runtime_config*.go` 归 p1），因此没有新增明文泄漏面；
+   同时把「本层只记录路径与错误类型、从不把文件内容写进日志」钉成一条测试
+   （`execenv_errors_never_echo_file_contents`）。**这是一条未覆盖项而非已满足项**：p1 落地注入面时
+   必须走 redaction 通道，不得复用本层的 `tracing` 直写。
+3. **`defer` 式清理 + 「准备中途失败不留残留」**：`PreparedEnv` 用 RAII 覆盖三条路径——
+   显式 `cleanup()`、`prepare` 中途 `Err` 导致的 `Drop` 回滚、以及持有者进程死亡后由 GC 回收
+   （内核释放 `.task_lock`）。回滚不依赖「反向步骤清单」：所有产物都在 task 临时目录子树内，
+   所以回滚 = 放锁 + 删这一个目录，不会漏掉某一步写得隐晦的中间文件。测试：
+   `prepare_failure_midway_leaves_no_residue`（用越界 `layout` 在**已建目录之后**触发失败，
+   断言基目录为空）、`prepare_creates_layout_under_canonical_root_and_cleans_up_without_residue`。
+
+另外把上游两条容易被顺手改坏的不变量写成了代码不变量：
+
+- **删除顺序**：先内容、再标记、最后目录本身，且在第一个删不掉的内容上**停**——上游明确解释了
+  为什么不能用 `remove_dir_all`（它遇错继续，会把 `.task_lock` 一起删掉，于是目录退化成
+  「无法与遗留物区分的无标记目录」）。同理，**目录删不掉时把标记放回去**，否则「清理走得最远」
+  的那种失败反而成为唯一永久泄漏的一种。
+- **GC 只碰死者**：`ExecutionLock::probe` 锁 `.task_lock` 本身（**不能**用 claim 路径——那会给
+  自己另开一个 inode，对「标记是否仍被持有」毫无判断力，本条曾是本片的真实实现 bug，被测试抓出）；
+  锁不上就是有人在用（包括同机另一个 daemon 的 task，任何进程内 active 集合都看不见它）。
+  没有标记的遗留物只在「有内容且超龄」时回收，因为刚创建、还没发布标记的目录里不可能有 task 内容。
+
+### 12.3 与上游的刻意偏离
+
+- **D-1 锁实现**：用 Rust 1.89 稳定的 `std::fs::File::try_lock`（安全代码、零新依赖，
+  `Cargo.lock` 无 delta）取代上游的 `flock(2)`。语义等价（随文件描述与进程释放、非阻塞探测）
+  但**高于本仓 `rust-version = 1.80`**。若后续要求回到 1.80，正确做法是加 `rustix` 这类依赖
+  （本仓 `unsafe_code = "forbid"`，自写 FFI 不可行）——属于依赖仲裁，留给集成 owner。
+- **D-2 符号链接解析粒度**：上游 `canonical_path.go`（在**父目录** `daemon/`，不在 execenv）在
+  拼接点上解析；本实现逐段解析并逐跳复核前缀，更严。代价是 root 内链接必须指向 root 内路径。
+- **D-3 不接线**：本片 0 路由、0 迁移、0 DB，也没有把 execenv 接进 daemon 主循环——接线属于
+  M3-8 后续片与 http 侧写集（`mc-http/src/routes/daemon/**`），本片只交付库侧内核。
+- **D-4 符号链接删除**：`remove_task_temp_dir` 对符号链接按**链接本身**删除（不跟随），
+  避免把 root 之外的目标卷进删除面。
+
+### 12.4 测试与门禁证据
+
+新增 `crates/mc-daemon/tests/execenv_prepare.rs` 共 **9 条**（全部为真文件系统测试，
+不需要数据库/外部二进制，因此**没有** `#[ignore]`）：
+
+`prepare_creates_layout_under_canonical_root_and_cleans_up_without_residue`、
+`prepare_failure_midway_leaves_no_residue`、`join_checked_rejects_traversal_and_absolute_paths`、
+`join_checked_resolves_symlinks_before_prefix_check`（`cfg(unix)`）、
+`execution_lock_is_exclusive_and_released_on_drop`、`task_temp_dir_removal_is_content_first_and_idempotent`、
+`prune_reclaims_dead_dirs_and_keeps_live_ones`、`prune_honours_legacy_ttl_for_unmarked_dirs`、
+`execenv_errors_never_echo_file_contents`。
+
+### 12.5 后续切片建议（按上游行数分组，供派发用）
+
+| 建议切片 | 上游组成 | 行数 |
+|----------|----------|------|
+| **p1 provider 配置生成** | `openclaw_config.go` 1868 + `codex_home.go` 1415 + `runtime_config_sections.go` 1105 + `codex_sandbox.go` 509 + `runtime_config.go` 406 + `openclaw_config_cache.go` 340 + `codex_memory.go` 343 + `codex_shell_env.go` 300 + `codex_multi_agent.go` 238 + `openclaw_shim.go` 153 + `codex_user_skills.go` 106 + `codex_skill_strip.go` 87 + `runtime_config_kind.go` 72 + 链接/残留 45 | ≈ 6,987 |
+| **p2 会话 / 记忆 / 提示词** | `context.go` 996 + `hermes_home.go` 925 + `hermes_memory.go` 487 + `hermes_sessions.go` 482 + `reply_instructions.go` 388 + `cursor_mcp.go` 361 + `issue_state_instructions.go` 81 + `omp_mcp.go` 33 | ≈ 3,753 |
+| **p3 worktree / 身份 / skill 策略 / Windows** | `local_worktree.go` 1738 + `sidecar_manifest.go` 469 + `root_identity.go` 399 + `reasonix_user_config.go` 278 + `git.go` 243 + `envlock_windows.go` 66 + `isolation_windows.go` 123 + `runtime_skill_policy.go` 159 + `skill_visibility.go` 99 + `channel_type.go` 134 + `reasonix_permissions.go` 192 + `qwenpaw_workspace.go` 129 | ≈ 4,029 |
+| 余量 | `execenv.go` 剩余装配面、`gitroot_lock.go` 挂载点 | ≈ 1.6k |
+
+合计数与 17,413 的差额（≈ 1.0k）是 `task_temp.go` 等已被本片覆盖的部分。
+p1 与 p3 都会改 `crates/mc-daemon/src/lib.rs` 与 `Cargo.toml` ⇒ **本片是它们的串行前置**。
+
+门禁（本片提交前实测，`PATH="$HOME/.cargo/bin:$PATH" bash scripts/gates.sh`）：
+
+```
+  #  gate               exit   time  result
+  ①  fmt                   0     1s  PASS
+  ②  build                 0     0s  PASS
+  ③  clippy                0     1s  PASS
+  ④  clippy-test-util      0     0s  PASS
+  ⑤  test                  0    28s  PASS
+  ⑦  route-parity          0     0s  PASS
+  ⑨  conformance           0     5s  PASS
+  ⑩  file-size             0     0s  PASS
+  overall: PASS — 8/8 gate(s) green in 35s
+```
+
+（首次全量跑时 ① 因一处 rustfmt 折行红了，`cargo fmt --all` 后 ①/⑤/⑩ 单独重跑绿，随后 8/8 全绿一遍。）
+`Cargo.lock` **无** delta（`cargo build --locked` 直接过）；本片无 DB 断言，故未跑 `--with-db`。
