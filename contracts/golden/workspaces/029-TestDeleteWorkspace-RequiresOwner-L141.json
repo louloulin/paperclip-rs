@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "workspaces/TestDeleteWorkspace_RequiresOwner@server/internal/handler/workspace_test.go:141#29",
+  "method": "DELETE",
+  "path": "/api/workspaces/a05b0e10-ee7a-4603-a72d-a548b2390cb2",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 403,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/workspace_test.go",
+    "line": 141,
+    "test": "TestDeleteWorkspace_RequiresOwner",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

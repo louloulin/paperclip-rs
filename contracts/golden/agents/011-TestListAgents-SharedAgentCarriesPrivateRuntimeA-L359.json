@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "agents/TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability@server/internal/handler/agent_access_test.go:359#11",
+  "method": "GET",
+  "path": "/api/agents",
+  "path_params": {},
+  "query": {
+    "include_archived": "true"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/agent_access_test.go",
+    "line": 359,
+    "test": "TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

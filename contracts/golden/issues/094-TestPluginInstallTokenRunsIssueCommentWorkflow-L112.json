@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "issues/TestPluginInstallTokenRunsIssueCommentWorkflow@server/internal/handler/plugin_action_test.go:112#94",
+  "method": "GET",
+  "path": "/v1/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Multica-Plugin-Installation": ""
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/plugin_action_test.go",
+    "line": 112,
+    "test": "TestPluginInstallTokenRunsIssueCommentWorkflow",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (GetPluginIssue); replayed here against the router, which also applies its middleware",
+      "status read from the `get.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#23",
+  "method": "GET",
+  "path": "/api/chat/sessions/d1473000-0000-4000-8000-000000000031/messages",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/chat_test.go",
+    "line": 601,
+    "test": "TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (ListChatMessages); replayed here against the router, which also applies its middleware",
+      "status read from the `legacyW.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id"
+    }
+  }
+}

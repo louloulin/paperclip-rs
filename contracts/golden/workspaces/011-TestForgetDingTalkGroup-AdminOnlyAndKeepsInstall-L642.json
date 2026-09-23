@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "workspaces/TestForgetDingTalkGroup_AdminOnlyAndKeepsInstallation@server/internal/handler/dingtalk_test.go:642#11",
+  "method": "GET",
+  "path": "/api/workspaces/{id}/dingtalk/groups",
+  "path_params": {
+    "id": "$testWorkspaceID"
+  },
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/dingtalk_test.go",
+    "line": 642,
+    "test": "TestForgetDingTalkGroup_AdminOnlyAndKeepsInstallation",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (ListDingTalkGroups); replayed here against the router, which also applies its middleware",
+      "status read from the `listRec.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

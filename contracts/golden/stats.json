@@ -2,51 +2,82 @@
   "candidate_sites": {
     "by_kind": {
       "authRequest": 71,
+      "direct_handler": 1342,
       "http.Get": 5,
       "http.NewRequest": 16,
       "testutil.Call": 463
     },
-    "total": 555
+    "total": 1897
   },
   "extraction_rate": {
-    "candidate_sites": 555,
-    "extracted_sites": 54,
-    "rate": 0.0973
+    "candidate_sites": 1897,
+    "extracted_sites": 361,
+    "rate": 0.1903
   },
   "fixtures": {
     "by_actor_kind": {
-      "anonymous": 11,
-      "member": 47
+      "agent": 13,
+      "anonymous": 59,
+      "member": 293
     },
     "by_domain": {
-      "agents": 3,
-      "auth": 1,
-      "autopilots": 1,
-      "config": 2,
-      "daemon": 1,
+      "agent_task_snapshot": 1,
+      "agents": 41,
+      "attachments": 2,
+      "auth": 2,
+      "autopilots": 8,
+      "chat": 27,
+      "chat_sessions": 2,
+      "cloud_billing": 1,
+      "cloud_runtime": 4,
+      "cloud_subscriptions": 6,
+      "comments": 3,
+      "config": 17,
+      "context": 1,
+      "daemon": 24,
+      "dashboard": 9,
+      "feedback": 1,
       "health": 1,
-      "inbox": 7,
+      "inbox": 8,
       "integrations": 1,
-      "issues": 30,
+      "invitations": 1,
+      "issue_statuses": 3,
+      "issue_view_preferences": 3,
+      "issue_views": 1,
+      "issues": 104,
+      "labels": 9,
+      "lark": 1,
       "me": 1,
       "pins": 1,
-      "projects": 3,
+      "projects": 25,
+      "properties": 2,
+      "skills": 5,
+      "tasks": 1,
+      "tokens": 9,
       "users": 1,
-      "workspaces": 5
+      "webhooks": 3,
+      "working_agents": 1,
+      "workspaces": 35
     },
     "by_status": {
-      "200": 15,
-      "201": 26,
-      "400": 10,
-      "401": 6,
-      "404": 1
+      "200": 168,
+      "201": 74,
+      "202": 1,
+      "204": 12,
+      "400": 58,
+      "401": 10,
+      "403": 16,
+      "404": 14,
+      "409": 7,
+      "429": 1,
+      "500": 4
     },
     "by_via": {
-      "handler": 38,
-      "router": 20
+      "handler": 331,
+      "router": 34
     },
-    "offline_decidable": 11,
-    "total": 58,
+    "offline_decidable": 59,
+    "total": 365,
     "with_json_subset": 0
   },
   "schema_version": 1,
@@ -55,22 +86,26 @@
       "testutil.Call(t, handler, request)",
       "authRequest(t, method, path, body)",
       "http.Get(url)",
-      "http.NewRequest(method, url, body)"
+      "http.NewRequest(method, url, body)",
+      "testHandler.<Handler>(w, req) + a following `<w>.Code` comparison (rule I4, docs/42 \u00a76.3)"
     ],
     "not_extracted": {
-      "description": "handler-direct calls that pass an httptest.ResponseRecorder and read w.Code, e.g. testHandler.CreateIssue(w, req); upstream bypasses its own router there, so a replayed status would differ for test-level reasons",
+      "description": "`w := httptest.NewRecorder()` sites rule I4 still cannot turn into a fixture: the request is built where the checkpoint walk cannot see it (inside a closure or a different helper), the call does not compare `w.Code`, or its path is absent from docs/fixtures/upstream-routes.tsv.  Each one is a `direct_handler` row of extraction-report.tsv with its reason.",
       "recorder_constructions": 1484
     }
   },
   "skipped": {
     "by_reason": {
-      "ambiguous_status": 12,
-      "body_unresolved": 74,
-      "no_status_assertion": 89,
-      "path_not_literal": 1,
-      "request_var_unresolved": 295,
-      "value_unresolved": 30
+      "ambiguous_status": 27,
+      "body_unresolved": 557,
+      "no_status_assertion": 306,
+      "path_not_literal": 38,
+      "path_not_registered": 35,
+      "recorder_var_unresolved": 31,
+      "request_var_unresolved": 248,
+      "status_not_equality": 1,
+      "value_unresolved": 293
     },
-    "total": 501
+    "total": 1536
   }
 }

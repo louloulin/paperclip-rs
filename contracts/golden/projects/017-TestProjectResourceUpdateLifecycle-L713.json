@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "projects/TestProjectResourceUpdateLifecycle@server/internal/handler/project_resource_test.go:713#17",
+  "method": "POST",
+  "path": "/api/projects",
+  "path_params": {},
+  "query": {
+    "workspace_id": "$testWorkspaceID"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "title": "Update lifecycle project"
+  },
+  "expect": {
+    "status": 201,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/project_resource_test.go",
+    "line": 713,
+    "test": "TestProjectResourceUpdateLifecycle",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (CreateProject); replayed here against the router, which also applies its middleware",
+      "status read from the `w.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

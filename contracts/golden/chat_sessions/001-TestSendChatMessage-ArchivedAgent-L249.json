@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "chat_sessions/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#1",
+  "method": "POST",
+  "path": "/api/chat-sessions/d1473000-0000-4000-8000-000000000031/messages",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "content": "still there?"
+  },
+  "expect": {
+    "status": 409,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/chat_test.go",
+    "line": 249,
+    "test": "TestSendChatMessage_ArchivedAgent",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (SendChatMessage); replayed here against the router, which also applies its middleware",
+      "status read from the `sendW.Code` comparison that follows the call",
+      "path normalised from upstream's historical /api/chat-sessions/d1473000-0000-4000-8000-000000000031/messages to /api/chat/sessions/d1473000-0000-4000-8000-000000000031/messages"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

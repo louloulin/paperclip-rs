@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "issue_statuses/TestCreateIssueStatusIcon@server/internal/handler/issue_status_icon_test.go:80#1",
+  "method": "GET",
+  "path": "/api/issue-statuses",
+  "path_params": {},
+  "query": {
+    "include_archived": "true"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/issue_status_icon_test.go",
+    "line": 80,
+    "test": "TestCreateIssueStatusIcon",
+    "site": "testutil.Call",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}

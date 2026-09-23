@@ -456,6 +456,31 @@ print(r['totals']);print('contract=%.4f'%r['contract_equivalence_rate'])"
 grep -rc 'testHandler\.[A-Z][A-Za-z]*(' server/internal/handler/*chat*_test.go \
   server/internal/handler/*project*_test.go server/internal/handler/*squad*_test.go | \
   awk -F: '{s+=$2} END{print s}'
+
+# ⑧ 规则 I4（§6.3）落地后的复算 —— 上一条 ⑥ 的「M4 域 0 条 fixture」已被本组取代：
+#    M4 域实测 242 站点 / 30 文件，其中 48 抽出为 fixture、194 逐条记账（不许静默丢弃）。
+#    （<checkout> = 与 contracts/golden/PIN 同 commit 的上游检出，见 docs/20；
+#      scratch/ 是本仓未入库的临时目录，docstring 里也用它做示例。）
+python3 scripts/extract_upstream_fixtures.py --upstream <checkout> --out scratch/golden-i4
+#    I4 站点总数（`candidate_sites.by_kind.direct_handler`）与产出的域分布
+python3 -c "import json;d=json.load(open('scratch/golden-i4/stats.json'));\
+print(d['candidate_sites']);print(d['fixtures']['by_domain'])"
+#    M4 域逐行结论（reason 机器可查；基线是 19 行 / 6 文件 / 0 抽出）
+awk -F'\t' 'NR>1 && $1 ~ /chat|project|squad/{c[$5" "$6]++} END{for(k in c) print c[k], k}' \
+  scratch/golden-i4/extraction-report.tsv
+#    §6.3 的 36 个标杆站点（chat_history 16 / chat_pending_tasks 19 / squad_member_status 1）
+awk -F'\t' 'NR==1 || $1 ~ /(chat_history|chat_pending_tasks|squad_member_status)_test.go/' \
+  scratch/golden-i4/extraction-report.tsv
+
+# ⑨ handler → 路由键索引（新文件，规则 I4 第 6 步；由 router.go 的 h.<Handler> + 路由表复算）
+python3 scripts/upstream_handler_index.py --upstream <checkout> --write-handler-routes
+python3 scripts/upstream_handler_index.py --upstream <checkout> --check-handler-routes
+
+# ⑩ 门 ⑨（conformance/stateless）层新 fixture 的落点分布 ——「unevaluable 有原因」是协议，不是可删项：
+python3 -c "import json;r=json.load(open('crates/mc-conformance/report.json'));\
+print(r['totals']);print('contract=%.4f'%r['contract_equivalence_rate'])"
+#    fixture 树必须可字节复算（⑨ 门的前置），且 58 条旧 fixture 形状不变：
+python3 scripts/extract_upstream_fixtures.py --upstream <checkout> --out contracts/golden --check
 ```
 
 ---

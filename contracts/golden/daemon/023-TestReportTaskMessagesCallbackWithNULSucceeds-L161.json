@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "id": "daemon/TestReportTaskMessagesCallbackWithNULSucceeds@server/internal/handler/task_payload_nul_test.go:161#23",
+  "method": "POST",
+  "path": "/api/daemon/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/messages",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": {
+    "messages": [
+      {
+        "seq": 1,
+        "type": "tool_use\u0000",
+        "tool": "Bash\u0000",
+        "content": "reading\u0000 the binary",
+        "output": "ELF\u0000\u0000binary",
+        "input": {
+          "command": "cat",
+          "args": [
+            "-n",
+            "build/app.bin"
+          ],
+          "result": {
+            "stdout": "ELF\u0000\u0000binary"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "status": 200,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/task_payload_nul_test.go",
+    "line": 161,
+    "test": "TestReportTaskMessagesCallbackWithNULSucceeds",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (ReportTaskMessages); replayed here against the router, which also applies its middleware",
+      "status read from the `w.Code` comparison that follows the call"
+    ],
+    "bindings": {}
+  }
+}

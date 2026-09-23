@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "context/TestPluginActionRequiresTheFeatureFlag@server/internal/handler/plugin_action_test.go:86#1",
+  "method": "GET",
+  "path": "/v1/context",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Multica-Plugin-Installation": ""
+  },
+  "actor": {
+    "kind": "member",
+    "upstream_identity": {
+      "X-User-ID": "$testUserID"
+    }
+  },
+  "body": null,
+  "expect": {
+    "status": 403,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/plugin_action_test.go",
+    "line": 86,
+    "test": "TestPluginActionRequiresTheFeatureFlag",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (GetPluginContext); replayed here against the router, which also applies its middleware",
+      "status read from the `recorder.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id"
+    }
+  }
+}

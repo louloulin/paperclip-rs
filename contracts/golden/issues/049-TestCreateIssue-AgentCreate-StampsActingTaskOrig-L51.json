@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "issues/TestCreateIssue_AgentCreate_StampsActingTaskOrigin@server/internal/handler/issue_agent_create_origin_test.go:51#49",
+  "method": "POST",
+  "path": "/api/issues",
+  "path_params": {},
+  "query": {
+    "workspace_id": "$testWorkspaceID"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "actor": {
+    "kind": "agent",
+    "upstream_identity": {
+      "X-Agent-ID": "1c331d0b-94fd-412a-a7cc-6a209add00a1",
+      "X-Task-ID": "5c57b65b-ee7a-4603-a72d-b659c34a1dc3",
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
+    }
+  },
+  "body": {
+    "title": "Agent-created via normal create (MUL-4305)"
+  },
+  "expect": {
+    "status": 201,
+    "json_subset": {},
+    "headers": {}
+  },
+  "source": {
+    "file": "server/internal/handler/issue_agent_create_origin_test.go",
+    "line": 51,
+    "test": "TestCreateIssue_AgentCreate_StampsActingTaskOrigin",
+    "site": "direct_handler",
+    "via": "handler",
+    "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
+  },
+  "extraction": {
+    "notes": [
+      "upstream drove the handler directly (CreateIssue); replayed here against the router, which also applies its middleware",
+      "status read from the `w.Code` comparison that follows the call"
+    ],
+    "bindings": {
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
+    }
+  }
+}
