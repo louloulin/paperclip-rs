@@ -1623,3 +1623,118 @@ grep -vc '^#' docs/fixtures/slash-alias-allowlist.tsv
 - **没派发、没晋升**任何 backlog 片（无空位；晋升 = 立刻排 run ⇒ 4/3）。下一位的顺序见 §19.2。
 - **没动源码、⑨ 快照、⑦ 基线、allowlist**：那些属切片（`LUM-1470`/`LUM-1458`）。§19.3 的实测都在本工作树上跑完即 `git checkout` 还原，收尾 `git status` 0 行。
 - **没新建 issue**：下一位的清单已由 `LUM-1458`、`LUM-1471`、`LUM-1470…1476`、`LUM-1440/1443` 覆盖；本轮唯一新缺陷（§19.3）折进 `LUM-1470` 描述，不另开单。
+
+## 20. 13:00 cycle 落地记录（LUM-1499）—— 合并 #39（M3-7 daemon 面 44 条）**不是快进**（分支基于 `4f0188e`、落后 base 4 个 merge）⇒ 走真 merge `2a51a46`，并在**合并树**上跑真库全门 **10/10 绿（329s）**；派发 `LUM-1458`（3/3 满载）
+
+### 20.0 开工实测：并发位 2/3（空 1 位），base `62e7427`，磁盘 30G 可用
+
+```bash
+multica daemon status --output json | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['active_task_count'],d['running_task_count'])"
+#   → 2 2（本 cycle 自己占 1 位 ⇒ 只剩 1 个空位）
+for p in $(ls /proc | grep -E '^[0-9]+$'); do readlink /proc/$p/cwd 2>/dev/null; done | grep lumos- | sed 's#/workdir.*##' | sort -u
+#   → lum-1443-b8d1354c323e（M3-8 批 3，在飞）/ lum-1499-8d004f067d98（本 cycle）
+multica issue runs 01a0cab1-698b-73fb-9ea3-18c5436078cc   # LUM-1438 → 01a0cc6e-…bc22f48c54a3 completed 04:02:58Z
+```
+
+`LUM-1438`（M3-7）的 run 已终态、PR #39 已开、issue `in_review` ⇒ 它不再占并发位；**本 cycle 只派 1 片**（§20.3）。
+
+### 20.1 `#39` 的分支**落后 base 4 个 merge**：不是快进，走真 merge
+
+```bash
+git merge-base --is-ancestor 62e7427 6711fb7; echo "exit=$?"     # exit=1 —— 62e7427 不是 6711fb7 的祖先
+git merge-base 62e7427 6711fb7 | cut -c1-8                        # 4f0188e = #34 的 merge，M3-7 分支的真实起点
+git log --oneline 62e7427..6711fb7                                # 162e60d / 71afaf6 / 888c686（归档）+ 6711fb7（收尾）
+git merge-tree --write-tree 62e7427 6711fb7 | head -1             # 3248b7e0…，exit=0 ⇒ 零冲突
+```
+
+M3-7 的 run 04:02:58Z 起步，而 `#35`(docs/37 §18) / `#36`(docs/42) / `#37`(§19) / `#38`(M3-8 批 2，= `62e7427`) 四个 merge **都在其后** ⇒ 分支树里没有这 4 个 merge。PR 的 `base.sha` 只是开 PR 时的快照，**不保证祖先关系**；GitHub 的 `mergeable: true / clean` 也只说明「能合」，不说明「是快进」。
+
+⇒ 本轮不用 `git push` 快进，而用本地真 merge（与 base 上 `#31`–`#38` 的形态一致）：
+
+```bash
+git config --worktree user.name devbox5 && git config --worktree user.email devbox5@multica.local   # 托管 checkout 的 include.path 缺失，必须补
+git checkout -b tmp/merge39 62e7427
+git merge --no-ff -m "merge(#39): M3-7 daemon 面 44 条路由 + ws 接线 + mc-daemon 客户端（LUM-1438）" 6711fb7   # → 2a51a46
+git push origin tmp/merge39:refs/heads/feat/multica-rs-initial
+#   → 62e7427..2a51a46；GitHub 随即把 #39 置 merged（merge_commit_sha = 2a51a46，merged_at 05:09:13Z）
+```
+
+**关键纪律：全部门禁跑在合并树 `2a51a46` 上，不是分支树 `6711fb7` 上**（§20.2 先绿再推）。
+
+### 20.2 合并树真库全门：**10/10 绿（329s）**；⑦ 台账逐字命中 §19.5 的预测
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH" CARGO_INCREMENTAL=0
+export MULTICA_TEST_DATABASE_URL='postgres://mc_lum1499:***@127.0.0.1:5432/multica_lum1499'
+bash scripts/gates.sh --with-db        # overall: PASS — 10/10 gate(s) green in 329s
+```
+
+| 门 | 退出码 | 说明 |
+| --- | ---: | --- |
+| `fmt` / `build`(`--all-targets --locked`) / `clippy` / `clippy-test-util` / `test` | 0 | 合并树冷构建（本 worktree 首次） |
+| `db`（migrate + e2e）/ `schema-drift` | 0 | 真库：新建 `mc_lum1499` / `multica_lum1499` |
+| `route-parity`（`route_parity.py` + `slash_alias_audit.py`）| 0 | 见下表 |
+| `conformance`（`--no-db --check report.json`）| 0 | 快照**未漂移** |
+| `file-size` | 0 | `OK: 0 violation(s)` |
+
+⑦ 实测（合并树）：`upstream 456 (f41fae6b08fb) | local 239 | baseline 195`、`implemented 196 real + 10 placeholder = 206 / 456`、`known_gap 250`、`unclaimed 0`、`regression 0`、`local_only 11`。
+第二条：`0 defect(s), 0 warning(s); 19 allowlisted` —— M3-7 的 44 条**没有新增尾斜杠缺陷**，19 行欠账归属不变（§19.4）。
+⑨ 实测：`fixtures 58 / pass 5 / mismatch 1 / unmounted 5 / unevaluable 47`、契约等价率 **8.62%**、挂载等价率 83.33% —— **与 §19.5 记录的 base 值逐字相同** ⇒ M3-7 一行 fixture 都没动，快照按计划**没有**重刷。
+
+**§19.5 的预测命中情况**（本轮最有价值的一条对账）：预测「M3-7 落地后 local 239 / implemented 196R+10P=206 / known_gap 250」——**三项逐字命中**；`baseline` 仍 195（集成 cycle 才刷，切片不刷）。
+
+### 20.3 派发 `LUM-1458`（9 键尾斜杠 + 同 PR 内拆 `comments.rs`）：写集与在飞片零交集
+
+在飞写集（`git status --porcelain` 实测）：
+
+- **lum-1443（M3-8 批 3）**：`crates/mc-runtime/src/{lib,registry,catalog}.rs`、`adapters/{mod,claude_family}.rs` + `adapters/{dim,dsh}/`(新) + `grok|kimi|kiro|qoder|qoderclicn|traecli/`、`conformance/{mod,fake_cli}.rs`、`tests/cli_adapters.rs → tests/cli_adapters/{main,batch3}.rs`。
+- **lum-1458**（本 cycle 派）：`crates/mc-http/src/routes/issues/mod.rs`、`crates/mc-http/src/routes/comments.rs`（+ 按 ⑩ 拆出的子文件）、`docs/fixtures/slash-alias-allowlist.tsv`、`docs/fixtures/route-parity-baseline.json`。
+
+交集 = **∅**（一片在 `mc-runtime`，一片在 `mc-http`）⇒ 立即派，无写者冲突。
+`LUM-1470`（M4-0 anchor）**不能**与 `LUM-1458` 并行：两者都写 allowlist + ⑦ 基线 JSON，且 `LUM-1470` 还要 `Cargo.lock` / `mc-repos/src/lib.rs` / `mount.rs` ⇒ 串行。
+
+```bash
+multica issue update 01a0cb45-45f4-70fc-bd07-34d196bc5dfd --status todo    # LUM-1458 backlog → todo ⇒ 自动排 run
+multica issue runs 01a0cb45-45f4-70fc-bd07-34d196bc5dfd                    # 01a0ccab running（05:09）
+#   派发后 active_task_count 3 / running 3 ⇒ 满载
+```
+
+### 20.4 后续顺序（合并 #39 后的更新）
+
+| 槽位 | 片 | 前置 | 备注 |
+| --- | --- | --- | --- |
+| 占用 | `LUM-1443`（M3-8 批 3）| — | M3 最后一批适配器 |
+| 占用 | `LUM-1458`（9 键尾斜杠）| ✅ M3-6 已合 | 本 cycle 派（§20.3） |
+| 占用 | `LUM-1499`（本 cycle）| — | 编排 |
+| 下一空位 ① | `LUM-1470`（M4-0 anchor）| ✅ **M3-7 已合**（§20.1 已推 base）⇒ 解锁 | 与 `LUM-1458` 串行（§20.3） |
+| 下一空位 ②（可并行）| `LUM-1471`（M4-0b 规则 I4）| 无 | 与任何片零文件交集 |
+| 其后 | `LUM-1440`（M3-8-p0 execenv）| ✅ M3-7 已合 | 同 `mc-daemon` crate + `Cargo.lock` ⇒ 排 M3-7 之后 |
+
+**§19.5 的后续预测随本轮更新**：M4-0 落地后预期 `local 233 / implemented 200 / known_gap 256`（`195→239→233` 链条里 `239` 已实测）。
+
+### 20.5 空间
+
+```bash
+df -h / | tail -1     # 开工 30G 可用 → 合并树冷构建后 17G → 删本 worktree 的 target/（6.8G）后 24G 可用
+```
+
+本 cycle 的 `target/` 用完即删（可重建缓存；源码/`.git` 不动）——合并树门禁已跑完且 base 已推，本 worktree 不再需要编译。两个在飞片（`lum-1443` / `lum-1458`）的冷构建此后有 24G 余量。
+
+### 20.6 本 cycle 没做（边界）
+
+- **没动源码**：合并是把 `6711fb7` 原样合入（真 merge、零冲突），没有改一行代码。
+- **没刷 ⑦ 基线 / ⑨ 快照**：合并后 `local 239 > baseline 195` 是**允许**的（baseline 是下界锁，只对丢路由判红），⑨ 快照逐字未变（§20.2）⇒ 两者都按纪律留给切片/集成 cycle。
+- **没把 `LUM-1438` 置 `done`**：交付的子 issue 停在 `in_review`，`done` 由人拍（与 `#31`–`#38` 各片一致）。
+- **没新建 issue**：本轮无新缺陷；派发的是已存在且已复核就绪的 `LUM-1458`。
+
+### 20.7 复算命令（§20.0–§20.5 逐条可重跑）
+
+```bash
+git ls-remote origin refs/heads/feat/multica-rs-initial      # 2a51a46946c9…
+git merge-base --is-ancestor 62e7427 6711fb7; echo $?        # 1（不是快进，见 §20.1）
+git merge-tree --write-tree 62e7427 6711fb7 | head -1        # 3248b7e0…（零冲突的合并树）
+python3 scripts/route_parity.py | head -2                    # local 239 / baseline 195
+python3 scripts/slash_alias_audit.py --quiet; echo $?        # 0（0 defect / 19 allowlisted）
+python3 scripts/file_size_check.py --quiet; echo $?          # 0
+python3 -c "import json;print(json.load(open('crates/mc-conformance/report.json'))['totals'])"   # 58/5/1/5/47
+```
