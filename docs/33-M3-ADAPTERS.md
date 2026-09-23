@@ -511,7 +511,8 @@ qoderclicn 10 / traecli 10）+ `qoder_family` 1；其中含一致性套件 **8 �
 GATE_FMT_EXIT=0              GATE_BUILD_EXIT=0     GATE_CLIPPY_EXIT=0     GATE_CLIPPY_TEST_UTIL_EXIT=0
 GATE_TEST_EXIT=0             GATE_ROUTE_PARITY_EXIT=0
 GATE_CONFORMANCE_EXIT=0      GATE_FILE_SIZE_EXIT=0
-（⑤ 工作区合计 870 passed / 0 failed；整体 PASS 8/8，39s）
+（⑤ 工作区合计 870 passed / 0 failed / 87 ignored（后者是需要真库的用例，本机未跑 --with-db）；
+  整体 PASS 8/8，合并基线后的最后一次实测 18s）
 ```
 
 - **③ clippy 本轮修掉 30 处**（首轮 26 处 + 修 `handle(&CursorEvent)` 签名后暴露的 4 处
@@ -523,8 +524,10 @@ GATE_CONFORMANCE_EXIT=0      GATE_FILE_SIZE_EXIT=0
   先例 `mc-repos/src/workspace.rs`）、`#[allow(clippy::cast_possible_truncation)]`
   （JSON-RPC 的 id / token 数在 `serde_json` 里是 f64，上游同款截断）。
 - **⑦ 与本片无关（0 路由）**：`git diff` 里没有任何路由注册、没有 `docs/fixtures/**` 改动；
-  实测计数 `upstream 456 | local 195 registered | baseline 184`、
+  实测计数 `upstream 456 | local 195 registered | baseline 195`、
   `implemented 152 real + 10 placeholder = 162`、`known_gap 294`、`regression 0`、`local_only 11`。
+  本片基线是 `4f0188e`（当时 `baseline 184`），合并 `origin/feat/multica-rs-initial`（`8d5c2ab`，
+  内含 LUM-1465 集成 cycle 的一次性基线刷新）后基线跟上到 195 ⇒ 上面是**合并后**的实测值。
 - **⑨ 无漂移**：`report matches crates/mc-conformance/report.json` —— `report.json` 与
   `docs/fixtures/route-parity-baseline.json` 本片**一字未动**（0 路由、不加 fixture）。
 - **⑩ 本轮改了结构**：`src/conformance.rs` 因新增逐帧回放长到 **992 行 > 800** 触红。因为基线
