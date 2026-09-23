@@ -3796,8 +3796,14 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
   契约等价率 `5/365 = 1.4%`；⑩ 0。
 - **磁盘**：起手 `df -h /` = **12G 可用**（低于「<12G 不派」阈值）⇒ 回收 M5-7 workdir 的 `target/`
   （17G；其 run 13:58 已终态、分支 `agent/devbox5/e6b28b1a26b1` 已推、PR 已开、`readlink /proc/*/cwd` 无该目录下进程）
-  ⇒ 28G 可用；合并树 target 7.9G。**流程偏离登记**：本 cycle 唯一的破坏性动作，只删 build 缓存（可重建），
+  ⇒ 28G 可用；合并树 target 7.9G。**流程偏离登记**：这是本 cycle 第一次回收，只删 build 缓存（可重建），
   不删工作树、不删提交。
+- **本 cycle 第二次回收（重派之后）**：三片同时在飞构建（M5-6 `target/` 15G + 新建 M4-INT + 新建 M5-1）
+  加上本 cycle 自己的 8.2G ⇒ 余量掉到 **7.7G**（<8G，会让在飞片的 `--with-db` 门禁因磁盘失败）。
+  `readlink /proc/*/cwd` 逐个确认无人占用后删两处**纯构建缓存**：① 本 cycle 自己的 `target/`（8.2G，本轮门禁已跑完、
+  结论已落 §37.1 与 base 4 门复验日志）；② **M5-1 旧 workdir** `lum-1564-334607c0bcb3` 的 `target/`（6.1G；
+  该 workdir 的 2383 行已全部提交并推远程，重派已换新 workdir `lum-1564-4af818251425`）⇒ **22G 可用**。
+  **可复用顺序**：① 已终态 run 的 workdir 缓存 → ② 本 cycle 自己的 → ③ 旧 workdir（前提：工作树内容**已推远程**）。
 
 ### 37.2 M5-1（`LUM-1564`）静默死亡诊断 + WIP 抢救（本 cycle 最重要的一条）
 
