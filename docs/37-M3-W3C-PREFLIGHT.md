@@ -2511,8 +2511,11 @@ base 侧 ⑦ 读数与 §25.1 逐字相同（`local 242 / baseline 242 / 196 rea
 ### 26.2 两个死 run 的终态取证
 
 ```bash
-grep -a "task=01a0ccea-4f85-7abd-a441-a2728e008efe" ~/.multica/daemon.log | tail -2  # M4-1：completed + output_bytes=0
-grep -a "task=01a0cd01-cc41-7d87-9b33-3ee1737c1af5" ~/.multica/daemon.log | tail -2  # M4-3：failed 503
+grep -a "01a0ccea-4f85-7abd-a441-a2728e008efe" ~/.multica/daemon.log | grep -a output_bytes | tail -1
+#   07:24:36 DBG agent result detail … status=completed output_bytes=0 … agent_error=""
+grep -a "01a0cd01-cc41-7d87-9b33-3ee1737c1af5" ~/.multica/daemon.log | grep -a "output_bytes\|failure_reason" | tail -2
+#   07:39:00 DBG agent result detail … status=failed output_bytes=0 … agent_error="503: {…Service temporarily unavailable…}"
+#   07:39:00 INF task did not complete, reporting failure … status=blocked failure_reason=agent_error.provider_server_error
 ```
 
 | 片 | attempt | task id | 终态 | 判据 | 工作树 |
