@@ -650,6 +650,8 @@ python3 scripts/route_parity.py --json | python3 -c "import json,sys;r=json.load
    且 §37 §5.4 实测「`AgentType → ProtocolFamily` 映射不存在」而 M3-7 的 hub 协商要按族决策 ⇒ 该表是 M3-7 的**前置**，
    先落批 1 是拆前置。`LUM-1440`（execenv，与 M3-7 共用 `mc-daemon/src/lib.rs` + `Cargo.toml`）与批 2/3 仍按本条串行。
    依据与实测见 `docs/37-M3-W3C-PREFLIGHT.md` §16.1。
+   **2026-09-23 08:00 状态更新**：批 1（`LUM-1441`）已在跑；**M3-4（PR #31）已合入 base** ⇒ `LUM-1438`（M3-7）的唯一阻塞解除，已在本 cycle 晋升。
+   合并波（#31/#32/#33 → base `463eb3f`）与合并树真库 10/10 门的证据见 `docs/37` §18.2。
 6. **M3 集成 cycle**：按 §8.3 出门禁 → 一次性刷新 parity baseline → 写 `docs/34-M3-INTEGRATION.md`（照 `docs/21-M2-INTEGRATION-RECIPE.md` 的配方）→ 契约等价率按 §8.5 口径提升。
    **2026-09-23 新增纪律**（见 `docs/37` §16.2）：**切片 PR 不刷 `docs/fixtures/route-parity-baseline.json`** —— 一次性刷新就是本条的活；
    切片各刷一遍会让每两个改路由的切片 PR 必冲突（PR #31 × #32 实测同一 JSON 列表尾部相邻追加）。切片只跑门禁：⑦ 是**下界锁**，只对**丢**路由判红。
