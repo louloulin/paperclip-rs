@@ -2659,3 +2659,179 @@ grep -a <task-id> ~/.multica/daemon.log | grep -a "starting agent\|resuming sess
 （本 cycle + 三片），即 **daemon 侧没有「最多 3 个」的硬闸**——`docs/37` 各 cycle 里的「并发位 3/3」一直是**运维约定**（issue 正文的「一次最多三个任务运行」），
 不是 daemon 或 platform 强制的上限。⇒ 下一轮调度不必再用「cycle 自己占掉一个位 ⇒ 只能派两片」的口径推导；
 真正要盯的是 **provider 侧**（`503` 抖动 / `Concurrency limit exceeded`，两者都在**只有 2 个任务**时实测发生过）。
+
+## 27. 17:00 cycle 落地记录（`LUM-1537`）—— 两个 PR 合并进 base（#43 / #44，合并树真库 10/10）+ M4-3 死 run 的「第二次抢救」（只剩 4 条行为差）+ 换位派发 M4-0b
+
+### 27.0 一句话
+
+起手实测：base `33be5ea`、GitHub **2 个 open PR**（#43 M4-1 / #44 M4-2）、并发位 1/3，宿主盘 **90%（4.8G 可用）**。
+本轮先**清盘**（§27.1，回收 26G）再做主线动作：两片 `merge-tree` 预检零冲突 → **真 merge** → 合并树 `--with-db` **10/10（263s）** →
+⑦ 与预合并审计双读数一致 → **推 base**（`33be5ea..cf65ed3`，GitHub 侧两个 PR 均报 merged，0 open PR，§27.2）。
+随后给第三片 M4-3：它的第三次 attempt **这次推了 2 个 commit 才死**（§25.6 的纪律生效），
+本 cycle 只补了**可测性**（§27.5，commit **`3f85499`**）⇒ 全门从 8/10 到 **9/10**，剩 **4 条行为差**（§27.6）；
+据此 `rerun` 重派（§27.7：实测 `resume_session=false` + 新 workdir）+ 把 `LUM-1471`（M4-0b）从 backlog 翻到 todo。
+
+### 27.1 起手实测（`09:0xZ`）与清盘
+
+```bash
+git fetch origin feat/multica-rs-initial; git rev-parse --short origin/feat/multica-rs-initial   # 33be5ea
+df -h /                                                                                          # 49G/51G 已用（90%）
+du -sh /home/devbox/multica_workspaces/lumos-659117e3ca3d/*/workdir/paperclip-rs/target
+multica daemon status --output json                                                              # running_task_count 1（只有本 cycle）
+```
+
+`target/` 实测三棵闲置树合计 **33G**（`debug/deps` 12G + `incremental` 6G 的形态会反复出现）：
+
+| 删除对象 | 依据 | 回收 |
+| --- | --- | :--- |
+| `lum-1470-7cb27b4cfc6b/…/target` | 该片早已交付（M4-0 已合并进 base） | **19G** |
+| `lum-1472-829d92d87c44/…/target` | M4-1 已完结（PR #43 待合），产物在 git 里 | **6.9G** |
+| `lum-1474-68db42a17c32/…/target` | M4-3 的 attempt 3 已终态，源码在分支上 | **7.4G** |
+
+⇒ **38G 可用 / 19%**，够本 cycle 的三次全门（本 cycle 总耗时最长的一次 263s）。**只删缓存，没删任何源码文件**。
+另：`CARGO_INCREMENTAL=0` 在整轮里都开着（增量单独占 ~6G，且抢救场景几乎不复用命中）。
+
+### 27.2 两个 PR 的合并（本轮唯一改变 base 的动作）
+
+```bash
+git merge-tree --write-tree --name-only origin/feat/multica-rs-initial origin/agent/devbox5/829d92d87c44   # exit 0
+git merge-tree --write-tree --name-only origin/feat/multica-rs-initial origin/agent/devbox5/b2c784c3ce8a   # exit 0
+git checkout -B feat/multica-rs-cycle-1700 origin/feat/multica-rs-initial
+git merge --no-ff origin/agent/devbox5/829d92d87c44 -m "merge(#43): M4-1 project 面 10 条路由（LUM-1472）"    # b3602dc
+git merge --no-ff origin/agent/devbox5/b2c784c3ce8a -m "merge(#44): M4-2 squad 面 10 条路由（LUM-1473）"      # cf65ed3
+MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db                                                  # 10/10（263s）
+git push origin HEAD:feat/multica-rs-initial                                                                 # 33be5ea..cf65ed3
+```
+
+| PR | 片 | head 分支 | merge commit（GitHub API 复核） | 状态 |
+| --- | --- | --- | --- | --- |
+| #43 | M4-1 `LUM-1472` | `agent/devbox5/829d92d87c44` @ `8baf694` | `b3602dc9351e5fd29b9f33fd48c2a719b85c1fe3` | `closed` / merged |
+| #44 | M4-2 `LUM-1473` | `agent/devbox5/b2c784c3ce8a` @ `7e7db77` | `cf65ed301dcf3063e8cd27e2f4105ba43b729a53` | `closed` / merged（`merged_at 09:07:38Z`） |
+
+⇒ 合并后 **0 open PR**。「本地 merge commit + 推 base ⇒ GitHub 自动把 PR 标 merged」这条在本轮再次成立（同 §25）。
+
+### 27.3 ⑦ 读数（base 侧）：`local 272`，`implemented 220/456`
+
+```bash
+python3 scripts/route_parity.py --quiet
+# upstream 456 (commit f41fae6b08fb) | local 272 registered | baseline 242
+# implemented 216 real + 4 placeholder = 220 / 456 | known_gap 236 | unclaimed 0 | regression 0 | local_only 11
+```
+
+`local_only 11` = base 里既有的 11 条（`242 + 10 + 10 + 10` 之外的 11 条别名形态），**没有刷新 ⑦ 基线**（口径同 §25：基线是下界锁，切片轮不刷）。
+M4 域进度到本轮为止：**10（M4-1）+ 10（M4-2）= 20/45**，`LUM-1474` 的 15 条已在分支上（§27.6）。
+
+### 27.4 预合并静态审计：45 条预期与「合并丢了什么」的读法
+
+```bash
+python3 scripts/w3b_premerge_audit.py --merged . --expect scratch/m4_expect.json
+#   45 expected / 276 live / 0 finding；"lost by the merge" = 正好 25 条 chat 键
+```
+
+`scratch/m4_expect.json` 是**按 `:param` 形态**重生成的（`docs/` 的 45 条声明里有 `:id` 与 `{}` 两种写法，
+上游路由表用 `:param` ⇒ 必须先归一到 `:param` 再比；本轮踩过「braces 形态漏进预期文件」的坑，`scratch/` 不入库、新 workdir 必须重生成）。
+「丢失 25 条」不是缺陷读数：那是**尚未合并的 M4-3 的 25 条 chat 键**（15 条已在其分支上、10 条归 M4-4）——
+**审计的 `--merged` 模式要把「仍在飞的切片」当作预期差集来读**。
+
+### 27.5 M4-3 第三次死亡取证 + 本轮抢救（只补可测性，commit `3f85499`）
+
+```bash
+grep -a "01a0cd54-cf81" ~/.multica/daemon.log | grep -a "output_bytes" | tail -1   # status=completed output_bytes=0
+python3 - <<'PY'   # 末条 assistant 消息的 stopReason / totalTokens
+import json
+S='/home/devbox/.multica/pi-sessions/20260923T061824.353921136.jsonl'
+last=None
+for line in open(S, errors='replace'):
+    try: o = json.loads(line)
+    except Exception: continue
+    m = o.get('message') or {}
+    if m.get('role') == 'assistant':
+        last = (o.get('timestamp'), m.get('stopReason'), (m.get('usage') or {}).get('totalTokens'))
+print(last)   # ('2026-09-23T08:51:29.509Z', 'length', 124084)  ← 124k 硬顶
+PY
+git ls-remote --heads origin 'refs/heads/agent/devbox5/68db42a17c32'              # 1e38365 ← 死前已推 2 commit
+```
+
+与 §26.3 的**抢救成本完全不同**：上一轮要从工作树里「捞 9 个文件」，这轮产物**已经在 git 里**（`b938d19` HTTP 面 + `1e38365` 守卫与 PG 测试），
+所以本 cycle 做的不是抢救文件，而是**把编译/断言口径对齐**，让下一片的起手不再浪费在门红上：
+
+| # | 改动 | 依据 |
+| --- | --- | --- |
+| 1 | `tests/chat/support.rs` 新增 `error_message()`（剥 12 条内部前缀），`assert_err` 改用它；13 处 `"not found: <resource>"` 改成剥完后的资源名 | 全仓既有约定：`tests/agents|tasks|runtimes|daemon/support.rs` 都在剥前缀（本仓 `not found: X` 对上游 `X not found` 是**已知偏离**，见 `session.rs` 文件头与 `inbox.rs`） |
+| 2 | `routes/chat/mod.rs` 新增 `#[cfg(test)] upstream_text()`，`bar.rs` / `message.rs` / `session.rs` 的 4 条 lib 断言改用它 | 同上；lib 级测试够不着 `tests/**` 的 helper |
+| 3 | `update_presence_uses_raw_map` 的第一条断言按上游 `Title *string` 语义修正（`{"title":null}` 与缺失**同为不存在**） | 上游 `chat.go:355` `hasTitle = req.Title != nil`；执行侧 `session.rs:385` 本来就是对的 ⇒ **错的是测试** |
+| 4 | `tests/chat.rs` 的 `chat_draft_restore` 直插夹具补 `id`（`Uuid::new_v4()`） | 该列**无默认值**，上游 `chat.sql:1454` 的 `INSERT` 由调用方传 id（= 被删掉那条 user 消息的 id）⇒ 原骨架触发 PG `23502` |
+
+实测：门 ⑤ 由 **5 红 → 全绿**；门 ⑥ 由 **5 红 → 4 红**（剩下的都是行为差）。
+
+```bash
+git diff > …/m43_fix.patch                       # 先落补丁（跨分支搬运，避免把 M4-1/M4-2 的 merge 一起带过去）
+git checkout -B salvage/m43 origin/agent/devbox5/68db42a17c32
+git apply <补丁> && git add -A && git reset -q scratch/… && git commit -F <消息文件> --amend
+git push --force-with-lease origin HEAD:agent/devbox5/68db42a17c32    # 1e38365..3f85499
+```
+
+**边界**：这一 commit 只动 `tests/**` 与 `#[cfg(test)]` 的 helper，**没动一行执行路径代码**——4 条行为差留给原片（§27.6）。
+
+### 27.6 剩下的 4 条行为差（下一片的起手清单）
+
+合并树（base `cf65ed3` + M4-3 分支）`bash scripts/gates.sh --with-db` 实测：⑤ 绿、⑥ 只剩 4 条 e2e。
+三条是**可见性门**、一条是**游标语义**，判据都指向上游 `chat.sql` 的 join/排序与 `chat.go` 的门函数：
+
+| 测试 | 断言点 | 实测 | 期望 | 指向 |
+| --- | --- | --- | --- | --- |
+| `create_get_and_list_visibility` | `tests/chat.rs:216` | 列表多返回他人**私有 agent** 的会话 | 只返回可见的 | `ListChatSessions` 的 agent join |
+| `flags_update_and_delete` | `tests/chat.rs:314` | 删隐藏渠道会话 → `404 not found: chat session` | **204**（清理面不看公开门） | `DeleteChatSession` 与 `gatePublicChatSessionForUser` 的分工 |
+| `message_read_and_paging` | `tests/chat.rs:397` | `next_cursor.created_at = …02.5Z`（区间下界） | 窗口**最旧一条**的 `…03Z` | `ListChatMessagesPage` 的 `(created_at,id)` 与 NextCursor |
+| `pinned_agents_bar` | `tests/chat.rs:493` | 置顶不可见 agent → 200 | 404 `not found: agent` | `PinChatAgent` 的可见性门 |
+
+### 27.7 派发：M4-3 `rerun`（新 session 实测）+ M4-0b backlog→todo
+
+```bash
+multica issue update 01a0cbbd-aa27-… --description-file ./lum1474_desc.md --no-start   # 描述追加 17:00 口径
+multica issue comment add 01a0cbbd-aa27-… --content-file ./lum1474_handoff.md          # 真库配方 + 4 条 dump
+multica issue rerun 01a0cbbd-aa27-…                                                    # 01a0cd92-26c4-7427-a323-bb91b28ab055
+multica issue assign 01a0cbbd-9f80-… --to-id 3c6087f9-… --no-start
+multica issue status 01a0cbbd-9f80-… todo                                              # 01a0cd92-f6bf-7e33-82f0-6c28d3ea17b6
+```
+
+| 片 | task | 机制实测（daemon 日志逐字） | 判定 |
+| --- | --- | --- | --- |
+| M4-3 `LUM-1474` | `01a0cd92-26c4-7427-…` | `resume_session=false reuse_workdir=false` → `workdir=…/lum-1474-bb91b28ab055/workdir` | ✅ `rerun` = **force_fresh_session + 新 workdir**（与 §26.9 对 M4-1 的实测一致）⇒ 不再撞 124k 顶 |
+| M4-0b `LUM-1471` | `01a0cd92-f6bf-7e33-…` | `resume_session=true reuse_workdir=true` → 沿用 `lum-1471-3729eee9c3cd` | ⚠️ 该片**从未成功开过工**（issue 上只有 2 条 system：`503` / `Concurrency limit exceeded`），但 daemon 侧 `resume_reachable=true` ⇒ 它**复用了一个空工作树**；无产物可丢，不必干预 |
+
+派发后 25s 内两片都进了 `tool #1: write`（M4-0b 在 09:22:55Z）——§25.5 的「前 25 次调用内落文件」纪律在起手阶段成立。
+并发位：本 cycle + 两片 = **3/3**（口径同 §26.9：这是**运维约定**，daemon 无硬闸）。
+
+### 27.8 本 cycle 没做什么（边界）
+
+- **没有**把 M4-3 合进 base：它的树是 9/10（4 条行为差未修）⇒ 只做了**本地合并树验证**，合并分支用完即弃；
+- **没有**修那 4 条行为差（那是原片的交付内容，本轮只对齐测试口径，§27.5 边界）；
+- **没有**刷新 ⑦ 基线、⑨ 快照、`slash-alias-allowlist.tsv`、`routes/mount.rs`、`routes/mod.rs`、任何迁移；
+- `LUM-1475`（M4-4）**没派**：它与 M4-3 同写 `routes/chat/**`，且依赖 M4-3 的路由与 M3-7 的 ws 广播（§25.5 的排位口径）；
+  `LUM-1476`（M4-INT）同理等 M4-4 落地。`LUM-1440` 仍在 backlog。
+
+### 27.9 复算命令（§27.1–§27.7 逐条可重跑）
+
+```bash
+git log --oneline -1 origin/feat/multica-rs-initial     # cf65ed3（#43 b3602dc → #44 cf65ed3）
+git ls-remote --heads origin 'refs/heads/agent/devbox5/68db42a17c32'                    # 3f85499
+bash scripts/gates.sh --only route-parity,file-size; echo $?                            # 0（⑦：local 272 / implemented 220 / 456）
+python3 scripts/slash_alias_audit.py --quiet; echo $?                                   # 0
+export MULTICA_TEST_DATABASE_URL='postgres://mc_lum1472:lum1472pw_a3b03d9a@127.0.0.1:5432/multica_lum1472'
+export CARGO_INCREMENTAL=0
+bash scripts/gates.sh --with-db                                                         # 本 cycle 的合并树读数：10/10（263s）
+python3 scripts/w3b_premerge_audit.py --merged . --expect scratch/m4_expect.json         # 45 expected / 0 finding
+multica issue runs LUM-1474 --output json | grep -o '"status": "[a-z]*"'
+multica issue get LUM-1471 --output json | grep -o '"status": "[a-z]*"'
+```
+
+### 27.10 本轮三个新坑（都实测到，已定死处置）
+
+1. **`#[cfg(test)]` 的 helper 放错模块 = `E0425`**：`chat/bar.rs` 的 `mod tests { use super::*; }` 里的 `super` 是 **`bar`**，不是 `chat`。
+   要把 `upstream_text()` 放进 `chat/mod.rs`，子模块测试必须显式 `use crate::routes::chat::upstream_text;`（三个文件都要加）。
+2. **shell 里写 commit message 不能用双引号 + 反引号**：本轮的第一次 commit 消息被 **shell 命令替换吃掉一半**，还混进一行
+   `uid=1001(devbox)…`（反引号里的 `id` 被执行了）。处置：message 写文件 + `git commit -F <file>`（或 `-m` 用单引号），
+   发版前 `git log -1 --format=%B` 复核。
+3. **`git add -A` 会把 `scratch/` 一起入库**：`scratch/m4_expect*.json` 是审计用的一次性产物（§27.4），
+   提交前若已 `add -A`，要先 `git reset -q scratch/…` 再 commit（本 cycle 命中过一次，已在 amend 前清掉）。
