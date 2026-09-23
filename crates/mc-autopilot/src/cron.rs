@@ -128,6 +128,16 @@ pub enum CronError {
         /// 时区名。
         timezone: String,
     },
+    /// 表达式自带的 `TZ=`/`CRON_TZ=` 前缀里的时区不认识。
+    ///
+    /// **分类是 `invalid_cron` 而不是 `invalid_timezone`**：`tz` 查询参数与「表达式文本里的前缀」
+    /// 是两回事，上游只有前者会走 `ValidateTimezone`（⇒ `invalid_timezone`），后者是 robfig
+    /// `Parse` 的错误（⇒ handler 一律映射成 `invalid_cron`）。排程编辑器靠这个区分该高亮哪个输入框。
+    #[error("provided bad location {timezone}")]
+    BadPrefixTimezone {
+        /// 前缀时区名。
+        timezone: String,
+    },
 }
 
 impl CronError {
@@ -323,17 +333,25 @@ impl CronSpec {
     ///
     /// `after` 按**绝对时刻**解释；结果恒为 UTC。调度判定的入参应是 DB 时间（`SELECT now()`），
     /// 这样两个时钟偏移的实例会给出同一个 `plan_time`（上游 `NextOccurrenceAfterUTC` 的注释契约）。
+    ///
+    /// 视界**只用来终止**「永不触发」的表达式（如 `0 0 30 2 *` ⇒ `None`），**不截断**次数
+    /// （年粒度表达式要 10 次就给 10 次）。
     #[must_use]
     pub fn next_after_utc(self, after: DateTime<Utc>, tz: Tz) -> Option<DateTime<Utc>> {
+        // robfig 的「严格前进到下一个整分钟」：`t.Add(1s - ns)` + 秒字段循环的净效果。
         let start = after
             .with_second(0)
             .and_then(|value| value.with_nanosecond(0))
             .unwrap_or(after)
             + Duration::minutes(1);
-        let horizon = start + Duration::days(i64::from(SEARCH_HORIZON_YEARS) * 366);
+        // robfig `yearLimit := t.Year() + 5`（按本地年）。
+        let horizon_year = start.with_timezone(&tz).year() + SEARCH_HORIZON_YEARS;
         let mut instant = start;
-        while instant <= horizon {
+        loop {
             let local = instant.with_timezone(&tz);
+            if local.year() > horizon_year {
+                return None;
+            }
             if !self.month.matches(local.month()) {
                 instant = jump(instant, next_month_start(&local, tz));
                 continue;
@@ -343,16 +361,20 @@ impl CronSpec {
                 continue;
             }
             if !self.hour.matches(local.hour()) {
+                // 本地墙钟 +1h 并**归零到整点**（robfig 首次失配时 `time.Date(y,m,d,h,0,0,0)` 再
+                // `Add(1*time.Hour)`）。四季跳变处本地墙钟可能跳过/重复一小时，但被跳过的那一小时
+                // 本来就不会匹配这个 hour 字段；`jump` 再保证绝不后退。
                 instant = jump(instant, next_hour_start(&local, tz));
                 continue;
             }
             if !self.minute.matches(local.minute()) {
-                instant = jump(instant, next_minute_start(&local, tz));
+                // 同理**绝对** +1 分钟：按本地墙钟推进会跨过二次出现的同一本地分钟
+                //（回拨后本地又回到 01:00，用 `from_local().earliest()` 会直接跳到 02:00）。
+                instant += Duration::minutes(1);
                 continue;
             }
             return Some(instant);
         }
-        None
     }
 }
 
@@ -370,6 +392,8 @@ fn jump(instant: DateTime<Utc>, target: Option<DateTime<Utc>>) -> DateTime<Utc> 
     }
 }
 
+/// 本地墙钟 → UTC。歧义（秋季回拨里的重复本地时刻）取**较早**的那一个 ——
+/// 与 Go `time.Date` 的选择一致（robfig 走的是同一条路）。
 fn local_to_utc(tz: Tz, naive: NaiveDateTime) -> Option<DateTime<Utc>> {
     tz.from_local_datetime(&naive)
         .earliest()
@@ -391,16 +415,13 @@ fn next_day_start(local: &DateTime<Tz>, tz: Tz) -> Option<DateTime<Utc>> {
     local_to_utc(tz, naive)
 }
 
+/// 本地墙钟的「下一个整点」（分钟/秒归零）。
 fn next_hour_start(local: &DateTime<Tz>, tz: Tz) -> Option<DateTime<Utc>> {
     let naive = wall_clock(local).checked_add_signed(Duration::hours(1))?;
     local_to_utc(tz, naive.with_minute(0)?.with_second(0)?)
 }
 
-fn next_minute_start(local: &DateTime<Tz>, tz: Tz) -> Option<DateTime<Utc>> {
-    let naive = wall_clock(local).checked_add_signed(Duration::minutes(1))?;
-    local_to_utc(tz, naive.with_second(0)?)
-}
-
+/// 本地墙钟（丢掉时区，只留 y-m-d h:m:s）。
 fn wall_clock(local: &DateTime<Tz>) -> NaiveDateTime {
     chrono::NaiveDateTime::new(local.date_naive(), local.time())
 }
@@ -440,13 +461,24 @@ pub fn resolve_timezone(timezone: &str) -> Result<Tz, CronError> {
 /// 解析「表达式 + 时区」：`TZ=` 前缀**覆盖** `fallback_timezone`（robfig 的行为），
 /// 前缀存在但时区非法 / 排程非法都按 [`CronError`] 返回。
 ///
+/// 分类口径（对齐上游 `CronPreview` + robfig `Parse`）：
+/// - `tz` 查询参数坏 ⇒ [`CronError::InvalidTimezone`]（`invalid_timezone`）；
+/// - 表达式文本坏（含 `TZ=` 前缀里的时区坏）⇒ [`CronError::BadPrefixTimezone`] /
+///   [`CronError::FieldCount`] …（`invalid_cron`）。
+///
 /// # Errors
 ///
 /// 见 [`CronSpec::parse`] / [`resolve_timezone`]。
 pub fn parse_with_timezone(expr: &str, fallback_timezone: &str) -> Result<(CronSpec, Tz), CronError> {
     let (prefix_timezone, schedule) = split_timezone_prefix(expr)?;
     let tz = match prefix_timezone {
-        Some(timezone) => resolve_timezone(timezone)?,
+        // 前缀属于**表达式文本**（robfig 在字段解析前就 `LoadLocation` 它）⇒ 分类是 `invalid_cron`。
+        Some(timezone) => {
+            resolve_timezone(timezone).map_err(|_| CronError::BadPrefixTimezone {
+                timezone: timezone.to_string(),
+            })?
+        }
+        // `tz` 参数属于**请求参数**（上游 handler 先 `ValidateTimezone`）⇒ `invalid_timezone`。
         None => resolve_timezone(fallback_timezone)?,
     };
     Ok((CronSpec::parse(schedule)?, tz))

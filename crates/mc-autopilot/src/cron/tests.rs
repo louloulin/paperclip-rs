@@ -113,7 +113,7 @@ fn never_fires_is_none_not_error() {
 }
 
 #[test]
-fn occurrences_are_ascending_and_capped_by_horizon() {
+fn occurrences_are_ascending_and_capped_by_count() {
     let runs = next_occurrences_after_utc("0 0 * * *", "UTC", at("2024-01-01T12:00:00Z"), 3)
         .expect("parse");
     assert_eq!(
@@ -124,10 +124,13 @@ fn occurrences_are_ascending_and_capped_by_horizon() {
             at("2024-01-04T00:00:00Z"),
         ]
     );
-    // 年粒度表达式在 5 年视界里只有 5 次，要 10 次就给 5 次。
+    // 5 年视界**不截断** `count`：它只用来**终止**「根本不触发」的表达式
+    //（robfig 的 `yearLimit`，零值时间 ⇒ 短切片）。所以年粒度表达式要 10 次就给 10 次。
     let yearly =
         next_occurrences_after_utc("0 0 1 1 *", "UTC", at("2024-01-01T00:00:00Z"), 10).expect("parse");
-    assert_eq!(yearly.len(), 5);
+    assert_eq!(yearly.len(), 10);
+    assert_eq!(yearly[0], at("2025-01-01T00:00:00Z"));
+    assert_eq!(yearly[9], at("2034-01-01T00:00:00Z"));
 }
 
 #[test]
@@ -175,8 +178,10 @@ fn tz_prefix_overrides_the_argument() {
 #[test]
 fn tz_prefix_without_schedule_is_a_400_not_a_panic() {
     // 上游 robfig 在这里 panic（parser.go:99），handler 必须把它拦成 invalid_cron。
-    let err = CronSpec::parse("TZ=UTC 0 9 * * *").expect_err("prefix must be stripped first");
-    assert!(matches!(err, CronError::FieldCount { found: 4, .. }));
+    // 前缀**没有被剥离**的原文交给 5 字段解析器 ⇒ 它看到 6 个字段（`TZ=UTC` 也算一个），
+    // 绝不会误当成合法表达式；前缀剥离只发生在 [`parse_with_timezone`] 里。
+    let err = CronSpec::parse("TZ=UTC 0 9 * * *").expect_err("raw parser must reject");
+    assert!(matches!(err, CronError::FieldCount { found: 6, .. }));
     let err = parse_with_timezone("TZ=UTC", "UTC").expect_err("no schedule");
     assert!(matches!(
         err,
@@ -192,7 +197,12 @@ fn timezone_errors_are_classified() {
     let err = parse_with_timezone("0 9 * * *", "Mars/Olympus").expect_err("unknown zone");
     assert_eq!(err.code(), CODE_INVALID_TIMEZONE);
     // 合法时区 + 非法表达式 ⇒ invalid_cron（两类不能混）。
-    let err = parse_with_timezone("9 0 * * *", "Europe/Berlin").expect_err("bad dom/dow? no: 4 fields");
+    let err = parse_with_timezone("61 0 * * *", "Europe/Berlin").expect_err("minute 61");
+    assert_eq!(err.code(), CODE_INVALID_CRON);
+    // 表达式自带前缀里的坏时区 ⇒ 也算**表达式**的问题（invalid_cron），
+    // 只有 `tz` 查询参数才走 invalid_timezone（上游 handler 的 `ValidateTimezone`）。
+    let err = parse_with_timezone("TZ=Mars/Olympus 0 9 * * *", "UTC").expect_err("bad prefix");
+    assert!(matches!(err, CronError::BadPrefixTimezone { .. }));
     assert_eq!(err.code(), CODE_INVALID_CRON);
     assert!(resolve_timezone("  Asia/Tokyo  ").is_ok(), "前后空白要容忍");
 }
@@ -260,15 +270,15 @@ fn dst_gap_skips_the_missing_local_minute() {
 
 #[test]
 fn dst_fold_fires_the_repeated_local_minute_twice() {
-    // 2024-11-03 America/New_York：02:30 先 EDT（06:30Z）后 EST（07:30Z）。
-    let first = next("30 2 * * *", "America/New_York", "2024-11-03T00:00:00Z");
-    assert_eq!(first, Some(at("2024-11-03T06:30:00Z")));
-    let second = next(
-        "30 2 * * *",
-        "America/New_York",
-        "2024-11-03T06:30:00Z",
-    );
-    assert_eq!(second, Some(at("2024-11-03T07:30:00Z")));
+    // 2024-11-03 America/New_York：本地 01:00–01:59 出现两次。01:30 先 EDT（05:30Z）
+    // 后 EST（06:30Z）——回拨那一小时里的分钟**触发两次**（只有 gap 里的分钟才永不触发）。
+    let first = next("30 1 * * *", "America/New_York", "2024-11-03T00:00:00Z");
+    assert_eq!(first, Some(at("2024-11-03T05:30:00Z")));
+    let second = next("30 1 * * *", "America/New_York", "2024-11-03T05:30:00Z");
+    assert_eq!(second, Some(at("2024-11-03T06:30:00Z")));
+    // 回拨之后的下一分钟（本地 01:30 EST 之后）是次日 01:30。
+    let third = next("30 1 * * *", "America/New_York", "2024-11-03T06:30:00Z");
+    assert_eq!(third, Some(at("2024-11-04T06:30:00Z")));
 }
 
 #[test]
@@ -276,4 +286,15 @@ fn compute_next_run_uses_now_and_validates() {
     let upcoming = compute_next_run("0 0 1 1 *", "UTC").expect("parse");
     assert!(upcoming.is_some(), "元旦总会有下一次");
     assert!(compute_next_run("* * * * *", "Mars/Olympus").is_err());
+}
+
+#[test]
+fn fold_hour_jump_lands_after_the_repeated_hour() {
+    // 2024-11-03 America/New_York：01:00–01:59 出现了两次。从 00:00 EDT 出发找当天的 02:00：
+    // 整点跳必须经过 01:00 EST（本地再次回到 01:00）后停在 02:00 EST = 07:00Z，
+    // 不能把重复的那一小时当成「已经走过」。
+    assert_eq!(
+        next("0 2 * * *", "America/New_York", "2024-11-03T04:00:00Z"),
+        Some(at("2024-11-03T07:00:00Z"))
+    );
 }
