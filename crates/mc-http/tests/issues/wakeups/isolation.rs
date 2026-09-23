@@ -4,8 +4,10 @@ use axum::http::StatusCode;
 use serde_json::json;
 use tower::ServiceExt;
 
-use crate::support::{body_json, build_state_with_db, cleanup, connect, create_issue, req, seed_workspace};
 use super::support::{create_event_wakeup, seed_agent, seed_runtime};
+use crate::support::{
+    body_json, build_state_with_db, cleanup, connect, create_issue, req, seed_workspace,
+};
 
 /// 7) 非成员 403（本仓口径；上游是 404）与跨 workspace 404。
 #[tokio::test]

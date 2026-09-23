@@ -243,14 +243,19 @@ pub(crate) async fn accessible_agent_ids(
         role: role.to_string(),
         repo: AgentRepo::new(state.db.clone()),
     };
-    let agents = scope.repo.list(workspace_id, true).await.map_err(repo_error)?;
+    let agents = scope
+        .repo
+        .list(workspace_id, true)
+        .await
+        .map_err(repo_error)?;
     let agent_ids = agents.iter().map(|a| a.id).collect::<Vec<_>>();
     let targets = scope
         .repo
         .list_invocation_targets_for_agents(&agent_ids)
         .await
         .map_err(repo_error)?;
-    let mut by_agent: HashMap<Uuid, Vec<mc_repos::agent::AgentInvocationTargetRow>> = HashMap::new();
+    let mut by_agent: HashMap<Uuid, Vec<mc_repos::agent::AgentInvocationTargetRow>> =
+        HashMap::new();
     for target in targets {
         by_agent.entry(target.agent_id).or_default().push(target);
     }
@@ -277,7 +282,8 @@ async fn list_workspace_wakeups_handler(
 
     let scope = normalise_scope(params.scope.as_deref())?;
     let kind = normalise_kind(params.kind.as_deref())?;
-    let (page_limit, page_offset) = parse_pagination(params.limit.as_deref(), params.offset.as_deref())?;
+    let (page_limit, page_offset) =
+        parse_pagination(params.limit.as_deref(), params.offset.as_deref())?;
     let search = params.search.as_deref().unwrap_or("").trim().to_string();
     if search.len() > 256 {
         return Err(Error::Validation {

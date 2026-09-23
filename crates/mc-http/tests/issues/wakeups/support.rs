@@ -27,7 +27,12 @@ pub(crate) async fn seed_runtime(pool: &PgPool, workspace_id: Uuid) -> Uuid {
 }
 
 /// 建一个 `kind='user'` 的 agent（owner = 测试用户 ⇒ `can_member_invoke_agent` / 可见性都通过）。
-pub(crate) async fn seed_agent(pool: &PgPool, workspace_id: Uuid, runtime_id: Uuid, owner_id: Uuid) -> Uuid {
+pub(crate) async fn seed_agent(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    runtime_id: Uuid,
+    owner_id: Uuid,
+) -> Uuid {
     sqlx::query_scalar(
         "INSERT INTO agent \
             (workspace_id, name, runtime_mode, status, kind, runtime_id, owner_id, permission_mode) \
@@ -105,7 +110,12 @@ pub(crate) async fn create_event_wakeup(
 }
 
 /// `GET /api/issues/:id/wakeups` → 数组。
-pub(crate) async fn list_wakeups(app: &Router<()>, ws: Uuid, user: Uuid, issue_id: &str) -> Vec<Value> {
+pub(crate) async fn list_wakeups(
+    app: &Router<()>,
+    ws: Uuid,
+    user: Uuid,
+    issue_id: &str,
+) -> Vec<Value> {
     let res = app
         .clone()
         .oneshot(req(

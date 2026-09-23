@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::support::{body_json, build_state_with_db, cleanup, connect, create_issue, req, seed_workspace};
+use crate::support::{
+    body_json, build_state_with_db, cleanup, connect, create_issue, req, seed_workspace,
+};
 
 use super::support::{
     create_event_wakeup, list_wakeups, post_wakeup, seed_agent, seed_runtime, seed_wakeup_world,
@@ -57,7 +59,10 @@ async fn wakeup_kinds_create_and_readback() {
     assert_eq!(status, StatusCode::CREATED, "{at}");
     assert_eq!(at["kind"], "at");
     assert_eq!(at["mode"], "once");
-    assert!(at["next_fire_at"].is_string(), "after_seconds 折算成绝对时间");
+    assert!(
+        at["next_fire_at"].is_string(),
+        "after_seconds 折算成绝对时间"
+    );
 
     let (status, every) = post_wakeup(
         &app,
@@ -87,7 +92,10 @@ async fn wakeup_kinds_create_and_readback() {
     assert_eq!(cron["mode"], "continuous");
     assert_eq!(cron["cron_expression"], "0 9 * * *");
     assert_eq!(cron["timezone"], "Asia/Shanghai");
-    assert!(cron["next_fire_at"].is_string(), "M5-6 自带 5 字段 cron 解析");
+    assert!(
+        cron["next_fire_at"].is_string(),
+        "M5-6 自带 5 字段 cron 解析"
+    );
     assert!(cron["next_fire_at"].as_str().unwrap() > "2020-01-01");
 
     let rows = list_wakeups(&app, ws, user, &issue_id).await;
@@ -278,7 +286,10 @@ async fn wakeup_upsert_bumps_revision_and_drops_receipts() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     let body = body_json(res.into_body()).await;
     assert_eq!(body["error"]["code"], "not_found");
-    assert!(body["error"]["message"].as_str().unwrap().contains("wakeup"));
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("wakeup"));
 
     // 非法 wakeup id ⇒ 400 `invalid wakeup id`（上游 `parseUUIDOrBadRequest`）。
     let res = app
@@ -288,8 +299,10 @@ async fn wakeup_upsert_bumps_revision_and_drops_receipts() {
             &format!("/api/issues/{issue_id}/wakeups/not-a-uuid"),
             ws,
             user,
-            Some(json!({"agent_id": agent.to_string(), "instruction": "x", "kind": "event",
-                        "event_types": ["comment.created"]})),
+            Some(
+                json!({"agent_id": agent.to_string(), "instruction": "x", "kind": "event",
+                        "event_types": ["comment.created"]}),
+            ),
         ))
         .await
         .unwrap();
@@ -358,9 +371,15 @@ async fn wakeup_disable_then_enable() {
     assert_eq!(res.status(), StatusCode::OK);
     let enabled = body_json(res.into_body()).await;
     assert_eq!(enabled["enabled"], true);
-    assert!(enabled["disabled_at"].is_null(), "重新启用要清掉 disabled_at");
+    assert!(
+        enabled["disabled_at"].is_null(),
+        "重新启用要清掉 disabled_at"
+    );
     assert_eq!(enabled["revision"], revision + 1);
-    assert_eq!(enabled["instruction"], "toggle", "enable 不回传配置，从库里恢复");
+    assert_eq!(
+        enabled["instruction"], "toggle",
+        "enable 不回传配置，从库里恢复"
+    );
 
     // revision 缺失 ⇒ 400（上游 `revision is required`）。
     let res = app
@@ -417,12 +436,10 @@ async fn wakeup_disable_then_enable() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body_json(res.into_body()).await["error"]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("invalid enable body")
-    );
+    assert!(body_json(res.into_body()).await["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("invalid enable body"));
 
     cleanup(&pool, ws, user).await;
 }
@@ -452,8 +469,10 @@ async fn wakeup_instruction_edit() {
     // 陈旧 revision ⇒ 409（`revision` 与 `expected_instruction` 任一不符都冲突）。
     let res = app
         .clone()
-        .oneshot(patch(json!({"instruction": "new text", "expected_instruction": "old text",
-                              "revision": revision + 5})))
+        .oneshot(patch(
+            json!({"instruction": "new text", "expected_instruction": "old text",
+                              "revision": revision + 5}),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::CONFLICT);
@@ -470,8 +489,10 @@ async fn wakeup_instruction_edit() {
     // 正常路径：204 无 body。
     let res = app
         .clone()
-        .oneshot(patch(json!({"instruction": "new text", "expected_instruction": "old text",
-                              "revision": revision})))
+        .oneshot(patch(
+            json!({"instruction": "new text", "expected_instruction": "old text",
+                              "revision": revision}),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -485,8 +506,10 @@ async fn wakeup_instruction_edit() {
     // 指令为空 ⇒ 400（上游 `instruction must be 1–12000 bytes and revision is required`）。
     let res = app
         .clone()
-        .oneshot(patch(json!({"instruction": "   ", "expected_instruction": "new text",
-                              "revision": revision})))
+        .oneshot(patch(
+            json!({"instruction": "   ", "expected_instruction": "new text",
+                              "revision": revision}),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -499,33 +522,32 @@ async fn wakeup_instruction_edit() {
     // 体上限 160000（上游 `MaxBytesReader`）⇒ 400 `invalid instruction body`。
     let res = app
         .clone()
-        .oneshot(patch(json!({"instruction": "x".repeat(200_000), "expected_instruction": "",
-                              "revision": revision})))
+        .oneshot(patch(
+            json!({"instruction": "x".repeat(200_000), "expected_instruction": "",
+                              "revision": revision}),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body_json(res.into_body()).await["error"]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("invalid instruction body")
-    );
+    assert!(body_json(res.into_body()).await["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("invalid instruction body"));
 
     // 未知字段 ⇒ 400 `invalid instruction body`（上游 `DisallowUnknownFields`）。
     let res = app
         .clone()
-        .oneshot(patch(json!({"instruction": "y", "expected_instruction": "new text",
-                              "revision": revision, "bogus": 1})))
+        .oneshot(patch(
+            json!({"instruction": "y", "expected_instruction": "new text",
+                              "revision": revision, "bogus": 1}),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body_json(res.into_body()).await["error"]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("invalid instruction body")
-    );
+    assert!(body_json(res.into_body()).await["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("invalid instruction body"));
 
     cleanup(&pool, ws, user).await;
 }
-

@@ -3,8 +3,8 @@
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::support::{body_json, cleanup, req};
 use super::support::{create_event_wakeup, seed_wakeup_world};
+use crate::support::{body_json, cleanup, req};
 
 /// 6) workspace 级列表（scope/kind/分页/search 校验）与 summaries（#29，本片新增注册）。
 #[tokio::test]
@@ -30,8 +30,7 @@ async fn workspace_list_and_summaries() {
     let page = body_json(res.into_body()).await;
     assert!(page["total"].as_i64().unwrap() >= 1, "{page}");
     assert_eq!(
-        page["items"][0]["issue_id"],
-        issue_id,
+        page["items"][0]["issue_id"], issue_id,
         "workspace 级列表带着 issue 归属"
     );
     assert_eq!(page["items"][0]["id"], wakeup_id);
@@ -53,12 +52,7 @@ async fn workspace_list_and_summaries() {
         .oneshot(get("/api/issue-wakeups?search=WAKEUP".to_string()))
         .await
         .unwrap();
-    assert!(
-        body_json(res.into_body()).await["total"]
-            .as_i64()
-            .unwrap()
-            >= 1
-    );
+    assert!(body_json(res.into_body()).await["total"].as_i64().unwrap() >= 1);
 
     // 参数校验：scope / kind / limit / offset / search / agent_id。
     for (query, expected) in [
@@ -92,12 +86,10 @@ async fn workspace_list_and_summaries() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body_json(res.into_body()).await["error"]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with("search too long")
-    );
+    assert!(body_json(res.into_body()).await["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("search too long"));
 
     // agent_id 过滤命中自己。
     let res = app
@@ -109,12 +101,7 @@ async fn workspace_list_and_summaries() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert!(
-        body_json(res.into_body()).await["total"]
-            .as_i64()
-            .unwrap()
-            >= 1
-    );
+    assert!(body_json(res.into_body()).await["total"].as_i64().unwrap() >= 1);
 
     // summaries：每 issue 最多 3 条预览 + 全量计数（本片新增的 #29）。
     let res = app
@@ -137,14 +124,20 @@ async fn workspace_list_and_summaries() {
     // 所以这里仍然看到自己的行，而不是去解析一个不存在的 slug。
     let res = app
         .clone()
-        .oneshot(
-            req("GET", "/api/issue-wakeup-summaries?workspace_slug=nope", ws, user, None),
-        )
+        .oneshot(req(
+            "GET",
+            "/api/issue-wakeup-summaries?workspace_slug=nope",
+            ws,
+            user,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(body_json(res.into_body()).await.as_array().unwrap().len(), 1);
+    assert_eq!(
+        body_json(res.into_body()).await.as_array().unwrap().len(),
+        1
+    );
 
     cleanup(&pool, ws, user).await;
 }
-

@@ -184,19 +184,21 @@ async fn load_ctx(
 
 /// `:wakeupId` 解析（上游 `parseUUIDOrBadRequest(w, raw, "wakeup id")`）。
 fn parse_wakeup_id(raw: &str) -> WakeupResult<Uuid> {
-    Id::parse(raw.trim())
-        .map(|id| id.0)
-        .map_err(|_| {
-            Error::Validation {
-                message: "invalid wakeup id".into(),
-                details: Vec::new(),
-            }
-            .into()
-        })
+    Id::parse(raw.trim()).map(|id| id.0).map_err(|_| {
+        Error::Validation {
+            message: "invalid wakeup id".into(),
+            details: Vec::new(),
+        }
+        .into()
+    })
 }
 
 /// 体上限 + 反序列化（等价上游 `MaxBytesReader` + `DisallowUnknownFields`）。
-fn parse_body<T: for<'de> Deserialize<'de>>(bytes: &Bytes, limit: usize, label: &str) -> WakeupResult<T> {
+fn parse_body<T: for<'de> Deserialize<'de>>(
+    bytes: &Bytes,
+    limit: usize,
+    label: &str,
+) -> WakeupResult<T> {
     if bytes.len() > limit {
         return Err(body_error(label));
     }
@@ -225,7 +227,8 @@ async fn list_issue_wakeups(
     user: AuthUser,
 ) -> WakeupResult<Json<Vec<IssueWakeupView>>> {
     let ctx = load_ctx(&state, &headers, &query, &raw_id, user).await?;
-    let agent_ids = accessible_agent_ids(&state, ctx.issue.workspace_id(), user.id(), &ctx.role).await?;
+    let agent_ids =
+        accessible_agent_ids(&state, ctx.issue.workspace_id(), user.id(), &ctx.role).await?;
     let rows = wi::list_issue_wakeups(
         state.db.pool(),
         ctx.issue.workspace_id,
@@ -352,9 +355,15 @@ async fn edit_issue_wakeup_instruction(
         expected_instruction: body.expected_instruction,
         revision: body.revision,
     };
-    service::edit_instruction(state.db.pool(), ctx.issue.id, wakeup_id, user.id().0, &input)
-        .await
-        .map_err(wakeup_error)?;
+    service::edit_instruction(
+        state.db.pool(),
+        ctx.issue.id,
+        wakeup_id,
+        user.id().0,
+        &input,
+    )
+    .await
+    .map_err(wakeup_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -365,7 +374,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/issues/:id/wakeups",
             get(list_issue_wakeups).post(create_issue_wakeup),
         )
-        .route("/api/issues/:id/wakeups/:wakeupId", put(upsert_issue_wakeup))
+        .route(
+            "/api/issues/:id/wakeups/:wakeupId",
+            put(upsert_issue_wakeup),
+        )
         .route(
             "/api/issues/:id/wakeups/:wakeupId/disable",
             post(disable_issue_wakeup),
