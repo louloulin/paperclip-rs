@@ -318,6 +318,36 @@ impl AgentScope {
             .map_err(|e| repo_err(e, "agent"))
     }
 
+    /// 上游 `canInvokeAgent`（`agent_access.go:49`）的 **member actor 分支**。
+    ///
+    /// ⚠️ **invoke 门 ≠ view 门**（M3-6 逐行核实）：
+    /// - `private`：**只有 agent owner** —— 上游在这里**没有** admin 越权，也没有 A2A 通道；
+    /// - `public_to`：白名单命中就放行（workspace 目标 ⇒ 任何成员；member 目标 ⇒ 该用户；
+    ///   team 目标 V1 恒不命中）；
+    /// - 其他 `permission_mode`：拒绝。
+    ///
+    /// 虽然 [`AgentScope::can_access_private`]（view 门）对 admin 放行，但 invoke 门
+    /// **不**复用那个判定：同一个 admin 读得到 agent，却不能只因此就把它跑起来。
+    pub(crate) fn can_invoke(
+        &self,
+        agent: &AgentRow,
+        targets: &[AgentInvocationTargetRow],
+    ) -> bool {
+        if self.is_agent_owner(agent) {
+            return true;
+        }
+        agent.permission_mode == mc_repos::agent::PERMISSION_MODE_PUBLIC_TO
+            && self.member_hits_targets(targets)
+    }
+
+    /// 上游 `loadAgentForUser` 的非报错变体：不存在 / 非本 workspace / `kind<>'user'` 都回 `None`。
+    pub(crate) async fn agent_opt(&self, id: Id) -> Result<Option<AgentRow>, Error> {
+        self.repo
+            .find_in_workspace(self.workspace_id, id)
+            .await
+            .map_err(|e| repo_err(e, "agent"))
+    }
+
     /// agent 的 invoke 白名单。
     pub(crate) async fn targets_of(
         &self,

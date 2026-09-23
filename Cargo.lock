@@ -2551,6 +2551,7 @@ dependencies = [
  "mc-core",
  "mc-db",
  "mc-errors",
+ "mc-task",
  "pretty_assertions",
  "rand 0.8.8",
  "serde",
