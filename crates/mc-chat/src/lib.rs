@@ -49,9 +49,22 @@
 //! 快捷栏容量与顺序（[`pinned`]）、草稿幂等消费（[`draft`]）。SQL 在 `mc-repos/src/chat_*.rs`，
 //! HTTP 在 `mc-http/src/routes/chat/*.rs`。
 //!
-//! `task` / `history` / `quick_action` 三个模块属于 **M4-4**，本切片不建。
+//! # 已落地（M4-4 / LUM-1475）
+//!
+//! 后三个模块由 M4-4 实现，同样**纯规则**：排队位置 / pending 投影 / 标题派生（[`task`]）、
+//! transcript 分页与渠道词表（[`history`]）、regenerate 的拒绝形状（[`quick_action`]）；
+//! [`onboarding`] 是 Mika 四种语言的开场白 + kickoff 提示词（`/api/chat/sessions/:id/onboarding`
+//! 的文案面，纯字符串处理 —— 本 crate 无 `regex` 依赖，转义是手写字符扫描）。
+//!
+//! ⚠️ `quick_action` 的**表**（`quick_action`，上游 `237_quick_action`）属于 `/api/quick-actions*`
+//! 路由（**不在** M4 的 45 条里），M4-4 不碰；chat 的快捷建议存在
+//! `chat_message.quick_actions`（jsonb），读写面在 `mc_repos::chat_quick_action`。
 
 pub mod draft;
+pub mod history;
 pub mod message;
+pub mod onboarding;
 pub mod pinned;
+pub mod quick_action;
 pub mod session;
+pub mod task;

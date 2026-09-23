@@ -317,6 +317,15 @@ handler 的鉴权（`memberCanWriteAutopilot` 等 285 行）**留在 `mc-http`**
 （M5-4 只 **读** `mc-repos/src/autopilot/mod.rs` 与 `mc-http/…/dto.rs`，这两者已在 B 波合并）；
 D 波 `M5-5 ∥ M5-8` 零交集。**全波无「同一文件两个并发写者」**。
 
+**补记（13:30 cycle / `LUM-1607` 实测，`docs/37` §36.6）**：上表的「零交集」对 `mc-autopilot` 的
+**框架三文件**（`src/lib.rs` / `src/error.rs` / `src/dto.rs`）原本**没有行** —— anchor 把它们判给 M5-1
+（见 `src/lib.rs` 的写者表），但同时写着「其余切片加自己的错误变体时只准加变体」⇒ `src/error.rs`
+在 **C 波（`M5-2 ∥ M5-3 ∥ M5-4`，真 3 片并行）** 上是**多写者**：三片都要 400/403/404/409 语义，
+最省事的写法就是各自往同一个 enum 尾部 + 同一个 `AutopilotError → ApiError` 映射里追加 ⇒ PR 层必然文本冲突。
+**C 波派发时每片 DoD 必须写明两条**：① 私有错误/形状放**自己的文件**，只有跨切片共享的才进 `src/error.rs`；
+② 确需进时**只在文件末尾追加**（变体与 match 臂），禁止重排/重命名/改既有行。
+（`mc-http/…/autopilots/dto.rs` 判给 M5-1 单写者，**不需要**这条补丁；`src/lib.rs` 在 B 波后不再变。）
+
 ---
 
 ## 4. 切片表（派发用）
