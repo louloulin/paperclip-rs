@@ -28,7 +28,8 @@
 //! `auth = None`：`daemon_id` 必填检查仍在最前（上游的 400 在鉴权之前），随后没有任何
 //! runtime 可见 ⇒ 同样的 200 空列表。
 
-use std::sync::{Arc, OnceLock, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use mc_core::Id;
 use mc_daemon_proto::messages::daemon::DaemonHeartbeatAckPayload;
@@ -42,21 +43,17 @@ use serde_json::{json, Value};
 use super::claims::claim_batch_core;
 use super::dto::BatchClaimRequest;
 use super::lifecycle::{heartbeat_ack, runtime_gone_ack};
-use super::scope::{validation, DaemonActor, DaemonAuth};
+use super::scope::{not_found, validation, DaemonActor, DaemonAuth};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
-/// 幂等闸：`OnceLock` 保证进程内只装一次（重复装会换掉刚装上的槽位）。
-static INSTALLED: OnceLock<()> = OnceLock::new();
-
+/// 幂等闸在 `mod.rs` 的 [`super::install_ws_handlers`]（唯一入口）。
+///
 /// 把两条 handler 装进 `state.daemon_hub`。
 ///
 /// **回调持 `Weak<AppState>`**：`AppState → daemon_hub → 回调 → AppState` 会成环，
 /// 用弱引用切断（hub 活得比 state 长时回调只是拿不到 state，不会拖住整个 `AppState`）。
 pub(crate) fn install(state: &Arc<AppState>) {
-    if INSTALLED.set(()).is_err() {
-        return;
-    }
     let hub = state.daemon_hub.clone();
 
     let weak = Arc::downgrade(state);
@@ -70,6 +67,63 @@ pub(crate) fn install(state: &Arc<AppState>) {
         let weak: Weak<AppState> = weak.clone();
         Box::pin(async move { dispatch_rpc(weak, request).await })
     }));
+}
+
+// ---------------------------------------------------------------------------
+// `GET /api/daemon/ws` 的查询收窄（上游 `daemon_ws.go:120` `parseRuntimeIDs`）
+// ---------------------------------------------------------------------------
+
+/// 上游 `parseRuntimeIDs`：把 `runtime_id`（可重复）与 `runtime_ids`
+/// （逗号分隔）合流，逐项 trim、去空、**保序去重**。
+///
+/// 取值走 `Query<HashMap<_, _>>` 而不是 `RawQuery` 字符串自己拆：与
+/// `routes/agents/env.rs` 的既有口径一致，并且不引入新依赖
+/// （`serde_urlencoded` 已由 axum 的 `Query` 使用）。
+///
+/// **偏离**：上游对**重复出现的** `runtime_id=` 参数会逐个合并，而 `HashMap` 只能留住
+/// 最后一个 —— 即 `?runtime_id=A&runtime_id=B` 本地只看到 `B`。逗号形态
+/// （`?runtime_ids=A,B`）逐字一致，而 daemon 升级时用的正是它。已登记在 `docs/43-M3-7-FU-WS-CLOSE.md`。
+pub(crate) fn requested_runtime_ids(query: &HashMap<String, String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |raw: &str| {
+        for part in raw.split(',') {
+            let id = part.trim();
+            if id.is_empty() || out.iter().any(|seen| seen == id) {
+                continue;
+            }
+            out.push(id.to_owned());
+        }
+    };
+    if let Some(raw) = query.get("runtime_id") {
+        push(raw);
+    }
+    if let Some(raw) = query.get("runtime_ids") {
+        push(raw);
+    }
+    out
+}
+
+/// 上游 `buildDaemonWebSocketIdentity`:53-66 的收窄与 404：
+///
+/// * 没带收窄参数 ⇒ 用 **daemon 名下全集**（本地原有行为，超集方向是安全的）；
+/// * 带了就逐项要求「在本 daemon 的 runtime 集合里」，否则 **404 `runtime not found`**
+///   —— 与上游「不在该机器名下」的那条分支同一文案、同一状态码；
+/// * 收窄后的集合直接成为 `ClientIdentity.runtime_ids`，因而决定
+///   hub 的 `by_runtime` 投递面（`Hub::notify_task_available` 等按 runtime 过滤）
+///   —— 所以这不是纯校验。
+///
+/// 顺序保留**请求里的顺序**（上游 `identity.RuntimeIDs = runtimeIDs`）。
+pub(crate) fn narrow_runtime_ids(
+    full: &[String],
+    requested: &[String],
+) -> Result<Vec<String>, ApiError> {
+    if requested.is_empty() {
+        return Ok(full.to_vec());
+    }
+    if requested.iter().any(|id| !full.iter().any(|own| own == id)) {
+        return Err(not_found("runtime not found"));
+    }
+    Ok(requested.to_vec())
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +308,49 @@ mod tests {
     fn malformed_identity_yields_no_actor() {
         assert!(auth_from_identity(&identity("", "not-a-uuid", "")).is_none());
         assert!(auth_from_identity(&identity("m1", "", "not-a-uuid")).is_none());
+    }
+
+    /// 请求里的收窄与 daemon 名下全集的交集校验：不在名下 ⇒ 404。
+    #[test]
+    fn narrow_keeps_only_daemon_owned_runtimes() {
+        let full = vec!["a".to_owned(), "b".to_owned()];
+        // 无收窄 ⇒ 全集（旧行为不变）。
+        assert_eq!(narrow_runtime_ids(&full, &[]).ok(), Some(full.clone()));
+        // 收窄到子集，顺序按请求。
+        assert_eq!(
+            narrow_runtime_ids(&full, &["b".to_owned()]).ok(),
+            Some(vec!["b".to_owned()])
+        );
+        // 不在名下 ⇒ 404 `runtime not found`。
+        let err = narrow_runtime_ids(&full, &["a".to_owned(), "z".to_owned()])
+            .expect_err("不属于该 daemon 的 runtime 必须 404");
+        assert_eq!(err.0.http_status(), 404);
+        assert!(err.0.to_string().contains("runtime not found"), "{}", err.0);
+        // 空全集 + 非空收窄 ⇒ 同样 404（不是「静默空集」）。
+        assert!(narrow_runtime_ids(&[], &["a".to_owned()]).is_err());
+    }
+
+    /// 查询收窄的解析：`runtime_id` 单值 + `runtime_ids` 逗号表，trim / 去空 / 保序去重。
+    #[test]
+    fn requested_runtime_ids_merges_both_query_keys() {
+        let parse = |pairs: &[(&str, &str)]| {
+            requested_runtime_ids(
+                &pairs
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect::<HashMap<_, _>>(),
+            )
+        };
+        assert!(parse(&[]).is_empty());
+        assert_eq!(parse(&[("runtime_id", " a ")]), vec!["a".to_owned()]);
+        assert_eq!(
+            parse(&[("runtime_ids", "a, b ,a,")]),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+        assert_eq!(
+            parse(&[("runtime_id", "a"), ("runtime_ids", "b,a")]),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
     }
 
     /// 成功体 / 失败体：与 HTTP 腿同一形状（200 带 body；4xx 是 `{"error": {...}}`）。

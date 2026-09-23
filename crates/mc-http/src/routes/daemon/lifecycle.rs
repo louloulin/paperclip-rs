@@ -7,7 +7,7 @@
 
 use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -22,6 +22,7 @@ use mc_errors::Error;
 use mc_repos::daemon::{DaemonRepo, RuntimeUpsert, UpsertRuntime};
 use mc_ws::identity::ClientIdentity;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::dto::{
@@ -629,30 +630,49 @@ const MAX_IMPORT_BATCH: usize = 10;
 /// 用户身份给出 `user_id` + 全部 membership 工作区。上游在 upgrade 时做批量鉴权并把
 /// 结果存成连接租约，本地不缓存（`ClientIdentity` 的 D4 说明 + `docs/32` 偏离表）。
 ///
+/// 查询里的 `runtime_id` / `runtime_ids` 收窄按上游 `parseRuntimeIDs` +
+/// `buildDaemonWebSocketIdentity` 处理：**不在本连接名下 ⇒ 404 `runtime not found`**，
+/// 收窄结果直接写进 `ClientIdentity.runtime_ids`（因此决定 hub 的投递面）。
+/// 解析与校验在 [`super::ws::requested_runtime_ids`] / [`super::ws::narrow_runtime_ids`]。
+///
 /// `runtime_ids` 与 `user_id` 都为空时 `Hub` 会回 400 且**不升级**。
 pub(crate) async fn ws(
     State(state): State<Arc<AppState>>,
     auth: DaemonAuth,
+    Query(query): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Response {
     let repo = DaemonRepo::new(&state.db);
+    let requested = super::ws::requested_runtime_ids(&query);
     let identity = match &auth.actor {
         DaemonActor::Daemon {
             workspace_id,
             daemon_id,
         } => match repo.runtime_ids_for_daemon(*workspace_id, daemon_id).await {
-            Ok(ids) => ClientIdentity {
-                daemon_id: daemon_id.clone(),
-                workspace_id: workspace_id.to_string(),
-                runtime_ids: ids.iter().map(ToString::to_string).collect(),
-                ..ClientIdentity::default()
-            },
+            Ok(ids) => {
+                let full: Vec<String> = ids.iter().map(ToString::to_string).collect();
+                match super::ws::narrow_runtime_ids(&full, &requested) {
+                    Ok(runtime_ids) => ClientIdentity {
+                        daemon_id: daemon_id.clone(),
+                        workspace_id: workspace_id.to_string(),
+                        runtime_ids,
+                        ..ClientIdentity::default()
+                    },
+                    Err(err) => return err.into_response(),
+                }
+            }
             Err(e) => return db_err(e).into_response(),
         },
         DaemonActor::User {
             user_id,
             daemon_id: _,
         } => {
+            // 用户连接的 runtime scope 本地**不加载**（`runtime_ids` 只由 `mdt_` token
+            // 填），所以非空收窄 fail-closed 回 404 —— 与上游「不在你名下 ⇒ 404」同文案。
+            // 上游允许用户连接声明自己可见的 runtime；本地缺这条查询，登记在 `docs/43-M3-7-FU-WS-CLOSE.md`。
+            if !requested.is_empty() {
+                return not_found("runtime not found").into_response();
+            }
             let workspaces = match repo.list_workspaces_for_user(*user_id).await {
                 Ok(rows) => rows,
                 Err(e) => return db_err(e).into_response(),
@@ -672,9 +692,9 @@ pub(crate) async fn ws(
         }
     };
     // 注入 WS 的两条 handler（心跳 / RPC）。放这里而不是启动期：`mount_slice_daemon()`
-    // 拿不到 `Arc<AppState>`，而 handler 只在有人真的升级 WS 时才被用到；`OnceLock`
-    // 保证只装一次。
-    super::ws::install(&state);
+    // 拿不到 `Arc<AppState>`，而 handler 只在有人真的升级 WS 时才被用到；幂等闸在
+    // `install_ws_handlers` 里（`OnceLock`）—— 这是它在全仓**唯一**的调用点。
+    super::install_ws_handlers(&state);
     state.daemon_hub.handle_websocket(ws, identity)
 }
 

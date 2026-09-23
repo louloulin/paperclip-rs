@@ -25,7 +25,7 @@ use mc_daemon_proto::messages::{
     TaskAvailablePayload, WorkspacesChangedPayload,
 };
 use mc_daemon_proto::{events, rpc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
@@ -111,6 +111,93 @@ pub fn runtime_gone_frame(runtime_id: &str) -> Message {
 #[must_use]
 pub fn heartbeat_ack_frame(ack: &DaemonHeartbeatAckPayload) -> Message {
     frame(events::DAEMON_HEARTBEAT_ACK, ack)
+}
+
+// ---------------------------------------------------------------------------
+// 用户面事件帧（M3-7-fu / LUM-1506）
+// ---------------------------------------------------------------------------
+
+/// 用户面 `chat:done` 载荷（上游 `pkg/protocol/messages.go:278` `ChatDonePayload` 逐字）。
+///
+/// 上游由 `task.go:7307` `broadcastChatDone` 在**完成事务提交之后**发出：正文行
+/// （`message` / `no_response`）与 resume 指针此时已落库，客户端据此收尾「正在输入」。
+///
+/// 字段顺序与 `omitempty` 语义都照抄上游：`message_id` / `content` / `elapsed_ms` /
+/// `created_at` / `message_kind` / `quick_actions` 在缺席/零值时**不出现**。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ChatDonePayload {
+    /// 会话 id（客户端用它把帧只贴到对应的 chat 窗口）。
+    pub chat_session_id: String,
+    /// 产生本次完成事件的任务 id。
+    pub task_id: String,
+    /// 助手消息 id；`None` = 本次没有正文行。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// 助手正文（`no_response` 行为空 → 缺席）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// 上游 `elapsed_ms,omitempty`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<i64>,
+    /// RFC3339Nano（上游在 Go 侧格式化后放进载荷）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    /// `message` / `no_response` 等正文行种类。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_kind: Option<String>,
+    /// 随正文一起下发的快捷动作（上游 `[]ChatQuickAction`）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub quick_actions: Vec<Value>,
+    /// 上游注释：告诉客户端还会补一条 `chat:quick_actions`（占位骨架据此显示）。
+    pub quick_actions_pending: bool,
+}
+
+/// 用户面 `task:queued` 载荷（上游 `task.go:7159` `taskEvent` 的 payload 键集）。
+///
+/// 上游把同一份 `taskEvent` 契约用在 `task:queued` / `task:running` / `task:completed` /
+/// `task:failed` / `task:cancelled` 上，所以这里的字段集与状态无关，只有 `status` 变。
+/// 上游还有两个信封级 scope 提示（`TaskID` / `ChatSessionID`），本地帧面只有
+/// `{type, payload}` 一层信封 ⇒ 它们落在载荷里（值相同，见 `docs/43-M3-7-FU-WS-CLOSE.md` 偏离表）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TaskQueuedPayload {
+    /// 任务 id。
+    pub task_id: String,
+    /// 归属 agent id。
+    pub agent_id: String,
+    /// 触发任务的问题 id。
+    pub issue_id: String,
+    /// 上游行上的 `status`（本帧恒为 `queued`，但字段随行取值而不写死）。
+    pub status: String,
+    /// chat 任务才有：客户端据此把手里的 pending pill 从「排队」改到「运行中」。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_session_id: Option<String>,
+}
+
+/// 用户面 `agent:status` 载荷（上游 `agent_env.go:272` / `runtime.go:966`）。
+///
+/// 上游载荷只有 `agent` 一个键，值是**脱敏后**的 `AgentResponse`——它从不带 env 明文。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentStatusPayload {
+    /// 脱敏 agent 响应（键集由调用方决定；本 crate 不做投影）。
+    pub agent: Value,
+}
+
+/// 上游 `protocol.EventChatDone`：会话一轮完成。
+#[must_use]
+pub fn chat_done_frame(payload: &ChatDonePayload) -> Message {
+    frame(events::CHAT_DONE, payload)
+}
+
+/// 上游 `protocol.EventTaskQueued`：队列新增一条待办（客户端刷新队列视图）。
+#[must_use]
+pub fn task_queued_frame(payload: &TaskQueuedPayload) -> Message {
+    frame(events::TASK_QUEUED, payload)
+}
+
+/// 上游 `protocol.EventAgentStatus`：某个 agent 变了，订阅者重取该行。
+#[must_use]
+pub fn agent_status_frame(payload: &AgentStatusPayload) -> Message {
+    frame(events::AGENT_STATUS, payload)
 }
 
 /// RPC 响应帧（上游 `hub.go:1036` `sendRPCResponse` 内联构造）。
@@ -360,6 +447,7 @@ mod tests {
     use mc_daemon_proto::messages::{
         DaemonHeartbeatRequestPayload, RPCRequestPayload, RPCResponsePayload,
     };
+    use serde_json::json;
 
     #[test]
     fn notification_frames_match_upstream_wire_shape() {
@@ -408,6 +496,70 @@ mod tests {
         assert_eq!(ack.kind, events::DAEMON_HEARTBEAT_ACK);
         let payload: DaemonHeartbeatAckPayload = ack.decode_payload().unwrap();
         assert_eq!(payload.server_capabilities, vec!["rpc-v1".to_owned()]);
+    }
+
+    #[test]
+    fn user_facing_frames_match_upstream_wire_shape() {
+        // chat:done —— 缺席字段一律不出现（上游 `omitempty`）。
+        let bare = ChatDonePayload {
+            chat_session_id: "cs-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            quick_actions_pending: true,
+            ..ChatDonePayload::default()
+        };
+        assert_eq!(
+            chat_done_frame(&bare).encode().unwrap(),
+            r#"{"type":"chat:done","payload":{"chat_session_id":"cs-1","quick_actions_pending":true,"task_id":"task-1"}}"#
+        );
+
+        let full = ChatDonePayload {
+            chat_session_id: "cs-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            message_id: Some("msg-1".to_owned()),
+            content: Some("hi".to_owned()),
+            elapsed_ms: Some(1200),
+            created_at: Some("2026-09-23T10:00:00Z".to_owned()),
+            message_kind: Some("message".to_owned()),
+            quick_actions: vec![json!({"label": "继续"})],
+            quick_actions_pending: false,
+        };
+        let text = chat_done_frame(&full).encode().unwrap();
+        let decoded = decode(&text).unwrap();
+        assert_eq!(decoded.kind, "chat:done");
+        let back: ChatDonePayload = decoded.decode_payload().unwrap();
+        assert_eq!(back, full);
+        // 空 quick_actions 不出现（`omitempty`），零值字段也不出现。
+        assert!(text.contains(r#""quick_actions":[{"label":"继续"}]"#));
+        assert_eq!(bare.quick_actions, Vec::<Value>::new());
+
+        // task:queued —— 无 chat 会话时不带 `chat_session_id`。
+        let queued = TaskQueuedPayload {
+            task_id: "task-1".to_owned(),
+            agent_id: "ag-1".to_owned(),
+            issue_id: "issue-1".to_owned(),
+            status: "queued".to_owned(),
+            chat_session_id: None,
+        };
+        assert_eq!(
+            task_queued_frame(&queued).encode().unwrap(),
+            r#"{"type":"task:queued","payload":{"agent_id":"ag-1","issue_id":"issue-1","status":"queued","task_id":"task-1"}}"#
+        );
+        let with_chat = TaskQueuedPayload {
+            chat_session_id: Some("cs-1".to_owned()),
+            ..queued.clone()
+        };
+        let text = task_queued_frame(&with_chat).encode().unwrap();
+        assert!(text.contains(r#""chat_session_id":"cs-1""#), "{text}");
+
+        // agent:status —— 只有 `agent` 一个键。
+        let status = AgentStatusPayload {
+            agent: json!({"id": "ag-1", "runtime_bound": false}),
+        };
+        let text = agent_status_frame(&status).encode().unwrap();
+        let decoded = decode(&text).unwrap();
+        assert_eq!(decoded.kind, "agent:status");
+        let back: AgentStatusPayload = decoded.decode_payload().unwrap();
+        assert_eq!(back, status);
     }
 
     #[test]

@@ -39,7 +39,7 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use mc_daemon_proto::messages::{
-    DaemonHeartbeatAckPayload, PendingWorkPayload, RuntimeProfilesChangedPayload,
+    DaemonHeartbeatAckPayload, Message, PendingWorkPayload, RuntimeProfilesChangedPayload,
     TaskAvailablePayload, HEARTBEAT_STATUS_RUNTIME_GONE,
 };
 use mc_daemon_proto::{events, rpc};
@@ -418,6 +418,79 @@ impl Hub {
         self.invalidate_runtime(runtime_id, &text, "")
     }
 
+    // ---------------------------------------------------------- 用户面通知
+    //
+    // 上游把 daemon 面（`daemonws.Hub`）与用户面（`events.Bus` + 工作区订阅者）**分成两个
+    // 传输层**：用户面事件按 `WorkspaceID` 扇出，连接由「该工作区的订阅者」决定。
+    // 本仓只有**一个** hub + 一条 `/api/daemon/ws` 连接面（`docs/32` D-4），所以这三条
+    // 用户面通知函数必须自己把 daemon 面连接**排除掉**：
+    //
+    // * 索引维度用 [`Index::Workspace`]（与上游同一维度：事件带 `WorkspaceID`），
+    //   但逐连接额外要求 `user_id` 非空 —— `register()` 会给每条连接建 `Index::User`
+    //   索引，而 daemon 面连接（`mdt_` token）的 `user_id` 是空串；
+    // * 工作区也必须在该连接授权 scope 内（用户连接带全部 membership，daemon 面连接
+    //   只带自己那一个）—— `ClientIdentity::allows_workspace` 空 scope 放行。
+    //
+    // 这条过滤是**正确性**而不是优化：不排掉的话，`chat:done` 的正文会顺着工作区索引
+    // 投给同一工作区的 daemon 面连接。`notify_workspaces_changed` 用 `Index::User`
+    // 寻址也是同一个理由。
+
+    /// 用户面 `chat:done`（上游 `task.go:7307` `broadcastChatDone`）。
+    ///
+    /// 在完成事务**提交之后**调用（正文行与 resume 指针已落库）；帧里带
+    /// `chat_session_id`，客户端据此把帧贴到对应会话窗口。
+    pub fn notify_chat_done(
+        &self,
+        workspace_id: &str,
+        payload: &frames::ChatDonePayload,
+    ) -> DeliveryOutcome {
+        let frame = frames::chat_done_frame(payload);
+        self.notify_workspace_users(workspace_id, &frame, "")
+    }
+
+    /// 用户面 `task:queued`（上游 `task.go:2733` `BroadcastTaskQueued`）。
+    ///
+    /// 上游在队列写入**提交后**发它，客户端据此把新任务挂进队列视图。
+    pub fn notify_task_queued(
+        &self,
+        workspace_id: &str,
+        payload: &frames::TaskQueuedPayload,
+    ) -> DeliveryOutcome {
+        let frame = frames::task_queued_frame(payload);
+        self.notify_workspace_users(workspace_id, &frame, "")
+    }
+
+    /// 用户面 `agent:status`（上游 `agent_env.go:272`、`runtime.go:966`）。
+    ///
+    /// 载荷是**脱敏**的 agent 响应；调用方负责投影，hub 不认识 agent 字段。
+    pub fn notify_agent_status(
+        &self,
+        workspace_id: &str,
+        payload: &frames::AgentStatusPayload,
+    ) -> DeliveryOutcome {
+        let frame = frames::agent_status_frame(payload);
+        self.notify_workspace_users(workspace_id, &frame, "")
+    }
+
+    /// 按工作区给**用户连接**投递一帧（见上方「用户面通知」的过滤说明）。
+    fn notify_workspace_users(
+        &self,
+        workspace_id: &str,
+        frame: &Message,
+        event_id: &str,
+    ) -> DeliveryOutcome {
+        if workspace_id.is_empty() {
+            return DeliveryOutcome::miss();
+        }
+        let Some(text) = frames::encode_text(frame) else {
+            return DeliveryOutcome::miss();
+        };
+        self.notify_frame_filtered(Index::Workspace, workspace_id, &text, event_id, |conn| {
+            let identity = conn.identity();
+            !identity.user_id.is_empty() && identity.allows_workspace(workspace_id)
+        })
+    }
+
     /// 上游 `hub.go:577` `DeliverDaemonRuntime`：处理从 relay（Redis 回环）回来的帧。
     ///
     /// 分派规则逐条对应上游 `switch msg.Type`：帧类型决定索引维度，载荷里的 id 决定 key，
@@ -487,6 +560,25 @@ impl Hub {
         data: &str,
         event_id: &str,
     ) -> DeliveryOutcome {
+        self.notify_frame_filtered(index, key, data, event_id, |_| true)
+    }
+
+    /// [`Hub::notify_frame`] 的带**连接级准入**版本：`allow` 返回 `false` 的连接直接跳过
+    /// （不投递、不计入 `delivered`、**不做去重标记** —— 它压根不属于这一帧的受众）。
+    ///
+    /// 用户面事件靠它把 daemon 面连接排除在外（见「用户面通知」一节）。去重、非阻塞入队、
+    /// 慢客户端驱逐的语义与上游 `notifyFrame` 逐字相同。
+    fn notify_frame_filtered<F>(
+        &self,
+        index: Index,
+        key: &str,
+        data: &str,
+        event_id: &str,
+        allow: F,
+    ) -> DeliveryOutcome
+    where
+        F: Fn(&ConnectionRef) -> bool,
+    {
         if key.is_empty() {
             return DeliveryOutcome::miss();
         }
@@ -499,6 +591,9 @@ impl Hub {
                     let Some(conn) = registry.clients.get(id) else {
                         continue;
                     };
+                    if !allow(conn) {
+                        continue;
+                    }
                     if !conn.mark_seen(event_id) {
                         outcome.deduped = true;
                         continue;
