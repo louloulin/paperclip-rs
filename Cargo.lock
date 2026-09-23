@@ -2362,6 +2362,7 @@ dependencies = [
  "futures-util",
  "mc-core",
  "mc-daemon-proto",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -32,6 +32,13 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
+# M3-7（LUM-1438）：daemon 客户端的 HTTP 腿（注册 / 心跳 / claim / 下线四条
+# 真实出站调用）。`reqwest` 已是 workspace 依赖且已在 `Cargo.lock` 里
+# （mc-http 用它跑 W1-Google 的出站调用），这里只是把它接到本 crate 上——
+# **不新增任何包、不新增 feature、不加新版本**；锁文件的唯一变化是本 crate
+# `dependencies` 数组里多一条 `reqwest`（实测 +1 行，无新 package 条目）。
+# 预声明清单里没有它（docs/15 §7.2.5 当时只算了 ws 侧），登记为偏离 D-10。
+reqwest = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-daemon-proto = { path = "../mc-daemon-proto" }

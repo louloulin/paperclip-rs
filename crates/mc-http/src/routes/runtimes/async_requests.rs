@@ -21,6 +21,12 @@
 //! provider 字段，本仓不从它派生任何判定）；`G_ls` 再加 owner-only（`insufficient
 //! permissions`）—— 导入要读**机器上的真实文件**，所以连 workspace owner/admin 都不放行。
 //!
+//! **`G_ls` 只落在导入那两条上**：上游 `InitiateListLocalSkills` /
+//! `GetLocalSkillListRequest` 走的是 `requireRuntimeCapabilityReadAccess`
+//! （`runtime_local_skills.go:594`、`:617`），owner 门只在 `InitiateImportLocalSkill` /
+//! `GetLocalSkillImportRequest` 上（`requireRuntimeLocalSkillAccess`，同文件 `:572`）。
+//! 列表只是「列一下这台机器上有哪些 skill」，不读文件内容。
+//!
 //! ## 与上游的偏离（逐条见 `docs/32-M3-DAEMON-FACE.md`）
 //!
 //! - **无 catalog 缓存**：上游 `InitiateListModels` 命中 `ModelCatalogCache`（Redis，
@@ -257,15 +263,15 @@ pub(crate) async fn get_model_list_request(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/runtimes/:runtimeId/local-skills`（上游 `InitiateListLocalSkills`，`runtime_local_skills.go:594`）。
+///
+/// 门是**能力读**（`G_rc`）而不是 owner-only：非 owner 成员在 `public` runtime 上可以
+/// 让主人的机器报一次技能清单，只是不能导入（见模块文档）。
 pub(crate) async fn initiate_list_local_skills(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
     Path(runtime_id): Path<String>,
 ) -> ApiResult<Response> {
-    let (rt, member) = load_readable_runtime_member(&state, &runtime_id, user.id()).await?;
-    if !member.can_set_visibility(&rt) {
-        return Err(forbidden(OWNER_ONLY).into());
-    }
+    let (rt, _) = load_readable_runtime_member(&state, &runtime_id, user.id()).await?;
     if rt.status != "online" {
         return Ok(runtime_offline());
     }
@@ -280,15 +286,14 @@ pub(crate) async fn initiate_list_local_skills(
 }
 
 /// `GET /api/runtimes/:runtimeId/local-skills/:requestId`（上游 `GetLocalSkillListRequest`）。
+///
+/// 轮询与入队同门（`G_rc`），且**不在离线时 503** —— 掉线后仍要能取回最后一次结果。
 pub(crate) async fn get_local_skill_list_request(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
     Path((runtime_id, request_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let (rt, member) = load_readable_runtime_member(&state, &runtime_id, user.id()).await?;
-    if !member.can_set_visibility(&rt) {
-        return Err(forbidden(OWNER_ONLY).into());
-    }
+    let (rt, _) = load_readable_runtime_member(&state, &runtime_id, user.id()).await?;
     Ok(poll_response(
         &state.daemon_requests,
         rt.id,

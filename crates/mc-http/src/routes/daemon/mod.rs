@@ -61,12 +61,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/daemon/runtimes/:runtimeId/tasks/:taskId/prepare-lease",
             post(claims::prepare_lease),
         )
+        // 上游 `router.go:1547`：`tasks/pending` 下**没有** `{taskId}` 段。
         .route(
-            "/api/daemon/runtimes/:runtimeId/tasks/:taskId/pending",
+            "/api/daemon/runtimes/:runtimeId/tasks/pending",
             get(claims::list_pending),
         )
+        // 上游 `router.go:1570`：`recover-orphans` 直接挂在 runtimeId 下，**没有** `tasks/` 段。
         .route(
-            "/api/daemon/runtimes/:runtimeId/tasks/recover-orphans",
+            "/api/daemon/runtimes/:runtimeId/recover-orphans",
             post(claims::recover_orphans),
         )
         .route(

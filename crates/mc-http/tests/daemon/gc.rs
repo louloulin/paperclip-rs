@@ -35,6 +35,7 @@ async fn seed_autopilot_run(pool: &sqlx::PgPool, workspace_id: Uuid, user_id: Uu
 /// 5 条 gc-check 各打一次，断言状态码与关键字段。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+#[allow(clippy::too_many_lines)] // 五个探针按顺序平铺，拆函数反而更难读
 async fn gc_check_covers_all_five_probes() {
     let Some((pool, db)) = support::connect().await else {
         return;
@@ -138,7 +139,10 @@ async fn gc_check_covers_all_five_probes() {
     // 未知 id ⇒ 404（且用 daemon 面的上游短语）。
     let missing = "00000000-0000-4000-8000-000000000000";
     for (path, expected) in [
-        (format!("/api/daemon/issues/{missing}/gc-check"), "issue not found"),
+        (
+            format!("/api/daemon/issues/{missing}/gc-check"),
+            "issue not found",
+        ),
         (
             format!("/api/daemon/chat-sessions/{missing}/gc-check"),
             "chat session not found",
@@ -147,7 +151,10 @@ async fn gc_check_covers_all_five_probes() {
             format!("/api/daemon/autopilot-runs/{missing}/gc-check"),
             "autopilot run not found",
         ),
-        (format!("/api/daemon/tasks/{missing}/gc-check"), "task not found"),
+        (
+            format!("/api/daemon/tasks/{missing}/gc-check"),
+            "task not found",
+        ),
     ] {
         let (status, body) = support::call(&app, "GET", &path, user_id, Some("m1"), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");

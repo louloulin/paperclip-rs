@@ -13,10 +13,10 @@
 //!
 //! **无 `Authorization` 头**时走本仓 M1/M2 的 dev-mode 约定（`X-Multica-User-Id`，可选
 //! `X-Daemon-Id`），否则本仓既有的 daemon e2e 测试无法构造身份。这是**偏离 D-1**，
-//! 记在 `docs/32-M3-7-DAEMON-ROUTES.md` 的偏离表里。
+//! 记在 `docs/32-M3-DAEMON-FACE.md` 的偏离表里。
 //!
 //! JWT 面（上游最后那条 `jwt` 分支）本地未实现：M1 的 session 中间件用的是
-//! `X-Multica-Session` cookie，语义不同；走 dev-mode 兜底即可，登记为 D-2。
+//! `X-Multica-Session` cookie，语义不同；走 dev-mode 兜底即可，登记为 D-7。
 //!
 //! ## 门禁三级（upstream `requireDaemonWorkspaceAccess` / `requireDaemonRuntimeAccess` /
 //! `requireDaemonTaskAccess`）

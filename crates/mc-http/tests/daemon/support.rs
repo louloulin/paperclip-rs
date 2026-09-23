@@ -119,6 +119,17 @@ pub(crate) async fn seed_user(pool: &PgPool, workspace_id: Uuid, role: &str) -> 
 }
 
 /// 建一台绑在 `daemon_id` 上、`online` 且有主的 runtime（可被 claim）。
+///
+/// `visibility` 只能是 `'private'` / `'public'`（`083_runtime_visibility.up.sql`：
+/// `CHECK (visibility IN ('private','public'))`，默认 `'private'`）。`'workspace'` 是
+/// **另一张表**的词汇（`runtime_profile.visibility`，`120_runtime_profile.up.sql`），
+/// 写到 `agent_runtime` 上会被 check 约束拒掉（23514）。
+///
+/// 这里用上游默认值 `'private'`：本套件的调用者全是这台 runtime 的 `owner_id`，
+/// `AgentRuntimeRepo::list(Visible)` 的口径 `owner_id = $1 OR visibility = 'public'`
+/// 与 daemon 面 `require_*_access` 的 workspace 门都不受影响；
+/// `async_face::local_skill_list_is_readable_but_import_is_owner_only` 这类「非主不可」的
+/// 用例更是只有在 `'private'` 下才真的有判别力（它自己再翻成 `'public'`）。
 pub(crate) async fn seed_runtime(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -129,7 +140,7 @@ pub(crate) async fn seed_runtime(
         "INSERT INTO agent_runtime \
             (workspace_id, daemon_id, name, runtime_mode, provider, owner_id, visibility, \
              status, last_seen_at) \
-         VALUES ($1, $2, $3, 'local', 'claude', $4, 'workspace', 'online', now()) RETURNING id",
+         VALUES ($1, $2, $3, 'local', 'claude', $4, 'private', 'online', now()) RETURNING id",
     )
     .bind(workspace_id)
     .bind(daemon_id)
@@ -156,6 +167,11 @@ pub(crate) async fn seed_agent(pool: &PgPool, workspace_id: Uuid, runtime_id: Uu
 }
 
 /// 建一条 `status` 状态的 `agent_task_queue` 行（顺带建占位 issue），返回 task id。
+///
+/// issue 的 `number` 必须显式分配：`agent_runtime` 之外，`issue` 也带
+/// `UNIQUE(workspace_id, number)`（`020_issue_number.up.sql:33`）而列的默认值是 `0`
+/// ⇒ 同一 workspace 里建第二条占位 issue 会撞 23505。这里按生产口径推 workspace 的
+/// `issue_counter`，而不是自己编一个序号。
 pub(crate) async fn seed_task(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -164,12 +180,21 @@ pub(crate) async fn seed_task(
     agent_id: Uuid,
     status: &str,
 ) -> Uuid {
+    let number: i32 = sqlx::query_scalar(
+        "UPDATE workspace SET issue_counter = issue_counter + 1 \
+         WHERE id = $1 RETURNING issue_counter",
+    )
+    .bind(workspace_id)
+    .fetch_one(pool)
+    .await
+    .expect("bump issue_counter");
     let issue_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issue(workspace_id, title, creator_type, creator_id) \
-         VALUES ($1, 'itest daemon task', 'member', $2) RETURNING id",
+        "INSERT INTO issue(workspace_id, title, creator_type, creator_id, number) \
+         VALUES ($1, 'itest daemon task', 'member', $2, $3) RETURNING id",
     )
     .bind(workspace_id)
     .bind(creator)
+    .bind(number)
     .fetch_one(pool)
     .await
     .expect("insert issue");
@@ -300,7 +325,7 @@ pub(crate) async fn claim(
 
 /// 错误正文里**上游原文**那一段（剥掉 `mc-errors` 的内部前缀）。
 pub(crate) fn error_message(body: &Value) -> &str {
-    const PREFIXES: [&str; 12] = [
+    const PREFIXES: [&str; 13] = [
         "validation error: ",
         "not found: ",
         "conflict: ",
@@ -313,6 +338,9 @@ pub(crate) fn error_message(body: &Value) -> &str {
         "internal error: ",
         "io error: ",
         "upstream error: ",
+        // `mc_errors::Error::RuntimeOffline` 的 Display 前缀（`mc-errors/src/lib.rs:56`）。
+        // daemon 面把它的状态码改写成 503，但错误体统一带前缀（见 `docs/32` 偏离表）。
+        "runtime not connected: ",
     ];
     let raw = body["error"]["message"].as_str().unwrap_or("");
     for prefix in PREFIXES {

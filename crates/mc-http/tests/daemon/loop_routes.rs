@@ -6,6 +6,7 @@
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
+use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::support::{self, DAEMON_ID_HEADER, USER_ID_HEADER};
@@ -59,6 +60,7 @@ fn first_task(body: &Value) -> Value {
 /// complete，每步都断言服务端可观察的状态。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+#[allow(clippy::too_many_lines)] // 主链按调用顺序平铺，拆函数会丢掉步进关系
 async fn daemon_loop_end_to_end() {
     let Some((pool, db)) = support::connect().await else {
         return;
@@ -82,7 +84,10 @@ async fn daemon_loop_end_to_end() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "heartbeat: {ack}");
-    assert!(ack.get("runtime_id").is_none(), "http ack 不该带 runtime_id: {ack}");
+    assert!(
+        ack.get("runtime_id").is_none(),
+        "http ack 不该带 runtime_id: {ack}"
+    );
     assert!(
         ack.get("server_capabilities").is_none(),
         "http ack 不该带 server_capabilities: {ack}"
@@ -259,7 +264,7 @@ async fn daemon_loop_end_to_end() {
     let (status, pending) = support::call(
         &app,
         "GET",
-        &format!("/api/daemon/runtimes/{runtime_id}/tasks/{task}/pending"),
+        &format!("/api/daemon/runtimes/{runtime_id}/tasks/pending"),
         user_id,
         Some("m1"),
         None,
@@ -319,12 +324,14 @@ async fn claim_rejects_daemon_id_mismatch() {
     let (runtime_id, _agent_id, task_id) =
         support::seed_ready_task(&pool, workspace_id, user_id, "m1").await;
 
+    // 头里的机器名与体里的 `daemon_id` 必须一致（上游 `ctx daemon_id != req.daemon_id`
+    // ⇒ 403）：头是凭据来源，体是客户端自己声明的，两者不同就是冒名。
     let (status, body) = support::call(
         &app,
         "POST",
         "/api/daemon/tasks/claim",
         user_id,
-        Some("m2"),
+        Some("m1"),
         Some(json!({
             "daemon_id": "m2",
             "runtime_ids": [runtime_id.to_string()],
@@ -373,6 +380,56 @@ async fn claim_skips_runtimes_of_other_daemons() {
             .await
             .expect("task status");
     assert_eq!(task_status, "queued");
+
+    support::cleanup(&pool, workspace_id, &[user_id]).await;
+}
+
+/// 并发 claim：两条同时到达的认领请求，同一条任务**只会被发出一次**。
+///
+/// 互斥靠 SQL 的 `FOR UPDATE SKIP LOCKED`（`mc-repos/src/daemon/tasks.rs:462`），不是应用层的
+/// 锁——所以断言的是「两次应答的并集恰好一条」，而不是谁先谁后。两条请求都会 200：
+/// 输的那条只是拿到空列表（与上游同款语义，不是 409）。
+#[tokio::test]
+#[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+async fn concurrent_claims_yield_the_task_exactly_once() {
+    let Some((pool, db)) = support::connect().await else {
+        return;
+    };
+    let (workspace_id, user_id) = support::seed_workspace(&pool, "owner").await;
+    let app = support::app_with_db(db);
+    let (runtime_id, _agent_id, task_id) =
+        support::seed_ready_task(&pool, workspace_id, user_id, "m1").await;
+    let claimed_runtimes = [runtime_id];
+
+    let (a, b) = tokio::join!(
+        support::claim(&app, user_id, "m1", &claimed_runtimes, 4),
+        support::claim(&app, user_id, "m1", &claimed_runtimes, 4),
+    );
+    let (a_status, a_body) = a;
+    let (b_status, b_body) = b;
+    assert_eq!(a_status, StatusCode::OK, "claim A: {a_body}");
+    assert_eq!(b_status, StatusCode::OK, "claim B: {b_body}");
+
+    let mut ids: Vec<String> = [&a_body, &b_body]
+        .into_iter()
+        .filter_map(|body| body["tasks"].as_array())
+        .flatten()
+        .filter_map(|task| task["id"].as_str().map(str::to_owned))
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        vec![task_id.to_string()],
+        "同一任务只能被发出一次：A={a_body} B={b_body}"
+    );
+
+    // 只有一枚任务 token（没领到的请求不会签发凭据）。
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM task_token WHERE task_id = $1")
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await
+        .expect("task_token count");
+    assert_eq!(tokens, 1, "两枚 token 意味着任务被发给了两台机器");
 
     support::cleanup(&pool, workspace_id, &[user_id]).await;
 }
@@ -440,8 +497,15 @@ async fn cancel_ack_accepts_empty_body() {
     let app = support::app_with_db(db);
     let (runtime_id, agent_id, _queued) =
         support::seed_ready_task(&pool, workspace_id, user_id, "m1").await;
-    let cancelled =
-        support::seed_task(&pool, workspace_id, user_id, runtime_id, agent_id, "cancelled").await;
+    let cancelled = support::seed_task(
+        &pool,
+        workspace_id,
+        user_id,
+        runtime_id,
+        agent_id,
+        "cancelled",
+    )
+    .await;
 
     let (status, body) = support::call(
         &app,
@@ -473,7 +537,7 @@ async fn recover_orphans_reports_counts() {
     let (status, body) = support::call(
         &app,
         "POST",
-        &format!("/api/daemon/runtimes/{runtime_id}/tasks/recover-orphans"),
+        &format!("/api/daemon/runtimes/{runtime_id}/recover-orphans"),
         user_id,
         Some("m1"),
         None,
@@ -515,7 +579,7 @@ async fn unknown_runtime_and_task_are_404() {
     let (status, body) = support::call(
         &app,
         "GET",
-        "/api/daemon/runtimes/00000000-0000-4000-8000-000000000000/tasks/00000000-0000-4000-8000-000000000000/pending",
+        "/api/daemon/runtimes/00000000-0000-4000-8000-000000000000/tasks/pending",
         user_id,
         Some("m1"),
         None,
@@ -549,7 +613,6 @@ async fn spoofed_identity_headers_do_not_authenticate() {
         .header(DAEMON_ID_HEADER, "m1")
         .body(axum::body::Body::empty())
         .unwrap();
-    use tower::ServiceExt;
     let status = app
         .clone()
         .oneshot(request)

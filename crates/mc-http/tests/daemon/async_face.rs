@@ -326,9 +326,7 @@ async fn local_skill_import_round_trip() {
     assert_eq!(ack["pending_local_skill_import"]["id"], json!(request_id));
     // 支持批量导入是本地能力位，两个字段都要有。
     assert_eq!(
-        ack["pending_local_skill_imports"]
-            .as_array()
-            .map(Vec::len),
+        ack["pending_local_skill_imports"].as_array().map(Vec::len),
         Some(1)
     );
 
@@ -353,15 +351,26 @@ async fn local_skill_import_round_trip() {
     )
     .await;
     assert_eq!(done["status"], json!("completed"));
-    assert_eq!(done["skill"]["id"], json!("s-1"));
+    // `skill` 是**服务端自己建的行**（上游 `LocalSkillImportStore.Complete(ctx, id, resp)`，
+    // `resp` 来自 `createSkillWithFiles`）⇒ 新 uuid，不是 daemon 报的 `s-1`；
+    // 名字也以用户面的 `name` 为准（上游 `if req.Name != nil { name = *req.Name }`）。
+    let created_skill_id = done["skill"]["id"].as_str().expect("created skill id");
+    assert_ne!(created_skill_id, "s-1");
+    Uuid::parse_str(created_skill_id).expect("created skill id is a uuid");
+    assert_eq!(done["skill"]["name"], json!("Code Review"));
 
     support::cleanup(&pool, workspace_id, &[user_id]).await;
 }
 
-/// 权限：非 owner 的普通成员入队 local-skills ⇒ 403 `insufficient permissions`。
+/// 本地技能两条门：**列表**是能力读（`G_rc`），**导入**才是 owner-only（`G_ls`）。
+///
+/// 上游 `InitiateListLocalSkills` / `GetLocalSkillListRequest` 走
+/// `requireRuntimeCapabilityReadAccess`（`runtime_local_skills.go:594`、`:617`），owner 门
+/// 只加在导入两条上（`requireRuntimeLocalSkillAccess`，同文件 `:572`）—— 导入要读
+/// **机器上的真实文件**，列表不读。所以同一位非 owner 成员：列表 200、导入 403。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-async fn local_skill_enqueue_is_owner_only() {
+async fn local_skill_list_is_readable_but_import_is_owner_only() {
     let Some((pool, db)) = support::connect().await else {
         return;
     };
@@ -370,10 +379,64 @@ async fn local_skill_enqueue_is_owner_only() {
     let app = support::app_with_db(db);
     let runtime_id = seed_online(&pool, workspace_id, owner).await;
 
+    // `private`（上游默认）：非 owner 连读门都过不了 ⇒ 404 `runtime`（不是 403 ——
+    // 一个已知但在别人名下的 runtime id 不能当存在性预言机）。
     let (status, body) = support::call(
         &app,
         "POST",
         &format!("/api/runtimes/{runtime_id}/local-skills"),
+        member,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // 翻成 `public`：读门（`canUseRuntimeForAgent`）放行，列表两条都 200。
+    sqlx::query("UPDATE agent_runtime SET visibility = 'public' WHERE id = $1")
+        .bind(runtime_id)
+        .execute(&pool)
+        .await
+        .expect("publish runtime");
+    let (status, created) = support::call(
+        &app,
+        "POST",
+        &format!("/api/runtimes/{runtime_id}/local-skills"),
+        member,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let request_id = created["id"].as_str().expect("request id").to_owned();
+    let (status, polled) = support::call(
+        &app,
+        "GET",
+        &format!("/api/runtimes/{runtime_id}/local-skills/{request_id}"),
+        member,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{polled}");
+
+    // 导入两条：owner-only ⇒ 403 `insufficient permissions`（读门先过，所以不是 404）。
+    let (status, body) = support::call(
+        &app,
+        "POST",
+        &format!("/api/runtimes/{runtime_id}/local-skills/import"),
+        member,
+        None,
+        Some(json!({ "skill_key": "code-review" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(support::error_message(&body), "insufficient permissions");
+
+    let (status, body) = support::call(
+        &app,
+        "GET",
+        &format!("/api/runtimes/{runtime_id}/local-skills/import/{request_id}"),
         member,
         None,
         None,
@@ -385,8 +448,12 @@ async fn local_skill_enqueue_is_owner_only() {
     support::cleanup(&pool, workspace_id, &[owner, member]).await;
 }
 
-/// 离线 runtime 的四个入队端点 ⇒ 503 `runtime is offline`（不是 422 —— 本地
+/// 离线 runtime 的**三个入队端点** ⇒ 503 `runtime is offline`（不是 422 —— 本地
 /// `Error::RuntimeOffline` 的默认码是 422，daemon 面按上游口径改写）。
+///
+/// `POST .../update` **不在这组里**：上游 `InitiateUpdate` 没有离线门
+/// （`runtime_update.go:213`），只有模型清单与两个技能端点有
+/// （`runtime_models.go:353`、`runtime_local_skills.go:601`、`:642`）。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn enqueue_on_offline_runtime_is_503() {
@@ -403,9 +470,12 @@ async fn enqueue_on_offline_runtime_is_503() {
         .expect("mark offline");
 
     for (method, path, body) in [
-        ("POST", format!("/api/runtimes/{runtime_id}/update"), Some(json!({ "target_version": "2.0.0" }))),
         ("POST", format!("/api/runtimes/{runtime_id}/models"), None),
-        ("POST", format!("/api/runtimes/{runtime_id}/local-skills"), None),
+        (
+            "POST",
+            format!("/api/runtimes/{runtime_id}/local-skills"),
+            None,
+        ),
         (
             "POST",
             format!("/api/runtimes/{runtime_id}/local-skills/import"),
@@ -414,13 +484,31 @@ async fn enqueue_on_offline_runtime_is_503() {
     ] {
         let (status, error) = support::call(&app, method, &path, user_id, None, body).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {error}");
-        assert_eq!(support::error_message(&error), "runtime is offline", "{path}");
+        assert_eq!(
+            support::error_message(&error),
+            "runtime is offline",
+            "{path}"
+        );
     }
+
+    // update 在离线 runtime 上照常入队（上游没有离线门）—— 回归：别顺手把 503 加上。
+    let (status, created) = support::call(
+        &app,
+        "POST",
+        &format!("/api/runtimes/{runtime_id}/update"),
+        user_id,
+        None,
+        Some(json!({ "target_version": "2.0.0" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["status"], json!("pending"));
 
     support::cleanup(&pool, workspace_id, &[user_id]).await;
 }
 
-/// `target_version` 为空 ⇒ 400（上游 `errTargetVersionRequired`），不落台账。
+/// `target_version` 为空串 ⇒ 400（上游 `req.TargetVersion == ""`，`runtime_update.go:229`），
+/// 不落台账；纯空白**算合法输入**（上游不做 trim，本仓照抄，见模块文档末条）。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn update_requires_target_version() {
@@ -430,18 +518,31 @@ async fn update_requires_target_version() {
     let (workspace_id, user_id) = support::seed_workspace(&pool, "owner").await;
     let app = support::app_with_db(db);
     let runtime_id = seed_online(&pool, workspace_id, user_id).await;
+    let path = format!("/api/runtimes/{runtime_id}/update");
 
     let (status, body) = support::call(
         &app,
         "POST",
-        &format!("/api/runtimes/{runtime_id}/update"),
+        &path,
+        user_id,
+        None,
+        Some(json!({ "target_version": "" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(support::error_message(&body), "target_version is required");
+
+    let (status, accepted) = support::call(
+        &app,
+        "POST",
+        &path,
         user_id,
         None,
         Some(json!({ "target_version": "   " })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(support::error_message(&body), "target_version is required");
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["target_version"], json!("   "));
 
     support::cleanup(&pool, workspace_id, &[user_id]).await;
 }

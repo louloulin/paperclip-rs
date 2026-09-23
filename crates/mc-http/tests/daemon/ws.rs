@@ -45,7 +45,7 @@ async fn send(
 ) {
     let frame = json!({ "type": kind, "payload": payload }).to_string();
     socket
-        .send(WsMessage::Text(frame.into()))
+        .send(WsMessage::Text(frame))
         .await
         .expect("send frame");
 }
@@ -173,7 +173,13 @@ async fn ws_handshake_rpc_and_claim_share_the_http_body() {
     support::cleanup(&pool, workspace_id, &[user_id]).await;
 }
 
-/// 无任何身份（既无 token 也无用户头）⇒ 400 且**不升级**（上游 `identity.validate()`）。
+/// 无任何身份（既无 token 也无用户头）⇒ **401** 且不升级。
+///
+/// 判据是上游 `middleware/daemon_auth.go`:102-106：`/api/daemon` 整组挂在 `DaemonAuth`
+/// 之下（`router.go:1520-1521`），而 `DaemonAuth` 在**没有 `Authorization` 头**时直接
+/// `401 missing authorization header`，中间件先于 handler 结束 —— `DaemonWebSocket` 里
+/// 那个 400 根本走不到（它只在“凭据有效但既没 `runtime_ids` 也没用户”时触发，
+/// `daemon_ws.go:19-23`）。本仓 `DaemonAuth`（`scope.rs`）同样先 401，行为一致。
 #[tokio::test]
 #[ignore = "requires PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
 async fn ws_without_identity_is_rejected_before_upgrade() {
@@ -192,8 +198,8 @@ async fn ws_without_identity_is_rejected_before_upgrade() {
         .expect_err("无身份不该升级");
     let text = error.to_string();
     assert!(
-        text.contains("400") || text.contains("Bad Request"),
-        "期望 400：{text}"
+        text.contains("401") || text.contains("Unauthorized"),
+        "期望 401（上游 `DaemonAuth` 在缺 Authorization 头时先于 handler 结束）：{text}"
     );
 
     server.abort();
