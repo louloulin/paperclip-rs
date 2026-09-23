@@ -3923,3 +3923,76 @@ overall: PASS — 4/4 gate(s) green in 26s           （日志 `../gates-1607-ba
    + 门 ⑥ 加 `-p mc-scheduler`（§7.2）。**未获批不动**。
 4. 建真库模板（下一轮照抄，省一次踩坑）：`CREATE ROLE mc_lumXXXX LOGIN **CREATEDB** PASSWORD '…'` + `CREATE DATABASE multica_lumXXXX OWNER …`；
    口令自拟不落明文；门禁日志 `tee` 全量。
+
+---
+
+## 39. 23:00 cycle（`LUM-1613`）：M5-1 收口 ⇒ B 波 3/3 ⇒ C 波 `M5-2 ∥ M5-3 ∥ M5-4` 派发
+
+### 39.1 起手读数与 checkout 坑（复现第 38.1 条）
+
+- `df -h /` **8.2G 可用**（起手：M5-1 `17G` + M4-INT `13G` 两个 target）；base **`f1f7977`**；GH **0 open PR**；在飞 **1 片**
+  （M5-1 重派 run `01a0ce9b-0ef5`，14:11:20 起，**活着且在跑门禁**）。
+- 【**再次复现，务必照抄**】`multica repo checkout` 不带 `--ref` 落的是 **main 系** `4fc96f3`（`fix(pc-http tests)…`）：
+  `git merge-base --is-ancestor 4fc96f3 origin/feat/multica-rs-initial` = 否。本轮起手即显式 `git checkout -B cycle-1613 origin/feat/multica-rs-initial`。
+
+### 39.2 M5-1（`LUM-1564`）收口：run 时间线与**一条新坑（PR head 会后移）**
+
+| 时刻（UTC） | 事件 |
+| --- | --- |
+| 14:11:20 | 重派 run `01a0ce9b-0ef5` 起；实际在旧 workdir `lum-1564-334607c0bcb3`（复用 3.6G 增量 target）干活 |
+| ~14:58 | 提交 `4f6db15`（读面测试）→ `d4e141e`（并入 base `f1f7977`）→ 首轮 `--with-db` 10/10 后补 `90ad519`（`docs/46` + 去重复依赖边 + clippy pedantic 收口） |
+| 15:02–15:03 | **重跑** `--with-db`（72s，10/10：①-⑤+⑥`migrate=0,e2e=0`+⑦+⑧+⑨+⑩） |
+| 15:03:48 | push 分支 + 开 **PR #55**（head `90ad5198`，22 files / +5668 −21） |
+| 15:05:24 | **head 再前进一格**：`025e630`（「恢复 `Cargo.toml` 段间空行（只留 M5-1 注释增量）」，vs `90ad519` 仅 `mc-http/Cargo.toml` +1 行） |
+| 15:08:10 | run 终态 `completed`（未再推） |
+
+- 【**新坑·可复用**】**PR 开出来之后 head 仍可能再前进**（本轮是收尾小提交）。我在 `90ad5198` 上做的预检 + 合并树门禁运行
+  因此在 15:05 之后**整体作废**：`PUT /pulls/55/merge`（钉 `90ad5198`）被 GitHub 以
+  **`Head branch was modified. Review and try the merge again.`** 拒绝 —— **这是保护而不是故障**。
+  ⇒ 口径：**判据链三步（预检 → 合并树门禁 → API 合并）之间 head 不得变化**；开始前重取 `git ls-remote` / PR `head.sha`，
+  被拒后**整链重跑**（本轮重跑代价仅 176s，因 target 热）。
+
+### 39.3 判据链读数（单片：base `f1f7977` + #55 `025e630`）
+
+| 步骤 | 实测 |
+| --- | --- |
+| 预检（`--no-ff --no-commit`） | staged `22 files changed, +5668 −20` = **PR/API 自述逐字一致**（`changed_files 22 / additions 5668 / deletions 20`，`commits 10`）；tree **`544af0fe60ac5c139c076d4811469305c7662dac`** == 分支 tip tree（`025e630^{tree}`） |
+| `Cargo.lock` 专项核 | `git diff --cached --stat -- Cargo.lock` **空** ⇒ 本片未碰 lock（`mc-http → mc-autopilot` 的 path 边 M5-0 已入 lock），门 ② `--locked` 无风险 |
+| 合并树门禁（真库 `mc_lum1613`/`multica_lum1613`，`--with-db`） | **10/10 绿 / 176s**：①1s ②17s ③13s ④15s ⑤31s ⑥43s(`migrate=0,e2e=0`) ⑧43s ⑦0s ⑨12s ⑩1s；跑前跑后 `HEAD=502743c` / tree `544af0fe` / `git status` **空**（同一棵树） |
+| API 合并 | `PUT /pulls/55/merge` 钉 **`025e630b`** ⇒ **`76db3eb6f10318b926f66f8da5139a8a206d2e2e`** |
+| 合并后复核 | 终态 base 树 = **`544af0fe`** == 预检树；`git diff 502743c origin/feat/multica-rs-initial` = **0 行** |
+
+### 39.4 合并树 ⑦/⑨/⑩ + 用例计数（只取当轮日志）
+
+- ⑦ `upstream 456 (commit f41fae6b08fb) | local 307 registered | baseline 300`；
+  `implemented 246 real + 2 placeholder = 248/456`、`known_gap 208`、**`unclaimed 0`**、**`regression 0`**、`local_only 11`
+  ⇒ 合并树**无需刷 ⑦ 基线**（本片 +6 键，基线按 R13 留给 `LUM-1572`/M5-INT；`LUM-1580` 继续 `backlog`）。
+- ⑤ `1255 passed / 0 failed`（`env -u MULTICA_TEST_DATABASE_URL`）；⑥ 真库 e2e **`246 passed / 0 failed`**（含本片 15+3 例）；
+  ⑨ `report matches crates/mc-conformance/report.json`；⑩ file-size exit 0；全日志无 `test result: FAILED`。
+- 真库角色照 §38.3 模板预先建好（`mc_lum1613` **`rolcreatedb=t`** + `multica_lum1613`）⇒ ⑥/⑧ 首次即绿，**没有再踩权限坑**。
+
+### 39.5 C 波派发（B 波 3/3 ⇒ 立即放 C 波）
+
+- 派发前先补 DoD：把 `docs/37` §36.6 的两条（**私有错误放自己的文件** / **进 `mc-autopilot/src/error.rs` 只准尾部追加**）
+  追加进 **`LUM-1567`(M5-2) / `LUM-1568`(M5-3) / `LUM-1569`(M5-4)** 的 description（`--no-start` 更新，落盘后复核 `has_DoD=True`），
+  再 `backlog → todo`（三片同时起步，**15:16:20Z**，run `01a0ced6-d3c` / `-d42` / `-d49`）。
+- 并行依据：`docs/44` §3.2 写集矩阵 + §4.3 明确「C 波 `M5-2 ∥ M5-3 ∥ M5-4` 零文件交集」（M5-4 只**读** B 波已合的
+  `mc-repos/src/autopilot/mod.rs` 与 `mc-http/…/autopilots/dto.rs`）。切片位 **3/3**，符合「一次最多三个任务」。
+- `LUM-1564` 置 `in_review`（`--no-start`，片已交付并合入）。
+
+### 39.6 磁盘：8.2G → **37G**（删两片已合并 target）
+
+- 删除 `lum-1564-334607c0bcb3/workdir/paperclip-rs/target`（**17G**）与 `lum-1611-2aac9c4e4394/.../target`（**13G**），
+  判据仍是 §38.5 三条：**PR 已合 + run 终态 + `readlink /proc/*/cwd` 无进程**（两片分别对应已合的 #55 与 #54/#53）。
+- 删前先把 M5-1 workdir 的分支切回 `agent/devbox5/334607c0bcb3`（避免后续重派撞到 cycle 的临时分支），只删 `target/`，不删工作树/提交。
+- C 波三片冷构建按 §7.5 口径 ≈7.4G/片（3 片 ≈22G）⇒ 37G 余量足够，且为合并期自己的冷构建留了空间。
+
+### 39.7 遗留 / 下一轮起手（交接）
+
+1. **C 波 3 片在飞（3/3 满位）**：三片交 PR 后走 §39.3 同一条判据链，**每步之间必须重取 head sha**（§39.2 新坑）；
+   合并顺序按到达顺序即可（三片零文件交集，无仲裁需求；`error.rs` 若真撞则按 §36.6 尾行相邻仲裁）。
+2. ⑦ 基线仍未刷（`local 307 / baseline 300`，`regression 0`）⇒ 由 **M5-INT（`LUM-1572`）一次性刷**；`LUM-1580` 保持 `backlog`（R13，不得与基线刷新同批）。
+3. **P0 仍待 owner**（`LUM-1609` 的 cycle comment 至今 0 回复）：`apps/mc-server` 缺 `mc-scheduler` 依赖边（`docs/48` §7.1，`Cargo.lock` 须同提交）
+   + 门 ⑥ 加 `-p mc-scheduler`（§7.2）。**未获批不动**。
+4. 记录号（`docs/NN`）：`46=M5-1 / 47=M5-6 / 48=M5-7 / 49=M4-INT` 已用 ⇒ **下一个空号 = 50**（C 波落地当刻取空号）。
+5. 下一轮起手三连：`df -h /` → `git ls-remote origin`（三片分支是否前进）→ GH `pulls?state=open`；已合并片的 `target/` 第一顺位回收。
