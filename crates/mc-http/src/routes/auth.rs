@@ -1042,7 +1042,7 @@ mod tests {
             verification: VerificationStoreContainer::new(),
             google_oauth,
             daemon_hub: std::sync::Arc::new(mc_ws::hub::Hub::new()),
-            daemon_requests: std::sync::Arc::new(mc_http::daemon_requests::RequestStore::new()),
+            daemon_requests: std::sync::Arc::new(crate::daemon_requests::RequestStore::new()),
         };
         Arc::new(state)
     }

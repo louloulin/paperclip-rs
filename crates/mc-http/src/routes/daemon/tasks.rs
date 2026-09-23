@@ -50,37 +50,30 @@
 //! - 插件面恒禁用：两条 plugin 路由在鉴权**之前**就回 403（忠实降级，见 §7.3）。
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use mc_core::Id;
-use mc_repos::daemon::{DaemonRepo, NewTaskMessage, TaskUsageUpsert};
-use mc_repos::task::TaskRow;
+use mc_repos::daemon::{DaemonRepo, TaskUsageUpsert};
 
 use super::dto::{
-    decode_body, sanitize, AckTaskCancelledRequest, DaemonTaskResponse, PinSessionRequest,
-    ProgressRequest, TaskCompleteRequest, TaskFailRequest, TaskMessageBatchRequest,
-    TaskUsageRequest, WaitLocalDirectoryRequest,
+    decode_body, opt, sanitize, AckTaskCancelledRequest, DaemonTaskResponse, PinSessionRequest,
+    ProgressRequest, TaskCompleteRequest, TaskFailRequest, TaskUsageRequest,
+    WaitLocalDirectoryRequest,
 };
 use super::scope::{
-    db_err, internal, not_found, normalize_provider, require_task_access, validation, DaemonAuth,
+    db_err, internal, normalize_provider, not_found, require_task_access, validation, DaemonAuth,
 };
 use crate::error::ApiResult;
 use crate::state::AppState;
 
 /// `prepare lease` 续租窗口秒数（`MarkTaskWaitingLocalDirectory` 会顺手续租）。
 const PREPARE_LEASE_SECS: i64 = 90;
-
-/// upstream `maxTaskMessageClockSkew = 2 * time.Minute`。
-const MAX_TASK_MESSAGE_CLOCK_SKEW_SECS: i64 = 120;
 
 // ---------------------------------------------------------------------------
 // status / start / wait-local-directory
@@ -95,8 +88,7 @@ pub(crate) async fn task_status(
     auth: DaemonAuth,
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
+    let (task, _workspace) = require_task_access(&state, &auth, &task_id, "task not found").await?;
     Ok(Json(json!({ "status": task.status })))
 }
 
@@ -109,16 +101,11 @@ pub(crate) async fn start_task(
     let repo = DaemonRepo::new(&state.db);
     let (existing, workspace) =
         require_task_access(&state, &auth, &task_id, "task not found").await?;
-    let row = repo
-        .start_task(existing.id())
-        .await
-        .map_err(db_err)?;
+    let row = repo.start_task(existing.id()).await.map_err(db_err)?;
     // CAS 只认 `dispatched` / `waiting_local_directory` 且未开工的行；不命中即 400
     // （上游把 SQL 的报错原文直接当 400 文案）。
     let Some(row) = row else {
-        return Err(validation(
-            "start task: task is not in a startable state",
-        ));
+        return Err(validation("start task: task is not in a startable state"));
     };
     Ok(Json(DaemonTaskResponse::from_row(
         &row,
@@ -149,7 +136,7 @@ pub(crate) async fn wait_local_directory(
     let row = repo
         .mark_waiting_local_directory(
             existing.id(),
-            (reason != "").then(|| reason.clone()),
+            (!reason.is_empty()).then(|| reason.clone()),
             PREPARE_LEASE_SECS,
         )
         .await
@@ -214,9 +201,21 @@ pub(crate) async fn report_progress(
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
     // 上游先解码后鉴权：坏 body 对不存在的任务也是 400。
-    let _req: ProgressRequest = decode_body(&body)?;
+    let req: ProgressRequest = decode_body(&body)?;
     let (_task, _workspace) =
         require_task_access(&state, &auth, &task_id, "task not found").await?;
+    // 上游 `ReportTaskProgress` 只有一件事：往事件总线推 `task.progress`
+    // （`EventTaskProgress`，payload = summary/step/total），**不写任何列**。
+    // 本仓 daemon 面还没有面向用户的进度事件通道（与 `agent:status` 同一条缺口，
+    // 登记在 `docs/32` 偏离表），所以这里保持与上游一致的 `200 {"status":"ok"}`，
+    // 并落一条 debug 日志，让「daemon 报了什么进度」在排查时可见。
+    tracing::debug!(
+        task_id = %task_id,
+        summary = %req.summary,
+        step = req.step,
+        total = req.total,
+        "task progress reported"
+    );
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -339,11 +338,6 @@ pub(crate) async fn fail_task(
     )))
 }
 
-/// 空串 → `None`（上游「没带」与「带空」都是不覆盖既有值）。
-fn opt(value: String) -> Option<String> {
-    (!value.is_empty()).then_some(value)
-}
-
 /// upstream `json.Marshal(req)` 的形状（`TaskCompleteRequest`）：无 `omitempty` 的
 /// 字段恒在，其余空则省略。
 #[derive(serde::Serialize)]
@@ -363,6 +357,9 @@ struct CompleteResultPayload<'a> {
 }
 
 /// `skip_serializing_if` 判据：Go 的 `omitempty` 对 `false` 同样省略。
+///
+/// 签名由 serde 定死（它只传 `&T`）。
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -436,8 +433,7 @@ pub(crate) async fn report_usage(
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
     let repo = DaemonRepo::new(&state.db);
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
+    let (task, _workspace) = require_task_access(&state, &auth, &task_id, "task not found").await?;
     let req: TaskUsageRequest = decode_body(&body)?;
 
     // provider 统一小写：客户端按 provider 做定价匹配，大小写漂移会让它落到 $0。
@@ -484,148 +480,6 @@ pub(crate) async fn report_usage(
 }
 
 // ---------------------------------------------------------------------------
-// messages
-// ---------------------------------------------------------------------------
-
-/// `GET /api/daemon/tasks/:taskId/messages` —— 响应是**裸数组**（重连后的追赶读）。
-#[derive(Debug, Default, Deserialize)]
-struct SinceQuery {
-    /// `?since=<seq>`：只取 `seq >` 该值的消息。
-    #[serde(default)]
-    since: Option<String>,
-}
-
-pub(crate) async fn list_messages(
-    State(state): State<Arc<AppState>>,
-    auth: DaemonAuth,
-    Path(task_id): Path<String>,
-    Query(query): Query<SinceQuery>,
-) -> ApiResult<Json<Value>> {
-    let repo = DaemonRepo::new(&state.db);
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
-
-    let since_seq = match query.since.as_deref() {
-        None => None,
-        Some("") => None,
-        Some(raw) => Some(
-            raw.trim()
-                .parse::<i32>()
-                .map_err(|_| validation("invalid since parameter"))?,
-        ),
-    };
-
-    let rows = repo
-        .list_task_messages(task.id(), since_seq)
-        .await
-        .map_err(|e| internal(format!("failed to list task messages: {e}")))?;
-    let issue_id = task.issue_id().map(|id| id.to_string()).unwrap_or_default();
-    let payloads: Vec<Value> = rows
-        .iter()
-        .map(|m| task_message_payload(m, &task.id().to_string(), &issue_id))
-        .collect();
-    Ok(Json(Value::Array(payloads)))
-}
-
-/// upstream `taskMessageToPayload`。
-fn task_message_payload(
-    m: &mc_repos::task::TaskMessageRow,
-    task_id: &str,
-    issue_id: &str,
-) -> Value {
-    // `input` 列是可空 JSONB；`input` 为 NULL 时 payload 里就是 `null`（不是 `{}`）。
-    let input = m.input.clone().unwrap_or(Value::Null);
-    let mut out = json!({
-        "task_id": task_id,
-        "issue_id": issue_id,
-        "seq": m.seq,
-        "type": m.r#type,
-        "tool": m.tool.clone().unwrap_or_default(),
-        "call_id": m.call_id.clone().unwrap_or_default(),
-        "content": m.content.clone().unwrap_or_default(),
-        "input": input,
-        "output": m.output.clone().unwrap_or_default(),
-        "created_at": m.created_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-    });
-    // 三态：没测量过就是 `null`，**永远不**塌成 `false`。
-    if let Some(obj) = out.as_object_mut() {
-        obj.insert(
-            "output_truncated".into(),
-            m.output_truncated.map_or(Value::Null, Value::Bool),
-        );
-    }
-    out
-}
-
-/// `POST /api/daemon/tasks/:taskId/messages`（实时 agent 输出）。
-///
-/// 上游先解码再鉴权（空批直接 200、**不做**鉴权查询）—— 这是最热的写路径，
-/// 每 500ms 每个在飞任务打一次；空批短路省掉的正是这次查询。
-pub(crate) async fn report_messages(
-    State(state): State<Arc<AppState>>,
-    auth: DaemonAuth,
-    Path(task_id): Path<String>,
-    body: Bytes,
-) -> ApiResult<Json<Value>> {
-    // 先解码后鉴权：坏 body / 空批对不存在的任务也走同一条短路。
-    let req: TaskMessageBatchRequest = decode_body(&body)?;
-    if req.messages.is_empty() {
-        return Ok(Json(json!({ "status": "ok" })));
-    }
-    let repo = DaemonRepo::new(&state.db);
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
-
-    let created_ats = batch_created_ats(&req.messages, Utc::now());
-    let mut rows = Vec::with_capacity(req.messages.len());
-    for (i, m) in req.messages.iter().enumerate() {
-        rows.push(NewTaskMessage {
-            task_id: task.id(),
-            seq: i32::try_from(m.seq).unwrap_or(i32::MAX),
-            kind: m.kind.clone(),
-            tool: opt(m.tool.clone()),
-            content: opt(m.content.clone()),
-            // `input` 缺省是 `null`（Go 的 `map[string]any` 零值），不是 `{}`。
-            input: (!m.input.is_null()).then(|| m.input.clone()),
-            output: opt(m.output.clone()),
-            output_truncated: m.output_truncated,
-            call_id: opt(m.call_id.clone()),
-            created_at: created_ats[i],
-        });
-    }
-    repo.insert_task_messages(&rows)
-        .await
-        .map_err(|e| internal(format!("failed to insert task messages: {e}")))?;
-    Ok(Json(json!({ "status": "ok" })))
-}
-
-/// upstream `taskMessageCreatedAt` + `taskMessageCreatedAts`：整批同一个时钟。
-///
-/// 只要有一条缺时间戳（老 daemon）或与服务器时钟偏离超过 2 分钟，**整批**都退回
-/// 数据库时间。成对事件（`tool_call` / `tool_result`）跨分钟排序会让 UI 把它们
-/// 显示反，这比丢掉一个可疑的客户端时间戳更糟。
-fn batch_created_ats(
-    messages: &[super::dto::TaskMessageRequest],
-    now: DateTime<Utc>,
-) -> Vec<Option<DateTime<Utc>>> {
-    let skew = Duration::seconds(MAX_TASK_MESSAGE_CLOCK_SKEW_SECS);
-    let mut out: Vec<Option<DateTime<Utc>>> = messages
-        .iter()
-        .map(|m| match m.created_at {
-            None => None,
-            Some(t) => {
-                let delta = t - now;
-                ((-skew <= delta) && (delta <= skew)).then_some(t)
-            }
-        })
-        .collect();
-    if out.iter().any(Option::is_none) {
-        out.iter_mut().for_each(|slot| *slot = None);
-    }
-    out
-}
-
-// ---------------------------------------------------------------------------
 // cancel-ack / session
 // ---------------------------------------------------------------------------
 
@@ -642,8 +496,7 @@ pub(crate) async fn ack_cancelled(
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
     let repo = DaemonRepo::new(&state.db);
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
+    let (task, _workspace) = require_task_access(&state, &auth, &task_id, "task not found").await?;
     // 解码失败不阻断：老 daemon 发 `{}`，而「取消契约」比字段完整更重要。
     let req: AckTaskCancelledRequest = decode_body(&body).unwrap_or_default();
 
@@ -670,7 +523,9 @@ pub(crate) async fn ack_cancelled(
 
 /// trim 后仍为空 → `None`（上游 `strings.TrimSpace(x) != ""` 的判据）。
 fn trimmed(value: Option<String>) -> Option<String> {
-    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// `POST /api/daemon/tasks/:taskId/session` —— **204 No Content**。
@@ -681,8 +536,7 @@ pub(crate) async fn pin_session(
     body: Bytes,
 ) -> ApiResult<StatusCode> {
     let repo = DaemonRepo::new(&state.db);
-    let (task, _workspace) =
-        require_task_access(&state, &auth, &task_id, "task not found").await?;
+    let (task, _workspace) = require_task_access(&state, &auth, &task_id, "task not found").await?;
     let req: PinSessionRequest = decode_body(&body)?;
     if req.session_id.is_empty() && req.work_dir.is_empty() {
         return Err(validation("session_id or work_dir required"));
@@ -745,7 +599,6 @@ pub(crate) async fn plugin_mcp_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone as _;
 
     #[test]
     fn legacy_absolute_path_wait_reason_is_dropped() {
@@ -765,28 +618,5 @@ mod tests {
         );
         // 非 `local_directory` 前缀的路径是合法原因（例如纯文本提示）。
         assert_eq!(sanitize_wait_reason(" /tmp/x "), "/tmp/x");
-    }
-
-    #[test]
-    fn batch_timestamps_are_all_or_nothing() {
-        let now = Utc.with_ymd_and_hms(2026, 9, 23, 0, 0, 0).unwrap();
-        let msg = |secs: Option<i64>| super::super::dto::TaskMessageRequest {
-            created_at: secs.map(|s| now + chrono::Duration::seconds(s)),
-            ..Default::default()
-        };
-
-        // 全部可信 ⇒ 逐个保留。
-        let ok = batch_created_ats(&[msg(Some(0)), msg(Some(-30))], now);
-        assert!(ok.iter().all(Option::is_some));
-
-        // 任一条缺时间戳 ⇒ 整批退回数据库时间。
-        let mixed = batch_created_ats(&[msg(Some(0)), msg(None)], now);
-        assert!(mixed.iter().all(Option::is_none));
-
-        // 超过 2 分钟的时钟偏离 ⇒ 同样整批丢弃。
-        let skewed = batch_created_ats(&[msg(Some(121))], now);
-        assert_eq!(skewed, vec![None]);
-        let edge = batch_created_ats(&[msg(Some(120))], now);
-        assert!(edge[0].is_some());
     }
 }

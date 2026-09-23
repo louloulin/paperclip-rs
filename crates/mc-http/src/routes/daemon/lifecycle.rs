@@ -12,8 +12,14 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mc_core::Id;
+use mc_daemon_proto::capabilities::SERVER_HEARTBEAT_CAPABILITIES;
+use mc_daemon_proto::messages::daemon::{
+    DaemonHeartbeatAckPayload, DaemonHeartbeatPendingLocalSkillImport,
+    DaemonHeartbeatPendingLocalSkills, DaemonHeartbeatPendingModelList,
+    DaemonHeartbeatPendingUpdate, HEARTBEAT_STATUS_RUNTIME_GONE,
+};
 use mc_errors::Error;
-use mc_repos::daemon::{DaemonRepo, RuntimeUpsert, UpsertRuntime, WorkspaceRepos};
+use mc_repos::daemon::{DaemonRepo, RuntimeUpsert, UpsertRuntime};
 use mc_ws::identity::ClientIdentity;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -22,11 +28,11 @@ use super::dto::{
     decode_body, DeregisterRequest, HeartbeatRequest, RegisterRequest, RegisterRuntime,
 };
 use super::scope::{
-    db_err, internal, not_found, normalize_provider, parse_path_id, require_workspace_access,
+    db_err, internal, normalize_provider, not_found, parse_path_id, require_workspace_access,
     validation, DaemonActor, DaemonAuth,
 };
 use crate::daemon_requests::RequestKind;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
 /// `X-Client-Capabilities`：逗号分隔，去空（upstream `requestClientCapabilities`）。
@@ -46,7 +52,11 @@ fn client_capabilities(headers: &HeaderMap) -> Vec<String> {
 
 /// upstream `requireWorkspaceMember(w, r, ws, "workspace not found")` 的本地等价物：
 /// 返回 `Some(user_id)`（owner）或 `None`（已写过响应 / 非成员）。
-async fn member_owner(state: &AppState, user_id: Id, workspace_id: Id) -> Result<Option<Id>, Error> {
+async fn member_owner(
+    state: &AppState,
+    user_id: Id,
+    workspace_id: Id,
+) -> Result<Option<Id>, ApiError> {
     let repo = DaemonRepo::new(&state.db);
     let is_member = repo
         .is_workspace_member(workspace_id, user_id)
@@ -60,6 +70,7 @@ async fn member_owner(state: &AppState, user_id: Id, workspace_id: Id) -> Result
 // ---------------------------------------------------------------------------
 
 /// upstream `DaemonRegister`（`daemon.go:405`）。
+#[allow(clippy::too_many_lines)] // 注册是本面最长的一条：校验 + upsert + 重建 + 迁移 + 唤醒
 pub(crate) async fn register(
     State(state): State<Arc<AppState>>,
     auth: DaemonAuth,
@@ -96,9 +107,11 @@ pub(crate) async fn register(
             }
             None
         }
-        DaemonActor::User { user_id, .. } => member_owner(&state, user_id, workspace_id)
-            .await?
-            .ok_or_else(|| not_found("workspace not found"))?,
+        DaemonActor::User { user_id, .. } => Some(
+            member_owner(&state, user_id, workspace_id)
+                .await?
+                .ok_or_else(|| not_found("workspace not found"))?,
+        ),
     };
 
     let repo = DaemonRepo::new(&state.db);
@@ -144,7 +157,7 @@ pub(crate) async fn register(
                 .await;
             match result {
                 Ok(out) => {
-                    provider = out.row.provider.clone();
+                    provider.clone_from(&out.row.provider);
                     out
                 }
                 // 未知 profile → 400（upstream `pgx.ErrNoRows` 分支）。
@@ -156,9 +169,9 @@ pub(crate) async fn register(
                 }
                 // profile 被停用 → 409（upstream `errRuntimeProfileDisabled`）。
                 Err(mc_repos::RepoError::Conflict) => {
-                    return Err(Error::Conflict {
+                    return Err(crate::error::ApiError(Error::Conflict {
                         message: format!("runtime profile is disabled: {}", runtime.profile_id),
-                    })
+                    }))
                 }
                 Err(e) => return Err(register_failure(&e)),
             }
@@ -269,16 +282,8 @@ pub(crate) async fn register(
         }
     }
 
-    let repos = repo
-        .workspace_repos(workspace_id)
-        .await
-        .map_err(db_err)?
-        .unwrap_or_else(|| WorkspaceRepos {
-            workspace_id: workspace_id.to_string(),
-            repos: Value::Array(Vec::new()),
-            repos_version: mc_repos::daemon::repos_version(&Value::Array(Vec::new())),
-            settings: None,
-        });
+    // 开头已取过同一行（缺失即 404），这里不重复查库：注册不会改动 repos 行。
+    let repos = workspace;
 
     Ok(Json(json!({
         "runtimes": responses,
@@ -295,9 +300,11 @@ fn to_runtime_json(row: &mc_repos::runtime::AgentRuntimeRow) -> Value {
         .unwrap_or(Value::Null)
 }
 
-fn register_failure(e: &mc_repos::RepoError) -> Error {
+fn register_failure(e: &mc_repos::RepoError) -> ApiError {
     match e {
-        mc_repos::RepoError::Db(message) => internal(format!("failed to register runtime: {message}")),
+        mc_repos::RepoError::Db(message) => {
+            internal(format!("failed to register runtime: {message}"))
+        }
         other => internal(format!("failed to register runtime: {other:?}")),
     }
 }
@@ -306,7 +313,7 @@ fn register_failure(e: &mc_repos::RepoError) -> Error {
 async fn inherit_machine_custom_name(
     repo: &DaemonRepo,
     upsert: RuntimeUpsert,
-) -> Result<RuntimeUpsert, Error> {
+) -> Result<RuntimeUpsert, ApiError> {
     if !upsert.inserted {
         return Ok(upsert);
     }
@@ -366,14 +373,8 @@ fn registration_metadata(
 ) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("version".into(), Value::String(version.to_string()));
-    map.insert(
-        "cli_version".into(),
-        Value::String(req.cli_version.clone()),
-    );
-    map.insert(
-        "launched_by".into(),
-        Value::String(req.launched_by.clone()),
-    );
+    map.insert("cli_version".into(), Value::String(req.cli_version.clone()));
+    map.insert("launched_by".into(), Value::String(req.launched_by.clone()));
     map.insert(
         "capabilities".into(),
         Value::Array(
@@ -405,43 +406,85 @@ fn registration_metadata(
 // ---------------------------------------------------------------------------
 
 /// upstream `DaemonDeregister`（`daemon.go:939`）：把给定 runtime 置为 `offline`。
+///
+/// 契约（`docs/16` §6.1）：`200 {"status":"ok"}`；400 `invalid request body`/
+/// `runtime_ids is required`/`invalid runtime_ids`；500 `failed to load runtimes`。
+///
+/// **单条失败不影响整批**：上游对「行不在」「不属于本 workspace」「置离线写失败」都是
+/// `slog.Warn` + `continue`，只有批量读出错才 500。daemon 停机时不该因为一台机器的行
+/// 被删掉就让整次下线请求失败——那些 runtime 会由 liveness sweep 兜底。
 pub(crate) async fn deregister(
     State(state): State<Arc<AppState>>,
     auth: DaemonAuth,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
     let req: DeregisterRequest = decode_body(&body)?;
+    if req.runtime_ids.is_empty() {
+        return Err(validation("runtime_ids is required"));
+    }
     let repo = DaemonRepo::new(&state.db);
 
-    // 解析 + 逐个过 workspace 门；任一被拒即整体 404（不部分生效）。
-    let mut targets: Vec<(Id, Id)> = Vec::new();
+    // 先整体校验 uuid（上游 `parseUUIDSliceOrBadRequest`：坏 id = 整批 400，不跳过）。
+    let mut targets: Vec<(String, Id)> = Vec::new();
     for raw in &req.runtime_ids {
-        let runtime = super::scope::require_runtime_access(
-            &state,
-            &auth,
-            raw,
-            "runtime not found",
-        )
-        .await?;
-        if !targets.iter().any(|(id, _)| *id == runtime.id) {
-            targets.push((runtime.id, runtime.workspace_id));
+        let id = Id::parse(raw.trim()).map_err(|_| validation("invalid runtime_ids"))?;
+        // 上游按 canonical uuid 去重后再批量查；本地保持「原始 id 单独查」以避免
+        // 一次多余的全表比价，同时用 canonical id 去重（重复 id 不重复通知）。
+        if !targets.iter().any(|(_, existing)| *existing == id) {
+            targets.push((raw.clone(), id));
         }
     }
 
-    let mut offline: Vec<String> = Vec::new();
-    for (runtime_id, workspace_id) in targets {
-        let rows = repo
-            .set_runtimes_offline(workspace_id, &[runtime_id])
-            .await
-            .map_err(db_err)?;
-        for id in rows {
-            // `NotifyRuntimeGone` 内部同时摘掉每条连接心跳 scope 里的这个 runtime。
-            state.daemon_hub.notify_runtime_gone(&id.to_string());
-            offline.push(id.as_string());
+    let mut offline = 0usize;
+    for (raw, runtime_id) in targets {
+        // 上游批量读一次再逐条判；本地逐条读（N+1，偏离 D-6），但语义一致：
+        // 读出错 = 500 `failed to load runtimes`，行不在 = warn + 跳过。
+        let runtime = match repo.runtime_by_id(runtime_id).await {
+            Ok(Some(runtime)) => runtime,
+            Ok(None) => {
+                tracing::warn!(runtime_id = %raw, "deregister: runtime not found");
+                continue;
+            }
+            Err(_) => return Err(internal("failed to load runtimes")),
+        };
+        if !super::scope::workspace_allowed(&state, &auth, runtime.workspace_id).await? {
+            tracing::warn!(runtime_id = %raw, "deregister: workspace mismatch");
+            continue;
+        }
+        // 上游用**请求原文 id**（不是 canonical uuid）去 `offline_reasons` 里取值。
+        let reason = req
+            .offline_reasons
+            .get(&raw)
+            .filter(|value| !value.is_null());
+        let updated = match reason {
+            Some(reason) => {
+                repo.set_runtime_offline_with_reason(runtime.workspace_id, runtime_id, reason)
+                    .await
+            }
+            None => {
+                repo.set_runtimes_offline(runtime.workspace_id, &[runtime_id])
+                    .await
+            }
+        };
+        match updated {
+            Ok(rows) if rows.is_empty() => {
+                tracing::warn!(runtime_id = %raw, "deregister: runtime not found");
+            }
+            Ok(rows) => {
+                for id in rows {
+                    // `notify_runtime_gone` 内部同时摘掉每条连接心跳 scope 里的这个 runtime。
+                    state.daemon_hub.notify_runtime_gone(&id.to_string());
+                    offline += 1;
+                }
+            }
+            Err(err) => {
+                tracing::warn!(runtime_id = %raw, error = %err, "deregister: failed to set offline");
+            }
         }
     }
 
-    Ok(Json(json!({ "offline_runtime_ids": offline })))
+    tracing::info!(runtime_ids = ?req.runtime_ids, offline, "daemon deregistered");
+    Ok(Json(json!({ "status": "ok" })))
 }
 
 // ---------------------------------------------------------------------------
@@ -478,66 +521,99 @@ pub(crate) async fn heartbeat(
         return Err(not_found("runtime not found"));
     }
 
-    let ack = process_heartbeat(&state, runtime.id, req.supports_batch_import);
-
-    let mut resp = serde_json::Map::new();
-    resp.insert("status".into(), Value::String("ok".into()));
-    for (key, value) in ack {
-        resp.insert(key, value);
-    }
-    Ok(Json(Value::Object(resp)))
+    let ack = heartbeat_ack(&state, runtime.id, req.supports_batch_import);
+    Ok(Json(http_ack_value(&ack)))
 }
 
-/// upstream `processHeartbeat`（`daemon.go:1371`）：探测并取走四类待处理请求。
+/// 心跳 ack 的**唯一**生产者：HTTP 与 WS 两条腿共用，避免字段集在两处漂移
+/// （upstream `processHeartbeat`，`daemon.go:1371`）。
 ///
-/// 返回**只包含存在的键**的 ack（上游 `omitempty` 语义：字段缺席 = 没有待办）。
-fn process_heartbeat(state: &AppState, runtime_id: Id, supports_batch_import: bool) -> Vec<(String, Value)> {
+/// 取走四类待处理请求并写进 ack（`omitempty` 语义：字段缺席 = 没有待办）。本地 store
+/// 是单节点内存实现，没有上游 `HasPending` 探测 / `PopPending` 取走的两段式 —— 也就
+/// 没有"探测超时"那一支（偏离见 `docs/32`）。
+pub(crate) fn heartbeat_ack(
+    state: &AppState,
+    runtime_id: Id,
+    supports_batch_import: bool,
+) -> DaemonHeartbeatAckPayload {
     let store = &state.daemon_requests;
-    let mut out: Vec<(String, Value)> = Vec::new();
+    let mut ack = DaemonHeartbeatAckPayload {
+        runtime_id: runtime_id.to_string(),
+        status: "ok".into(),
+        server_capabilities: SERVER_HEARTBEAT_CAPABILITIES
+            .iter()
+            .map(|c| (*c).to_string())
+            .collect(),
+        ..DaemonHeartbeatAckPayload::default()
+    };
 
     if let Some(pending) = store.pop_pending(RequestKind::Update, runtime_id) {
-        out.push((
-            "pending_update".into(),
-            json!({ "id": pending.id.to_string() }),
-        ));
+        // `target_version` **无条件**序列化（`messages.go:423`），结果上报的 body 里也
+        // 不回传它 ⇒ 只有 store 记得住它，必须在这里带出去。
+        ack.pending_update = Some(DaemonHeartbeatPendingUpdate {
+            id: pending.id.to_string(),
+            target_version: pending.target_version.clone().unwrap_or_default(),
+        });
     }
     if let Some(pending) = store.pop_pending(RequestKind::ModelList, runtime_id) {
-        out.push((
-            "pending_model_list".into(),
-            json!({ "id": pending.id.to_string() }),
-        ));
+        ack.pending_model_list = Some(DaemonHeartbeatPendingModelList {
+            id: pending.id.to_string(),
+        });
     }
     if let Some(pending) = store.pop_pending(RequestKind::LocalSkills, runtime_id) {
-        out.push((
-            "pending_local_skills".into(),
-            json!({ "id": pending.id.to_string() }),
-        ));
+        ack.pending_local_skills = Some(DaemonHeartbeatPendingLocalSkills {
+            id: pending.id.to_string(),
+        });
     }
     if supports_batch_import {
-        let batch = store.pop_pending_batch(RequestKind::LocalSkillImport, runtime_id, MAX_IMPORT_BATCH);
-        if let Some(first) = batch.first() {
-            // 向后兼容：老 daemon 不认复数键，单数键仍要拿到一条。
-            out.push((
-                "pending_local_skill_import".into(),
-                json!({ "id": first.id.to_string() }),
-            ));
-            out.push((
-                "pending_local_skill_imports".into(),
-                Value::Array(
-                    batch
-                        .iter()
-                        .map(|p| json!({ "id": p.id.to_string() }))
-                        .collect(),
-                ),
-            ));
-        }
+        let batch =
+            store.pop_pending_batch(RequestKind::LocalSkillImport, runtime_id, MAX_IMPORT_BATCH);
+        // 单数键 = 第一条（老 daemon 不认复数键，必须仍然拿到一条）；复数键 = 全部。
+        // 部分失败也要把已认领的条目发出去：它们已经在 store 里转成 `running` 了，
+        // 扣住不发只会让请求悬挂到超时。
+        ack.pending_local_skill_import = batch.first().map(skill_import_pending);
+        ack.pending_local_skill_imports = batch.iter().map(skill_import_pending).collect();
     } else if let Some(pending) = store.pop_pending(RequestKind::LocalSkillImport, runtime_id) {
-        out.push((
-            "pending_local_skill_import".into(),
-            json!({ "id": pending.id.to_string() }),
-        ));
+        ack.pending_local_skill_import = Some(skill_import_pending(&pending));
     }
-    out
+    ack
+}
+
+fn skill_import_pending(
+    pending: &crate::daemon_requests::PendingRequest,
+) -> DaemonHeartbeatPendingLocalSkillImport {
+    DaemonHeartbeatPendingLocalSkillImport {
+        id: pending.id.to_string(),
+        skill_key: pending.skill_key.clone().unwrap_or_default(),
+    }
+}
+
+/// upstram `runtimeGoneHeartbeatAck`（`daemon.go:1240`）：runtime 行已消失。
+///
+/// 带 `runtime_gone: true`，且**不带** `server_capabilities`（连协议协商都免了）。
+pub(crate) fn runtime_gone_ack(runtime_id: &str) -> DaemonHeartbeatAckPayload {
+    DaemonHeartbeatAckPayload {
+        runtime_id: runtime_id.to_string(),
+        status: HEARTBEAT_STATUS_RUNTIME_GONE.into(),
+        runtime_gone: true,
+        ..DaemonHeartbeatAckPayload::default()
+    }
+}
+
+/// WS ack → HTTP ack 的投影（upstream `DaemonHeartbeat` 结尾，`daemon.go:1185`）：
+///
+/// - 去掉 `runtime_id`：调用方已经知道自己问的是哪台，带上只是噪声；
+/// - 去掉 `server_capabilities`：上游 HTTP 腿从不发它（协议协商只走 WS）；
+/// - 其余 `pending_*` 靠 `skip_serializing_if` 自然缺席。
+fn http_ack_value(ack: &DaemonHeartbeatAckPayload) -> Value {
+    let Ok(mut value) = serde_json::to_value(ack) else {
+        return json!({ "status": "ok" });
+    };
+    if let Value::Object(obj) = &mut value {
+        obj.remove("runtime_id");
+        obj.remove("server_capabilities");
+    }
+    value
 }
 
 /// upstream `maxLocalSkillImportBatch = 10`。
@@ -571,15 +647,21 @@ pub(crate) async fn ws(
                 runtime_ids: ids.iter().map(ToString::to_string).collect(),
                 ..ClientIdentity::default()
             },
-            Err(e) => return crate::error::ApiError(db_err(e)).into_response(),
+            Err(e) => return db_err(e).into_response(),
         },
-        DaemonActor::User { user_id, daemon_id } => {
+        DaemonActor::User {
+            user_id,
+            daemon_id: _,
+        } => {
             let workspaces = match repo.list_workspaces_for_user(*user_id).await {
                 Ok(rows) => rows,
-                Err(e) => return crate::error::ApiError(db_err(e)).into_response(),
+                Err(e) => return db_err(e).into_response(),
             };
             ClientIdentity {
-                daemon_id: daemon_id.clone().unwrap_or_default(),
+                // 用户连接**不带**机器标识：上游只从 daemon 中间件（`mdt_` token）填
+                // `ClientIdentity.DaemonID`（`daemon_ws.go:44`）。dev-mode 的 `X-Daemon-Id`
+                // 是 HTTP 腿的偏离 D-1，不能让它在 WS 的 RPC 分发里冒充 daemon 身份。
+                daemon_id: String::new(),
                 user_id: user_id.to_string(),
                 workspace_ids: workspaces
                     .into_iter()
@@ -589,6 +671,10 @@ pub(crate) async fn ws(
             }
         }
     };
+    // 注入 WS 的两条 handler（心跳 / RPC）。放这里而不是启动期：`mount_slice_daemon()`
+    // 拿不到 `Arc<AppState>`，而 handler 只在有人真的升级 WS 时才被用到；`OnceLock`
+    // 保证只装一次。
+    super::ws::install(&state);
     state.daemon_hub.handle_websocket(ws, identity)
 }
 

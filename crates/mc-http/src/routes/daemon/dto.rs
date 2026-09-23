@@ -3,7 +3,7 @@
 //! ## 忠实度口径
 //!
 //! 每个结构体都对着上游某一个 Go 结构体写，**字段名逐字相同**（serde 的默认
-//! snake_case 与 Go 的 `json:"..."` 恰好一致）；刻意不做的部分逐条登记在
+//! `snake_case` 与 Go 的 `json:"..."` 恰好一致）；刻意不做的部分逐条登记在
 //! `docs/32-M3-7-DAEMON-ROUTES.md` 的偏离表里，不在代码里静默省略。
 //!
 //! 关键三类：
@@ -20,6 +20,7 @@
 use mc_repos::task::TaskRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 use super::scope::{timestamp, timestamp_opt};
 
@@ -95,14 +96,19 @@ pub(crate) struct FailedProfile {
 pub(crate) type HeartbeatRequest = mc_daemon_proto::messages::daemon::DaemonHeartbeatRequestPayload;
 
 /// upstream `DaemonDeregisterRequest`（`daemon.go:939` 附近）。
+///
+/// `offline_reasons` 是**按请求原文 id 索引的 JSON 对象**（上游
+/// `map[string]json.RawMessage`），不是数组：老的 daemon 整段不发，只有「用户必须去修」
+/// 的停机才带（MUL-6164）。值统一透传给 `agent_runtime.metadata.offline_reason`，
+/// 所以这里不做形状约束（裸字符串 / 对象 / `null` 都接受）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct DeregisterRequest {
     /// 要下线的 runtime id 列表。
     #[serde(default)]
     pub(crate) runtime_ids: Vec<String>,
-    /// 可选的下线原因（按 runtime id 对齐）。
+    /// 可选的下线原因，按**请求里的原文 id** 索引。
     #[serde(default)]
-    pub(crate) offline_reasons: Vec<String>,
+    pub(crate) offline_reasons: HashMap<String, Value>,
 }
 
 /// upstream `ClaimTasksByRuntimeRequest`（`daemon.go:1706` 附近）。
@@ -118,10 +124,6 @@ pub(crate) struct BatchClaimRequest {
     #[serde(default)]
     pub(crate) max_tasks: i64,
 }
-
-/// upstream `TaskStartRequest`（`StartTask` 不读 body，但保持与上游一致：空结构）。
-#[derive(Debug, Clone, Default, Deserialize)]
-pub(crate) struct StartRequest {}
 
 /// upstream `MarkTaskWaitingLocalDirectoryRequest`。
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -325,6 +327,13 @@ pub(crate) const MAX_ISSUE_GC_BATCH_SIZE: usize = 500;
 /// upstream `maxIssueGCBatchBodyBytes = 64 << 10`。
 pub(crate) const MAX_ISSUE_GC_BODY_BYTES: usize = 64 << 10;
 
+/// 空串 → `None`：上游把「没带这个字段」与「带了空串」都当**不覆盖既有值**
+/// （`COALESCE` + `NULLIF`），所以在进 SQL 之前就归一成 `None`。
+#[must_use]
+pub(crate) fn opt(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
 // ---------------------------------------------------------------------------
 // 任务响应（upstream `taskToResponse`，`agent.go:797`）
 // ---------------------------------------------------------------------------
@@ -433,8 +442,14 @@ impl DaemonTaskResponse {
         Self {
             id: task_id.clone(),
             agent_id: row.agent_id().as_string(),
-            runtime_id: row.runtime_id.map(|id| mc_core::Id::from(id).as_string()).unwrap_or_default(),
-            issue_id: row.issue_id.map(|id| mc_core::Id::from(id).as_string()).unwrap_or_default(),
+            runtime_id: row
+                .runtime_id
+                .map(|id| mc_core::Id::from(id).as_string())
+                .unwrap_or_default(),
+            issue_id: row
+                .issue_id
+                .map(|id| mc_core::Id::from(id).as_string())
+                .unwrap_or_default(),
             workspace_id: workspace_id.to_string(),
             status: row.status.clone(),
             priority: row.priority,
@@ -447,10 +462,14 @@ impl DaemonTaskResponse {
             branch_name: row.branch_name.clone().unwrap_or_default(),
             attempt: row.attempt,
             max_attempts: row.max_attempts,
-            parent_task_id: row.parent_task_id.map(|id| mc_core::Id::from(id).as_string()),
+            parent_task_id: row
+                .parent_task_id
+                .map(|id| mc_core::Id::from(id).as_string()),
             is_leader_task: row.is_leader_task,
             created_at: timestamp(row.created_at),
-            trigger_comment_id: row.trigger_comment_id.map(|id| mc_core::Id::from(id).as_string()),
+            trigger_comment_id: row
+                .trigger_comment_id
+                .map(|id| mc_core::Id::from(id).as_string()),
             coalesced_comment_ids: row
                 .coalesced_comment_ids
                 .iter()
@@ -468,8 +487,14 @@ impl DaemonTaskResponse {
             relative_work_dir: relative_work_dir(&work_dir, workspace_id, &task_id),
             durable_work_dir: durable_work_dir.clone(),
             relative_durable_work_dir: relative_work_dir(&durable_work_dir, "", ""),
-            chat_session_id: row.chat_session_id.map(|id| mc_core::Id::from(id).as_string()).unwrap_or_default(),
-            autopilot_run_id: row.autopilot_run_id.map(|id| mc_core::Id::from(id).as_string()).unwrap_or_default(),
+            chat_session_id: row
+                .chat_session_id
+                .map(|id| mc_core::Id::from(id).as_string())
+                .unwrap_or_default(),
+            autopilot_run_id: row
+                .autopilot_run_id
+                .map(|id| mc_core::Id::from(id).as_string())
+                .unwrap_or_default(),
             kind: compute_task_kind(row),
             cancelled_by: cancelled.then(|| CancellationActor {
                 kind: row.cancelled_by_type.clone().unwrap_or_default(),
@@ -540,7 +565,11 @@ pub(crate) fn relative_work_dir(work_dir: &str, workspace_id: &str, task_id: &st
     if let Some(stripped) = strip_home_prefix(&normalized) {
         return stripped;
     }
-    normalized.rsplit('/').next().unwrap_or_default().to_string()
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// upstream `taskDirSegment`：id 去掉 `-` 后取**末** 12 个十六进制字符。
@@ -564,7 +593,10 @@ fn matches_workspace_segment(segment: &str, workspace_id: &str) -> bool {
     let lower = segment.to_lowercase();
     segment.eq_ignore_ascii_case(workspace_id)
         || lower.ends_with(&format!("-{}", legacy_task_dir_segment(workspace_id)))
-        || lower.ends_with(&format!("-{}", task_dir_segment(workspace_id).to_lowercase()))
+        || lower.ends_with(&format!(
+            "-{}",
+            task_dir_segment(workspace_id).to_lowercase()
+        ))
 }
 
 fn matches_task_segment(segment: &str, task_id: &str) -> bool {
@@ -602,13 +634,20 @@ fn strip_home_prefix(normalized: &str) -> Option<String> {
 ///
 /// 刻意不用 `Json<T>` 提取器：它对类型不符回 **422**，而本仓（与上游
 /// `json.NewDecoder().Decode`）都是 400。`null` body 等价于 Go 的「字段全缺」。
+///
+/// **只收对象**：serde 的 derive 会让「全字段带 `#[serde(default)]` 的结构体」能从
+/// JSON **数组**反序列化（`[]` → 全默认），而 Go 的 `Decode` 对 `[]` 是
+/// `cannot unmarshal array into Go value of type …` �⇒ 这里显式挡掉，与上游对齐。
 pub(crate) fn decode_body<T: serde::de::DeserializeOwned + Default>(
     body: &axum::body::Bytes,
-) -> Result<T, mc_errors::Error> {
+) -> Result<T, crate::error::ApiError> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| super::scope::validation("invalid request body"))?;
     if value.is_null() {
         return Ok(T::default());
+    }
+    if !value.is_object() {
+        return Err(super::scope::validation("invalid request body"));
     }
     serde_json::from_value(value).map_err(|_| super::scope::validation("invalid request body"))
 }
@@ -626,14 +665,48 @@ mod tests {
 
     #[test]
     fn relative_work_dir_finds_workspace_and_task_segments() {
-        let ws = "11111111-2222-3333-4444-555555555555";
-        let task = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-        let task_tail: String = task.chars().filter(|c| *c != '-').collect::<String>();
-        let task_tail = &task_tail[task_tail.len() - 12..];
-        let path = format!("/root/workspaces/{ws}/tasks/task-{task_tail}/repo");
+        // 上游 envRoot 形状是 `<workspaceSegment>/<taskSegment>/<name>`（**相邻**，
+        // 中间没有 `tasks/` 这一层）—— 见 `agent_work_dir_test.go` 的前三例。
+        let ws = "a05b0e10-ee7a-4603-a72d-a548b2390cb2";
+        let task = "5c57b65b-ee7a-4603-a72d-b659c34a1dc3";
+        let task_tail = &task.replace('-', "")[20..];
+        assert_eq!(task_tail, "b659c34a1dc3");
+
+        let path = format!("/Users/alice/multica_workspaces/{ws}/{task_tail}/workdir");
         assert_eq!(
             relative_work_dir(&path, ws, task),
-            format!("{ws}/tasks/task-{task_tail}/repo")
+            format!("{ws}/{task_tail}/workdir")
+        );
+        // 可读目录名：只靠**尾部**短 id 匹配，标签本身不算身份。
+        let ws_tail = &ws.replace('-', "")[20..];
+        let readable = format!(
+            "/Users/alice/multica_workspaces/asset-feed-{ws_tail}/mul-6063-{task_tail}/workdir"
+        );
+        assert_eq!(
+            relative_work_dir(&readable, ws, task),
+            format!("asset-feed-{ws_tail}/mul-6063-{task_tail}/workdir")
+        );
+        // 遗留路径：`<slug>-<首8位>` / `<首8位>` 两种短 id 形状都能识别。
+        assert_eq!(
+            relative_work_dir(
+                "/Users/alice/multica_workspaces/asset-feed-a05b0e10/mul-6063-5c57b65b/workdir",
+                ws,
+                task
+            ),
+            "asset-feed-a05b0e10/mul-6063-5c57b65b/workdir"
+        );
+        assert_eq!(
+            relative_work_dir(
+                &format!("/Users/alice/multica_workspaces/{ws}/5c57b65b/workdir"),
+                ws,
+                task
+            ),
+            format!("{ws}/5c57b65b/workdir")
+        );
+        // envRoot 段识别不出来时，退路是 home 前缀（绝不吐绝对路径）。
+        assert_eq!(
+            relative_work_dir("/Users/alice/multica_workspaces/other/x", ws, task),
+            "multica_workspaces/other/x"
         );
     }
 
@@ -669,8 +742,18 @@ mod tests {
     #[test]
     fn decode_body_accepts_null_as_default() {
         use axum::body::Bytes;
-        let parsed: RegisterRequest = decode_body(&Bytes::from_static(b"null")).unwrap();
+        let Ok(parsed) = decode_body::<RegisterRequest>(&Bytes::from_static(b"null")) else {
+            panic!("null 应解码为默认值");
+        };
         assert!(parsed.daemon_id.is_empty());
+        // 形状不符（数组给结构体）与**空体**都是 400：Go 的 `Decode` 在空体上回
+        // `io.EOF`，对 `[]` 回 `cannot unmarshal array into Go value of type …`，
+        // 两者都落进 `invalid request body` 分支。
         assert!(decode_body::<RegisterRequest>(&Bytes::from_static(b"[]")).is_err());
+        assert!(decode_body::<RegisterRequest>(&Bytes::from_static(b"[1]")).is_err());
+        assert!(decode_body::<RegisterRequest>(&Bytes::from_static(b"true")).is_err());
+        assert!(decode_body::<RegisterRequest>(&Bytes::from_static(b"")).is_err());
+        // 缺字段的 `{}` 才是合法输入（全默认）。
+        assert!(decode_body::<RegisterRequest>(&Bytes::from_static(b"{}")).is_ok());
     }
 }

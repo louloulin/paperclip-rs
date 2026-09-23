@@ -64,6 +64,8 @@ tower = { workspace = true, features = ["util"] }
 hyper = { workspace = true }
 # M3-7：`GET /api/daemon/ws` 的真升级测试（握手 + 帧收发），不靠 mock。
 tokio-tungstenite = { workspace = true }
+# M3-7：WS 流的 `Sink::send` / `Stream::next`（与 mc-ws / mc-daemon 同款用法）。
+futures-util = { workspace = true }
 
 # 根目录 tests/smoke.rs 属于虚拟 workspace 根（无 [package]），默认不会被
 # cargo 编译；这里把它声明为 mc-http 的集成测试 target，使其真正可跑。

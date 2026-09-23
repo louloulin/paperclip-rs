@@ -28,12 +28,11 @@ use sha2::{Digest, Sha256};
 
 use mc_repos::daemon::SkillBundleRow;
 
-/// bundle 源：workspace 内 skill（唯一实现的源）。
+/// bundle 源：workspace 内 skill —— **本切片唯一实现的源**。
+///
+/// 上游另有 `builtin`（内置 skill 台账）与 `plugin`（要额外校验 pinned hash）两个源，
+/// 本地都没有台账面：请求里出现它们时按「查不到」处理（`not found`），偏离见 `docs/32`。
 pub(crate) const SOURCE_WORKSPACE: &str = "workspace";
-/// bundle 源：内置 skill（未实现，仅用于解析 ref 时报 `not found`）。
-pub(crate) const SOURCE_BUILTIN: &str = "builtin";
-/// bundle 源：插件 skill（未实现；上游对该源会额外校验 pinned hash）。
-pub(crate) const SOURCE_PLUGIN: &str = "plugin";
 
 /// upstream `skillbundle.writeHashPart`：`fmt.Fprintf(h, "%d:%s\n", len(value), value)`。
 fn write_hash_part(hasher: &mut Sha256, value: &str) {
@@ -81,8 +80,18 @@ pub(crate) struct SkillBundleData {
     pub files: Vec<SkillFileData>,
 }
 
+// `serde(skip_serializing_if = "…")` 只接受 `fn(&T) -> bool`，签名由 serde 定死。
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &i64) -> bool {
     *value == 0
+}
+
+/// `usize` 字节数 → `i64`（上游 `size_bytes` / `sizeBytes` 都是 int64）。
+///
+/// 只有恶意构造的 PB 级内容才会溢出 `i64`；饱和到 `i64::MAX` 比回绕成负数安全
+/// （下游用它算配额）。
+fn as_i64(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 /// 把一行 `SkillBundleRow` 投影成完整 bundle（含 manifest hash）。
@@ -102,19 +111,19 @@ pub(crate) fn build_bundle(row: &SkillBundleRow) -> SkillBundleData {
     write_hash_part(&mut hasher, &row.skill.description);
     write_hash_part(&mut hasher, &row.skill.content);
 
-    let mut size = row.skill.content.len() as i64;
+    let mut size = as_i64(row.skill.content.len());
     let mut out_files = Vec::with_capacity(files.len());
     for (path, content) in files {
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(content.as_bytes())));
         write_hash_part(&mut hasher, path);
         write_hash_part(&mut hasher, &digest);
         write_hash_part(&mut hasher, content);
-        size += content.len() as i64;
+        size += as_i64(content.len());
         out_files.push(SkillFileData {
             path: path.clone(),
             content: content.clone(),
             sha256: digest,
-            size_bytes: content.len() as i64,
+            size_bytes: as_i64(content.len()),
         });
     }
 
@@ -132,11 +141,7 @@ pub(crate) fn build_bundle(row: &SkillBundleRow) -> SkillBundleData {
 
 /// `config` 列里记录的导入来源（upstream `ReportLocalSkillImportResult` 逐字）。
 #[must_use]
-pub(crate) fn local_import_config(
-    runtime_id: &str,
-    provider: &str,
-    source_path: &str,
-) -> Value {
+pub(crate) fn local_import_config(runtime_id: &str, provider: &str, source_path: &str) -> Value {
     json!({
         "origin": {
             "type": "runtime_local",
@@ -169,15 +174,15 @@ pub(crate) fn validate_file_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mc_core::Id;
+    use uuid::Uuid;
 
     fn row(files: Vec<(&str, &str)>) -> SkillBundleRow {
         use chrono::Utc;
         use mc_repos::daemon::SkillRow;
         SkillBundleRow {
             skill: SkillRow {
-                id: Id::new(),
-                workspace_id: Id::new(),
+                id: Uuid::new_v4(),
+                workspace_id: Uuid::new_v4(),
                 name: "deploy".into(),
                 description: "deploy helper".into(),
                 content: "main".into(),
@@ -196,10 +201,16 @@ mod tests {
     /// 上游 `TestBuildManifestStableAcrossFileOrder` 的等价断言。
     #[test]
     fn hash_is_stable_across_file_order() {
-        let a = build_bundle(&row(vec![("b.md", "b"), ("a.md", "a")]));
-        let b = build_bundle(&row(vec![("a.md", "a"), ("b.md", "b")]));
+        // 同一个 skill（含 id）两份，只把 files 的顺序倒过来 —— 一行 `row()` 内部
+        // 会取新 uuid，所以必须 clone 而不能调两次 `row()`。
+        let one = row(vec![("b.md", "b"), ("a.md", "a")]);
+        let mut reversed = one.clone();
+        reversed.files.reverse();
+        let a = build_bundle(&one);
+        let b = build_bundle(&reversed);
         assert_eq!(a.hash, b.hash);
         assert_eq!(a.files[0].path, "a.md");
+        assert_eq!(b.files[0].path, "a.md");
     }
 
     /// 上游 `TestBuildManifestChangesWhenContentChanges` 的等价断言。

@@ -38,13 +38,14 @@ use axum::http::request::Parts;
 use mc_core::Id;
 use mc_errors::Error;
 use mc_repos::daemon::{DaemonRepo, DaemonTokenRow};
+use mc_repos::pat::PatRepo;
 use mc_repos::runtime::{AgentRuntimeRepo, AgentRuntimeRow};
 use mc_repos::task::TaskRow;
-use mc_repos::{PatRepo, RepoError};
+use mc_repos::RepoError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
 pub(crate) const USER_ID_HEADER: &str = "x-multica-user-id";
@@ -78,24 +79,6 @@ impl DaemonActor {
             Self::User { daemon_id, .. } => daemon_id.as_deref(),
         }
     }
-
-    /// 当前用户（daemon token 路径没有用户 —— 上游此时 `ownerID` 为零值）。
-    #[must_use]
-    pub(crate) fn user_id(&self) -> Option<Id> {
-        match self {
-            Self::Daemon { .. } => None,
-            Self::User { user_id, .. } => Some(*user_id),
-        }
-    }
-
-    /// daemon token 直接证明的 workspace（用户路径恒 `None`）。
-    #[must_use]
-    pub(crate) fn token_workspace_id(&self) -> Option<Id> {
-        match self {
-            Self::Daemon { workspace_id, .. } => Some(*workspace_id),
-            Self::User { .. } => None,
-        }
-    }
 }
 
 /// 已认证的 daemon 面调用者。
@@ -114,12 +97,12 @@ impl FromRequestParts<Arc<AppState>> for DaemonAuth {
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         if let Some(raw) = bearer_token(parts) {
-            return authenticate(state, &raw).await.map_err(ApiError);
+            return authenticate(state, &raw).await;
         }
         // dev-mode 兜底（偏离 D-1）。
         let user = header(parts, USER_ID_HEADER)
             .and_then(|v| Id::parse(v.trim()).ok())
-            .ok_or_else(|| ApiError(unauthorized("missing Authorization header")))?;
+            .ok_or_else(|| unauthorized("missing Authorization header"))?;
         let daemon_id = header(parts, DAEMON_ID_HEADER).map(|v| v.trim().to_string());
         Ok(Self {
             actor: DaemonActor::User {
@@ -163,7 +146,7 @@ fn hash_token(raw: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-async fn authenticate(state: &AppState, raw: &str) -> Result<DaemonAuth, Error> {
+async fn authenticate(state: &AppState, raw: &str) -> Result<DaemonAuth, ApiError> {
     if raw.starts_with("mdt_") {
         let repo = DaemonRepo::new(&state.db);
         let row: Option<DaemonTokenRow> = repo
@@ -178,7 +161,7 @@ async fn authenticate(state: &AppState, raw: &str) -> Result<DaemonAuth, Error> 
         }
         return Ok(DaemonAuth {
             actor: DaemonActor::Daemon {
-                workspace_id: row.workspace_id,
+                workspace_id: row.workspace_id(),
                 daemon_id: row.daemon_id,
             },
         });
@@ -188,8 +171,8 @@ async fn authenticate(state: &AppState, raw: &str) -> Result<DaemonAuth, Error> 
             .get_by_token(raw)
             .await
             .map_err(|e| match e {
-                RepoError::Db(message) => Error::Database(message),
-                other => Error::Internal(format!("pat lookup failed: {other:?}")),
+                RepoError::Db(message) => db_err(message),
+                other => internal(format!("pat lookup failed: {other:?}")),
             })?;
         let Some(row) = row else {
             return Err(unauthorized("invalid token"));
@@ -209,45 +192,50 @@ async fn authenticate(state: &AppState, raw: &str) -> Result<DaemonAuth, Error> 
 // 错误构造
 // ---------------------------------------------------------------------------
 
-pub(crate) fn validation(message: impl Into<String>) -> Error {
-    Error::Validation {
+// 这一族**直接产出 `ApiError`**（而非 `mc_errors::Error`）：daemon 面的 handler 本体
+// 一律返回 `ApiResult<T>`，`Err(validation(..))` 是最常见的形态；若这里返回裸 `Error`，
+// 每个调用点都要多一层包装。门禁函数（`require_*`）与解析函数（`parse_path_id`）
+// 同样收敛到 `ApiError`，让 `?` 在整条调用链上无需转换。
+pub(crate) fn validation(message: impl Into<String>) -> ApiError {
+    ApiError(Error::Validation {
         message: message.into(),
         details: Vec::new(),
-    }
+    })
 }
 
-pub(crate) fn not_found(resource: &str) -> Error {
-    Error::NotFound {
+pub(crate) fn not_found(resource: &str) -> ApiError {
+    ApiError(Error::NotFound {
         resource: resource.into(),
-    }
+    })
 }
 
 /// 409：状态机 / CAS 拒绝（upstream `writeError(w, http.StatusConflict, msg)`）。
-pub(crate) fn conflict(message: impl Into<String>) -> Error {
-    Error::Conflict {
+pub(crate) fn conflict(message: impl Into<String>) -> ApiError {
+    ApiError(Error::Conflict {
         message: message.into(),
-    }
+    })
 }
 
-pub(crate) fn forbidden(message: impl Into<String>) -> Error {
-    Error::Forbidden {
+pub(crate) fn forbidden(message: impl Into<String>) -> ApiError {
+    ApiError(Error::Forbidden {
         message: message.into(),
-    }
+    })
 }
 
-pub(crate) fn unauthorized(message: impl Into<String>) -> Error {
-    Error::Unauthorized {
+pub(crate) fn unauthorized(message: impl Into<String>) -> ApiError {
+    ApiError(Error::Unauthorized {
         message: message.into(),
-    }
+    })
 }
 
-pub(crate) fn db_err(e: impl std::fmt::Display) -> Error {
-    Error::Database(e.to_string())
+/// 仓储 / 基础设施错误 → 500（`RepoError` 与 `sqlx::Error` 都实现 `Display`）。
+pub(crate) fn db_err(e: impl std::fmt::Display) -> ApiError {
+    ApiError(Error::Database(e.to_string()))
 }
 
 /// 基础设施故障（上游 `writeError(w, 500, msg)`）。`msg` 是**操作**描述，不是错误原文。
-pub(crate) fn internal(message: impl Into<String>) -> Error {
-    Error::Internal(message.into())
+pub(crate) fn internal(message: impl Into<String>) -> ApiError {
+    ApiError(Error::Internal(message.into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -263,25 +251,32 @@ pub(crate) async fn require_workspace_access(
     auth: &DaemonAuth,
     workspace_id: Id,
     not_found_msg: &str,
-) -> Result<(), Error> {
+) -> Result<(), ApiError> {
+    if workspace_allowed(state, auth, workspace_id).await? {
+        Ok(())
+    } else {
+        Err(not_found(not_found_msg))
+    }
+}
+
+/// workspace 门的**布尔版**：批量场景里「这条不属于我」= 跳过（而不是整批 404）。
+///
+/// 上游同样有两个形态：`requireDaemonWorkspaceAccess`（写 404 并返回 false，调用方
+/// `return`）与 `verifyDaemonWorkspaceAccess`（只返回 false，调用方 `continue`）。
+/// 读 `member` 失败仍是 500（不静默降级成 404）。
+pub(crate) async fn workspace_allowed(
+    state: &AppState,
+    auth: &DaemonAuth,
+    workspace_id: Id,
+) -> ApiResult<bool> {
     match &auth.actor {
         DaemonActor::Daemon {
             workspace_id: token_ws,
             ..
-        } => {
-            if *token_ws == workspace_id {
-                Ok(())
-            } else {
-                Err(not_found(not_found_msg))
-            }
-        }
-        DaemonActor::User { user_id, .. } => {
-            is_workspace_member(state, workspace_id, *user_id)
-                .await
-                .map_err(db_err)?
-                .then_some(())
-                .ok_or_else(|| not_found(not_found_msg))
-        }
+        } => Ok(*token_ws == workspace_id),
+        DaemonActor::User { user_id, .. } => is_workspace_member(state, workspace_id, *user_id)
+            .await
+            .map_err(db_err),
     }
 }
 
@@ -310,13 +305,13 @@ pub(crate) async fn require_runtime_access(
     auth: &DaemonAuth,
     raw_runtime_id: &str,
     not_found_msg: &str,
-) -> Result<AgentRuntimeRow, Error> {
+) -> Result<AgentRuntimeRow, ApiError> {
     let runtime_id = parse_path_id("runtime_id", raw_runtime_id)?;
     let runtime = AgentRuntimeRepo::new(state.db.clone())
         .get(runtime_id)
         .await
         .map_err(|e| match e {
-            RepoError::Db(message) => Error::Database(message),
+            RepoError::Db(message) => db_err(message),
             _ => internal("failed to load runtime"),
         })?
         .ok_or_else(|| not_found(not_found_msg))?;
@@ -330,14 +325,14 @@ pub(crate) async fn require_task_access(
     auth: &DaemonAuth,
     raw_task_id: &str,
     not_found_msg: &str,
-) -> Result<(TaskRow, Id), Error> {
+) -> Result<(TaskRow, Id), ApiError> {
     let task_id = parse_path_id("task_id", raw_task_id)?;
     let repo = DaemonRepo::new(&state.db);
     let task = repo
         .task_by_id(task_id)
         .await
         .map_err(|e| match e {
-            RepoError::Db(message) => Error::Database(message),
+            RepoError::Db(message) => db_err(message),
             _ => internal("failed to load task"),
         })?
         .ok_or_else(|| not_found(not_found_msg))?;
@@ -356,7 +351,7 @@ pub(crate) async fn require_task_access(
 
 /// `:<field>` 路径参数：非法 → 400 `<field> must be a uuid`（上游 `parseUUID` panic→500，
 /// 本地沿用 M3-4 的 400 约定，登记为偏离 D-5）。
-pub(crate) fn parse_path_id(field: &str, raw: &str) -> Result<Id, Error> {
+pub(crate) fn parse_path_id(field: &str, raw: &str) -> Result<Id, ApiError> {
     Id::parse(raw.trim()).map_err(|_| validation(format!("{field} must be a uuid")))
 }
 
@@ -377,16 +372,3 @@ pub(crate) fn timestamp(value: chrono::DateTime<chrono::Utc>) -> String {
 pub(crate) fn timestamp_opt(value: Option<chrono::DateTime<chrono::Utc>>) -> Option<String> {
     value.map(timestamp)
 }
-
-/// 走 `mc-task` 的状态机做**校验**：迁移非法时回 400/409，合法时给出目标状态。
-///
-/// 上游的迁移约束分散在 SQL 的 `WHERE status IN (...)` 里（CAS 失败 → 400 `err.Error()`）。
-/// 本地等价物：先用 [`mc_task::state::TaskState::apply`] 判一次，迁移不合法就是 400，
-/// 然后才发 SQL —— 两层判定同一套语义，SQL 仍是最终权威（并发下 CAS 可能仍失败）。
-pub(crate) fn row_state(row: &TaskRow) -> Result<mc_task::state::TaskState, Error> {
-    row.to_task_state()
-        .map_err(|e| internal(format!("task state is invalid: {e}")))
-}
-
-use mc_repos::runtime::AgentRuntimeRepo;
-pub(crate) use crate::routes::issues::{resolve_workspace, WorkspaceQuery};

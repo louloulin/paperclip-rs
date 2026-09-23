@@ -38,7 +38,7 @@
 //! - stale comment plan 修复（`repairStaleCommentPlanIfNeeded`）。
 //! - `issue_wakeup` 的 revision 活性门（见 `claim_next_task_for_runtime` 的 SQL 注释）。
 //! - `recover-orphans` 的后续流水线只做到「清 task token」；上游还会回滚 agent 状态并
-//!   触发 auto-retry（在 RuntimeSweeper 面）。
+//!   触发 auto-retry（在 `RuntimeSweeper` 面）。
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -57,7 +57,7 @@ use uuid::Uuid;
 use super::dto::{decode_body, BatchClaimRequest, DaemonTaskResponse};
 use super::scope::{
     conflict, db_err, forbidden, internal, not_found, require_runtime_access, require_task_access,
-    validation, DaemonActor, DaemonAuth,
+    validation, workspace_allowed, DaemonAuth,
 };
 use super::skills::{build_bundle, SOURCE_WORKSPACE};
 use crate::error::ApiResult;
@@ -71,6 +71,10 @@ const RUNTIME_STALE_SECS: i64 = 90;
 const TASK_TOKEN_TTL_SECS: i64 = 24 * 60 * 60;
 /// 批量 claim 上限（upstream `claimBatchMaxTasksCap`）：daemon 传再大也只给这么多。
 const CLAIM_BATCH_MAX_TASKS_CAP: i64 = 32;
+/// poll-hint 查询用的 runtime 新鲜度（upstream `service.RuntimeClaimFreshnessSeconds`）。
+const RUNTIME_CLAIM_FRESHNESS_SECS: f64 = 150.0;
+/// poll-hint 的最小延迟（upstream `claimPollHintMinDelay = time.Second`）。
+const CLAIM_POLL_HINT_MIN_DELAY_MS: i64 = 1_000;
 
 // ---------------------------------------------------------------------------
 // task token
@@ -166,20 +170,48 @@ pub(crate) async fn claim_for_runtime(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/daemon/tasks/claim` 与 `POST /api/daemon/claim`（同一 handler）。
+///
+/// 本函数只做 HTTP 特有的那部分：从 `X-Client-Capabilities` 头取能力串。业务语义全在
+/// [`claim_batch_core`]，WS 面（[`super::ws`]）以连接身份的能力串调同一个核心。
 pub(crate) async fn claim_batch(
     State(state): State<Arc<AppState>>,
     auth: DaemonAuth,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
-    let repo = DaemonRepo::new(&state.db);
     let req: BatchClaimRequest = decode_body(&body)?;
+    // 头缺失/非法 utf8 ⇒ 空串（`requestClientCapabilities` 对坏头也只看到空）。
+    let capabilities = headers
+        .get("x-client-capabilities")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let out = claim_batch_core(&state, Some(&auth), &capabilities, req).await?;
+    Ok(Json(out))
+}
+
+/// 批量 claim 的**唯一**实现：HTTP 腿与 WS RPC 腿共用（见 `docs/16` §6.4）。
+///
+/// `auth = None` = 连接没有任何可鉴权主体（只声明了 `runtime_ids`），此时没有任何
+/// runtime 可见 —— 与上游逐个 runtime 走 `requireDaemonWorkspaceAccess` 失败的最终结果
+/// 相同（200 空列表），但少付 N 次 member 查询。
+///
+/// `capabilities` 是 `X-Client-Capabilities` 原文（WS 面 = 连接身份的能力串）。
+#[allow(clippy::too_many_lines)] // 上游单函数顺序照搬：mismatch → 空领短路 → 逐条认领 → 组装
+pub(crate) async fn claim_batch_core(
+    state: &AppState,
+    auth: Option<&DaemonAuth>,
+    capabilities: &str,
+    req: BatchClaimRequest,
+) -> ApiResult<Value> {
+    let repo = DaemonRepo::new(&state.db);
 
     if req.daemon_id.is_empty() {
         return Err(validation("daemon_id is required"));
     }
     // `mdt_` token 自带 daemon 身份 ⇒ 必须与 body 一致，否则一枚同 workspace 的
     // token 能替别的机器领任务。
-    if let Some(token_daemon) = auth.actor.daemon_id() {
+    if let Some(token_daemon) = auth.and_then(|a| a.actor.daemon_id()) {
         if token_daemon != req.daemon_id.as_str() {
             return Err(forbidden("daemon_id does not match token"));
         }
@@ -187,11 +219,12 @@ pub(crate) async fn claim_batch(
     if req.max_tasks < 0 {
         return Err(validation("max_tasks must not be negative"));
     }
-    // 显式 0 = 明确不领（不折算成 1），且不打库。
+    // 显式 0 = 明确不领（不折算成 1），且不打库；上游这条短路也**不带** poll-hint 字段。
     if req.max_tasks == 0 {
-        return Ok(Json(json!({ "tasks": [] })));
+        return Ok(json!({ "tasks": [] }));
     }
-    let max_tasks = req.max_tasks.min(CLAIM_BATCH_MAX_TASKS_CAP) as usize;
+    // 负数在上一条已判 400 ⇒ 落进这里的值域是 `[0, 32]`，转换不会丢符号也不会截断。
+    let max_tasks = usize::try_from(req.max_tasks.min(CLAIM_BATCH_MAX_TASKS_CAP)).unwrap_or(0);
 
     // 坏 id / 未知 id 一律**跳过**而不是整批 400：daemon 会捎上本地已知的全部
     // runtime，其中属于别人的、已被删除的很常见。
@@ -205,17 +238,20 @@ pub(crate) async fn claim_batch(
         }
     }
     if ids.is_empty() {
-        return Ok(Json(json!({ "tasks": [] })));
+        return Ok(json!({ "tasks": [] }));
     }
 
     let found = repo.list_runtimes_by_ids(&ids).await.map_err(db_err)?;
-    let by_id: HashMap<Id, AgentRuntimeRow> =
-        found.into_iter().map(|rt| (rt.id, rt)).collect();
+    let by_id: HashMap<Id, AgentRuntimeRow> = found.into_iter().map(|rt| (rt.id, rt)).collect();
 
     let mut authorized: Vec<AgentRuntimeRow> = Vec::new();
     for id in &ids {
         let Some(rt) = by_id.get(id) else { continue };
-        if !workspace_allowed(&state, &auth, rt.workspace_id).await? {
+        if let Some(auth) = auth {
+            if !workspace_allowed(state, auth, rt.workspace_id).await? {
+                continue;
+            }
+        } else {
             continue;
         }
         // 钉在别的 daemon 上的 runtime 不能被本机 claim；`daemon_id IS NULL`
@@ -228,8 +264,9 @@ pub(crate) async fn claim_batch(
         authorized.push(rt.clone());
     }
     if authorized.is_empty() {
-        return Ok(Json(json!({ "tasks": [] })));
+        return Ok(json!({ "tasks": [] }));
     }
+    let authorized_ids: Vec<Id> = authorized.iter().map(|rt| rt.id).collect();
 
     let mut out: Vec<DaemonTaskResponse> = Vec::new();
     'outer: for rt in authorized {
@@ -263,25 +300,47 @@ pub(crate) async fn claim_batch(
             }
         }
     }
-    Ok(Json(json!({ "tasks": out })))
+
+    // 安全轮询提示（upstream `daemon.go:1941-1952`）：只在**没领满**且调用方声明了
+    // `claim-poll-hints-v1` 时才查一次「最近的 deferred 任务 fire_at」。查询失败只记日志、
+    // 省略支持位（daemon 保守地退回自己的 `PollInterval`），绝不让一次提示查询把整次
+    // claim 变成 5xx —— 任务已经发出去了，回 5xx 只会让 daemon 重复 claim。
+    let mut response = json!({ "tasks": out });
+    let claimed = response["tasks"].as_array().map_or(0, Vec::len);
+    if claimed < max_tasks
+        && mc_daemon_proto::capabilities::request_has_client_capability(
+            capabilities,
+            mc_daemon_proto::capabilities::DAEMON_CAPABILITY_CLAIM_POLL_HINTS_V1,
+        )
+    {
+        match repo
+            .next_deferred_task_fire_at(&authorized_ids, RUNTIME_CLAIM_FRESHNESS_SECS)
+            .await
+        {
+            Ok(next) => {
+                response["claim_poll_hint_supported"] = json!(true);
+                if let Some(fire_at) = next {
+                    response["next_deferred_task_after_ms"] =
+                        json!(claim_poll_hint_delay_ms(chrono::Utc::now(), fire_at));
+                }
+            }
+            Err(err) => tracing::warn!(
+                error = %err,
+                "batch claim: next deferred task lookup failed; retaining short client poll"
+            ),
+        }
+    }
+    Ok(response)
 }
 
-/// 该 runtime 的 workspace 是否对该调用者可见（daemon token 只认自己的，用户查 member）。
-async fn workspace_allowed(
-    state: &AppState,
-    auth: &DaemonAuth,
-    workspace_id: Id,
-) -> ApiResult<bool> {
-    match &auth.actor {
-        DaemonActor::Daemon {
-            workspace_id: token_ws,
-            ..
-        } => Ok(*token_ws == workspace_id),
-        DaemonActor::User { user_id, .. } => DaemonRepo::new(&state.db)
-            .is_workspace_member(workspace_id, *user_id)
-            .await
-            .map_err(db_err),
-    }
+/// upstream `claimPollHintDelay`（`daemon.go:1954`）：不得低于 `claimPollHintMinDelay`
+/// （1s），否则「立刻到期」的 deferred 任务会让 daemon 打成紧轮询。
+fn claim_poll_hint_delay_ms(
+    now: chrono::DateTime<chrono::Utc>,
+    fire_at: chrono::DateTime<chrono::Utc>,
+) -> i64 {
+    let delay = (fire_at - now).num_milliseconds();
+    delay.max(CLAIM_POLL_HINT_MIN_DELAY_MS)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,10 +355,9 @@ pub(crate) async fn prepare_lease(
 ) -> ApiResult<Json<DaemonTaskResponse>> {
     let repo = DaemonRepo::new(&state.db);
     let runtime = require_runtime_access(&state, &auth, &runtime_id, "runtime not found").await?;
-    let (task, task_workspace) = require_task_access(&state, &auth, &task_id, "task not found").await?;
-    if task_workspace != runtime.workspace_id
-        || task.runtime_id != Some(runtime.id.as_uuid())
-    {
+    let (task, task_workspace) =
+        require_task_access(&state, &auth, &task_id, "task not found").await?;
+    if task_workspace != runtime.workspace_id || task.runtime_id != Some(runtime.id.as_uuid()) {
         return Err(not_found("task not found"));
     }
     let updated = repo
@@ -331,7 +389,9 @@ pub(crate) async fn list_pending(
         .iter()
         .map(|row| DaemonTaskResponse::from_row(row, &workspace))
         .collect();
-    Ok(Json(serde_json::to_value(out).unwrap_or(Value::Array(vec![]))))
+    Ok(Json(
+        serde_json::to_value(out).unwrap_or(Value::Array(vec![])),
+    ))
 }
 
 /// `POST /api/daemon/runtimes/:runtimeId/recover-orphans`。
@@ -342,7 +402,10 @@ pub(crate) async fn recover_orphans(
 ) -> ApiResult<Json<Value>> {
     let repo = DaemonRepo::new(&state.db);
     let runtime = require_runtime_access(&state, &auth, &runtime_id, "runtime not found").await?;
-    let rows = repo.recover_orphaned_tasks(runtime.id).await.map_err(db_err)?;
+    let rows = repo
+        .recover_orphaned_tasks(runtime.id)
+        .await
+        .map_err(db_err)?;
     let orphaned = rows.len();
     for row in &rows {
         // 上一次进程留下的 task token 必须立刻作废：否则它会活到 24h 过期，且
@@ -386,9 +449,7 @@ pub(crate) async fn resolve_skill_bundles(
     let runtime = require_runtime_access(&state, &auth, &runtime_id, "runtime not found").await?;
     let (task, task_workspace) =
         require_task_access(&state, &auth, &task_id, "task not found").await?;
-    if task_workspace != runtime.workspace_id
-        || task.runtime_id != Some(runtime.id.as_uuid())
-    {
+    if task_workspace != runtime.workspace_id || task.runtime_id != Some(runtime.id.as_uuid()) {
         return Err(not_found("task not found"));
     }
     if task.status != "dispatched" && task.status != "waiting_local_directory" {

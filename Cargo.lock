@@ -2439,6 +2439,7 @@ dependencies = [
  "axum",
  "chrono",
  "chrono-tz",
+ "futures-util",
  "hex",
  "http-body-util",
  "hyper 1.11.1",

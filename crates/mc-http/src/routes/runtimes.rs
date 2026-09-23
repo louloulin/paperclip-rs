@@ -6,9 +6,10 @@
 //! 路由与门禁见 `server/cmd/server/router.go`：`/api/runtimes` L2266-2293，
 //! `/api/workspaces/{id}/runtime-profiles` L1680-1681（member）+ L1717-1720（owner/admin）。
 //!
-//! 本切片**只做同步台账面**：运行时实例的读 / 改名 / 改可见性 / 删除 + profile 台账
-//! CRUD + 四个用量聚合。8 条异步往返（`update` / `models` / `local-skills*`）属于
-//! M3-7（W3c），这里**不注册**。
+//! 本切片做**同步台账面** + 8 条**异步往返**：运行时实例的读 / 改名 / 改可见性 / 删除 +
+//! profile 台账 CRUD + 四个用量聚合（`ledger.rs` / `profiles.rs` / `usage.rs`），
+//! 以及 update / models / local-skills* 的入队与轮询（`async_requests.rs`，M3-7）。
+//! 异步请求的执行方是 daemon（心跳领取 + 上报），服务端只做台账与门禁。
 //!
 //! ## 鉴权
 //!
@@ -43,10 +44,12 @@
 //! - `profiles.rs`：6 条 profile 路由
 //! - `ledger.rs`：4 条台账路由（list / patch / delete / unbind）
 //! - `usage.rs`：4 条用量路由（含 `days` 窗口与时区解析）
+//! - `async_requests.rs`：8 条异步往返路由（update / models / local-skills*，M3-7）
 #![allow(clippy::option_option)]
 
 mod access;
-mod dto;
+pub(crate) mod async_requests;
+pub(crate) mod dto;
 mod ledger;
 mod profiles;
 mod protocol;
@@ -112,5 +115,40 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/api/runtimes/:runtimeId/archive-agents-and-delete",
             post(ledger::unbind_agents_and_delete),
+        )
+        // ---- 异步往返（服务端入队 + 客户端轮询；`docs/16` §6.2 表 B）----
+        .route(
+            "/api/runtimes/:runtimeId/update",
+            post(async_requests::initiate_update),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/update/:updateId",
+            get(async_requests::get_update),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/models",
+            post(async_requests::initiate_list_models),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/models/:requestId",
+            get(async_requests::get_model_list_request),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/local-skills",
+            post(async_requests::initiate_list_local_skills),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/local-skills/import",
+            post(async_requests::initiate_import_local_skill),
+        )
+        // 注意：静态段 `import` 与 `:requestId` 同层 —— matchit 0.7 按「静态优先」匹配，
+        // 所以 `GET .../local-skills/import/<id>` 命中下面那条，其余命中上面这条。
+        .route(
+            "/api/runtimes/:runtimeId/local-skills/import/:requestId",
+            get(async_requests::get_local_skill_import_request),
+        )
+        .route(
+            "/api/runtimes/:runtimeId/local-skills/:requestId",
+            get(async_requests::get_local_skill_list_request),
         )
 }

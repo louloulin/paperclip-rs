@@ -197,10 +197,23 @@ pub(crate) async fn load_readable_runtime(
     raw: &str,
     user_id: Id,
 ) -> Result<AgentRuntimeRow, Error> {
+    Ok(load_readable_runtime_member(state, raw, user_id).await?.0)
+}
+
+/// 同上，但把成员行一起交回 —— 上游 `requireRuntimeReadAccess` 的签名就是
+/// `(rt, member, ok)`，而 `canEditRuntime` / `canSetRuntimeVisibility` 这类判定
+/// 需要**角色**：`InitiateUpdate` / `GetUpdate` 与本地 skill 的 owner-only 门都用这个。
+///
+/// 成员只载入一次：先调用本函数再调 `load_readable_runtime` 会多一次 `member` 查询。
+pub(crate) async fn load_readable_runtime_member(
+    state: &AppState,
+    raw: &str,
+    user_id: Id,
+) -> Result<(AgentRuntimeRow, RuntimeMember), Error> {
     let rt = load_runtime(state, raw).await?;
     let member = load_member_for_runtime(state, &rt, user_id).await?;
     if !rt.usable_by(member.user_id) {
         return Err(not_found("runtime"));
     }
-    Ok(rt)
+    Ok((rt, member))
 }
