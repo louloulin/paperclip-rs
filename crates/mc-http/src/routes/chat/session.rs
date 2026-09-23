@@ -502,7 +502,9 @@ pub(super) async fn mark_session_read(
 ///
 /// 上游在同一事务里还取消在飞任务、清渠道绑定 / 出站卡片、清 agent-builder draft、
 /// 删 label 绑定与 system agent；本片只做「锁 → 剪草稿恢复行 → 删会话」，
-/// 其余四类写入属 M4-4 / M7 写集（模块头第 3 条）。会话行不存在 ⇒ 幂等 204。
+/// 其余四类写入属 M4-4 / M7 写集（模块头第 3 条）。会话行不存在（或不是自己建的）
+/// ⇒ 404 / 403：`load_chat_session_for_user` 在事务之前，与上游 `loadChatSessionForUser` 同序；
+/// 上游那个「幂等 204」只覆盖 `LockChatSessionForDelete` 读到空行的竞态窗口。
 pub(super) async fn delete_session(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

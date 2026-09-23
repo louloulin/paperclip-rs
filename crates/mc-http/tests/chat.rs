@@ -199,8 +199,8 @@ async fn create_get_and_list_visibility() {
     let (s, b) = ctx.get(&format!("{SESSIONS}/not-a-uuid")).await;
     assert_err(&b, s, SC::BAD_REQUEST, "invalid chat session id");
 
-    // 列表可见性：隐藏渠道会话（无 `explicitly_created_at` + 只有 `channel_command`）与
-    // 「agent 对调用者不可见」的会话都不进列表；单个隐藏会话走公开门也是 404。
+    // 列表可见性 1：隐藏渠道会话（无 `explicitly_created_at` + 只有 `channel_command`）不进列表；
+    // 单个隐藏会话走公开门也是 404。
     let hidden = raw_session(&ctx.pool, ctx.fx.ws, owner, agent, false).await;
     let _ = new_message(
         &ctx.pool,
@@ -211,16 +211,38 @@ async fn create_get_and_list_visibility() {
         "channel_command",
     )
     .await;
-    let foreign = raw_session(&ctx.pool, ctx.fx.ws, owner, ctx.fx.peer_private, true).await;
     let (_, b) = ctx.get(SESSIONS).await;
-    assert_eq!(
-        ids(&b),
-        vec![id],
-        "{b}（隐藏会话 / 不可见 agent 的会话都不该出现）"
-    );
-    assert!(!ids(&b).contains(&foreign.to_string()));
+    assert_eq!(ids(&b), vec![id.clone()], "{b}（隐藏渠道会话不该出现）");
     let (s, b) = ctx.get(&format!("{SESSIONS}/{hidden}")).await;
     assert_err(&b, s, SC::NOT_FOUND, "chat session");
+
+    // 列表可见性 2：agent 可见性白名单（上游 `accessibleAgentIDs` → `memberAllowedToViewAgent`
+    // L192 / `canAccessPrivateAgent` L150）：**workspace owner/admin 与 agent owner 不受限**
+    // （"workspace owner/admin pass (governance / inventory visibility retained)"），
+    // 普通 member 只看得到「自己拥有的 agent」或「`public_to` 且命中 workspace/member 白名单」的 agent。
+    let foreign = raw_session(&ctx.pool, ctx.fx.ws, owner, ctx.fx.peer_private, true).await;
+    let allowed = raw_session(&ctx.pool, ctx.fx.ws, peer, ctx.fx.shared, true).await;
+    let denied = raw_session(&ctx.pool, ctx.fx.ws, peer, ctx.fx.agents[0], true).await;
+    let (_, b) = ctx.get(SESSIONS).await;
+    assert!(
+        ids(&b).contains(&foreign.to_string()),
+        "{b}（owner 角色不受 agent 可见性限制）"
+    );
+    let (s, b) = ctx.send("GET", SESSIONS, peer, None).await;
+    assert_eq!(s, SC::OK, "{b}");
+    let peer_list = ids(&b);
+    assert!(
+        peer_list.contains(&allowed.to_string()),
+        "{b}（`public_to` + workspace 白名单 ⇒ member 可见）"
+    );
+    assert!(
+        !peer_list.contains(&denied.to_string()),
+        "{b}（别人的 private agent 对 member 不可见）"
+    );
+    assert!(
+        !peer_list.contains(&foreign.to_string()),
+        "{b}（creator 过滤：列表只含自己建的会话）"
+    );
 
     ctx.cleanup().await;
 }
@@ -306,13 +328,16 @@ async fn flags_update_and_delete() {
     let (s, b) = ctx.raw("PATCH", &uri, r#"{"title":5}"#).await;
     assert_err(&b, s, SC::BAD_REQUEST, "invalid request body");
 
-    // 删除：204 幂等；别人的会话 403（弱归属门）；隐藏渠道会话也能被删（清理面不看公开门）。
+    // 删除：别人的会话 403（弱归属门）；自己的会话 204；**已删的会话再删 404**
+    // （上游 `DeleteChatSession` L677 先走 `loadChatSessionForUser` L252 ⇒ 行没了就是 404
+    // `chat session not found`，`LockChatSessionForDelete` 的幂等 204 只覆盖「读到又被别人删掉」
+    // 的竞态窗口）；隐藏渠道会话也能被删（清理面不看公开门）。
     let (s, b) = ctx.send("DELETE", &uri, peer, None).await;
     assert_err(&b, s, SC::FORBIDDEN, "not your chat session");
-    for _ in 0..2 {
-        let (s, b) = ctx.delete(&uri).await;
-        assert_eq!(s, SC::NO_CONTENT, "{b}");
-    }
+    let (s, b) = ctx.delete(&uri).await;
+    assert_eq!(s, SC::NO_CONTENT, "{b}");
+    let (s, b) = ctx.delete(&uri).await;
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
     let (s, _) = ctx.get(&uri).await;
     assert_eq!(s, SC::NOT_FOUND);
     let hidden = raw_session(&ctx.pool, ws, owner, ctx.fx.agents[0], false).await;
@@ -392,9 +417,10 @@ async fn message_read_and_paging() {
         vec![m[2].to_string(), m[3].to_string()],
         "{page1}"
     );
-    // 游标 = 窗口里最旧一条，且是**纳秒形态**（RFC3339Nano 去尾零：`.000000` ⇒ 无小数点）。
+    // 游标 = **窗口里最旧一条**（上游在 `messages = messages[:limit]` 之后取 `len-1`，即多取
+    // 2 行的那批里被截断的那条），且是纳秒形态（RFC3339Nano 去尾零）⇒ 这条是 `.5`。
     let cursor = page1["next_cursor"].clone();
-    assert_eq!(cursor["created_at"], "2026-01-01T00:00:03Z", "{page1}");
+    assert_eq!(cursor["created_at"], "2026-01-01T00:00:02.5Z", "{page1}");
     assert_eq!(cursor["id"], Id(m[2]).as_string());
     let next = format!(
         "{base}/messages/page?limit=2&before_created_at={}&before_id={}",
@@ -412,16 +438,25 @@ async fn message_read_and_paging() {
         !page2.as_object().unwrap().contains_key("next_cursor"),
         "`omitempty`：无下一页时字段整个不出现：{page2}"
     );
-    // 纳秒形态的尾零：`.1` 保留、`.000000` 掉成整秒（上面那条）。
+    // 纳秒形态（上游 `oldest.CreatedAt.Time.Format(time.RFC3339Nano)`）：游标取**窗口里最旧一条**
+    // ⇒ `limit=1` 时就是最新的那条；尾零去掉 ⇒ `.000000` 渲染成整秒、`.123456` 原样保留。
     let solo = raw_session(&ctx.pool, ctx.fx.ws, owner, ctx.fx.agents[0], true).await;
     let _ = new_message(&ctx.pool, solo, "user", "a", AT[0], "message").await;
-    let _ = new_message(&ctx.pool, solo, "user", "b", AT[4], "message").await;
+    let _ = new_message(&ctx.pool, solo, "user", "b", AT[3], "message").await;
     let (_, page) = ctx
         .get(&format!("{SESSIONS}/{solo}/messages/page?limit=1"))
         .await;
     assert_eq!(
-        page["next_cursor"]["created_at"], "2026-01-01T00:00:01.1Z",
-        "{page}"
+        page["next_cursor"]["created_at"], "2026-01-01T00:00:03Z",
+        "{page}（`.000000` ⇒ 无小数点）"
+    );
+    let _ = new_message(&ctx.pool, solo, "user", "c", AT[4], "message").await;
+    let (_, page) = ctx
+        .get(&format!("{SESSIONS}/{solo}/messages/page?limit=1"))
+        .await;
+    assert_eq!(
+        page["next_cursor"]["created_at"], "2026-01-01T00:00:04.123456Z",
+        "{page}（非零小数位原样保留）"
     );
 
     // 参数校验：`limit` 越界 / 非数字 → 400 `invalid limit`；游标只给一半 → 400 `invalid cursor`；
@@ -484,10 +519,11 @@ async fn pinned_agents_bar() {
         .await;
     assert_err(&b, s, SC::NOT_FOUND, "agent");
     let (s, b) = ctx
-        .raw(
+        .send(
             "POST",
             uri,
-            &json!({"agent_id": ctx.fx.peer_private}).to_string(),
+            peer,
+            Some(&json!({"agent_id": ctx.fx.agents[0]}).to_string()),
         )
         .await;
     assert_err(&b, s, SC::NOT_FOUND, "agent");
@@ -538,21 +574,51 @@ async fn pinned_agents_bar() {
         .await;
     assert_err(&b, s, SC::NOT_FOUND, "agent");
 
-    // 看不见的 agent 从响应里静默丢弃（归档后消失、恢复后回来；行还在库里）。
+    // 可见性：上游 `accessibleAgentIDs` 只在 `actorType == "member"` 时按
+    // `memberAllowedToViewAgent` 过滤，而它读的 `ListAllAgents` 是
+    // `WHERE workspace_id = $1 AND kind = 'user'`（**没有** `archived_at IS NULL`）
+    // ⇒ **归档不等于不可见**，pin 保留（`chat_pinned_agent.go` 的 doc 注释写“archived →
+    // dropped”，与自己的实现不符；以查询为准，见 `chat/session/support.rs::accessible_agent_ids`）。
     sqlx::query("UPDATE agent SET archived_at = now() WHERE id = $1")
         .bind(ctx.fx.agents[1])
         .execute(&ctx.pool)
         .await
         .expect("archive agent");
     let (_, b) = ctx.get(uri).await;
-    assert_eq!(b.as_array().unwrap().len(), 4, "{b}");
+    assert_eq!(
+        b.as_array().unwrap().len(),
+        5,
+        "{b}（归档 agent 仍算可见）"
+    );
     sqlx::query("UPDATE agent SET archived_at = NULL WHERE id = $1")
         .bind(ctx.fx.agents[1])
         .execute(&ctx.pool)
         .await
         .expect("unarchive agent");
-    let (_, b) = ctx.get(uri).await;
-    assert_eq!(b.as_array().unwrap().len(), 5, "{b}");
+
+    // 权限变更**会**丢 pin：peer 置顶的是 `shared`（peer **自己拥有**的 `public_to` + 命中 workspace
+    // 白名单）。把它改成「不属于 peer 的 private agent」（`member_allowed_to_view`：`can_manage`
+    // 已不成立、`permission_mode != public_to` 直接 false）⇒ 静默丢弃（行还在库里），改回又出现。
+    sqlx::query("UPDATE agent SET permission_mode = 'private', owner_id = $2 WHERE id = $1")
+        .bind(ctx.fx.shared)
+        .bind(ctx.fx.owner)
+        .execute(&ctx.pool)
+        .await
+        .expect("move agent away from peer");
+    let (_, b) = ctx.send("GET", uri, peer, None).await;
+    assert_eq!(
+        b.as_array().unwrap().len(),
+        0,
+        "{b}（不可见 agent 的 pin 被丢弃）"
+    );
+    sqlx::query("UPDATE agent SET permission_mode = 'public_to', owner_id = $2 WHERE id = $1")
+        .bind(ctx.fx.shared)
+        .bind(ctx.fx.peer)
+        .execute(&ctx.pool)
+        .await
+        .expect("restore agent owner/mode");
+    let (_, b) = ctx.send("GET", uri, peer, None).await;
+    assert_eq!(b.as_array().unwrap().len(), 1, "{b}");
 
     // 取消置顶：204 幂等，未知 agent 也 204；坏 UUID → 400 `invalid agentId`（路径参数名不同）。
     for agent in [ctx.fx.agents[0], ctx.fx.agents[0], Uuid::new_v4()] {
