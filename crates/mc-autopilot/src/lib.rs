@@ -28,8 +28,14 @@
 //!    与 robfig 的「零值时间 = 无下次触发」一致 ⇒ 本地手写版同样用 `Option<Timestamp>` 表达
 //!    「无下次触发」，不要用 `Result::Err`。
 //!
-//! 结论：`service/cron.go`(138) 的移植落在 `src/trigger.rs`（M5-3；cron 解析的**唯一**落点，
+//! 结论：`service/cron.go`(138) 的移植落在 **`src/cron.rs`**（cron 解析的**唯一**落点，
 //! `cron-preview` 路由与 M5-7 的 `plan_time` 共用它），**`cron` 不在依赖表里**。
+//!
+//! ⚠️ 本文件（M5-0 anchor）原文写的是「落在 `src/trigger.rs`（M5-3）」，已被 **M5-1 更正**：
+//! `docs/44` §3.2 把 `src/trigger.rs` 独占给 M5-3（一格一写者），而 §4.2/§6.2 把 `service/cron.go`
+//! 与「5 字段 + 无下次触发」的**专属测试**判给 M5-1 ⇒ 两者不可同时成立。cron 解析因此落在
+//! **新文件 `src/cron.rs`**（§3.2 矩阵里没有这一行，不与任何切片抢文件），由本文件（同属 M5-1 写者）
+//! 声明为 `pub mod cron`。记录见 `docs/46`；M5-3/M5-7 直接调用 `mc_autopilot::cron`，不要再写第二份。
 //!
 //! ## 与 `mc-core` 的边界（对 §5.2 的唯一偏离，必须记）
 //!
@@ -44,6 +50,7 @@
 //! | 文件 | 写者 | 上游主源 |
 //! | --- | :-: | --- |
 //! | `src/lib.rs` / `src/error.rs` / `src/dto.rs` | M5-1 | crate 框架 + 跨切片共享的 DTO / 错误基座 |
+//! | `src/cron.rs`（+ `src/cron/tests.rs`） | M5-1 | `service/cron.go`138（见上方偏离说明） |
 //! | `src/quota.rs` / `src/notification.rs` | M5-1 | `service/autopilot_quota.go`414 / `autopilot_quota_notifications.go`198 / `autopilot_notification_recipient.go`91 |
 //! | `src/write.rs` / `src/collaborator.rs` | M5-2 | `CreateAutopilot`159 / `UpdateAutopilot`260 / `DeleteAutopilot`64 / 协作者与订阅者 |
 //! | `src/trigger.rs` / `src/credential.rs` | M5-3 | trigger CRUD 5 条 + `service/cron.go`138 + `signingSecretHint`15 |
@@ -64,6 +71,7 @@
 
 pub mod collaborator;
 pub mod credential;
+pub mod cron;
 pub mod dispatch;
 pub mod dto;
 pub mod error;
