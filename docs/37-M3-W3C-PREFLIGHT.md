@@ -2637,3 +2637,25 @@ multica issue runs LUM-1472 --output json | grep -o '"status": "[a-z]*"'        
 multica issue runs LUM-1474 --output json | grep -o '"status": "[a-z]*"'                          # 新 attempt（todo 重派）已入队
 multica issue get LUM-1473 --output json | grep -o '"status": "[a-z_]*"'                          # in_progress（首派）
 ```
+
+### 26.9 派发验证（`08:14:37–08:14:42Z` 实测）与一条机制修正
+
+```bash
+multica issue runs LUM-1472 --output json   # 01a0cd54-bc16-75ba-93e2-829d92d87c44  running 08:14:37Z
+multica issue runs LUM-1474 --output json   # 01a0cd54-cf81-7594-92f0-a3a8d95cce02  running 08:14:42Z
+multica issue runs LUM-1473 --output json   # 01a0cd54-d009-7ef9-a936-b2c784c3ce8a  running 08:14:42Z
+grep -a <task-id> ~/.multica/daemon.log | grep -a "starting agent\|resuming session"
+```
+
+| 片 | 新 task | 机制实测（daemon 日志逐字） | 判定 |
+| --- | --- | --- | --- |
+| M4-1 | `01a0cd54-bc16-…` | `starting agent … workdir=…/lum-1472-829d92d87c44/workdir`，**无 `resuming session` 行** | ✅ `rerun` = 新 workdir + 新 session（与 §24 的上游代码结论一致） |
+| M4-3 | `01a0cd54-cf81-…` | `starting agent … workdir=…/lum-1474-68db42a17c32/workdir` + `INF resuming session … 20260923T061824.353921136.jsonl` | ✅ 续用 workdir + session |
+| M4-2 | `01a0cd54-d009-…` | `starting agent … workdir=…/lum-1473-b2c784c3ce8a/workdir`，无 resume | ✅ 全新首派 |
+
+三片都在 **20s 内**进到 `first_tool_use`（`first_output_received` 12–14s）⇒ 启动开销 ~15s，与 §26.6 的「重叠窗口短于启动开销」一致。
+
+⚠️ **机制修正（本轮实测）**：`multica daemon status` 在四片同时活着时读数是 **`running_task_count 4 / active_task_count 4`**
+（本 cycle + 三片），即 **daemon 侧没有「最多 3 个」的硬闸**——`docs/37` 各 cycle 里的「并发位 3/3」一直是**运维约定**（issue 正文的「一次最多三个任务运行」），
+不是 daemon 或 platform 强制的上限。⇒ 下一轮调度不必再用「cycle 自己占掉一个位 ⇒ 只能派两片」的口径推导；
+真正要盯的是 **provider 侧**（`503` 抖动 / `Concurrency limit exceeded`，两者都在**只有 2 个任务**时实测发生过）。
