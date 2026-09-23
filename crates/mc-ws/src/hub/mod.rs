@@ -10,6 +10,10 @@
 //! | [`Hub::invalidate_runtime`] | `hub.go:538` `invalidateRuntime` |
 //! | [`Hub::deliver_daemon_runtime`] | `hub.go:577` `DeliverDaemonRuntime` |
 //!
+//! **用户面**通知（`chat:*` / `task:queued` / `task:cancelled` / `agent:status`）是对 hub 的
+//! `impl` 续段，但住在子模块 `user_face`：它们与传输核心不同 —— 需要按工作区扇出并**排除
+//! daemon 面连接**（策略），而那套过滤依赖本模块私有的 `notify_frame_filtered`。
+//!
 //! 连接与索引的数据结构在 [`crate::connection`]，读写泵与帧分派在 [`crate::pump`]。
 //!
 //! # 这个 hub 是「尽力而为的唤醒通道」
@@ -27,6 +31,7 @@
 //! 的路由注册、token 解析、`RuntimeLeases` liveness 查询都在 M3-7（后续切片）——见
 //! `docs/38-M3-WS-TRANSPORT.md` 的「M3-7 消费方式」。
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -39,7 +44,7 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use mc_daemon_proto::messages::{
-    DaemonHeartbeatAckPayload, Message, PendingWorkPayload, RuntimeProfilesChangedPayload,
+    DaemonHeartbeatAckPayload, PendingWorkPayload, RuntimeProfilesChangedPayload,
     TaskAvailablePayload, HEARTBEAT_STATUS_RUNTIME_GONE,
 };
 use mc_daemon_proto::{events, rpc};
@@ -51,6 +56,9 @@ use crate::connection::{
 use crate::frames::{self, HeartbeatHandler, RpcHandler};
 use crate::identity::ClientIdentity;
 use crate::pump::{read_pump, write_pump};
+
+// 用户面通知（工作区扇出 + 排除 daemon 面连接）—— 见模块头与 `user_face.rs` 的模块文档。
+mod user_face;
 
 /// 传输层可调参数 —— **默认值全部等于 [`mc_daemon_proto::rpc`] 里的冻结常量**。
 ///
@@ -364,6 +372,34 @@ impl Hub {
         self.notify_frame(Index::Runtime, runtime_id, &text, "")
     }
 
+    /// 上游 `service/task.go:7076` `notifyTasksFinished`：批量终态之后的**合并唤醒**。
+    ///
+    /// 上游语义逐条复刻：
+    /// * `!task.RuntimeID.Valid` 的行跳过（本仓传空串表示「没有 runtime」）；
+    /// * 按 runtime **去重** —— 一台机器上同时取消一批任务，只发**一次**唤醒，而不是一串
+    ///   完全相同的 hint；
+    /// * 唤醒载荷的 `task_id` 是**空串**：被取消/完成的任务自己不再可认领，这次 hint 只表示
+    ///   「agent 容量或串行屏障可能已经放行，队列里的后继值得再 claim 一次」
+    ///   （上游 `notifyRuntimeMayHaveWork(runtimeID, "")`，`task.go:7105`）。
+    ///
+    /// ⚠️ 本地**没有**上游 `EmptyClaim.Bump`（Redis 上的「空认领」裁决缓存）的等价物：本仓
+    /// 的 claim 路径每次都读 DB，不存在需要失效的缓存 —— 这条偏离登记在 `docs/53`。
+    ///
+    /// 返回实际唤醒的 runtime 数（去重后的非空条数）；调用方**可以**忽略它 —— 唤醒是尽力
+    /// 而为，失败不影响任何状态码。
+    pub fn notify_tasks_finished(&self, runtime_ids: &[String]) -> usize {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(runtime_ids.len());
+        let mut woken = 0;
+        for runtime_id in runtime_ids {
+            if runtime_id.is_empty() || !seen.insert(runtime_id.as_str()) {
+                continue;
+            }
+            self.notify_task_available(runtime_id, "");
+            woken += 1;
+        }
+        woken
+    }
+
     /// 上游 `Hub.NotifyRuntimeProfilesChanged`（`hub.go:452`）：按 **workspace** 广播。
     pub fn notify_runtime_profiles_changed(
         &self,
@@ -416,79 +452,6 @@ impl Hub {
             return DeliveryOutcome::miss();
         };
         self.invalidate_runtime(runtime_id, &text, "")
-    }
-
-    // ---------------------------------------------------------- 用户面通知
-    //
-    // 上游把 daemon 面（`daemonws.Hub`）与用户面（`events.Bus` + 工作区订阅者）**分成两个
-    // 传输层**：用户面事件按 `WorkspaceID` 扇出，连接由「该工作区的订阅者」决定。
-    // 本仓只有**一个** hub + 一条 `/api/daemon/ws` 连接面（`docs/32` D-4），所以这三条
-    // 用户面通知函数必须自己把 daemon 面连接**排除掉**：
-    //
-    // * 索引维度用 [`Index::Workspace`]（与上游同一维度：事件带 `WorkspaceID`），
-    //   但逐连接额外要求 `user_id` 非空 —— `register()` 会给每条连接建 `Index::User`
-    //   索引，而 daemon 面连接（`mdt_` token）的 `user_id` 是空串；
-    // * 工作区也必须在该连接授权 scope 内（用户连接带全部 membership，daemon 面连接
-    //   只带自己那一个）—— `ClientIdentity::allows_workspace` 空 scope 放行。
-    //
-    // 这条过滤是**正确性**而不是优化：不排掉的话，`chat:done` 的正文会顺着工作区索引
-    // 投给同一工作区的 daemon 面连接。`notify_workspaces_changed` 用 `Index::User`
-    // 寻址也是同一个理由。
-
-    /// 用户面 `chat:done`（上游 `task.go:7307` `broadcastChatDone`）。
-    ///
-    /// 在完成事务**提交之后**调用（正文行与 resume 指针已落库）；帧里带
-    /// `chat_session_id`，客户端据此把帧贴到对应会话窗口。
-    pub fn notify_chat_done(
-        &self,
-        workspace_id: &str,
-        payload: &frames::ChatDonePayload,
-    ) -> DeliveryOutcome {
-        let frame = frames::chat_done_frame(payload);
-        self.notify_workspace_users(workspace_id, &frame, "")
-    }
-
-    /// 用户面 `task:queued`（上游 `task.go:2733` `BroadcastTaskQueued`）。
-    ///
-    /// 上游在队列写入**提交后**发它，客户端据此把新任务挂进队列视图。
-    pub fn notify_task_queued(
-        &self,
-        workspace_id: &str,
-        payload: &frames::TaskQueuedPayload,
-    ) -> DeliveryOutcome {
-        let frame = frames::task_queued_frame(payload);
-        self.notify_workspace_users(workspace_id, &frame, "")
-    }
-
-    /// 用户面 `agent:status`（上游 `agent_env.go:272`、`runtime.go:966`）。
-    ///
-    /// 载荷是**脱敏**的 agent 响应；调用方负责投影，hub 不认识 agent 字段。
-    pub fn notify_agent_status(
-        &self,
-        workspace_id: &str,
-        payload: &frames::AgentStatusPayload,
-    ) -> DeliveryOutcome {
-        let frame = frames::agent_status_frame(payload);
-        self.notify_workspace_users(workspace_id, &frame, "")
-    }
-
-    /// 按工作区给**用户连接**投递一帧（见上方「用户面通知」的过滤说明）。
-    fn notify_workspace_users(
-        &self,
-        workspace_id: &str,
-        frame: &Message,
-        event_id: &str,
-    ) -> DeliveryOutcome {
-        if workspace_id.is_empty() {
-            return DeliveryOutcome::miss();
-        }
-        let Some(text) = frames::encode_text(frame) else {
-            return DeliveryOutcome::miss();
-        };
-        self.notify_frame_filtered(Index::Workspace, workspace_id, &text, event_id, |conn| {
-            let identity = conn.identity();
-            !identity.user_id.is_empty() && identity.allows_workspace(workspace_id)
-        })
     }
 
     /// 上游 `hub.go:577` `DeliverDaemonRuntime`：处理从 relay（Redis 回环）回来的帧。
