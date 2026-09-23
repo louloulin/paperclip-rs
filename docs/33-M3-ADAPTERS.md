@@ -775,16 +775,19 @@ doc-test。
 
 ```
 ①  fmt                    0     1s  PASS
-②  build                  0    96s  PASS
-③  clippy                 0    23s  PASS
-④  clippy-test-util       0    24s  PASS
-⑤  test                   0    32s  PASS
+②  build                  0    29s  PASS
+③  clippy                 0    16s  PASS
+④  clippy-test-util       0    12s  PASS
+⑤  test                   0    17s  PASS
 ⑦  route-parity           0     0s  PASS
-⑨  conformance            0    39s  PASS
+⑨  conformance            0    23s  PASS
 ⑩  file-size              0     0s  PASS
-overall: PASS — 8/8 gate(s) green in 215s
-（⑤ 工作区合计 1001 passed / 0 failed / 87 ignored（87 是需要真库的用例；本机未跑 --with-db））
+overall: PASS — 8/8 gate(s) green in 98s
+（⑤ 工作区合计 1081 passed / 0 failed / 87 ignored（87 是需要真库的用例；本机未跑 --with-db））
 ```
+
+上表是**合并 `origin/feat/multica-rs-initial`（`2a51a46`，含 M3-7 的 44 条 daemon 路由）之后**
+的实测；合并前本片自己的分支上同样是 8/8（那时 ⑤ 的工作区合计是 1001，差值来自 M3-7 合入的用例）。
 
 - **③ clippy 本轮修掉 20 处**（`-D warnings` 全工作区过）：or-pattern 嵌套、`clone_into`、
   文档反引号、`LivePlan` 两个 match 臂合并、`#[allow(clippy::cast_possible_wrap)]`
@@ -792,9 +795,12 @@ overall: PASS — 8/8 gate(s) green in 215s
   `#[allow(clippy::struct_excessive_bools)]`（dsh 解码器的相位布尔）、以及
   `cargo clippy --fix` 清掉的 19 处 `needless_borrow`。
 - **⑦ 与本片无关（0 路由）**：`git diff` 里没有任何路由注册、没有 `docs/fixtures/**` 改动。
-  实测 `upstream 456 | local 195 registered | baseline 195`、`implemented 152 real + 10 placeholder
-  = 162 / 456`、`known_gap 294`、`regression 0`、`local_only 11`；斜杠别名审计
+  实测 `upstream 456 | local 239 registered | baseline 195`、`implemented 196 real + 10 placeholder
+  = 206 / 456`、`known_gap 250`、`regression 0`、`local_only 11`；斜杠别名审计
   `0 defect / 19 allowlisted`（`--no-allowlist` 下 19 defect，全是既有登记债务）。
+  这里的 `local 239` 是**合并 M3-7 之后**的数字（本片自己分支上是 195，与批 2 交付时相同；
+  M3-7 带进来 44 条路由）；`baseline` 是"某次 `--write-baseline` 记下的路由集合"，是
+  **regression 的参照**而不是上限 —— `regression 0` 才是这条门禁的判定。
 - **⑨ 无漂移**：`report matches crates/mc-conformance/report.json` —— `report.json` 与
   `docs/fixtures/route-parity-baseline.json` 本片**一字未动**。
 - **⑩ 本片再拆了一处文件**：`tests/cli_adapters.rs` 因批 3 用例长到 900+ 行触红 ⇒ 拆成
