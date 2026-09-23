@@ -2310,3 +2310,172 @@ for p in sorted(glob.glob(os.path.expanduser('~/.multica/pi-sessions/*.jsonl')),
                   m.get('stopReason'), (m.get('usage') or {}).get('totalTokens'))
 EOF
 ```
+
+## 25. 15:00 cycle 落地记录（`LUM-1518`）—— 并发位 3/3 满且两片都在 repos 层 ⇒ 不派发；把「合并前静态审计」做成一条可复跑命令（0 finding）+ 冻结 45 条声明路由预期 + 队列换位给 M4-2
+
+### 25.0 一句话
+
+起手实测：base `d520e1a`、GitHub **0 open PR**、并发位 **3/3 满**（本 cycle + `LUM-1472`/M4-1 + `LUM-1474`/M4-3），
+且两片**都还在 repos 层**——`w3b_premerge_audit.py` 逐字扫过两棵在飞工作树：**45 条声明路由注册了 0 条**（§25.2）。
+⇒ 本轮无 PR 可合、无空位可派，产出改为**把「合并前该查什么」变成一条可复跑的命令**并当场跑出 **0 finding**（§25.3），
+另落一个可复算的**冻结预期**（§25.4，与上游路由表 45/45 逐字相等），并按关键路径把下一个空位**换位给 M4-2**（§25.5）。
+
+### 25.1 起手实测（`07:04Z`）
+
+```bash
+git -C paperclip-rs fetch origin feat/multica-rs-initial && git rev-parse --short origin/feat/multica-rs-initial  # d520e1a
+bash scripts/gates.sh --only route-parity,file-size      # 2/2 PASS（0s / 0s）
+python3 scripts/slash_alias_audit.py --quiet; echo $?    # 0
+multica daemon status --output json                      # running_task_count 3 / active_task_count 3
+```
+
+```
+upstream 456 (commit f41fae6b08fb) | local 242 registered | baseline 242
+  implemented  196 real +   4 placeholder =  200 / 456   known_gap  256   unclaimed    0   regression   0   local_only   11
+```
+
+逐字与 §24.1 相同（本地 242 / baseline 242 / 196+4 / known_gap 256 / regression 0）。
+**不跑 ⑥/⑧/⑨ 的依据**（同 §24.1，本轮再加一条）：`git diff --stat 7401ee7 d520e1a` ⇒ **只有 `docs/37` 一个文件 +142 行**，
+而 `7401ee7` 上游的 `fd3c81c` 已跑过 `--with-db` **10/10**；⑨ 快照的输入（`crates/mc-conformance/**`）自 `a51d523` 起零改动。
+本 cycle 的 commit 同样是 **docs-only** ⇒ ⑥/⑧/⑨ 仍无新输入可验；它们该在 **合并树**上跑（§25.7 的闸门矩阵）。
+
+### 25.2 两片在飞状态（审计读数，不是 issue 文本）
+
+```bash
+python3 scripts/w3b_premerge_audit.py --base-ref d520e1a \
+  --slice M4-1=/home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-1472-a2728e008efe/workdir/paperclip-rs \
+  --slice M4-3=/home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-1474-68db42a17c32/workdir/paperclip-rs
+```
+
+| 片 | issue | 工作树 head | 改动文件 | **已注册路由** | 实际所在层 | 工作树指纹（抢救检查点） |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| M4-1 project | `LUM-1472` | `7401ee7`（**0 commit**） | 7 | **0** | `mc-repos`：`project.rs` `project_resource.rs` `project/{search,tests}.rs` | `77fea364fa554384` |
+| M4-3 chat 读面 | `LUM-1474` | `a4be9e0`（已推 2 commit） | 10 | **0** | `mc-repos`：`chat_{session,message,pinned_agent,draft_restore}.rs`（+ 已推的 `mc-chat/src/{session,message,pinned,draft}.rs`） | `fd88dac429adb3f2` |
+
+⇒ 两片都**没到路由层**，`routes/{projects,squads}.rs` / `routes/chat/**` 仍是 anchor 的空切片。
+`crates/mc-repos/src/project/tests.rs` 的 8 个测试带 **DB-gate env 命中**（审计的 `~` 行 = `DB-gate yes`），
+即它不会在无库环境下静默跳过——与 `docs/15` §8 的纪律一致。
+
+### 25.3 预合并静态审计：**0 finding**，以及它比 `gates.sh` 多查的三件事
+
+```
+== per-slice ==   [M4-1] … added_routes 0 … fp 77fea364fa554384
+                  [M4-3] … added_routes 0 … fp fd88dac429adb3f2
+== cross-slice == union 0 keys; duplicates across slices: none
+== audit: 0 finding(s) ==
+```
+
+`scripts/w3b_premerge_audit.py`（W3b 投产，**不编译、不跑测试、亚秒级只读**）在 M4 波同样适用，它查的是 `gates.sh` 查不到的：
+
+1. **GUARDED 路径**：anchor 拥有的 5 个文件（`routes/mount.rs`、`routes/mod.rs`、
+   `docs/fixtures/route-parity-baseline.json`、`crates/mc-conformance/report.json`、`scripts/file_size_baseline.tsv`）
+   一旦被某个切片改动，就说明**写集纪律已破**（三片会在同一文件上三方冲突）。
+   本轮实测：两片 **0 命中** ⇒ anchor 预建机制按 `docs/42` §4.2 生效。
+2. **⑩ 的盲区**：`scripts/file_size_check.py` 读 `git ls-files` ⇒ **看不见未 `git add` 的新文件**；
+   该审计自带一份对 untracked 的复算（`crates/**/*.rs`、`scripts/**/*.{py,sh}`，>800 且超基线即报）。本轮 0 命中
+   （M4-1 的 `project/tests.rs` 15.5KB、`project/search.rs` 13.3KB，均远低于 800 行）。
+3. **逐字注册键**：⑦ 的 `slash_aliases()` 会把 `/x` 与 `/x/` 折叠成同一个键 ⇒ 「注册成无尾斜杠形态」
+   在 ⑦ 报表里**看不出来**，但 axum 对上游字面量路径恒 404（`docs/42` §1.1 的形态纪律）。
+   本条要等切片写出 `.route(...)` 后才会有读数——见 §25.4 的冻结预期。
+
+### 25.4 本轮新产物：冻结的 M4 声明路由预期（45 条，与上游路由表 45/45 逐字相等）
+
+```bash
+python3 - <<'PY'
+import json, re
+m4 = [l.split('\t') for l in open('docs/fixtures/m4-declared-routes.tsv') if l.strip() and not l.startswith('#')]
+m4 = [(m, p.strip()) for m, p in m4 if m != 'METHOD']
+routes = sorted(f"{m} {re.sub(r'\{([^}]*)\}', r':\1', p)}" for m, p in m4)
+json.dump({"base_ref": "d520e1a", "source": "docs/fixtures/m4-declared-routes.tsv", "routes": routes},
+          open('scratch/m4_expect.json', 'w'), indent=1, ensure_ascii=False)
+print(len(routes))          # 45
+PY
+```
+
+**oracle 校验**（本轮实测，防「预期文件自己是错的」）：
+
+```bash
+# docs/fixtures/upstream-routes.tsv 里 owner=M4 的行数 = 45，与冻结集对称差为空
+python3 - <<'PY'
+import json, re
+frozen = set(json.load(open('scratch/m4_expect.json'))['routes'])
+lit = lambda p: re.sub(r'\{([^}]*)\}', r':\1', p)
+up = {f"{c[0]} {lit(c[1])}" for c in (l.rstrip('\n').split('\t') for l in open('docs/fixtures/upstream-routes.tsv')
+      if l.strip() and not l.startswith('#')) if len(c) >= 3 and c[2].strip() == 'M4'}
+print(len(up), sorted(frozen ^ up))    # 45 []
+PY
+```
+
+用法（合并前 / 合并后两个方向）：
+
+```bash
+# A. 切片方向（本 cycle 用的就是这个）：预期集 vs 各片「新增路由」⇒ 谁还欠哪些键、有没有越界新增
+python3 scripts/w3b_premerge_audit.py --base-ref d520e1a --expect scratch/m4_expect.json \
+  --slice M4-1=<LUM-1472 工作树> --slice M4-3=<LUM-1474 工作树>          # LUM-1473 开出工作树后再加 --slice
+# 本轮读数：expected (frozen) 45 keys / missing now: 全部 45（两片 added_routes 均为 0）/ new since freeze: none
+```
+
+⚠️ **预期文件的键形态**：切片方向比的是 `.route("…")` 里的**字面量**，故本文件用 `:id` 形态（`docs/42` §1.1 要求路径参数写 `:id`）。
+`--merged` 方向会先过 `canon()`（把 `:id`/`{id}` 折叠为 `:param`）再比 ⇒ 直接拿本文件跑 `--merged` 会把所有带参键报成「lost」。
+合并方向请用 `:param` 形态的同一来源（`sed 's/:\([A-Za-z]*\)/:param/g'`），或只信 `--merged` 的「⑦ 基线 / ⑩ / golden 逐字」三段读数。
+
+### 25.5 队列换位（本轮唯一的调度动作）
+
+| issue | 动作 | 为什么 |
+| --- | --- | --- |
+| `LUM-1473`（M4-2 squad 10 条，`backlog`） | ⇒ **`todo`**（`--no-start`） | 关键路径上唯一**未开工**的 M4 切片；**LPT 判据**：剩余工作量最长 ⇒ 应该排在最前，让它在下一个空位立刻开跑（而不是等 16:00 的 cycle 才发现空位） |
+| `LUM-1471`（M4-0b 抽取器 I4，`todo`） | ⇒ **`backlog`**（`--no-start`） | 它**离关键路径最远**（只写 `scripts/` + `contracts/golden/`）；其工作树 `lum-1471-3729eee9c3cd` 已有可观产物（`scripts/extract_i4_direct_handler.py`、`scripts/upstream_handler_index.py`、`docs/fixtures/handler-routes.tsv`、`i4-out/**`）⇒ 重派会续用同一 session/workdir，**不会**因换位而丢工作 |
+
+**晋升触发器（写死，免得下一轮重新论证）**：
+1. 任一 M4 切片**开出 PR**（即到了 `docs/42` §8.2 的 fixture 门）⇒ `LUM-1471` 回 `todo`；
+2. 或 M4-2 已在跑、且又空出一个位 ⇒ `LUM-1471` 回 `todo`；
+3. `LUM-1440`（M3-8-p0 execenv）仍排在其后：它与 `mc-daemon` 同 crate 且动 `Cargo.lock`，不与 M4 并行。
+
+### 25.6 「静默死亡」抢救配方（两片都在飞，本轮把判据补全成可执行步骤）
+
+`§24.3/§24.4` 给出判据（`completed` + `output_bytes=0`）与重派机制；本轮补上**产物抢救**这一步，因为
+**M4-1 目前是 0 commit**（`head 7401ee7`，7 个文件的改动只在工作树里），一旦它静默死亡，那些改动**不在任何 git 对象里**：
+
+```bash
+# 1) 判据：daemon 侧
+grep -a "task=<task-id>" ~/.multica/daemon.log | tail -3        # status=completed + output_bytes=0 ?
+# 2) issue 侧与远端侧
+multica issue comment list <issue-id> --roots-only --summary --compact --output json   # 有无交付评论
+git ls-remote origin 'refs/heads/agent/devbox5/*' | grep <workdir-suffix>              # 有无游离分支
+# 3) 抢救：从**它自己的工作树**把工作树提交成可推的分支（先跑该 crate 的测试，红就不要推）
+git -C <worktree> status --porcelain          # 与 §25.2 的指纹对照：指纹变了说明死亡之后还有人写过
+git -C <worktree> add -A && git -C <worktree> commit -m "salvage(<?>): <slice> WIP from dead attempt"
+git -C <worktree> push -u origin agent/devbox5/<workdir-suffix>
+```
+
+⚠️ 只在确认该 run **已终态**（daemon 记 `completed`/`failed`）后动手；`running` 中提交会和一个活着的写者抢同一个工作树。
+
+### 25.7 本 cycle 没做什么（边界）
+
+没开 PR、没合并、**没改一行 Rust**、没加迁移、没碰 `mount.rs` / allowlist / ⑦ 基线 / ⑨ 快照；
+没跑 ⑥/⑧/⑨（依据见 §25.1）；没派 `LUM-1471`（本轮明确**降级**它，理由见 §25.5）；**没动两片的工作树**
+（审计对它俩是只读的：`git status`/`git show`/`git ls-tree` 与读文件）。
+
+合并树上的验收链（下一个真正的合并 cycle 用）：
+
+```bash
+git merge-tree --write-tree <branch> origin/feat/multica-rs-initial      # 冲突预检
+bash scripts/gates.sh --with-db                                          # 合并树上 10/10（⑥⑧在这里跑，不在本轮）
+python3 scripts/w3b_premerge_audit.py --merged . --expect <:param 形态的 45 条>   # 丢失/形态逐字
+bash scripts/gates.sh --only route-parity,file-size,conformance          # ⑦ 的「只增不减」+ ⑩ + ⑨ 快照
+```
+
+### 25.8 复算命令（§25.1–§25.4 逐条可重跑）
+
+```bash
+git fetch origin feat/multica-rs-initial; git log --oneline -1 origin/feat/multica-rs-initial   # d520e1a
+git diff --stat 7401ee7 d520e1a                                                                 # docs/37 一个文件 +142
+bash scripts/gates.sh --only route-parity,file-size; echo $?                                    # 0
+python3 scripts/slash_alias_audit.py --quiet; echo $?                                           # 0
+multica daemon status --output json | grep -o '"running_task_count": [0-9]*'                     # 3（=本 cycle+2 片）
+python3 scripts/w3b_premerge_audit.py --base-ref d520e1a --expect scratch/m4_expect.json \
+  --slice M4-1=/home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-1472-a2728e008efe/workdir/paperclip-rs \
+  --slice M4-3=/home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-1474-68db42a17c32/workdir/paperclip-rs
+multica issue get LUM-1471 --output json | grep -o '"status": "[a-z_]*"'                          # backlog（本轮换位）
+multica issue get LUM-1473 --output json | grep -o '"status": "[a-z_]*"'                          # todo（本轮换位）
+```
