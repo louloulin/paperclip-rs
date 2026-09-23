@@ -180,6 +180,76 @@ impl Default for GoogleOAuthConfig {
     }
 }
 
+/// 插件部署密钥（`MULTICA_PLUGIN_SECRET_KEY`）—— M6 anchor（LUM-1665）落下的**唯一**读取口。
+///
+/// ## 为什么挂在 `AppState` 而不是某个新 crate
+///
+/// 上游在进程启动时读一次（`cmd/server/router.go:1281` 的
+/// `secretbox.LoadKey("MULTICA_PLUGIN_SECRET_KEY")`），密钥再派生出每一处签名/加密上下文；
+/// 本仓照 `GoogleOAuthConfig::from_env()` 的先例，把「读 env」收敛到 `AppState::new`：
+/// - `mc-plugin-host`（M6-1）**故意不依赖** `mc-http`（依赖方向是 `mc-http → mc-plugin-host`），
+///   所以它只能接受 `&[u8; 32]`，不能自己读 env —— 否则配置入口两处、测试无法注入；
+/// - 反过来若把 env 读取放到 M6-1 的 crate 里，`mc-http` 就得给 `AppState::new` 加参数，
+///   而那会波及 21 个 `AppState::new` 调用点（含 8 个 `tests/*.rs`、`mc-conformance`）。
+///
+/// ## 线格式（逐字照抄上游 `internal/util/secretbox/secretbox.go` 的 `LoadKey`）
+///
+/// - env 值是 **base64（Go 的 `StdEncoding`：带填充的标准字母表）**；
+/// - 解出后**必须恰好 32 字节**（AES-256-GCM 的 key）；
+/// - 未设置 / 空串 / 非法 base64 / 长度不对 ⇒ 一律**当作未配置**（`None`）——
+///   **绝不**用零密钥兜底、**绝不** panic；
+/// - **不做 trim**：上游只在 `raw == ""` 时判空，`" abc "` 会走到 base64 解码那一步被拒；
+///   本地加 trim 就等于把上游拒绝的输入放行（**拓宽**而不是照搬）。
+///
+/// 加密块的字节排布（`nonce‖ciphertext‖tag`，进 `plugin_secret.ciphertext` BYTEA）归
+/// `mc-plugin-host::credentials`（M6-1）；本文件**只负责把 env 变成 32 字节**。
+#[derive(Clone)]
+pub struct PluginSecretKey {
+    key: [u8; 32],
+}
+
+impl PluginSecretKey {
+    /// 环境变量名（与上游同名）。
+    pub const ENV_VAR: &'static str = "MULTICA_PLUGIN_SECRET_KEY";
+    /// 期望的密钥长度（字节）：AES-256-GCM。
+    pub const KEY_SIZE: usize = 32;
+
+    /// 从进程环境读取（生产装配点：`AppState::new`）。
+    pub fn from_env() -> Option<Self> {
+        Self::from_env_with(|name| std::env::var(name).ok())
+    }
+
+    /// 从任意名字→值的查询函数读取 —— 与 `GoogleOAuthConfig::from_env_with` 同款，
+    /// 让映射本身能在不碰进程全局 env 的情况下被单测。
+    pub fn from_env_with<F>(get: F) -> Option<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        use base64::Engine as _;
+
+        let raw = get(Self::ENV_VAR)?;
+        if raw.is_empty() {
+            // 上游：`if raw == "" { return error("… is not set") }`。
+            return None;
+        }
+        let decoded = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+        let key: [u8; Self::KEY_SIZE] = decoded.try_into().ok()?;
+        Some(Self { key })
+    }
+
+    /// 密钥字节（交给 `mc-plugin-host` 的派生函数；不要外发、不要落日志）。
+    pub fn as_bytes(&self) -> &[u8; Self::KEY_SIZE] {
+        &self.key
+    }
+}
+
+impl std::fmt::Debug for PluginSecretKey {
+    /// 手写脱敏实现（不派生）：密钥字节**绝不能**进日志/panic backtrace。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PluginSecretKey(<redacted, 32 bytes>)")
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
@@ -219,6 +289,27 @@ pub struct AppState {
     /// 进程内 store，无 DB 表 —— 本仓照搬以避开新迁移带来的 schema-drift。
     /// 语义与偏离见 `daemon_requests.rs` 模块头与 `docs/32`。
     pub daemon_requests: Arc<crate::daemon_requests::RequestStore>,
+    /// 插件部署密钥（M6 anchor / LUM-1665）—— `None` = 未配置（缺 env / 非法 base64 / 非 32 字节）。
+    ///
+    /// 消费方**必须 fail-closed**：`None` 时按上游口径返回
+    /// `plugin_disabled` / `plugin_surfaces_not_configured`（503），
+    /// **不得**跳校验、**不得**用零密钥（见 [`PluginSecretKey`]）。
+    pub plugin_key: Option<PluginSecretKey>,
+    /// 插件 surface 的**专用**内容 origin（`MULTICA_PLUGIN_SURFACE_ORIGIN`）—— M6 anchor 落下的读取口。
+    ///
+    /// 语义照上游 `cmd/server/router.go:434`：`TrimRight(TrimSpace(v), "/")` ⇒ 空串即 `None`
+    /// （surface 功能整体禁用）。`None` 时 M6-6 / M6-7 返回 503
+    /// `plugin_surfaces_not_configured`（与 `writeFeatureDisabled` 逐字一致）。
+    ///
+    /// ⚠️ **本字段只做「读 + 规范化」**：origin 的合法性（必须是合法 origin、且必须与 app/API
+    /// origin **不同**）由 M6-6 的 launch handler 判定，非法时返回 500
+    /// `plugin_surfaces_misconfigured`（上游 `parsePluginSurfaceOrigin` +
+    /// `pluginSurfaceOriginIsDedicated`）。
+    ///
+    /// 为什么 anchor 一并落这个字段：`state.rs` 是本片**冻结**的共享文件 ——
+    /// 若留到 M6-6/M6-7，它们就得回来改锚点文件（本 anchor 存在的唯一理由就是消灭这种改动）。
+    /// 已登记 `docs/32` §9。
+    pub plugin_surface_origin: Option<String>,
 }
 
 impl AppState {
@@ -244,7 +335,23 @@ impl AppState {
             google_oauth: GoogleOAuthConfig::from_env(),
             daemon_hub: Arc::new(mc_ws::hub::Hub::new()),
             daemon_requests: Arc::new(crate::daemon_requests::RequestStore::new()),
+            plugin_key: PluginSecretKey::from_env(),
+            plugin_surface_origin: plugin_surface_origin_from_env(),
         }
+    }
+}
+
+/// 读 `MULTICA_PLUGIN_SURFACE_ORIGIN`（上游 `cmd/server/router.go:434` 的逐字口径）。
+///
+/// `TrimSpace` → `TrimRight("/")` → 空串即 `None`。**不**校验 origin 合法性
+/// （`parsePluginSurfaceOrigin` 是 M6-6 的事，见 [`AppState::plugin_surface_origin`]）。
+fn plugin_surface_origin_from_env() -> Option<String> {
+    let raw = std::env::var("MULTICA_PLUGIN_SURFACE_ORIGIN").ok()?;
+    let normalized = raw.trim().trim_end_matches('/').to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
 }
 
@@ -371,5 +478,53 @@ mod tests {
         assert_eq!(cfg.redirect_uri_for(None), "https://env.example/cb");
         cfg.redirect_uri = None;
         assert_eq!(cfg.redirect_uri_for(None), "");
+    }
+
+    /// M6 anchor（LUM-1665）：`PluginSecretKey::from_env_with` 的解析口径。
+    ///
+    /// 锁两件事：① 合法 base64 的 32 字节才拿到 key；② 未设置/空串/非法 base64/长度不对
+    /// 都归 `None`（**不是**错误、**不是**零密钥、**不** panic）。
+    #[test]
+    fn plugin_secret_key_parsing_matches_upstream_loadkey() {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode([7_u8; 32]);
+        let key = PluginSecretKey::from_env_with(env(&[("MULTICA_PLUGIN_SECRET_KEY", &encoded)]))
+            .expect("合法的 base64 + 32 字节应解析出 key");
+        assert_eq!(key.as_bytes(), &[7_u8; 32]);
+
+        // 未设置 / 空串 ⇒ 未配置（上游：`if raw == "" { return error(… is not set) }`）。
+        assert!(PluginSecretKey::from_env_with(env(&[])).is_none());
+        assert!(
+            PluginSecretKey::from_env_with(env(&[("MULTICA_PLUGIN_SECRET_KEY", "")])).is_none(),
+            "空串 = 未配置"
+        );
+
+        // 非法 base64 ⇒ 未配置（不是 panic）。
+        assert!(PluginSecretKey::from_env_with(env(&[(
+            "MULTICA_PLUGIN_SECRET_KEY",
+            "not base64 !!"
+        )]))
+        .is_none());
+
+        // 长度不对（31 / 33 字节）⇒ 未配置。
+        let short = base64::engine::general_purpose::STANDARD.encode([0_u8; 31]);
+        let long = base64::engine::general_purpose::STANDARD.encode([0_u8; 33]);
+        assert!(
+            PluginSecretKey::from_env_with(env(&[("MULTICA_PLUGIN_SECRET_KEY", &short)])).is_none()
+        );
+        assert!(
+            PluginSecretKey::from_env_with(env(&[("MULTICA_PLUGIN_SECRET_KEY", &long)])).is_none()
+        );
+
+        // **不做 trim**：上游只在 `raw == ""` 时判空，带空白的值会走到 base64 解码被拒。
+        let padded = format!(" {encoded} ");
+        assert!(
+            PluginSecretKey::from_env_with(env(&[("MULTICA_PLUGIN_SECRET_KEY", &padded)]))
+                .is_none(),
+            "加 trim 会放宽上游拒绝的输入（docs/32 §9 登记的不拓宽原则）"
+        );
+
+        // 密钥不进 Debug（脱敏）。
+        assert_eq!(format!("{key:?}"), "PluginSecretKey(<redacted, 32 bytes>)");
     }
 }

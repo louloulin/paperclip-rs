@@ -45,14 +45,19 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // M2-C（mount_slice_inbox），占位留着会在 M2 切片合并时撞成重复注册 panic。
         // 另外，M2 切片的真实 router 里路径参数必须写 `:id`（axum 0.7 / matchit 0.7
         // 会把 `{id}` 当字面量段——编译通过但恒 404，docs/09 §7.4）。
-        .route(
-            "/api/skills",
-            get(health::placeholder).post(health::placeholder),
-        )
-        .route(
-            "/api/plugins",
-            get(health::placeholder).post(health::placeholder),
-        )
+        //
+        // ✅ 两条 M0 占位（`GET|POST /api/skills`、`GET|POST /api/plugins`，共 4 个注册键）
+        // 已由 **M6-0 anchor 预删**（LUM-1665，配方见 docs/57 §5）：它们与上游的真形态
+        // **不是同一个注册键**（占位的路径本身对，但上游 router.go:2234-2235 的
+        // `/api/skills/` 是 chi 的 `Mount` + `Get("/")`/`Post("/")` ⇒ **两种形态都服务**，
+        // 而占位只服务无尾斜杠形态）⇒ 留着不仅会永久留下 501 幽灵路由，还会被门 ⑦ 的
+        // `slash_aliases()` 折叠算成「已实现」，从报表上看不出来（与 M4-0 删
+        // `/api/chat/sessions` 同一理由，docs/42 §1.1 形态纪律）。
+        // 预删后：④ 注册键集合减 4；`docs/fixtures/slash-alias-allowlist.tsv` 同步删掉那 2 行
+        // （否则判 STALE）；⑤ ⑦ 基线随之刷新（`--write-baseline` 与删除在同一次提交里）。
+        // 注：切片接线时**必须**两形态一起注册（`/api/skills` + `/api/skills/`、
+        // `/api/skills/:id` + `/api/skills/:id/`），漏一个会被 `slash_alias_audit.py` 判
+        // `MISSING_ALIAS` —— 这条**不再有 allowlist 退路**（M6-0 已删那 2 行）。
         .route("/api/feature-flags", get(health::placeholder))
         // ----- M1 切片占位（sub-issue A/B/C 在 mount_slice_* 里追加真实 router） -----
         .merge(mount_slice_workspace_member(state.clone()))
@@ -76,6 +81,12 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_chat())
         // ----- M5 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
         .merge(mount_slice_autopilot())
+        // ----- M6 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        .merge(mount_slice_skill())
+        .merge(mount_slice_plugin())
+        .merge(mount_slice_plugin_bridge())
+        .merge(mount_slice_plugin_surface())
+        .merge(mount_slice_v1())
 }
 
 /// workspace + member + me 切片。
@@ -266,4 +277,54 @@ fn mount_slice_autopilot() -> Router<Arc<AppState>> {
         .merge(super::autopilots::router())
         .merge(super::webhooks::router())
         .merge(super::issue_wakeups::router())
+}
+
+// ---------------------------------------------------------------------------
+// M6 anchor scaffold（LUM-1665 / docs/57-M6-PLAN.md §3.1 / §5）
+// ---------------------------------------------------------------------------
+//
+// 五个面一次性接好，M6-1..M6-9 九个切片各自只实作自己的 `routes/*.rs`，不再分别改本文件
+// （与 M4-0 / M5-0 同一手法）。五个子 router 目前都是**空** `Router::new()` ⇒ 合并本片后
+// **注册键只少 4 个**（下面那两条 M0 占位），路由表其余逐字不变。
+//
+// ✅ 两条 M0 占位（`GET|POST /api/skills`、`GET|POST /api/plugins`）已由本 anchor 预删，
+// 理由见 `router()` 里的那段注释（chi 的 `Mount` 两形态 vs 占位单形态 + 门 ⑦ 的
+// `slash_aliases()` 折叠会让幽灵路由从报表上看不出来）。
+//
+// ⚠️ 切片接线纪律（三条，与 M5-0 同款）：
+// 1. 同 path+method 重复注册 ⇒ axum 在**启动时 panic**（docs/15 §9.6.6），所以占位必须
+//    在切片接线**之前**删完（本 anchor 已做）；
+// 2. 尾斜杠两形态都要注册（M6 有 5 个键要求，全在 M6-2；`slash-alias-allowlist.tsv` 里
+//    的豁免行已删 ⇒ MISSING_ALIAS 是硬失败）；
+// 3. 路径参数写 `:id`（matchit 0.7 把 `{id}` 当字面量：编译通过但恒 404）。
+
+/// skill 面切片：`/api/skills*`（M6-2 读写 12 条 + M6-3 导入/刷新 2 条）。
+/// 本函数只合并 `routes/skills/mod.rs` 的聚合 router，后者再合并 5 个子模块 ⇒
+/// M6-2 / M6-3 只写各自的子文件，**都不改本文件**。
+fn mount_slice_skill() -> Router<Arc<AppState>> {
+    super::skills::router()
+}
+
+/// plugin 面切片：`/api/workspaces/:id/plugins*`（M6-5 生命周期/包 13 条 + M6-6 运行时面 4 条）。
+/// 由 `routes/plugins/mod.rs` 聚合，M6-8 的 job 粘合也在其中（0 路由）。
+fn mount_slice_plugin() -> Router<Arc<AppState>> {
+    super::plugins::router()
+}
+
+/// plugin bridge 切片：`/api/plugin-bridge/v1/*`（M6-7 的 9 条 + M6-8 的 hook 回调 1 条）。
+/// 与 `/v1` 是**同一组 handler 挂两个前缀**（上游 router.go:103-111），实现在 `routes/v1/*`。
+fn mount_slice_plugin_bridge() -> Router<Arc<AppState>> {
+    super::plugin_bridge::router()
+}
+
+/// surface 页面切片：`GET /plugin-surfaces/:token`（M6-7，**不在 `/api` 前缀下**）。
+fn mount_slice_plugin_surface() -> Router<Arc<AppState>> {
+    super::surfaces::router()
+}
+
+/// 公开 Action API 切片：`/v1/*`（M6-7，9 条）。
+/// `routes/v1/mod.rs` 在**合并点之后**套一层 `policy::apply`（anchor 期恒等）——
+/// 限流桶按 router 实例分片，子文件各挂一层会变成 3 倍配额（见 `routes/v1/mod.rs` 的 ⚠️ 段）。
+fn mount_slice_v1() -> Router<Arc<AppState>> {
+    super::v1::router()
 }

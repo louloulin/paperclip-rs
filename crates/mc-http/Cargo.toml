@@ -68,6 +68,22 @@ mc-task = { path = "../mc-task" }
 # M4-2（LUM-1473）：squad 成员 presence 的纯推导（`derive_member_status` / 五桶分类）。
 # 只走 domain 层，不碰 DB；放在 `mc-squad` 而不是 http 层是为了能单独做单元测试。
 mc-squad = { path = "../mc-squad" }
+# M6-0 anchor（docs/57-M6-PLAN.md §5）：三个新 crate 的依赖边一次接好，此后 M6 各切片
+# **不再改本 manifest**（`Cargo.lock` 也只在 anchor 这一片重新生成）。
+# - `mc-skill`：frontmatter / 归档 / 保留路径判定（M6-2 / M6-3 / M6-4 共用）；
+# - `mc-plugin-host`：manifest 与 bundle 校验器（M6-1 写，M6-5…M6-8 读）；
+# - `mc-mcp`：remote MCP 客户端（M6-1 写，M6-6 / M6-9 读）。
+mc-skill = { path = "../mc-skill" }
+mc-plugin-host = { path = "../mc-plugin-host" }
+mc-mcp = { path = "../mc-mcp" }
+# M6-7：`/v1` 两档限流。
+tower_governor = { workspace = true }
+# M6-5：插件包（zip 上传 / 预览解析）。
+zip = { workspace = true }
+# M6-0 anchor：`MULTICA_PLUGIN_SECRET_KEY` 是 **base64** 编码的 32 字节（上游
+# `internal/util/secretbox/secretbox.go` 的 `LoadKey` 口径），`state.rs` 解析它需要 base64 ——
+# 本 crate 之前没有这条边（workspace 里已有 `base64 = "0.22"`，无新包）。
+base64 = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
