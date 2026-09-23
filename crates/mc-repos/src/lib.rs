@@ -13,6 +13,13 @@
 //!
 //! M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.2）：`agent` / `runtime` / `task`
 //! 三个模块一次性声明（空 stub，与 M2 同手法），让 W3a/W3b 的 repo 切片不再编辑本文件。
+//!
+//! M4 anchor scaffold（LUM-1470 / docs/42-M4-PLAN.md §5.1 第 2 项）：M4 的 10 个模块一次性
+//! 声明（空 stub，与 M2/M3 同手法）——`chat_draft_restore` / `chat_history` / `chat_message` /
+//! `chat_pinned_agent` / `chat_quick_action` / `chat_session` / `chat_task` / `project` /
+//! `project_resource` / `squad`。**本文件自本片起对 M4 是只读的**：M4-1..M4-4 各切片只填自己
+//! 那几个模块文件，不再编辑本 `lib`。见 `docs/42` §4.2 的「anchor 预建、此后任何切片不再改的
+//! 文件」表。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -21,6 +28,13 @@ use serde::Serialize;
 use mc_db::Db;
 
 pub mod agent;
+pub mod chat_draft_restore;
+pub mod chat_history;
+pub mod chat_message;
+pub mod chat_pinned_agent;
+pub mod chat_quick_action;
+pub mod chat_session;
+pub mod chat_task;
 pub mod comment;
 pub mod daemon;
 pub mod inbox;
@@ -30,8 +44,11 @@ pub mod issue_status;
 pub mod issue_table;
 pub mod member;
 pub mod pat;
+pub mod project;
+pub mod project_resource;
 pub mod runtime;
 pub mod share_link;
+pub mod squad;
 pub mod subscriber;
 pub mod task;
 pub mod user;

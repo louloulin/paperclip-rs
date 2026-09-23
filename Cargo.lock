@@ -2278,6 +2278,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-chat"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mc-core",
+ "mc-db",
+ "mc-errors",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mc-cli"
 version = "0.1.0"
 dependencies = [
@@ -2525,6 +2540,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-project"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mc-core",
+ "mc-db",
+ "mc-errors",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mc-realtime"
 version = "0.1.0"
 dependencies = [
@@ -2634,6 +2664,21 @@ dependencies = [
  "tower 0.5.3",
  "tower-http",
  "tracing",
+]
+
+[[package]]
+name = "mc-squad"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mc-core",
+ "mc-db",
+ "mc-errors",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

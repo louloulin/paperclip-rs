@@ -86,6 +86,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_runtime())
         .merge(mount_slice_task())
         .merge(mount_slice_daemon())
+        // ----- M4 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        .merge(mount_slice_project())
+        .merge(mount_slice_squad())
+        .merge(mount_slice_chat())
 }
 
 /// workspace + member + me 切片。
@@ -199,4 +203,45 @@ fn mount_slice_task() -> Router<Arc<AppState>> {
 /// daemon 切片：`/api/daemon*` + ws 服务端（M3-7）。
 fn mount_slice_daemon() -> Router<Arc<AppState>> {
     super::daemon::router()
+}
+
+// ---------------------------------------------------------------------------
+// M4 anchor scaffold（LUM-1470 / docs/42-M4-PLAN.md §5.2–§5.3）
+// ---------------------------------------------------------------------------
+//
+// 三个空切片先接好，M4 的四个面（M4-1 project / M4-2 squad / M4-3 + M4-4 chat）
+// 各自只实作自己的 `routes/*.rs`，不再分别改本文件。stub router 目前是空
+// `Router::new()`，因此合并本片后**路由表只剩下面 6 行的删除**（route_parity 基线
+// 已随之刷新）。
+//
+// ⚠️ M0 的三条占位（`GET|POST /api/chat/sessions`、`GET|POST /api/squads`、
+// `GET|POST /api/projects`，共 6 个注册键）在本 commit **原样保留**：它们与上游的真形态
+// **不是同一个注册键**（占位是无尾斜杠的 `/api/chat/sessions`，上游 `router.go:2335-2336`
+// 的 `Route("/api/chat/sessions") + Post("/") / Get("/")` 服务的是带尾斜杠形态），而 chi 的
+// `Mount` 两种形态都服务 ⇒ 留着会永久留下 501 幽灵路由，并被门 ⑦ 的 `slash_aliases()`
+// 折叠算成「已实现」（docs/42 §1.1 形态纪律）。预删连同 ⑦ 基线 + `slash-alias-allowlist.tsv`
+// 的 6 行放在本 anchor 的**第二个 commit**（docs/42 §5.1 第 5 项 / §5.2）；本 commit 只有
+// 空 `Router::new()` 合并 ⇒ **路由表逐字不变**，⑦ 基线不受影响。
+// 注：切片接线时**不得**再加无尾斜杠形态的同键路由——axum 0.7 同 path+method 重复注册
+// 会在启动时 panic（docs/15 §9.6.6），且 chi 的两种形态**都要**注册（见
+// `routes/{projects,squads}.rs` / `routes/chat/mod.rs` 的模块文档）。
+
+/// project 切片：`/api/projects*`（M4-1）。M0 占位已由 M4-0 anchor 预删（docs/42 §5.2），
+/// 切片只需在此实现 `router()`，不必再动本文件。
+fn mount_slice_project() -> Router<Arc<AppState>> {
+    super::projects::router()
+}
+
+/// squad 切片：`/api/squads*`（M4-2）。M0 占位已由 M4-0 anchor 预删（docs/42 §5.2），
+/// 切片只需在此实现 `router()`，不必再动本文件。
+fn mount_slice_squad() -> Router<Arc<AppState>> {
+    super::squads::router()
+}
+
+/// chat 切片：`/api/chat*`（M4-3 会话/消息读面/快捷栏 + M4-4 派发与生成面）。
+/// M0 占位已由 M4-0 anchor 预删（docs/42 §5.2）。本函数只合并 `routes/chat/mod.rs`
+/// 的聚合 router，后者再合并 4 个子模块 ⇒ M4-3 / M4-4 只写各自的子文件，
+/// **都不改本文件**。
+fn mount_slice_chat() -> Router<Arc<AppState>> {
+    super::chat::router()
 }
