@@ -4237,3 +4237,116 @@ session `20260923T160628.822648440.jsonl` **4.8MB / 16 压缩**，末条 assista
 4. `LUM-1567` / `LUM-1568` 均保持 `in_review`（cycle 不代改 `done`）；本 cycle issue 交付后置 `in_review`。
 5. 记录号 `docs/NN`：**下一个空号 = 53**（M5-5 取号用；M5-4 的记录是 `docs/52`，尚未落盘 —— 下一次 attempt 交 PR 时一并带上）。
 6. ⑦ 基线 `local 322 / baseline 300`（regression 0）仍归 **M5-INT（`LUM-1572`）** 一次性刷；`LUM-1580` 保持 `backlog`（R13）。
+
+---
+
+## §44 02:00 cycle（`LUM-1635`）：base 复核 4/4（`86116ae` 未动、GH 0 PR）；M5-4 体检（⑩ 937→748 已收口、7 条编译错清零、真库 e2e 在跑）；空位派 M4-4-fu（`LUM-1600`），末位留给 D 波
+
+### 44.0 起手读数
+
+- base head = **`86116ae`**（= `22d7135`（merge #57 / M5-3）+ `docs/37` §43）；GH `pulls?state=open` = **0**。
+- `df -h /` = 49G 盘 / 17G 用 / **31G 可用（36%）**；`running_task_count = 3` = **本 cycle + `LUM-1569`(M5-4) + `LUM-1600`（本轮新派）**，`LUM-1569` 的 run `01a0cf55` 活着（17:35:02 起）。
+- **【口径修正（本轮实测）】daemon 的 `running_task_count` 把 cycle 自身算在内** ⇒ 「一次最多三个任务运行」在 daemon 账上意味着**可派切片位 = 2**（cycle 占 1）。§35.5 的「cycle 不占位」只在**切片计数**意义上成立，调度时要按 daemon 的账留位。
+
+### 44.1 base 复核 4/4（便宜那一半；真库 = 本轮新建的一次性 `mc_cyc1635` / `multica_cyc1635`，CREATEDB）
+
+- `bash scripts/gates.sh --only fmt,route-parity,file-size,schema-drift` → **4/4 绿 / 25s**（①1s ⑦1s ⑩0s ⑧23s），`FAILED` 0 次。
+- ⑦ 当轮读数：`upstream 456 (commit f41fae6b08fb) | local 322 registered | baseline 300`、`implemented 256 real + 2 placeholder = 258/456`、`known_gap 198`、**`unclaimed 0`**、**`regression 0`**、`local_only 11` ⇒ 与 §43 逐字一致（在飞 M5-4 的 WIP **未**污染 base）。
+- ⑧ 的 scratch 库名自带 PID（§17），与在飞片各自的 ⑧ 可共存；本轮**不刷** ⑦ 基线（仍归 M5-INT `LUM-1572`）。
+
+### 44.2 M5-4（`LUM-1569`）在飞体检（只读）
+
+| 项 | 实测（18:02–18:05） |
+| --- | --- |
+| 分支 `agent/devbox5/262d8d1d79ef` | 远端 **`2279ca6`**；本地 workdir 已到 **`b8a70df`**（`c479058` 抢救 → `905f8d0` 并 base → `2279ca6` dispatch 服务层 → `5968959` 执行面 6 路由 → `b8a70df` clippy pedantic 清零），**2 个提交尚未推**（「每文件一 commit + push」在执行，暴露窗口 = 1 个文件的量级） |
+| 上轮两个红点 | **均已收口**：门 ⑩ `dispatch/mod.rs` **937 → 748 行**（< 800）✓；§43.2 的 7 条编译错（语法错 + `E0432` ×2 + `E0425` ×3 + `E0308`）清零 ✓（其提交自述 `--workspace -D warnings` 通过） |
+| 进度 | `dispatch/*.rs` **9 文件 / 2835 行**（mod 748 / create_issue 386 / admission 383 / sync 356 / attribution 304 / template 234 / run_only 170 / analytics 128 / skip 126）；已在真库 `multica_lum1569` 上跑 `mc-migrate run` ⇒ 进入**真库 e2e** 段 |
+| 未提交 / 体积 | 未提交 **1 个**（`mc-http/src/routes/autopilots/execution.rs` 修改中）；`target/` **6.5G**（热）；run `tool_calls=241`、session **2.8MB / 14 压缩** |
+
+- **风险记账**：14 次压缩已过 §40.2 的 8 次预警线、体积 2.8MB（上轮死亡点 4.8MB / 16 压缩）⇒ **死亡概率仍偏高，但这不是杀它的理由**。若再次静默死亡，严格按 §43.2 的顺序处置：**先把未提交状态固化成提交并推分支，再 `rerun`**（顺序反了那部分就真丢了）。
+
+### 44.3 D 波预飞复核（只读，base `86116ae`）
+
+- **骨架齐（实测）**：`mc-autopilot/src/webhook/{mod,admission,provider,ratelimit,signature}.rs`、`mc-http/src/routes/webhooks/{autopilots,mod}.rs`、`mc-repos/src/autopilot/{ingress,delivery,run,trigger,write,quota}.rs`、`mc-scheduler/src/jobs/{mod,autopilot,issue_wakeup}.rs` 全部已在 base（只填实现，不改 `mount.rs` / `routes/mod.rs` / 各 `lib.rs`）。
+- **前置件在 base 可读**：`mc-autopilot/src/quota.rs`（M5-1 的 quota API）、`mc-autopilot/src/{credential.rs,trigger/}`（M5-3 的凭据/trigger 形态）⇒ M5-5 只等 M5-4 的 `DispatchAutopilotForWebhookDelivery`，M5-8 只等 M5-4 的 `DispatchAutopilotForPlan`。
+- **P0 仍开（owner 无回复，不重复刷）**：`apps/mc-server/Cargo.toml` 无 `mc-scheduler` 边，`Cargo.lock` 里只有 `mc-scheduler` 包条目、**没有** `mc-server` 的依赖项 ⇒ M5-8 派发时按它描述的**降级方案**（交付 `jobs/**` + `register_all` 两行 + 测试，**不碰** manifest / `main.rs`；真库用例手工跑并贴原始输出，**不计入**门 ⑥）。
+- ⇒ 本轮仍**不派** D 波（C 波只差最后一片），但**末位空位只留给 M5-5**（理由见 44.4）。
+
+### 44.4 空位派发：`LUM-1600`（M4-4-fu）`backlog → todo`
+
+- **为什么是它**：`docs/43` G1/G2 是**指名 M4-4 接、而 M4-4 没做**的显式遗留（帧面 / hub 通知面已由 #49 就绪，只差调用点）；写集 `mc-ws/src/{frames,hub}.rs` + `mc-http/src/routes/chat/task/*.rs` 与在飞 M5-4、与 D 波两片（`mc-autopilot/src/webhook/**`、`mc-repos/src/autopilot/ingress.rs`、`mc-http/src/routes/webhooks/**`、`mc-scheduler/src/jobs/**`）**零文件交集**。
+- **为什么只派 1 片**：daemon 侧可派位只有 2（cycle 占 1），M5-4 已占 1 ⇒ 只剩 1；末位**让给 D 波第一片（M5-5）**，否则 M5-4 一合，D 波会卡在「位满」上等 `LUM-1600` 跑完 —— 那是在关键路径上排队。
+- `LUM-1601`（chat 面 16 模块真库测试）**继续 `backlog`**：纯测试面、不在 M5 关键路径上；等 D 波起来或出现明确空位再晋升。
+- 派发内容（已写进 issue 描述「派发（cycle `LUM-1635` 02:00 轮）」段）：base `86116ae`、零交集判据、**⑩ 预警**（`mc-ws/src/frames.rs` **677 行** / `hub.rs` **675 行**，加两条帧 + 调用点后必超 800，第一动作就拆）、先写后读（不通读上游）、每文件一 `commit+push`、自建库 `mc_lum1600`/`multica_lum1600`、⑦/⑨ 基线不动、`--with-db` 10/10（⑥ 计数取自当轮日志）。
+- run **`01a0cf71-95e1-73da-82ec-9ad3d6845941`**（18:05:22 起，`running`）。
+- **号段预约（本轮定死，避免撞号）**：`52` = M5-4 / `53` = M5-5 / `54` = M5-8 / **`55` = `LUM-1600` 的交付记录**（`45` 是 M4-4 与 M5-INT 的既有文件：`LUM-1600` 在 `docs/45` 追加一节「续记」+ 交付面另开 `docs/55`）。
+
+### 44.5 下一轮起手
+
+1. `git ls-remote origin` 看 `agent/devbox5/262d8d1d79ef` 是否越过 `b8a70df` + GH `pulls?state=open`；**有 PR 就按 §39.3 / §42.2 链合**（预检 == API → 在**该片自己的热 target**（现 6.5G）跑合并树 `--with-db` 10/10 → API 钉 head → base 树 == 预检树 + diff 0）。
+2. `LUM-1569` 的 run 仍活着 ⇒ **不要动它**；若已终态且无注释/无 PR，按 §43.2 顺序抢救（先固化未提交 → 推分支 → 再 `rerun`）。
+3. **M5-4 一合**：只晋升 `LUM-1570`(M5-5)（位只剩 1 个）；`LUM-1571`(M5-8) 按降级方案排在 `LUM-1600` 之后或空位出现时。
+4. `LUM-1567` / `LUM-1568` 保持 `in_review`（`done` 归人工）；`LUM-1601` / `LUM-1580` 保持 `backlog`（R13）。
+5. 磁盘 31G 可用：M5-4 6.5G + `LUM-1600` 冷建预算 ≈7.4G ⇒ 下一轮合并树门禁与 D 波起来之前**无需**回收；回收判据仍是三条（PR 已合 + run 终态 + `/proc/*/cwd` 无进程，**只删 `target/`**）。
+
+### 44.6 勘误（本 cycle 内自查，18:20）：`docs/NN` 号段改为 `52`=M5-4 / **`53`=`LUM-1600`** / `54`=M5-5 / `55`=M5-8
+
+- **原因**：`LUM-1600` 的 run `01a0cf71` **18:05:22** 就起手了，而 §44.4 把它的记录号从 `53` 改成 `55` 的描述更新是 **18:06:30** 才落的 ⇒ 该 run 读到的仍是 `docs/53`（实测它 session 里出现 4 次 `docs/53`、0 次 `docs/55`）。
+  号段是「只读一次」的事实。与其让在飞的 run 记错号、将来与 M5-5 撞上同一个文件名（两分支各自新增 `docs/53-*.md` ⇒ 合并必冲突），不如把 **`53` 让给 `LUM-1600`**。
+- **最终预约（权威）**：**`52` = M5-4 `LUM-1569` / `53` = M4-4-fu `LUM-1600` / `54` = M5-5 `LUM-1570` / `55` = M5-8 `LUM-1571`**（`45` 仍是 M4-4 与 M5-INT 的既有文件）。
+- **已同步**：`LUM-1600` / `LUM-1570` / `LUM-1571` 三片的描述都已写明自己的号（并显式写「不要用 `53`」）。
+- **【lesson】给在飞 run 改「它已经读过的那条事实」是无效动作**：issue 描述里的一次性事实（记录号、真库名、分支名）必须在 run 起手**之前**定死；起手后再修描述，跑着的 session **不会回读**。⇒ 派发顺序固定为**先定号 → 再晋升** `backlog → todo`。
+
+---
+
+## §45 02:30 cycle（`LUM-1638`）：base 复核 4/4（`bf1997b` 未动、GH 0 PR）；并发 3/3 满位不派发；M5-4 head `be3411b` 只读独立复验（⑩ 0 违规 / ⑦ 328 · 264 / D 波前置 `dispatch_for_plan` 已在分支上）
+
+### 45.1 base 复核 4/4（`bf1997b`）
+
+- 命令：`bash scripts/gates.sh --only fmt,route-parity,file-size,schema-drift`（本 cycle 一次性真库 `mc_cyc1638` / `multica_cyc1638`）⇒ **4/4 绿 / 96s**（① 2s、⑦ 0s、⑩ 0s、⑧ 94s）。
+- `bf1997b` 相对 `9445ad5` 只动 `docs/37-M3-W3C-PREFLIGHT.md`（+8 行）⇒ base 没有因为文档提交漂移。
+- ⑦ 当轮读数：`upstream 456 (f41fae6b08fb) | local 322 registered | baseline 300 | implemented 256 real + 2 placeholder = 258/456 | known_gap 198 | unclaimed 0 | regression 0 | local_only 11` —— 与 §44 逐字一致。
+- GH `pulls?state=open` = **0**。
+
+### 45.2 并发口径：3/3 满位 ⇒ 本轮不派发（以进程为准，不只看 daemon 计数）
+
+- daemon `running_task_count = 3`（= cycle 自身 + 2 在飞片）。用 `ps` + `/proc/*/cwd` 直接核对到三个 `pi` 进程：本 cycle（pid 37073）、`LUM-1569` 的重派 run `01a0cf55`（pid 50707，17:35 起）、`LUM-1600` 的 run `01a0cf71`（pid 62972，18:05 起）⇒ **可派切片位 = 0**。
+  因此 `LUM-1570` / `LUM-1571` 继续 `backlog`（此刻晋升就是第 4 个任务，越界）。
+
+### 45.3 M5-4（`LUM-1569`）在飞体检 + 分支**只读**独立复验
+
+- **不杀活着的 run**。run `01a0cf55` 活（1h+，当前在真库段）。远端 head、workdir `HEAD`、`@{u}` 三者同为 **`be3411b`**，`git status --porcelain` 空 ⇒ **未提交 / 未推 = 0**，WIP 暴露窗口 0（§43.2 的「先固化未提交 → 推分支 → 再 `rerun`」顺序已生效）。
+- 本轮用 `git worktree add` 在 cycle 自己的 checkout 里拉了**只读快照**（`be3411b`，不碰在飞片的 workdir），独立复验：
+  - ⑩ `file_size_check.py`：**516 scanned / baseline 10 / violations 0**（`dispatch/mod.rs` **748** < 800；`dispatch/*.rs` 9 文件 2883 行）。
+  - ⑦ `route_parity.py`：**local 328 registered**（base 322 + 本片 6 条新路由）/ `implemented 262 real + 2 placeholder = 264/456` / `known_gap 192` / `unclaimed 0` / `regression 0` / `local_only 11`；`slash_alias_audit.py --quiet` 绿。
+  - 树 diff vs base：**24 文件 +8143 −71**。
+- **D 波前置（实测，不是推断）**：`crates/mc-autopilot/src/dispatch/mod.rs:514 pub async fn dispatch_for_plan`（上游 `DispatchAutopilotForPlan`）**已在分支上** ⇒ `LUM-1570` 的硬前置在 M5-4 一合即满足。
+- ⑦ 剩余 M5 gap 恰好 **1 条**：`POST /api/webhooks/autopilots/{token}`（owner M5，上游 `router.go` L1487）= `LUM-1570` 的唯一路由。
+- D 波骨架仍在 base：`crates/mc-autopilot/src/webhook/{admission,provider,ratelimit,signature}.rs`、`crates/mc-http/src/routes/webhooks/{autopilots,mod}.rs`、`crates/mc-scheduler/src/jobs/{autopilot,issue_wakeup,mod}.rs`。
+
+### 45.4 `LUM-1600`（M4-4-fu）在飞体检
+
+- run `01a0cf71` 活（30min+），正在自跑 `gates.sh --with-db`（自己的库 `mc_lum1600`）。
+- 分支 `agent/devbox5/9ad3d6845941` head = `a5b17ae`（= 远端），相对 base `2 ahead / 3 behind`（待合 base）；workdir 有 2 个未提交改动（`M crates/mc-http/tests/chat.rs`、`?? crates/mc-http/tests/chat/broadcast.rs`）= 正在写的广播测试面；`target/` 4.6G。
+
+### 45.5 P0 / 号段 / 磁盘 / 看板
+
+- **P0 仍开**（本轮复核）：`apps/mc-server/Cargo.toml` 无 `mc-scheduler` 依赖边 ⇒ `LUM-1571`(M5-8) 派发仍走降级方案（不碰 manifest / `main.rs`，不计入门 ⑥）。按口径**不重复上报**。
+- **号段不变**：`52` = M5-4 / `53` = `LUM-1600` / `54` = M5-5 / `55` = M5-8（权威表见 §44.6）。
+- **磁盘 14G 可用**（49G 盘 / 33G 用）：在飞两片 `target/` = M5-4 **19G**（热，留给下一轮合并树门禁）+ `LUM-1600` **4.6G**；其余 workdir 的 `target/` 已被前几轮回收 ⇒ **本轮无终态 target 可回收**（判据仍是三条：PR 已合 + run 终态 + `/proc/*/cwd` 无进程，只删 `target/`）。
+- **看板清理**：`LUM-1620`（23:30 cycle）的交付注释 16:17 已发，但状态卡在 `in_progress` 且无活 run ⇒ 本轮置 `in_review`。
+
+### 45.6 下一轮起手
+
+1. `git ls-remote origin agent/devbox5/262d8d1d79ef` + GH `pulls?state=open`：**有 PR 就按 §39.3 / §42.2 判据链合**（预检读数 == API 读数 → 用它自己的 19G 热 `target/` 跑合并树 `--with-db` 10/10 → API 钉 head → base 树 == 预检树且 diff 0）。
+2. `LUM-1569` 的 run 未终态 ⇒ **不要动它**；若终态且无 PR / 无交付注释，按 §43.2 顺序抢救（先固化未提交 → 推分支 → **再** `rerun`）。本轮已确认它的 WIP 暴露为 0。
+3. **M5-4 一合**：只晋升 `LUM-1570`(M5-5)（那时位只剩 1 个）；`LUM-1571`(M5-8) 按降级方案排在 `LUM-1600` 之后或空位出现时。
+4. `LUM-1601`（chat 面真库测试）继续 `backlog`（不在 M5 关键路径上）。
+
+### 45.7 本轮内追加观测（写完 §45.1–45.6 之后的实测，防误读成终态）
+
+- **两片分支都在推进**：M5-4 `be3411b → 55203cd`（`M5-4: 修 e2e 并发撞 token 的 flake`，`tests/autopilots/{deliveries,deliveries_replay}.rs` +93 −11；worktree 仍干净、已推）；`LUM-1600` `a5b17ae → 2848afb`。⇒ §45.3 对 `be3411b` 的复验是**快照**，不是该片终态。
+- **磁盘告急：14G → 3.8G（92% 用）**。两个在飞片同时在跑真库门禁，`target/` 由 19G / 4.6G 涨到 **19G / 15G**；其中 `target/debug/incremental` = **10.2G + 5.6G = 15.8G**（`deps` 8.6G + 8.8G）。
+  全仓除这两个 workdir 外最大的 workdir 只有 188M ⇒ **本轮没有任何可回收的终态 `target/`**（回收判据三条：PR 已合 + run 终态 + `/proc/*/cwd` 无进程）。
+- **【下一轮回收杠杆，按顺序】**：① 任一片 run 终态后**先删 `target/debug/incremental`** —— 它是可重建的编译缓存，单片省 5–10G，远比整删温和；② 仍不够再按三条判据整删该片 `target/`。
+- **【风险，必须记账】**：冷建预算 ≈7G，而现在只剩 **3.8G** ⇒ **D 波（`LUM-1570`）在至少一片终态并回收之前无法起手**；M5-4 的合并树门禁必须复用它自己那份热 `target/`（这一步本来就在判据链里）。此刻若任一片需要冷建，会因空间不足而失败。
