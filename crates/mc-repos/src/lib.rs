@@ -22,6 +22,7 @@ use mc_db::Db;
 
 pub mod agent;
 pub mod comment;
+pub mod daemon;
 pub mod inbox;
 pub mod invitation;
 pub mod issue;
