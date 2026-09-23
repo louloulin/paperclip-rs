@@ -25,6 +25,7 @@
 //! 2. **错误类型放本模块**：`src/error.rs` 是 M5-1 的写集（并发片）⇒ [`WakeupError`] 定义在
 //!    [`service`] 外的本文件，M5-1 落地后若要收拢到 `error.rs` 可以直接搬。
 
+pub mod dispatch;
 pub mod evidence;
 pub mod schedule;
 pub mod service;
