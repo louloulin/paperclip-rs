@@ -153,8 +153,8 @@
 
 | 套件 | 命令 | 读数 |
 | --- | --- | --- |
-| 内核真库（⑨） | `MULTICA_TEST_DATABASE_URL=… cargo test -p mc-scheduler --test lease_db -- --ignored --test-threads=1` | **7 passed / 0 failed**（4.09s） |
-| 仓储真库（⑥） | `cargo test -p mc-repos --test scheduler_lease_db -- --ignored` | **4 passed / 0 failed**（0.28s） |
+| 内核真库（⑨） | `MULTICA_TEST_DATABASE_URL=… cargo test -p mc-scheduler --test lease_db -- --ignored --test-threads=1` | **7 passed / 0 failed**（首轮 4.09s / 复跑 7.76s） |
+| 仓储真库（⑥） | `cargo test -p mc-repos --test scheduler_lease_db -- --ignored` | **4 passed / 0 failed**（0.28–0.29s） |
 
 `docs/44` §6.2 给 M5-7 的四条硬要求与用例的对应：
 
@@ -185,7 +185,8 @@ handler 未写完、行仍是 `RUNNING`/`attempt=1`、`retry_eligible(false)`、
 ## 6. 门禁读数（当轮 `2026-09-23`，base `e75aca5`，`--with-db`）
 
 ```
-overall: PASS — 10/10 gate(s) green in 317s
+overall: PASS — 10/10 gate(s) green in 317s      # 冷缓存那一轮
+overall: PASS — 10/10 gate(s) green in 155s      # 复跑（②20s ③11s ⑤31s ⑥43s）
 ```
 
 | 门 | 命令 | 读数 |
