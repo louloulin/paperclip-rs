@@ -61,6 +61,15 @@ mc-task = { path = "../mc-task" }
 # M4-2（LUM-1473）：squad 成员 presence 的纯推导（`derive_member_status` / 五桶分类）。
 # 只走 domain 层，不碰 DB；放在 `mc-squad` 而不是 http 层是为了能单独做单元测试。
 mc-squad = { path = "../mc-squad" }
+# M5-1（LUM-1564）：读面要用 `mc_autopilot::cron`（`GET /api/autopilots/cron-preview` 的唯一解析点）
+# 与 `mc_autopilot::quota`（`GET /api/autopilots/usage` 的 entitlement 面）。
+#
+# **这是对 anchor `docs/44` §3.1 的补一条边**：`autopilots/list.rs` 的 scaffold 原文就写着
+# 「`usage` 走 `mc_autopilot::quota`」，但 M5-0 只声明了两个新 crate 的依赖、漏了这条
+# `mc-http → mc-autopilot`，而 Cargo.lock 因此也要多 1 行（`"mc-autopilot",` —— 同一 workspace
+# 内的既有成员，**不是**新第三方依赖；方向无环：mc-autopilot 只依赖 mc-core/mc-realtime/
+# mc-repos/mc-telemetry）。记录见 `docs/46-M5-1-READ-FACE.md`。
+mc-autopilot = { path = "../mc-autopilot" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
