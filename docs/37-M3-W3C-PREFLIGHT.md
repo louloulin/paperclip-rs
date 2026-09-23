@@ -4481,3 +4481,72 @@ gaps by owner: M6=55  M9=33  M7=24  M8=24  M3+=16  M2-A=14  M3=11  M2-E=9  M10=5
 3. D 波两片全合 ⇒ 才晋升 **`LUM-1572`（M5-INT）**（⑦ 基线一次性刷新 + 落地文档）；`LUM-1572` 落地后有空位 ⇒ 晋升 **`LUM-1652`（M6 计划）**，M6 代码切片由它的 §4 切片表产出。
 4. 切片是否「真活着」的判据：`~/.multica/pi-sessions/*.jsonl` mtime + workdir `target/` 增长 + `git status` 写集变化（三者同看，单看进程列表不够）。
 5. 汇报 ⑦ 时必须写明**本轮**读数并扣掉 2 条 501 占位（`/api/skills`、`/api/plugins`）。
+
+## 48. 04:00 cycle（`LUM-1657`，20:00Z）：**合并 #60（M5-8）⇒ base `eed6969`**；M6 计划片（`LUM-1652`）晋升占末位；建 M5-9 接线片（`LUM-1659`）
+
+> 本轮有一个 PR 可合（`#60` = D 波 `LUM-1571` M5-8）⇒ 工作主体是**合并判据链**；
+> 合完释放一个切片位 ⇒ 把 `LUM-1652`（M6/W6 计划，`backlog`）晋升为 `todo`；同时把 M5-8 明确留白的
+> **接线**登记成独立片 `LUM-1659`（`backlog`，等 owner 的 P0 裁决）。
+
+### 48.1 起手三连（19:57Z 实测）
+
+- `df -h /`：**20G 可用** / 49G（57% 用；比 §47 的 34G 少 14G，差额就是两片在飞构建 + 本轮合并树门禁）。
+- base `origin/feat/multica-rs-initial` = **`e796c5d`**（= §47 收尾值，**自 03:30 起未动**）；cycle 起手分支干净。
+- 认证 GH `pulls?state=open` = **1**：`#60`（M5-8，head `e12705d`，base `e796c5d`，`7 files +2862 −20 / commits 3`，`mergeable_state=clean`）。
+- `git ls-remote`：`agent/devbox5/f8942cbd66b4` = `e12705d`（= PR head，未后移）；**`agent/devbox5/d27781eeb7ef`（M5-5 / `LUM-1570`）仍未推送** ⇒ 该片尚未交 PR。
+- `running_task_count = 2`（cycle 自身 + `LUM-1570`）⇒ 起手可派位 **1**。
+
+### 48.2 PR #60（M5-8）合并判据链（逐条读数）
+
+| 步骤 | 实测 |
+| --- | --- |
+| 预检（cycle checkout 里 `--no-ff --no-commit`） | staged **`7 files changed, +2862 −20`** == PR API（`changed_files 7 / additions 2862 / deletions 20 / commits 3`）**逐字一致**；文件面 = `mc-scheduler/src/jobs/{autopilot,issue_wakeup,mod}.rs` + `tests/{common/mod,jobs_autopilot,jobs_issue_wakeup}.rs` + `docs/55-M5-8-SCHEDULER-JOBS.md` |
+| `Cargo.lock` 专项核 | `git diff --cached --name-only -- Cargo.lock` **空** ⇒ 门 ② `--locked` 无风险（本片按设计零新依赖边） |
+| 等价性 | `git merge-base --is-ancestor e796c5d e12705d` = **真**（该片已在分支上真合过 base，§46 lesson 已遵守）⇒ **合并树 == 分支 tip 树** |
+| 合并树门禁 | 在**该片自己的 workdir**（`lum-1571-f8942cbd66b4`，热 `target/` 15G，§42.2 口径）跑 `--with-db`：**10/10 绿 / 76s**（⑥ `migrate=0,e2e=0` / 11s，⑧ 25s） |
+| 门读数（当轮日志 `grep`） | ⑤ **97 个测试二进制 / 1354 passed / 0 failed / 128 ignored**；⑦ `upstream 456 (commit f41fae6b08fb) | local 328 registered | baseline 300`、`implemented 262 real + 2 placeholder = 264/456`、**`known_gap 192` · `unclaimed 0` · `regression 0` · `local_only 11`**；⑨ `pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`；⑩ `scanned=523 baseline=10 violations=0` |
+| API 合并 | `PUT /pulls/60/merge` 钉 **`e12705d`** ⇒ **`eed69693f4484283a96e5fee9ec9bd92e359fe17`**（真 merge commit，parents `e796c5d` + `e12705d`） |
+| 合并后复核 | `tree(eed6969)` = **`93390088455453a2214861d54cc111595ef2c1a4`** == 预检 merge tree == `tree(e12705d)`；`git diff e12705d origin/feat/multica-rs-initial` = **0 行**；GH open PR = **0** |
+
+- ⑦/⑨ 与 §46/§47 的读数**逐字一致**（本片 0 路由 ⇒ ⑦ 本就不该动；`local 328 / implemented 264 / baseline 300` 三个数都不变）。
+- **【本轮 lesson】预检 `merge --no-commit` 也会被空身份挡住**：托管 worktree 的 `multica-identity.config`（经 `include.path`）把 `user.name`/`user.email` 写成**空串**，`git merge --no-ff --no-commit` 直接报
+  `fatal: empty ident name (for <>) not allowed` —— 而且它**在写索引前就失败**（`git diff --cached` 空、`write-tree` 返回的还是 base 树，极易被误读成「预检无改动」）。
+  解法与 §47 的提交口径同源：`git -c user.name=devbox5 -c user.email=devbox5@multica.local merge …`（不写任何 config）。**判据链第一步就要先确认这一步真的产生了 staged 变更。**
+- **【口径复用】**「base 是 head 祖先 ⇒ 合并树 == tip 树」这条等价性让合并树门禁能在被合并片**自己的热 `target/`** 里跑：本轮 **76s** 拿到与合并树逐字同树的证据，而 cycle 自己那份 checkout 是冷 `target/`（≈7G + 数十分钟）。判据链看的是 **tree sha**，不是跑在哪台机器。
+
+### 48.3 D 波状态：1/2 已合，`LUM-1570`（M5-5）仍在飞且健康（20:07Z 采样）
+
+| 片 | 分支 / workdir | HEAD | 未提交写集 | `target/` | 状态 |
+| --- | --- | --- | --- | ---: | --- |
+| `LUM-1571`（M5-8） | `agent/devbox5/f8942cbd66b4` @ `lum-1571-…` | `e12705d` | 0（已交 PR） | 15G | **已合入 `eed6969`**，run 终态、`/proc/*/cwd` 无进程 |
+| `LUM-1570`（M5-5） | `agent/devbox5/d27781eeb7ef`（**未推**）@ `lum-1570-…` | `d2fc6c9` | **9 文件 / +3296 −33** | 1.9G | 活：pid `59859`（19:13 起）、session `20260923T191305.438831186` 4.4MB / 20:07:09 仍在写 |
+
+- `LUM-1570` 的写集 = `mc-autopilot/src/webhook/{admission,mod,provider,ratelimit,signature}.rs` + `mc-http/src/routes/webhooks/autopilots.rs` + `mc-http/tests/autopilots/main.rs` + `mc-repos/src/autopilot/ingress.rs`；与已合的 M5-8（`mc-scheduler/**`）**零交集** ⇒ 本轮合并未与它撞车。
+- ⚠️ 它交 PR 时 **base 已从 `d2fc6c9` 后移到 `eed6969`+§48** ⇒ 按 §46 lesson 必须**真合 base 再重跑门禁**（它在热 `target/` 里跑即可）。
+- D 波**未全合** ⇒ **`LUM-1572`（M5-INT）本轮不晋升**（该片的硬依赖是 M5-0…M5-8 全部合并）。
+
+### 48.4 并发与派发：末位给 M6 计划片；接线登记成独立片
+
+- 合完 #60 后 `running_task_count = 2`（cycle + `LUM-1570`）⇒ 释放 **1 位**。
+- **晋升 `LUM-1652`（M6/W6 切片计划）`backlog → todo`**（`LUM-1651` §47.4 建的片）。理由：`LUM-1572`（M5-INT）**还不能起手**（等 D 波全合），而 M6 面是本轮实测的**最大未开面**（§47 的 ⑦ 缺口归属板 `M6=55`）；计划片提前产出切片表，M5 一收口就能直接填位，不会出现「空位等计划」。
+  本片只写 `docs/57-M6-PLAN.md` + `docs/fixtures/m6-declared-routes.tsv` + backlog 子任务，**不占代码面**、与 `LUM-1570` 写集零交集 ⇒ 并发安全。派后 `running_task_count = 3`（**3/3 满位**）。
+- **新建 `LUM-1659`**（`backlog`，本 agent 自派）**M5-9 · 接线**：`apps/mc-server/Cargo.toml` 的 `mc-scheduler` 边 + `register_all` 两处装配 + 两个端口的**生产实现**（`AutopilotSchedulePort` 5 条 SQL / `WakeupDispatchPort` 7 步事务）。
+  依据 = `docs/55` §3.4 的如实登记：M5-8 按降级方案交付后，**M5-7 内核 + M5-8 jobs 在运行时零效果**（无人调用 `register_all`），而这条接线**至今没有任何切片认领**。
+  它仍是 `LUM-1628` §4 那条 **P0（manifest 依赖边需 owner 裁决）**的下游 ⇒ 故置 `backlog` 待裁决，本轮**不重复 @ owner**（口径：一次，不重复刷）。
+- **号段更正**：`LUM-1572`（M5-INT）描述里写的落地文档 `docs/45-M5-INTEGRATION.md` 是排期初期旧号（`docs/45` 现为 `45-M4-4-CHAT-DISPATCH.md`，`docs/43`/`docs/49` 分别属 M3-7-FU 与 M4-INT）⇒ 已在该 issue 描述顶部加**号段更正**（改用 **`docs/56-M5-INTEGRATION.md`**），并提醒起手时以当轮 gate 读数覆盖描述里的预演值。`LUM-1652` 取 **`docs/57`**。**本轮 cycle 记录 = `docs/37` §48。**
+
+### 48.5 P0 / 看板 / 磁盘
+
+- **P0 仍无 owner 回复**（`LUM-1628` §4 的 member 提及 16:37Z 发出、至今 0 回复）：本轮复核 `apps/mc-server/Cargo.toml` 的 13 条 `mc-*` 边里**仍无 `mc-scheduler`**（`grep -c mc-scheduler` = 0）⇒ 接线继续挂起，`LUM-1659` 已在 `backlog` 登记。
+- 看板：`LUM-1601`（chat 真库测试）/ `LUM-1580`（⑦ 占位正则）/ `LUM-1370`（M2-E 目录）保持 `backlog`；新增 `LUM-1659`（M5-9 接线）`backlog`；`LUM-1652` `todo`；`LUM-1571` 保持 `in_review`（`done` 归人工验收）。
+- **观察项（不动状态）**：`LUM-1521`（15:30Z 触发）/ `LUM-1533`（16:30Z 触发）两条 autopilot cycle issue 仍停在 `todo` 且从未启动 —— 与 §47.5 同一现象，继续只登记。
+- **磁盘回收**：`LUM-1571` 三条判据全满足（**PR 已合 `eed6969` + run 终态 + `/proc/*/cwd` 无进程**）⇒ 整删其 `target/`（**15G**）⇒ 20G → **≈35G 可用**；`LUM-1570` 的 1.9G 在活运行中**不回收**。
+
+### 48.6 下一轮起手
+
+1. 三连：`df -h /` → `git fetch` 后取 base sha → 认证 GH `pulls?state=open`（`git credential fill`，勿回显）+ `git ls-remote origin agent/devbox5/d27781eeb7ef`。
+2. `LUM-1570` 交 PR ⇒ 走 §48.2 链：预检（**带 `-c user.name/-c user.email`**，核对 staged stat 与 PR 自述逐字一致 + `Cargo.lock` 空）→ 真合 base（它落后 `eed6969`）后在其热 `target/` 跑 `--with-db` **10/10** → API 钉 head sha → 复核 `tree(base) == 预检树`、`diff` 空。
+3. D 波两片全合 ⇒ 晋升 **`LUM-1572`（M5-INT）**（⑦ 基线一次性刷新 + `docs/56`）；`LUM-1659`（M5-9 接线）仍在 `backlog`，**只在 owner 回复 P0 后**晋升。
+4. `LUM-1652`（M6 计划）在飞 ⇒ 它交 PR 后按同一条链合并（docs-only，门禁 8/8 即可）；其 §4 切片表产出的 M6 代码片建为 `backlog` 子任务，**由 cycle 按空位晋升**。
+5. 汇报 ⑦ 时必须写**本轮**读数并扣掉 2 条 501 占位（`/api/skills`、`/api/plugins`）。
+6. 存活判据仍是三看：`~/.multica/pi-sessions/*.jsonl` mtime + workdir `target/` 增长 + `git status` 写集变化。
