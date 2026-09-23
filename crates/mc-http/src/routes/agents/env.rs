@@ -15,7 +15,13 @@
 //! owner/admin 或 agent 的**人类 owner**。本片不解析 agent actor（见
 //! `agents.rs` 顶部说明），因此等价于「admin 或 agent owner」的 fail-closed 版本。
 //!
-//! 偏离：不广播 `agent:status`（M3-7）。
+//! 偏离：`agent:status` 广播已接（M3-7-fu / LUM-1506）。`PUT` 在提交并重新读出 skills 后
+//! 发一条**脱敏**的 `agent:status`（载荷是 `AgentDto`，从不带 env 值），投递面是
+//! **该 workspace 的用户连接**（`Hub::notify_agent_status`）。
+//!
+//! 与上游的两处差异（登记在 `docs/44`）：① 本地 `AgentDto.skills` 恒为空（没有上游
+//! `attachAgentSkills` 的等价物），上游为此专门重读过 skills；② 上游的
+//! `invocation_targets` 会一并带上，本片不额外查它（省一次 DB 往返，客户端仍以 HTTP 面为准）。
 
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -30,7 +36,7 @@ use serde_json::{json, Value as JsonValue};
 
 use mc_repos::agent::{ACTIVITY_ENV_REVEALED, ACTIVITY_ENV_UPDATED};
 
-use super::dto::{AgentEnvDto, CustomEnv, UpdateAgentEnvRequest, ENV_SENTINEL};
+use super::dto::{AgentDto, AgentEnvDto, CustomEnv, UpdateAgentEnvRequest, ENV_SENTINEL};
 use super::{bad_request, repo_err, AgentScope};
 use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
@@ -190,6 +196,27 @@ pub(super) async fn update_agent_env(
         )
         .await
         .map_err(|e| repo_err(e, "agent"))?;
+
+    // 上游 `agent_env.go:266-272`：提交后广播 `agent:status`，连着的客户端据此重取该行、
+    // 刷新「已配置 N 个变量」的指示器。载荷是**脱敏**的 agent 响应（`AgentDto` 从不带
+    // env 明文）。
+    //
+    // 广播失败**不影响**响应：它是「尽力而为的唤醒通道」（`hub.rs` 模块文档），客户端
+    // 仍以 HTTP 面为准。`updated` 已经是提交后重新读出的行（`update_custom_env_audited`
+    // 的返回值），所以 `has_custom_env` / `custom_env_key_count` 是本次写入后的真值。
+    if let Ok(targets) = scope.targets_by_agent(&[updated.id]).await {
+        let dto = AgentDto::from_row(
+            &updated,
+            &scope,
+            targets.get(&updated.id).map_or(&[], Vec::as_slice),
+        );
+        if let Ok(agent) = serde_json::to_value(&dto) {
+            state.daemon_hub.notify_agent_status(
+                &scope.workspace_id.to_string(),
+                &mc_ws::frames::AgentStatusPayload { agent },
+            );
+        }
+    }
 
     Ok(Json(AgentEnvDto {
         agent_id: updated.id.to_string(),

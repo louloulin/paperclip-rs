@@ -32,7 +32,9 @@ pub(crate) const DAEMON_ID_HEADER: &str = "x-daemon-id";
 // 应用状态 / 连接
 // ---------------------------------------------------------------------------
 
-pub(crate) fn app_with_db(db: Db) -> Router {
+/// 建 `AppState` + Router，并把 **state 一并返回**：有些用例不只是发 HTTP，还要直接驱动
+/// `state.daemon_hub`（例如验证 `PUT /api/agents/:id/env` 之后真的扇出了一条 `agent:status`）。
+pub(crate) fn app_and_state(db: Db) -> (Router, Arc<AppState>) {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let state = AppState::new(
@@ -53,7 +55,38 @@ pub(crate) fn app_with_db(db: Db) -> Router {
         ws,
     );
     let state = Arc::new(state);
-    mc_http::routes::router(state.clone()).with_state(state)
+    let app = mc_http::routes::router(state.clone()).with_state(state.clone());
+    (app, state)
+}
+
+pub(crate) fn app_with_db(db: Db) -> Router {
+    app_and_state(db).0
+}
+
+/// 插一条 `mdt_` daemon token（`daemon_token` 表 + `scope.rs` 同样的 sha256 哈希），
+/// 返回可直接放进 `Authorization: Bearer …` 的**原文**。
+///
+/// 只有它能拿到 `DaemonActor::Daemon`（dev-mode 头恒落用户分支）——
+/// `?runtime_id=` 收窄要对着「该机器名下的 runtime 集合」判，必须走这条分支。
+pub(crate) async fn seed_daemon_token(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    daemon_id: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let raw = format!("mdt_itest_{}", Uuid::new_v4().simple());
+    let hash = hex::encode(Sha256::digest(raw.as_bytes()));
+    sqlx::query(
+        "INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at) \
+         VALUES ($1, $2, $3, now() + interval '1 hour')",
+    )
+    .bind(&hash)
+    .bind(workspace_id)
+    .bind(daemon_id)
+    .execute(pool)
+    .await
+    .expect("insert daemon_token");
+    raw
 }
 
 /// 起一个真 axum 服务（只给 WS 用例用），返回 `(ws base url, handle)`。
@@ -120,6 +153,10 @@ pub(crate) async fn seed_user(pool: &PgPool, workspace_id: Uuid, role: &str) -> 
 
 /// 建一台绑在 `daemon_id` 上、`online` 且有主的 runtime（可被 claim）。
 ///
+/// 同 `(workspace_id, daemon_id, provider)` 只能有一行
+/// （`agent_runtime_workspace_daemon_provider_key`）—— 一台机器下要多台 runtime 就得换
+/// `provider`，所以提供 [`seed_runtime_with_provider`]。
+///
 /// `visibility` 只能是 `'private'` / `'public'`（`083_runtime_visibility.up.sql`：
 /// `CHECK (visibility IN ('private','public'))`，默认 `'private'`）。`'workspace'` 是
 /// **另一张表**的词汇（`runtime_profile.visibility`，`120_runtime_profile.up.sql`），
@@ -136,16 +173,28 @@ pub(crate) async fn seed_runtime(
     owner: Uuid,
     daemon_id: &str,
 ) -> Uuid {
+    seed_runtime_with_provider(pool, workspace_id, owner, daemon_id, "claude").await
+}
+
+/// 同上，但指定 `provider`：同一 `(workspace, daemon)` 下建**多台** runtime 的唯一办法。
+pub(crate) async fn seed_runtime_with_provider(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    owner: Uuid,
+    daemon_id: &str,
+    provider: &str,
+) -> Uuid {
     sqlx::query_scalar(
         "INSERT INTO agent_runtime \
             (workspace_id, daemon_id, name, runtime_mode, provider, owner_id, visibility, \
              status, last_seen_at) \
-         VALUES ($1, $2, $3, 'local', 'claude', $4, 'private', 'online', now()) RETURNING id",
+         VALUES ($1, $2, $3, 'local', $5, $4, 'private', 'online', now()) RETURNING id",
     )
     .bind(workspace_id)
     .bind(daemon_id)
     .bind(format!("rt-{}", Uuid::new_v4()))
     .bind(owner)
+    .bind(provider)
     .fetch_one(pool)
     .await
     .expect("insert agent_runtime")

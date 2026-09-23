@@ -23,7 +23,7 @@ mod ws;
 
 use axum::routing::{get, post};
 use axum::Router;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::state::AppState;
 
@@ -152,20 +152,26 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
-/// 把 ws 面的两个 handler 装进 `mc-ws` hub（幂等，只生效一次）。
+/// 把 ws 面的两个 handler 装进 `mc-ws` hub（幂等）。
 ///
 /// `hub` 里的 handler 槽是 `Arc<dyn Fn…>`，而 handler 又需要 `Arc<AppState>` ——
 /// 直接互相持有可能成环（`AppState` → hub → handler → `AppState`）。这里的做法是
 /// **一次性注入**：调用方拿一个 `Weak<AppState>` 进来，handler 每次执行时再 upgrade，
 /// 槽里不常驻强引用，环不存在。
 ///
+/// **幂等闸按 hub 判**（不是按进程）：`set_rpc_handler` / `set_heartbeat_handler` 是
+/// 「覆盖」语义，重复装只是换掉等价的闭包，所以拿 `rpc_handler().is_some()` 当已装标记
+/// 就够。**不能**用进程级 `OnceLock`：一个进程可以有多个 hub（测试里每个用例一个），
+/// 进程级闸会把第一个 hub 之后的全部漏装，症状是连接升级成功但 RPC 一律 503
+/// `rpc handler unavailable`。
+///
 /// 调用点：`GET /api/daemon/ws` 的升级 handler（[`lifecycle::ws`]）—— 那里同时握着
 /// `Arc<AppState>` 与 `daemon_hub`，而 `mount.rs::mount_slice_daemon()` 只有
-/// `Router<Arc<AppState>>`（拿不到 Arc）。handler 只在真有人升级时才走到，`OnceLock`
-/// 保证幂等，所以「懒装」不会漏装。
+/// `Router<Arc<AppState>>`（拿不到 Arc）。handler 只在真有人升级时才走到，所以「懒装」
+/// 不会漏装。每次升级重复调用时上面那道闸直接短路（多一次 `Arc::clone`，不做分配）。
 pub fn install_ws_handlers(state: &Arc<AppState>) {
-    static INSTALLED: OnceLock<()> = OnceLock::new();
-    if INSTALLED.set(()).is_err() {
+    let hub = &state.daemon_hub;
+    if hub.rpc_handler().is_some() && hub.heartbeat_handler().is_some() {
         return;
     }
     // 实现体在 `ws.rs`（与 rpc / heartbeat 的真实逻辑放在一起）。
