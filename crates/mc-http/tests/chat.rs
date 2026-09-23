@@ -129,7 +129,7 @@ async fn create_get_and_list_visibility() {
             &json!({"agent_id": Uuid::new_v4()}).to_string(),
         )
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: agent");
+    assert_err(&b, s, SC::NOT_FOUND, "agent");
     // peer 的 private agent：存在但 invoke 门不过 ⇒ 403（不是 404 —— 得先看得见才谈能不能用）。
     let (s, b) = ctx
         .raw(
@@ -193,9 +193,9 @@ async fn create_get_and_list_visibility() {
     let (s, b) = ctx.send("GET", &uri, peer, None).await;
     assert_err(&b, s, SC::FORBIDDEN, "not your chat session");
     let (s, b) = ctx.send("GET", &uri, outsider, None).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: workspace");
+    assert_err(&b, s, SC::NOT_FOUND, "workspace");
     let (s, b) = ctx.get(&format!("{SESSIONS}/{}", Uuid::new_v4())).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
     let (s, b) = ctx.get(&format!("{SESSIONS}/not-a-uuid")).await;
     assert_err(&b, s, SC::BAD_REQUEST, "invalid chat session id");
 
@@ -220,7 +220,7 @@ async fn create_get_and_list_visibility() {
     );
     assert!(!ids(&b).contains(&foreign.to_string()));
     let (s, b) = ctx.get(&format!("{SESSIONS}/{hidden}")).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
 
     ctx.cleanup().await;
 }
@@ -380,7 +380,7 @@ async fn message_read_and_paging() {
     assert_err(&b, s, SC::FORBIDDEN, "not your chat session");
     let missing = Uuid::new_v4();
     let (s, b) = ctx.get(&format!("{SESSIONS}/{missing}/messages")).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
 
     // 分页：`limit=2`。SQL 多取 2 行 ⇒ 隐藏行被滤掉后 `has_more` 仍然为真，窗口是最近两条。
     let (s, page1) = ctx.get(&format!("{base}/messages/page?limit=2")).await;
@@ -439,7 +439,7 @@ async fn message_read_and_paging() {
     let (s, b) = ctx
         .get(&format!("{SESSIONS}/{missing}/messages/page?limit=0"))
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
 
     ctx.cleanup().await;
 }
@@ -482,7 +482,7 @@ async fn pinned_agents_bar() {
             &json!({"agent_id": Uuid::new_v4()}).to_string(),
         )
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: agent");
+    assert_err(&b, s, SC::NOT_FOUND, "agent");
     let (s, b) = ctx
         .raw(
             "POST",
@@ -490,7 +490,7 @@ async fn pinned_agents_bar() {
             &json!({"agent_id": ctx.fx.peer_private}).to_string(),
         )
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: agent");
+    assert_err(&b, s, SC::NOT_FOUND, "agent");
 
     // 逐个置顶：位置从 1 开始递增；`position` 虽是 float64 也渲染成整数 `1`。
     for (n, agent) in ctx.fx.agents.iter().take(5).enumerate() {
@@ -536,7 +536,7 @@ async fn pinned_agents_bar() {
     let (s, b) = ctx
         .raw("POST", uri, &json!({"agent_id": upper}).to_string())
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: agent");
+    assert_err(&b, s, SC::NOT_FOUND, "agent");
 
     // 看不见的 agent 从响应里静默丢弃（归档后消失、恢复后回来；行还在库里）。
     sqlx::query("UPDATE agent SET archived_at = now() WHERE id = $1")
@@ -586,11 +586,14 @@ async fn draft_restores_and_project_lock() {
     let mut restores = Vec::new();
     for (n, at) in AT.iter().enumerate().take(2) {
         let content = format!("draft {n}");
+        // `chat_draft_restore.id` **没有默认值**（上游 `CreateChatDraftRestore` 由调用方传入，
+        // 约定是被删掉的那条 user 消息的 id）⇒ 直插的夹具自己造一个。
         restores.push(
             sqlx::query_scalar::<_, Uuid>(
-                "INSERT INTO chat_draft_restore(chat_session_id, task_id, content, created_at) \
-                 VALUES ($1, $2, $3, $4::timestamptz) RETURNING id",
+                "INSERT INTO chat_draft_restore(id, chat_session_id, task_id, content, created_at) \
+                 VALUES ($1, $2, $3, $4, $5::timestamptz) RETURNING id",
             )
+            .bind(Uuid::new_v4())
             .bind(sid)
             .bind(task)
             .bind(content)
@@ -619,7 +622,7 @@ async fn draft_restores_and_project_lock() {
     let (s, b) = ctx
         .get(&format!("{SESSIONS}/{missing}/draft-restores"))
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
     let (s, b) = ctx
         .get("/api/chat/sessions/not-a-uuid/draft-restores")
         .await;
@@ -634,7 +637,7 @@ async fn draft_restores_and_project_lock() {
     assert_err(&b, s, SC::BAD_REQUEST, "invalid restore id");
     let bogus = format!("{SESSIONS}/{missing}/draft-restores/not-a-uuid");
     let (s, b) = ctx.delete(&bogus).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: chat session");
+    assert_err(&b, s, SC::NOT_FOUND, "chat session");
     let (_, b) = ctx.get(&uri).await;
     assert_eq!(b["restores"].as_array().unwrap().len(), 1, "{b}");
 
@@ -652,7 +655,7 @@ async fn draft_restores_and_project_lock() {
         .unwrap();
     let body = json!({"agent_id": ctx.fx.agents[1], "project_id": Uuid::new_v4()}).to_string();
     let (s, b) = ctx.raw("POST", SESSIONS, &body).await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: project");
+    assert_err(&b, s, SC::NOT_FOUND, "project");
     let after: i64 = sqlx::query_scalar(count_sql)
         .bind(ws)
         .fetch_one(&ctx.pool)
@@ -675,7 +678,7 @@ async fn draft_restores_and_project_lock() {
             &json!({"project_id": Uuid::new_v4()}).to_string(),
         )
         .await;
-    assert_err(&b, s, SC::NOT_FOUND, "not found: project");
+    assert_err(&b, s, SC::NOT_FOUND, "project");
     let (s, b) = ctx
         .raw(
             "PATCH",

@@ -528,6 +528,7 @@ fn title_error(e: TitleError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::chat::upstream_text;
 
     /// `decode_body` 收 `&Bytes`（handler 从 `axum::body::Bytes` 拿），测试里包一层。
     fn body(raw: &str) -> Bytes {
@@ -544,11 +545,11 @@ mod tests {
     #[test]
     fn title_error_messages_match_upstream() {
         assert_eq!(
-            title_error(TitleError::Empty).to_string(),
+            upstream_text(title_error(TitleError::Empty)),
             "title is required"
         );
         assert_eq!(
-            title_error(TitleError::TooLong).to_string(),
+            upstream_text(title_error(TitleError::TooLong)),
             "title is too long"
         );
     }
@@ -571,11 +572,13 @@ mod tests {
         assert!(decode_body::<SetChatSessionFlagRequest>(&body("[]")).is_err());
     }
 
-    /// update 的「恰好一个」判据读的是**原始字段表**：`null` 算存在。
+    /// update 的「恰好一个」判据读的是**原始字段表**，且语义与上游 Go 的字段类型逐条对齐：
+    /// `Title *string`（`null` 与缺失同为「不存在」）而 `ProjectID json.RawMessage`
+    /// （`null` 是**存在**，表示清空项目）。
     #[test]
     fn update_presence_uses_raw_map() {
         let (_, raw) = decode_body::<UpdateChatSessionRequest>(&body(r#"{"title":null}"#)).unwrap();
-        assert!(raw.get("title").is_some_and(|v| !v.is_null()));
+        assert!(raw.get("title").is_none_or(serde_json::Value::is_null));
         assert!(!raw.contains_key("project_id"));
 
         let (_, raw) =

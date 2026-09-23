@@ -191,6 +191,7 @@ fn visible(rows: Vec<ChatMessageRow>) -> Vec<ChatMessageRow> {
 mod tests {
     use super::*;
     use crate::routes::chat::session::support::GoFloat64;
+    use crate::routes::chat::upstream_text;
     use chrono::{DateTime, Utc};
     use uuid::Uuid;
 
@@ -262,14 +263,14 @@ mod tests {
         let mut query = HashMap::new();
         query.insert("limit".to_string(), "0".to_string());
         assert_eq!(
-            parse_params(&query).unwrap_err().0.to_string(),
+            upstream_text(parse_params(&query).unwrap_err().0),
             "invalid limit"
         );
 
         let mut query = HashMap::new();
         query.insert("before_id".to_string(), Uuid::nil().to_string());
         assert_eq!(
-            parse_params(&query).unwrap_err().0.to_string(),
+            upstream_text(parse_params(&query).unwrap_err().0),
             "invalid cursor"
         );
     }

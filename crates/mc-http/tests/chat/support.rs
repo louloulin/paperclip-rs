@@ -116,10 +116,41 @@ pub fn msg(body: &Value) -> String {
         .to_string()
 }
 
-/// 断言错误响应（状态码 + 逐字文案，文案取自上游 Go）。
+/// 错误正文里**上游原文**那一段（剥掉 `mc-errors` 的内部前缀）。
+///
+/// 本仓 `Error` 的 `Display` 会给正文加内部前缀（`validation error: ` / `forbidden: ` …），
+/// 而上游 `writeError` 写的是裸文案；断言上游文案时先剥前缀，与
+/// `tests/agents/support.rs::error_message` 同款。`not found: <resource>` 是本仓的**已知
+/// 偏离**（上游是 `<resource> not found`）—— 剥完只剩资源名，所以调用方写 `"agent"`。
+pub fn error_message(body: &Value) -> &str {
+    const PREFIXES: [&str; 12] = [
+        "validation error: ",
+        "not found: ",
+        "conflict: ",
+        "unprocessable entity: ",
+        "forbidden: ",
+        "unauthorized: ",
+        "workspace not found: ",
+        "workspace archived: ",
+        "database error: ",
+        "internal error: ",
+        "io error: ",
+        "upstream error: ",
+    ];
+    let raw = body["error"]["message"].as_str().unwrap_or("");
+    for prefix in PREFIXES {
+        if let Some(rest) = raw.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    raw
+}
+
+/// 断言错误响应（状态码 + 逐字文案，文案取自上游 Go，内部前缀由
+/// [`error_message`] 剥掉）。
 pub fn assert_err(body: &Value, status: SC, expected: SC, want: &str) {
     assert_eq!(status, expected, "{body}");
-    assert_eq!(msg(body), want, "{body}");
+    assert_eq!(error_message(body), want, "{body}");
 }
 
 pub fn ids(items: &Value) -> Vec<String> {

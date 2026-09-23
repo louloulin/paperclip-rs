@@ -185,6 +185,7 @@ fn pin_error(e: PinError) -> crate::error::ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::chat::upstream_text;
 
     /// 路由表必须能构建（形态冲突 / 重复注册会 panic）。
     #[test]
@@ -196,13 +197,13 @@ mod tests {
     #[test]
     fn empty_body_is_invalid_request_body() {
         let err = decode_body::<PinChatAgentRequest>(&Bytes::new()).unwrap_err();
-        assert_eq!(err.to_string(), "invalid request body");
+        assert_eq!(upstream_text(err), "invalid request body");
 
         // 裸 `null` 是 no-op ⇒ agent_id 空 ⇒ 交给 `parse_uuid_field` 出 `invalid agent_id`。
         let (req, _) = decode_body::<PinChatAgentRequest>(&Bytes::from_static(b"null")).unwrap();
         assert_eq!(req.agent_id.unwrap_or_default(), "");
         assert_eq!(
-            parse_uuid_field("", "agent_id").unwrap_err().to_string(),
+            upstream_text(parse_uuid_field("", "agent_id").unwrap_err()),
             "invalid agent_id"
         );
         // 数组 / 数字体也是 400（顶层必须是对象）。
@@ -218,6 +219,6 @@ mod tests {
     #[test]
     fn limit_error_message_matches_upstream() {
         let err = pin_error(PinError::LimitReached);
-        assert_eq!(err.0.to_string(), "pinned agent limit reached");
+        assert_eq!(upstream_text(err.0), "pinned agent limit reached");
     }
 }
