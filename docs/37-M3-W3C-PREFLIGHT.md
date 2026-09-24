@@ -7361,3 +7361,50 @@ unclaimed 0   regression 0   local_only 9
    「2 片」；跨波排序按**关键路径**（`W9 after W8` ⇒ M8 优先保 1 槽）而非计划表行号。
 4. **`merge-tree --write-tree` 的预测必须与「实合一把的 `write-tree`」比对**，尤其当 base 在两次合并之间前移时
    （#82 合完 base 前进，#81 的预检值来自旧 base；重取 head/base 后才钉 sha）。
+
+## §83 07:00 cycle（`LUM-1831`，23:00Z 触发）：**0 open PR / 0 空位 —— 只读监控轮**；复核 M7-1 + M8-0 在飞与 M6 收口后的基线形态
+
+### 83.1 起手三连
+
+- `df -h /`：**31G 可用（35%）** —— 构成 = `lum-1829` 残留 `target/` 2.4G + `lum-1766` 851M + `lum-1797` 614M；
+  上一轮（§82.1）的「平台 GC 一次放掉 30G」把 `multica_workspaces/lumos-659117e3ca3d/` 从 ~250 个目录清到个位数。
+- `git ls-remote origin feat/multica-rs-initial` = **`bef6209a`**（= `401548db`(合并 #82 + #81) + `docs/37` §82；
+  `docs`-only `+90/−0`）；在飞两片分支 **尚未推**（`agent/devbox5/ba7ddf538cc8`、`agent/devbox5/d40efe34eaf7` 均不存在）。
+- 认证 GH `pulls?state=open`：**0 条** ⇒ **本 cycle 无判据链可走**。
+- daemon 起手 `running_task_count = 4` = cycle 自身 + `LUM-1766` + `LUM-1797` + **并发 cycle run（`LUM-1829`）**；
+  它于 **23:07:33Z** 才终态（`completed`，68 tools / 36m50s）⇒ 终态后读数回落 **3**。
+
+### 83.2 在飞片复核（判活三件套取二：`/proc` 存活 ∨ session 增长 ∨ 产物增加）
+
+| 片 | workdir | run / 起手 | 起手点 | 观测 |
+|---|---|---|---|---|
+| `LUM-1766`（M7-1，渠道契约层 + engine 路由/监管/解析，0 路由） | `lum-1766-ba7ddf538cc8` | `01a0d59f-6e13`，22:53:10Z | `401548db` | **活**：`/proc/4496/cwd` 命中；23:03Z 仍在 tool #38；HEAD **0 提交 / 0 未提交**（规划期） |
+| `LUM-1797`（M8-0 anchor，`mc-vcs`/`mc-vcs-github`/`mc-composio`） | `lum-1797-d40efe34eaf7` | `01a0d59f-7bb3`，22:53:14Z | `401548db` | **活**：`/proc/4521/cwd` 命中；新增 3 个未跟踪文件 = `crates/mc-core/src/{github,mcp,vcs}.rs` |
+
+两片起手点都是 `401548db`（**未含 §82 的 90 行 docs**）——无碍：docs 不参与任何门。
+
+### 83.3 空位 = 0（本 cycle 不派任何片）
+
+`空位 = 3 − 1(cycle 自身) − 2(在飞) = 0`。就绪但**不派**：`LUM-1767`(M7-2)、`LUM-1768`(M7-3)、
+`LUM-1798`(M8-1)——硬前置（M7-0 / M6-INT）都已满足，纯粹是**槽位**约束（§82.6 lesson 3：3 槽含 cycle 自身）。
+本轮唯一的具体动作是**回收**：`lum-1829-70f89436fe65` 的 `target/` **2.4G** 满足四判据
+（run 终态 ∧ 交付已在 base ∧ `/proc/*/cwd` 逐 PID 零命中 ∧ `git status` 空）⇒ 整删（31G → **32G**）。
+
+### 83.4 并发 cycle 观察（第 21 轮：护栏仍未落地）
+
+`LUM-1829`（06:30 cycle，22:30:58Z 起）与本 run **同时在飞 36m50s**，两者都在做 cycle 级只读复核 ——
+平台仍按 07:00 新建了 `LUM-1831`。**建议（重复登记）：同项目存在未终态 cycle issue 时不再新建 cycle issue。**
+同类积压 `todo`（`LUM-1826`/`1810`/`1805`/`1748`/`1740`/`1737`/`1726`/`1533`/`1521`，共 9 条，零进程零产物）
+**只登记、不动状态**。`blocked` = **0**。
+
+### 83.5 next cycle 起点与第一动作
+
+- 起点 base = **本 §83 提交**（docs-only 直推 `bef6209a`）。
+- 第一动作：三连（`df -h /` → `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证
+  `pulls?state=open`）→ 逐片查 **run 是否终态** + `merge-base --is-ancestor <base> <head>` + head 上 CI 3/3，
+  **终态后才进判据链**（§73 口径：「在飞」= run 终态，不是 issue 是 `in_review`）。
+- **槽位一空就派**（按波次各补各的槽）：`LUM-1766` 合/终 ⇒ 派 **`LUM-1767`（M7-2）**；
+  `LUM-1797` 合/终 ⇒ 派 **`LUM-1798`（M8-1，5 路由）** —— M8 stage-2 的硬前置是 M8-0 落地，**不可提前**。
+  两者都加路由/写 `routes/{mod,mount}.rs` 注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
+- ⑦ 基线 **406 不动**（普通片不得跑 `--write-baseline`；下一次刷新 = `LUM-1786` M7-21 INT）。
+- 回收：活物 `target/`（1766/1797）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删。
