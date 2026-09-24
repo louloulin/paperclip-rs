@@ -628,10 +628,15 @@ async fn build_registers_both_jobs_and_the_loop_claims_leases() {
     .expect("build scheduler");
     let mut names: Vec<&str> = manager.jobs().iter().map(|job| job.name.as_str()).collect();
     names.sort_unstable();
+    // M6-8（`LUM-1673`）：`register_all` 现在注册**三个** job（多 M6-8 的 hook 计划投递）。
     assert_eq!(
         names,
-        vec![autopilot_job::JOB_NAME, wakeup_job::JOB_NAME],
-        "两个 job 都必须在 spawn 之前注册"
+        vec![
+            autopilot_job::JOB_NAME,
+            wakeup_job::JOB_NAME,
+            mc_scheduler::jobs::plugin_hook::JOB_NAME
+        ],
+        "三个 job 都必须在 spawn 之前注册（sorted）"
     );
 
     let handle: SchedulerHandle = manager.spawn();
@@ -642,7 +647,7 @@ async fn build_registers_both_jobs_and_the_loop_claims_leases() {
     // 会留下 autopilot 行（本用例的 fixture 只保证**自己**、不保证全库），不写进条件就会
     // 被别的 trigger 提前满足。
     wait_until(
-        "两个 job 的终态租约行（含我的 trigger scope）",
+        "两个 M5 job 的终态租约行（含我的 trigger scope）",
         StdDuration::from_secs(60),
         || {
             let pool = observed.clone();
@@ -662,7 +667,14 @@ async fn build_registers_both_jobs_and_the_loop_claims_leases() {
                 let mine = rows
                     .iter()
                     .any(|row| row.0 == autopilot_job::JOB_NAME && row.3 == trigger);
-                if jobs.len() == 2 && mine {
+                // M6-8（`LUM-1673`）：`register_all` 现在注册**三个** job。这里不再数
+                // 「恰好 2 个」：第三个 job（hook 计划投递）的租约行取决于库里**有没有启用的
+                // 日程**（没有 scope 就没有行），而本用例用的是共享测试库 ⇒ 数个数会随别的
+                // 用例的残留而红。第二段证据（`Manager::jobs()` 里恰好三个）已经在前面断言过。
+                if jobs.contains(autopilot_job::JOB_NAME)
+                    && jobs.contains(wakeup_job::JOB_NAME)
+                    && mine
+                {
                     return true;
                 }
                 // 打印出来便于失败时定位（哪个 job / 哪个 scope 没跑成）。

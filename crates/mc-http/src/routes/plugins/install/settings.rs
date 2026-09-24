@@ -153,6 +153,11 @@ async fn set_enabled_inner(
     let updated = installations::set_enabled_tx(&mut tx, installation.id(), enabled)
         .await
         .map_err(|_| PluginError::unavailable("update plugin state"))?;
+    // M6-8（`LUM-1673`）：停用清 `next_run_at`、启用**换一代** —— 停机期间错过的格子永不补发
+    // （上游 `setPluginHookSchedulesEnabled`；与启停同一个事务）。
+    crate::routes::plugins::hooks_job::set_schedules_enabled_tx(&mut tx, updated.id(), enabled)
+        .await
+        .map_err(PluginError::from)?;
     commit(tx, "commit plugin state update").await?;
     installation_payload(state, &updated).await
 }

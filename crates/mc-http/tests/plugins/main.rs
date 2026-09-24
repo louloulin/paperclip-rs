@@ -10,6 +10,7 @@
 //! | `packages.rs` | `GET\|POST /plugins/packages`、`POST /plugins/packages/local`、`DELETE /plugins/packages/{packageId}` |
 //! | `token.rs` | `POST\|DELETE /plugins/{installationId}/token` |
 //! | `runtime.rs` / `runtime_surface.rs` | **M6-6 的 4 条**：`GET` invocations、`GET\|PUT` mcp tools（+ 共用的 `runtime_support.rs`）、`GET` surface launch |
+//! | `hooks.rs` / `hooks_job.rs` | **M6-8 的 1 条**：`POST /api/plugin-bridge/v1/hooks/{key}`（+ job 数据面） |
 //!
 //! 全部 `#[ignore]`：需要真库（`MULTICA_TEST_DATABASE_URL`），由门 ⑥ 用 `-- --ignored`
 //! 拉起；`connect()` 在 env 缺失时打印跳过并 `return`，设了却连不上则 **panic**。
@@ -18,6 +19,8 @@
 #![cfg(feature = "test-util")]
 
 mod guard;
+mod hooks;
+mod hooks_job;
 mod lifecycle;
 mod packages;
 mod runtime;

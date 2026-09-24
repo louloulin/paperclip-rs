@@ -211,6 +211,11 @@ async fn create_installation(
     })?;
 
     sync_skill_resources(&mut tx, workspace_id, user_id, &row, version, manifest).await?;
+    // M6-8（`LUM-1673`）：`hooks[].schedule` 的持久投影与安装行**同一个事务**
+    // （上游 `reconcilePluginHookSchedules`；缺口由 `docs/32` §9.6 的 M6-5-D2 指派给本片）。
+    crate::routes::plugins::hooks_job::reconcile_schedules_tx(&mut tx, &row, manifest)
+        .await
+        .map_err(PluginError::from)?;
     commit(tx, "commit install").await?;
     Ok(row)
 }
@@ -271,6 +276,10 @@ async fn upgrade_installation(
         manifest,
     )
     .await?;
+    // 升级也重跑日程对齐：定义没变 ⇒ 保留 generation（纯代码升级不得重置日程时钟）。
+    crate::routes::plugins::hooks_job::reconcile_schedules_tx(&mut tx, &updated, manifest)
+        .await
+        .map_err(PluginError::from)?;
     commit(tx, "commit upgrade").await?;
     Ok(updated)
 }
