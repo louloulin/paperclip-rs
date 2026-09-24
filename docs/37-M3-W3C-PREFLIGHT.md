@@ -7142,14 +7142,67 @@ unclaimed 0   regression 0   local_only 9
 - `LUM-1673` 的 run 终态于 **20:13:31Z**（`completed_at`），其分支 `4b8f5854` 已是 base（`bf8ecc48`）的**祖先**（内容全部在远端）、工作树 **0 未提交**、`/proc/*/cwd` **零命中** ⇒ 四判据齐，**整删 `lum-1673-3be5bf776e34/workdir/paperclip-rs/target`（16.3G）**；workdir 本体（源码 + `.git`，21M）保留作证据。删除时注意：`ls -l /proc/*/cwd | grep -c <workdir>` 会被**自己这条命令**（`cd` 进目标目录的 shell 与其子进程）污染 ⇒ 判第四判据要**按 PID 逐个看 `cmdline`**，别只看计数。
 - 结果：磁盘 **13G → 29G 可用（39%）**，为同轮在飞的 `LUM-1675`（起手即建 `target/`，2.5G 时可见增长）留足余量。两轮合计本轮回收 **28.1G**。
 
+## §80 05:30 cycle（`LUM-1812`，21:30Z 触发）：**合并 #80（M6-INT）⇒ base `f73d916d` —— M6 全波收口（⑦ 基线 `344 → 406` 进 base）**；空位 2 ⇒ 派 **M7-0 anchor（`LUM-1765`）+ M9/W9 计划片（`LUM-1814`）**
+
+### 80.1 起手三连
+
+- `df -h /`：**32G 可用（34%）**（起手）。
+- `git ls-remote origin feat/multica-rs-initial`：**`69c1e44a`**；在飞片分支 `agent/devbox5/14ec3a6d1f09` = **`a2f42fa1`**（= `LUM-1675` 的交付 head，**已推**）。
+- 认证 GH `pulls?state=open`（`git credential fill` 的 `x-access-token` + Basic）：**1 条 open PR = #80**（`LUM-1675` M6-INT，base `69c1e44a`，`mergeable: true / clean`）。
+- daemon `running_task_count = 1`（**含 cycle 自身**）⇒ **空位 = 3 − 1 − 0 = 2**；`pgrep -af pi` 只有本 cycle（`16052`）⇒ `LUM-1675` 的 run **已终态**（不是「PR 已开但还在写」）。
+
+### 80.2 判据链（`docs/57` 派发口径 + §79.8 lesson 2「先确认片停了」）
+
+| # | 步骤 | 证据 |
+|---|---|---|
+| 1 | **预检**：分支自身 `git diff --numstat <merge-base>..<head>` == PR API | `10/2 docs/57` · `356/0 docs/58` · `63/1 docs/fixtures/route-parity-baseline.json` —— 与 API 的 `+429/−3 / 3 files` **逐字相符** |
+| 2 | **形态判定**：base 是否为 head 祖先 | `merge-base --is-ancestor 69c1e44a a2f42fa1` = **假**（merge-base = `94f3ecfc`）⇒ **必须真合**，不适用 FF 形态 |
+| 3 | **码树等价** | `git diff --stat 69c1e44a a2f42fa1 -- crates apps scripts .github migrations` = **空** ⇒ 本片是**纯 docs + 基线快照片**（3 文件） |
+| 4 | **`merge-tree` 单哈希** | `git merge-tree --write-tree 69c1e44a a2f42fa1` ⇒ **`8e0983c717fa88b15e22f08f7472b77caeba8e0c`**（干净、无冲突） |
+| 5 | **实合验证** | `git merge --no-commit --no-ff` 后 `git write-tree` = **`8e0983c7…`**（与预测逐字相同）；三个文件在合并树的 blob == head 的 blob（逐文件 `rev-parse` 比对），其余文件 == base ⇒ 合并树的 `diff` 恰为这 3 文件 |
+| 6 | **API 钉 head sha 合并** | head 三处读数一致（`ls-remote` / `git fetch` / API `head.sha`）= **`a2f42fa1`** ⇒ `PUT /pulls/80/merge {sha, merge_method:"merge"}` ⇒ **合并提交 `f73d916d`** |
+| 7 | **落地复核** | `tree(f73d916d)` = **`8e0983c7…`**（== 预检树）；GH **0 open PR** |
+
+### 80.3 门禁：**改基线的片必须当场重跑 ⑦/⑨/⑩，不继承读数**（§77/§78 lesson）
+
+在合并树（= `f73d916d` 的工作树，`git write-tree` 逐字相符）上实测：
+
+- **⑦ route-parity（本片的核心项）**：`upstream 456 (commit f41fae6b08fb) | local 406 registered | baseline 406`；`implemented 326 real + 4 placeholder = 330 / 456   known_gap 126   unclaimed 0   regression 0   local_only 9`；`gaps by owner: M9=33 M7=24 M8=24 M3+=16 M2-A=13 M3=11 M10=5`；`OK: every upstream route is either implemented or owned`，**exit 0**。⇒ **基线 `344 → 406` 这个唯一的一次性刷新，在 base 上可复现**（`+62/−0`：57 条声明键 + M6-2 的 5 个双形态键）。
+- **⑦b slash-alias**：`python3 scripts/slash_alias_audit.py --quiet` **exit 0**；`--declared docs/fixtures/m6-declared-routes.tsv` = **5 defect / 0 warning，exit 0**（= M6-2 的 5 个双形态键非回归，allowlist 已空）。
+- **⑨ conformance**：`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` ⇒ **`report matches`，exit 0**；stateless 向量 `fixtures 365 / pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`（契约等价率 5/365，已接入路由 5/28）。**口径**：`report.json` 是 **stateless 层**快照，本片 0 diff（M6-INT 的「18 条离开 unevaluable」是 `--db-url` 层读数，不进 `report.json`）⇒ 「matches」即正解。
+- **⑩ file-size**：**exit 0**（`file_size_baseline.tsv` 22 行未变；docs 故意不查）。
+- **①–⑥/⑧**：本片码树与 base 逐字相同（第 3 步 `diff` 为空）⇒ 按**码树等价论证**沿用 `LUM-1675` 交付树上的 **10/10（冷 388s / 热 121s）**读数，不重跑。
+
+### 80.4 派发（空位 2）
+
+1. **`LUM-1765`（M7-0 anchor，0 路由）**：`docs/60` §7 的硬前置「M6 全合」在 #80 合入后**成立** ⇒ 本片是 **M7 波唯一共享写者**（`mc-http/src/routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock` + `docs/32`/`docs/37`），**必须单独跑**。动作：描述追加「起手补充」（base `f73d916d` + 当轮 ⑦ 逐字读数 + **订正正文过期的 `baseline 344` ⇒ 406** + 同轮在飞零交集 + 门禁证据形态）⇒ `assign --to-id` ⇒ `status todo`（它此前无 assignee **且**是 `backlog` ⇒ 两步都要）。
+2. **`LUM-1814`（M9/W9 商业面计划片，新立）**：**空位的第三类选项 = 「下一波的计划片」**（§79.8 lesson 4）。W9 是 DAG 里 W8 的下一个波（`plan1.md` §5：`w9 after w8`），**至今无计划文档、无子 issue**；本片 = docs + fixture + 建 issue（**不改 `.rs`、不动 `migrations/**`、不动 `Cargo.lock`、不刷基线**）⇒ 与 M7-0 写集**零交集**，是当前唯一可安全并派的片型。描述里已钉进：当轮 ⑦ 实测、**33 条 M9 路由逐字**、8 条必须裁定的问题（`/api/agents/mika` 归属 · `mc-cloud` 是否兼承载 M3 的 cloud-runtime · **billing/subscription/stripe 本地无表 ⇒ 出站代理还是补迁移** · `notification-preferences` 三条的双形态键 · stripe 验签与离线替身 · dashboard rollup 只读 · onboarding 与既有实现边界 · entitlement 落点）、交付物（`docs/62-M9-PLAN.md` ≤900 行 + `docs/fixtures/m9-declared-routes.tsv` + 全部 `backlog` 子 issue）、号段与起手纪律。
+3. **刻意不派**：`LUM-1797`（M8-0，**与 M7-0 硬规则不同飞**）；`LUM-1691`（M2-A 尾 12 条）/ `LUM-1793`（第 13 条）——**加路由且同写 `routes/{mod,mount}.rs` / `state.rs` / `Cargo.lock`** ⇒ 等 M7-0 合入后串行；`LUM-1745`（M5-D8，写 `apps/mc-server` + 大概率 `mc-http/src/state.rs`）⇒ 同样与 anchor 争写集。
+
+### 80.5 终点状态与下一轮起点
+
+- **base = `f73d916d`**（本节 docs 提交将使其前移）；GH **0 open PR**；**在飞 3/3** = cycle ∥ `LUM-1765`（M7-0）∥ `LUM-1814`（M9 计划）。
+- 看板：`LUM-1675`/`LUM-1673`/`LUM-1674`/`LUM-1796`/`LUM-1764` 等已合片保持 `in_review`（`done` 归人工）；`blocked` 0。
+- **⑦ 递推**：M7-0 落地 ⇒ **读数逐字不变**（0 路由、0 占位删除、不刷基线）；M7 全波落地后 `local 430 / implemented 354 real / known_gap 102 / owners.M7 0`（`docs/60` §6.1）；下一次基线刷新归 **`LUM-1786`（M7-21 INT）**，普通片不得顺手刷。
+- **磁盘**：**29G 可用（39%）**；本轮**零回收**（在飞的 `LUM-1675` 已自行回收其 15G target，`lum-1675` 的 workdir 现仅 20M）。
+- **下一轮第一动作**：① 起手三连；② 两片判活（`LUM-1765` 新 run 无前序产物；静默死亡 ⇒ 抢救未提交的 3 个新 crate 骨架 + 合 base + 描述追加 + `rerun`）；③ `LUM-1765` 交 PR ⇒ 判据链（预检 numstat == PR API → 形态判定 → `merge-tree` 单哈希 + 落地树等式 → **门 ⑦ 当场实测应与 80.3 逐字相同**）；④ 它一合入 ⇒ **M7 stage 2 三片并行**（`LUM-1766` ∥ `LUM-1767` ∥ `LUM-1768`，写集零交集），且 `LUM-1691`/`LUM-1793` 的写集冲突随之解除（可串行晋升）。
+
+### 80.6 lesson（第 23 轮）
+
+1. **「基线刷新的片」合入后必须由 cycle 亲自把 ⑦ 重跑到 target 值上**：本片 PR 自述的 `344 → 406` 与我独立重跑逐字相同（`local 406 / baseline 406 / regression 0`），但这次**不是**靠「码树等价」推断出来的——基线快照本身是 ⑦ 的输入，**它是这轮唯一不能继承的读数**。判据链里「`merge-tree` 单哈希 + 落地树等式 + 当场重跑」三件套缺一不可。
+2. **纯 docs 片也要走「真合」而不是「树等式直觉」**：本片 base 已越过 head 的 merge-base（`94f3ecfc`），`merge-base --is-ancestor` 为假 ⇒ 我先用 `merge-tree --write-tree` 拿单哈希、再**实合一把比对 `write-tree`**，才得到「合并树的 3 个文件 == head 的 blob」这条逐文件事实。**`mergeable: true` 只说明无冲突，不说明合并结果等于谁。**
+3. **空位判断的唯一合法来源是当轮 daemon 读数**（`running_task_count` 含 cycle 自身）：本轮起手 `1` ⇒ 空位 `2`；派完两片后实测 `3/3`（新 run 的 session 落在 `213636`/`213643`）。**禁抄上一轮 next-cycle 行**（§62 勘误后的固定纪律）。
+4. **`assign --to-id` 不会把 `backlog` 片拉起来**：本轮实测 `assign` 后 issue 仍 `backlog`、`status todo` 才起 run（两个 run 分别在 30s/20s 内落 session）。⇒ 「无 assignee 的 backlog 片」= **两步**（assign + status），漏第二步会静默不跑。
+5. **计划片的号段必须由 cycle 在描述里钉死并写「被抢走就顺延」**：`docs/62` 是本轮的空号（`61` 已被 M8 计划占），若同轮有别的片抢号，接收片按「顺延 + 首行注明」处理，不必回问。**号段冲突的成本 = 一次 rebase，回问的成本 = 一轮空转。**
+
 ---
 
-## §80 M7-0 anchor（`LUM-1765`）：渠道骨架落地 —— 五轮里**第一个不刷 ⑦ 基线**的 anchor
+## §81 M7-0 anchor（`LUM-1765`）：渠道骨架落地 —— 五轮里**第一个不刷 ⑦ 基线**的 anchor
 
 **起手 base = `f73d916d`**（= M6-INT / PR #80 的合并提交；`git fetch origin feat/multica-rs-initial`
 后当轮复核，与 `LUM-1812` 在描述里写的值一致）。本片是 M7 波的**唯一共享写者**（`docs/60` §3.1）。
 
-### 80.1 落地了什么（写集 18 项，逐字路径；零路由 / 零 SQL / 零迁移）
+### 81.1 落地了什么（写集 18 项，逐字路径；零路由 / 零 SQL / 零迁移）
 
 - **新 crate `mc-channel`**：`Channel` 五方法 trait（`connect` 阻塞跑接收循环）+ `Registry`
   （last-writer-wins / `ErrUnknownType` / 字典序 `kinds()`）+ `Capability` 8 位位图 +
@@ -7170,7 +7223,7 @@ unclaimed 0   regression 0   local_only 9
   **先停渠道连接 → 再停调度器 → 最后停 actor**。
 - **文档**：`docs/32` **§10**（文件→写者表 + 六处归位判断 + R-M7-1…R-M7-5 + 新登记 R-M7-10/R-M7-11）。
 
-### 80.2 门禁读数（逐字，当轮实测）
+### 81.2 门禁读数（逐字，当轮实测）
 
 ```
 ①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0
@@ -7192,7 +7245,7 @@ unclaimed 0   regression 0   local_only 9
 - `Cargo.lock`：`+31 −0` = **一个** `[[package]] mc-channel` + `mc-http` / `mc-server` 两条依赖边；
   **零新外部包**（全部用 workspace 既有版本；根 `Cargo.toml` **一行未改**）。
 
-### 80.3 三条 lesson（第 23 轮）
+### 81.3 三条 lesson（第 23 轮）
 
 1. **"anchor 必刷 ⑦ 基线"是 M4/M5/M6 的**经验**，不是规律**：那三轮的 anchor 都**预删了 M0 占位**
    （占位与上游真形态不同键 ⇒ 必须提前删，否则切片接线时 panic）。M7 的渠道面**从来**没有占位
@@ -7208,7 +7261,7 @@ unclaimed 0   regression 0   local_only 9
    **教训**：碰基线清单里的文件时，先算行数缺口再动手；`file_size_check.py` 的提示
    （"split / shrink / drop the entry"）里 `shrink` 往往是最小代价。
 
-### 80.4 下一轮起点与预置
+### 81.4 下一轮起点与预置
 
 - **base 前进需等 PR 合入**（本片零代码参照物，cycle 的判据链应按 `docs/60` §6.1 的 M7-0 行
   逐项比对本节的读数）。
