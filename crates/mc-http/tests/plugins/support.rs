@@ -20,9 +20,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use mc_core::actor::ActorRegistry;
 use mc_db::Db;
-use mc_http::state::{
-    AdapterRegistry, AppState, ConfigSnapshot, PluginSecretKey, RuntimeHandles,
-};
+use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, PluginSecretKey, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use serde_json::{json, Value};
 use sqlx::types::Json;
@@ -92,9 +90,11 @@ pub(crate) fn app_without_deployment_key(db: Db) -> Router {
 /// 带**关掉的** `plugins_v1` 开关的 app（开关未注册 = 开启，所以这里显式注册为 false）。
 pub(crate) fn app_with_plugins_v1_disabled(db: Db) -> Router {
     let state = build_state(db, true);
-    state
-        .feature_flags
-        .register(&mc_feature_flags::FeatureKey::new("plugins_v1"), false, None);
+    state.feature_flags.register(
+        &mc_feature_flags::FeatureKey::new("plugins_v1"),
+        false,
+        None,
+    );
     app_from(state)
 }
 
@@ -206,7 +206,9 @@ pub(crate) fn req(
         .header(WORKSPACE_HEADER, workspace_id.to_string())
         .header("content-type", "application/json");
     match body {
-        Some(value) => builder.body(Body::from(value.to_string())).expect("request"),
+        Some(value) => builder
+            .body(Body::from(value.to_string()))
+            .expect("request"),
         None => builder.body(Body::empty()).expect("request"),
     }
 }
@@ -273,7 +275,7 @@ pub(crate) async fn call_raw(app: &Router, request: Request<Body>) -> (StatusCod
 // ---------------------------------------------------------------------------
 
 /// 一个最小的合法 v1 manifest（`contributes` 由调用方补）。
-pub(crate) fn manifest(key: &str, version: &str, contributes: Value) -> Value {
+pub(crate) fn manifest(key: &str, version: &str, contributes: &Value) -> Value {
     let mut root = json!({
         "manifest_version": 1,
         "key": key,
@@ -299,14 +301,6 @@ pub(crate) fn issue_panel(entry: &str) -> Value {
                             "name": "Itest Panel", "entry": entry } ] })
 }
 
-/// 一个 `skill` 资源（入口**必须**恰好是 `skills/<key>/SKILL.md`）。
-pub(crate) fn skill_resource(key: &str) -> Value {
-    json!({ "surfaces": [ { "key": "panel", "type": "issue_panel",
-                            "name": "Itest Panel", "entry": "panel.js" } ],
-            "resources": [ { "type": "skill", "key": key,
-                             "entry": format!("skills/{key}/SKILL.md") } ] })
-}
-
 /// 把 manifest + 文件打成 zip 上传（`POST .../plugins/packages`）⇒ 期望 201。
 pub(crate) async fn publish(
     app: &Router,
@@ -316,7 +310,12 @@ pub(crate) async fn publish(
     files: &[(&str, &str)],
 ) -> Value {
     let mut entries = vec![("multica.plugin.json", manifest.to_string())];
-    entries.extend(files.iter().copied().map(|(path, body)| (path, body.to_string())));
+    entries.extend(
+        files
+            .iter()
+            .copied()
+            .map(|(path, body)| (path, body.to_string())),
+    );
     let owned: Vec<(&str, &str)> = entries
         .iter()
         .map(|(path, body)| (*path, body.as_str()))
@@ -325,7 +324,11 @@ pub(crate) async fn publish(
     let uri = plugins_uri(workspace_id, "/packages");
     let request = bundle_upload_req(&uri, workspace_id, user_id, "itest.zip", &archive);
     let (status, json) = call_raw(app, request).await;
-    assert_eq!(status, StatusCode::CREATED, "publish package failed: {json}");
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "publish package failed: {json}"
+    );
     json
 }
 
@@ -370,14 +373,7 @@ pub(crate) async fn publish_and_install(
 ) -> (Value, Value) {
     let package = publish(app, workspace_id, user_id, manifest, files).await;
     let version_id = version_id_of(&package);
-    let installation = install(
-        app,
-        workspace_id,
-        user_id,
-        &version_id,
-        &["issues:read"],
-    )
-    .await;
+    let installation = install(app, workspace_id, user_id, &version_id, &["issues:read"]).await;
     (package, installation)
 }
 
@@ -434,7 +430,18 @@ pub(crate) async fn installation_row(
     workspace_id: Uuid,
     plugin_key: &str,
 ) -> Option<InstallationRow> {
-    sqlx::query_as::<_, (Uuid, String, Value, Value, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Value,
+            Value,
+            bool,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         "SELECT id, version, granted_scopes, config, enabled, token_hash, token_rotated_at \
          FROM plugin_installation WHERE workspace_id = $1 AND plugin_key = $2",
     )
@@ -460,12 +467,14 @@ pub(crate) async fn stored_secret(
     installation_id: Uuid,
     name: &str,
 ) -> Option<Vec<u8>> {
-    sqlx::query_scalar("SELECT ciphertext FROM plugin_secret WHERE installation_id = $1 AND name = $2")
-        .bind(installation_id)
-        .bind(name)
-        .fetch_optional(pool)
-        .await
-        .expect("select plugin_secret")
+    sqlx::query_scalar(
+        "SELECT ciphertext FROM plugin_secret WHERE installation_id = $1 AND key = $2",
+    )
+    .bind(installation_id)
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .expect("select plugin_secret")
 }
 
 pub(crate) async fn secret_count(pool: &PgPool, installation_id: Uuid) -> i64 {
@@ -499,6 +508,9 @@ pub(crate) async fn package_version_count(pool: &PgPool, workspace_id: Uuid) -> 
 
 /// 直接落一个「已发布但本宿主跑不了」的版本。
 ///
+/// `digest` 必须是 **64 字符**（上游 `plugin_package_version_digest_check`），所以夹具用一个
+/// 合法长度的 32 字节十六进制字面量 —— 短串（如 `'fixture-digest'`）插不进去。
+///
 /// 上传路径**自己**会先用同一个校验器拦下这种 manifest（发布时就拒），所以想验「preview 与
 /// install 共用校验器」只能造库 —— 语义上也对：这是「更早/更新版本的宿主发布的版本」，
 /// 宿主能力收窄后老版本必须被安装路径挡住。
@@ -524,7 +536,8 @@ pub(crate) async fn seed_published_version(
     let version_id: Uuid = sqlx::query_scalar(
         "INSERT INTO plugin_package_version \
            (package_id, workspace_id, version, manifest, digest, size_bytes, published_by) \
-         VALUES ($1, $2, $3, $4, 'fixture-digest', 1, $5) RETURNING id",
+         VALUES ($1, $2, $3, $4, \
+           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, $5) RETURNING id",
     )
     .bind(package_id)
     .bind(workspace_id)

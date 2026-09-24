@@ -30,7 +30,7 @@
 //!
 //! 上游把 `MULTICA_PLUGIN_DIR` 读进 `PluginService.LocalDir`（构造时一次）；本仓**没有这个装配点**
 //! ——`AppState` 是 M6-0 冻结面、`apps/mc-server/src/main.rs` 不在 M6-5 写集，因此这里**按请求
-//! 读同名 env**（未设置 ⇒ 400「local plugin sources require MULTICA_PLUGIN_DIR」，与上游同一句），
+//! 读同名 env**（未设置 ⇒ 400「local plugin sources require `MULTICA_PLUGIN_DIR`」，与上游同一句），
 //! 装配点登记给 M6-10（`docs/32` §9）。目录读取用**同步** `std::fs`：`parse_bundle_from_dir` 的
 //! 读回调是同步签名（无法 `await`），且整包上限 4MiB / 512 条目，仅开发通道使用。
 //!
@@ -119,7 +119,7 @@ pub fn router() -> Router<Arc<AppState>> {
 // 响应体
 // ---------------------------------------------------------------------------
 
-/// 上游 `PluginPackageSummary`（键名与上游 JSON tag 一致：全 snake_case，无 `rename_all`）。
+/// 上游 `PluginPackageSummary`（键名与上游 JSON tag 一致：全 `snake_case`，无 `rename_all`）。
 #[derive(Debug, Serialize)]
 struct PackageSummaryDto {
     id: String,

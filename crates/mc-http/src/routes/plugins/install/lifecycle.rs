@@ -7,7 +7,16 @@
 //! `UninstallPlugin` + `internal/service/plugin.go` 的 `Preview` / `Install` / `Uninstall` /
 //! `InstallSkillResources`。
 
-use super::*;
+use super::{
+    begin, commit, config_fields, decode, installation_for_workspace, installation_payload,
+    installation_repo, installations, is_secret_field, json, manifest_of_version, packages,
+    parse_skill_frontmatter, prune_config, require_exact_scopes, require_plugins_v1,
+    require_supported, sync_plugin_skills, version_for_workspace, workspace_admin,
+    workspace_member, AppState, Arc, AuthUser, Bytes, Deserialize, Id, InstallationRow,
+    IntoResponse, Json, Manifest, Map, NewInstallation, PackageVersionRow, Path, PluginError,
+    PluginResult, PluginSkillInput, RepoError, ResourceType, Response, State, StatusCode,
+    UpgradeInstallation, Value,
+};
 
 // ---------------------------------------------------------------------------
 // 路由

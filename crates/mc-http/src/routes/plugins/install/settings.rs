@@ -7,7 +7,14 @@
 //! `RotatePluginToken` / `DeletePluginToken` + `internal/service/plugin.go` 的 `SetConfig` /
 //! `SetEnabled` / `RotateInstallCredentials`。
 
-use super::*;
+use super::{
+    begin, commit, credential_message, decode, deployment_key, hash_token, hook_signing_secret,
+    installation_for_workspace, installation_manifest, installation_payload, installations, json,
+    new_install_token, normalize_config_value, require_plugins_v1, seal_secret, workspace_admin,
+    AppState, Arc, AuthUser, Bytes, CredentialError, Deserialize, Id, IntoResponse, Json, Map,
+    Path, PluginError, PluginResult, Response, State, StatusCode, Value, MAX_PLUGIN_SECRET_BYTES,
+    SECRET_KIND,
+};
 
 #[derive(Debug, Default, Deserialize)]
 struct ConfigurePluginRequest {

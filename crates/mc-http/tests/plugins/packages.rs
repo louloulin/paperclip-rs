@@ -26,7 +26,7 @@ async fn published_versions_are_immutable_and_listed_newest_first() {
         &app,
         workspace_id,
         user_id,
-        &manifest(KEY, "1.0.0", issue_panel("panel.js")),
+        &manifest(KEY, "1.0.0", &issue_panel("panel.js")),
         &[("panel.js", "root.render();")],
     )
     .await;
@@ -34,7 +34,7 @@ async fn published_versions_are_immutable_and_listed_newest_first() {
         &app,
         workspace_id,
         user_id,
-        &manifest(KEY, "1.0.1", issue_panel("panel.js")),
+        &manifest(KEY, "1.0.1", &issue_panel("panel.js")),
         &[("panel.js", "root.render(1);")],
     )
     .await;
@@ -45,7 +45,8 @@ async fn published_versions_are_immutable_and_listed_newest_first() {
     assert_eq!(versions.len(), 2);
     assert_eq!(versions[0]["version"], json!("1.0.1"));
     assert_eq!(versions[1]["version"], json!("1.0.0"));
-    assert_eq!(versions[0]["size_bytes"], json!("root.render(1);".len() as i64));
+    let expected_size = i64::try_from("root.render(1);".len()).expect("size fits in i64");
+    assert_eq!(versions[0]["size_bytes"], json!(expected_size));
     assert_eq!(versions[0]["installed"], json!(false));
     assert!(
         versions[0]["published_at"]
@@ -57,7 +58,10 @@ async fn published_versions_are_immutable_and_listed_newest_first() {
     // 同版本再发 ⇒ 409：已发布的版本是不可变的（换新版本号是唯一出路）。
     let uri = plugins_uri(workspace_id, "/packages");
     let archive = zip_store(&[
-        ("multica.plugin.json", &manifest(KEY, "1.0.1", issue_panel("panel.js")).to_string()),
+        (
+            "multica.plugin.json",
+            &manifest(KEY, "1.0.1", &issue_panel("panel.js")).to_string(),
+        ),
         ("panel.js", "root.render(1);"),
     ]);
     let (status, body) = call_raw(
@@ -77,7 +81,7 @@ async fn published_versions_are_immutable_and_listed_newest_first() {
         &app,
         workspace_id,
         user_id,
-        &manifest("com.example.other", "1.0.0", issue_panel("panel.js")),
+        &manifest("com.example.other", "1.0.0", &issue_panel("panel.js")),
         &[("panel.js", "root.render();")],
     )
     .await;
@@ -113,9 +117,12 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
     let good = zip_store(&[
         (
             "multica.plugin.json",
-            &manifest(KEY, "1.0.0", issue_panel("panel.js")).to_string(),
+            &manifest(KEY, "1.0.0", &issue_panel("panel.js")).to_string(),
         ),
-        ("panel.js", "const el = root.querySelector('h1');\nel.textContent = 'ok';\n"),
+        (
+            "panel.js",
+            "const el = root.querySelector('h1');\nel.textContent = 'ok';\n",
+        ),
     ]);
     let (status, body) = call_raw(
         &app,
@@ -128,7 +135,7 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
     let module_syntax = zip_store(&[
         (
             "multica.plugin.json",
-            &manifest(KEY, "1.1.0", issue_panel("panel.js")).to_string(),
+            &manifest(KEY, "1.1.0", &issue_panel("panel.js")).to_string(),
         ),
         ("panel.js", "import x from './x.js';\nx();\n"),
     ]);
@@ -147,7 +154,7 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
     // 反例二：manifest 引用的入口根本不在包里（否则读到浏览器里才炸）。
     let missing_entry = zip_store(&[(
         "multica.plugin.json",
-        &manifest(KEY, "1.2.0", issue_panel("panel.js")).to_string(),
+        &manifest(KEY, "1.2.0", &issue_panel("panel.js")).to_string(),
     )]);
     let (status, body) = call_raw(
         &app,
@@ -156,7 +163,7 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        error_message(&body).contains("is missing from the package"),
+        error_message(&body).contains("is missing \"panel.js\", which the manifest declares"),
         "{body}"
     );
 
@@ -173,7 +180,8 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
         "{body}"
     );
 
-    // 反例四：没有 `bundle` 字段 ⇒ 400；空字段也走同一条。
+    // 反例四：没有 `bundle` 字段 ⇒ 413 + `payload_too_large`（与上游 `ParseMultipartForm`
+    // 失败同一条：包太大**或**不是 multipart）。
     let (status, body) = call(
         &app,
         "POST",
@@ -183,7 +191,7 @@ async fn publish_rejects_invalid_js_but_accepts_a_classic_script() {
         Some(json!({ "name": "not-multipart" })),
     )
     .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
     assert_eq!(error_code(&body), "payload_too_large");
 
     // 成功的那个 + 失败的三次都没落库（版本数仍是 1）。
@@ -201,7 +209,7 @@ async fn delete_package_refuses_while_it_is_installed() {
     };
     let app = app(db);
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let (package, _installation) = publish_and_install(
         &app,
         workspace_id,
@@ -228,10 +236,7 @@ async fn delete_package_refuses_while_it_is_installed() {
     assert_eq!(error_message(&body), "plugin package not found");
 
     // 合法但不存在的 uuid ⇒ 同样 404。
-    let uri = plugins_uri(
-        workspace_id,
-        &format!("/packages/{}", Uuid::new_v4()),
-    );
+    let uri = plugins_uri(workspace_id, &format!("/packages/{}", Uuid::new_v4()));
     let (status, body) = call(&app, "DELETE", &uri, workspace_id, user_id, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(error_message(&body), "plugin package not found");
@@ -291,12 +296,9 @@ async fn local_publish_reads_the_operators_directory() {
     // 3) 发布：目录里就是 manifest + 入口。
     let plugin_dir = root.join("demo");
     std::fs::create_dir_all(&plugin_dir).expect("create plugin dir");
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
-    std::fs::write(
-        plugin_dir.join("multica.plugin.json"),
-        manifest.to_string(),
-    )
-    .expect("write manifest");
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
+    std::fs::write(plugin_dir.join("multica.plugin.json"), manifest.to_string())
+        .expect("write manifest");
     std::fs::write(plugin_dir.join("panel.js"), "root.render();").expect("write entry");
 
     let (status, body) = call(

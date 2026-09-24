@@ -256,7 +256,7 @@ fn plugins_v1_enabled(state: &AppState) -> bool {
     state
         .feature_flags
         .get(&FeatureKey::new(PLUGINS_V1))
-        .map_or(true, |flag| flag.enabled)
+        .is_none_or(|flag| flag.enabled)
 }
 
 /// 成员角色（`member` 表的 `role`）；非成员 ⇒ `None`。
@@ -432,7 +432,6 @@ fn installation_manifest(installation: &InstallationRow) -> PluginResult<Manifes
 /// 上游 `Manifest.CheckCapabilities` 的 422 形态。
 pub(super) fn require_supported(manifest: &Manifest) -> PluginResult<()> {
     check_capabilities(manifest, &HOST_CAPABILITIES)
-        .map(|()| ())
         .map_err(|missing| PluginError::incompatible(capability_message(&missing)))
 }
 

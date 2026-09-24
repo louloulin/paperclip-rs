@@ -108,8 +108,5 @@ fn zip_store_fixture_is_readable() {
     ]);
     let bundle = mc_plugin_host::bundle::parse_bundle(&archive).expect("parse fixture bundle");
     assert_eq!(bundle.files.len(), 2);
-    assert_eq!(
-        bundle.file("panel.js"),
-        Some(b"root.render();".as_slice())
-    );
+    assert_eq!(bundle.file("panel.js"), Some(b"root.render();".as_slice()));
 }

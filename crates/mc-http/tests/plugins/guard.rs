@@ -58,7 +58,11 @@ async fn non_uuid_workspace_is_400_on_every_route() {
             call(&app, method, &uri, workspace_id, user_id, Some(json!({}))).await
         };
         assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body}");
-        assert_eq!(error_code(&body), "validation_error", "{method} {uri}: {body}");
+        assert_eq!(
+            error_code(&body),
+            "validation_error",
+            "{method} {uri}: {body}"
+        );
         assert!(
             error_message(&body).contains("workspace_id must be a valid uuid"),
             "{method} {uri}: {body}"
@@ -127,7 +131,11 @@ async fn non_member_is_404_and_member_who_is_not_admin_is_403() {
         let (status, body) = call(&app, method, &uri, workspace_id, member, Some(json!({}))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {body}");
         assert_eq!(error_code(&body), "forbidden", "{method} {uri}: {body}");
-        assert_eq!(error_message(&body), "workspace admin role required", "{uri}");
+        assert_eq!(
+            error_message(&body),
+            "workspace admin role required",
+            "{uri}"
+        );
     }
 
     cleanup(&pool, workspace_id, &[member]).await;

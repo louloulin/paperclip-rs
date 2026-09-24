@@ -20,7 +20,7 @@ async fn preview_install_list_and_uninstall_round_trip() {
     let app = app(db);
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
 
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let package = publish(
         &app,
         workspace_id,
@@ -108,7 +108,10 @@ async fn preview_install_list_and_uninstall_round_trip() {
         None,
     )
     .await;
-    assert_eq!(packages["packages"][0]["versions"][0]["installed"], json!(true));
+    assert_eq!(
+        packages["packages"][0]["versions"][0]["installed"],
+        json!(true)
+    );
 
     // 卸载：204 无体；行没了，包仍在（卸载不等于删包）。
     let uri = plugins_uri(workspace_id, &format!("/{installation_id}"));
@@ -138,7 +141,7 @@ async fn install_materializes_plugin_skills_and_uninstall_prunes_them() {
     let manifest = manifest(
         KEY,
         "2.0.0",
-        json!({
+        &json!({
             "surfaces": [ { "key": "panel", "type": "issue_panel",
                             "name": "Itest Panel", "entry": "panel.js" } ],
             "resources": [
@@ -172,7 +175,7 @@ async fn install_materializes_plugin_skills_and_uninstall_prunes_them() {
             ("alpha".to_owned(), "Alpha skill.".to_owned()),
             (
                 "beta".to_owned(),
-                "Provided by the Itest Plugin. Plugin.".to_owned()
+                "Provided by the Itest Plugin Plugin.".to_owned()
             ),
         ]
     );
@@ -203,7 +206,7 @@ async fn preview_and_install_report_the_same_validator_error() {
     let unsupported = manifest(
         KEY,
         "3.0.0",
-        json!({ "surfaces": [ { "key": "side", "type": "sidebar_panel",
+        &json!({ "surfaces": [ { "key": "side", "type": "sidebar_panel",
                                 "name": "Side", "entry": "panel.js" } ] }),
     );
     let version_id = seed_published_version(&pool, workspace_id, user_id, &unsupported).await;
@@ -228,7 +231,11 @@ async fn preview_and_install_report_the_same_validator_error() {
     .await;
 
     // 同一条判据（`manifest_of_version` + `require_supported`）⇒ 同 status、同 code、同文案。
-    assert_eq!(preview_status, StatusCode::UNPROCESSABLE_ENTITY, "{preview}");
+    assert_eq!(
+        preview_status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{preview}"
+    );
     assert_eq!(install_status, preview_status, "{install}");
     assert_eq!(error_code(&preview), "unprocessable");
     assert_eq!(error_code(&install), error_code(&preview));
@@ -252,7 +259,7 @@ async fn install_rejects_scopes_that_do_not_match_the_manifest() {
     };
     let app = app(db);
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let package = publish(
         &app,
         workspace_id,
@@ -279,7 +286,7 @@ async fn install_rejects_scopes_that_do_not_match_the_manifest() {
         "granted_scopes must match the manifest scopes exactly"
     );
 
-    // 多给（清单里没有的 scope）。
+    // 多给（长度不同 ⇒ 上游先撞上「必须完全一致」这条，`requireExactScopes` 的第一道门）。
     let (status, body) = call(
         &app,
         "POST",
@@ -289,6 +296,25 @@ async fn install_rejects_scopes_that_do_not_match_the_manifest() {
         Some(json!({
             "version_id": version_id,
             "granted_scopes": ["issues:read", "tasks:write"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        error_message(&body),
+        "granted_scopes must match the manifest scopes exactly"
+    );
+
+    // 换一个（长度相同但清单里没有 ⇒ 第二道门，点名哪个 scope 是多余的）。
+    let (status, body) = call(
+        &app,
+        "POST",
+        &plugins_uri(workspace_id, ""),
+        workspace_id,
+        user_id,
+        Some(json!({
+            "version_id": version_id,
+            "granted_scopes": ["tasks:write"]
         })),
     )
     .await;
@@ -311,7 +337,7 @@ async fn configure_sends_secrets_to_the_encrypted_table_only() {
     };
     let app = app(db);
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let (_package, installation) = publish_and_install(
         &app,
         workspace_id,
@@ -401,7 +427,7 @@ async fn configure_sends_secrets_to_the_encrypted_table_only() {
     cleanup(&pool, workspace_id, &[user_id]).await;
 }
 
-/// DoD 的 fail-closed 判据：**部署密钥缺失 ⇒ `plugin_secret` 写入失败**，绝不落明文。
+/// `DoD` 的 fail-closed 判据：**部署密钥缺失 ⇒ `plugin_secret` 写入失败**，绝不落明文。
 #[tokio::test]
 #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn configure_without_deployment_key_refuses_to_store_secrets() {
@@ -412,7 +438,7 @@ async fn configure_without_deployment_key_refuses_to_store_secrets() {
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
     // 先带密钥装好（安装本身不需要密钥），再用**没有**密钥的 app 去配 secret。
     let with_key = app(db.clone());
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let (_package, installation) = publish_and_install(
         &with_key,
         workspace_id,
@@ -476,7 +502,7 @@ async fn enable_and_disable_are_idempotent() {
     };
     let app = app(db);
     let (workspace_id, user_id) = seed_workspace(&pool, "owner").await;
-    let manifest = manifest(KEY, "1.0.0", issue_panel("panel.js"));
+    let manifest = manifest(KEY, "1.0.0", &issue_panel("panel.js"));
     let (_package, installation) = publish_and_install(
         &app,
         workspace_id,
@@ -530,10 +556,7 @@ async fn enable_and_disable_are_idempotent() {
     );
 
     // 不存在的安装 id（合法 uuid）⇒ 404，文案与卸载路径同款。
-    let uri = plugins_uri(
-        workspace_id,
-        "/00000000-0000-0000-0000-000000000009/enable",
-    );
+    let uri = plugins_uri(workspace_id, "/00000000-0000-0000-0000-000000000009/enable");
     let (status, body) = call(&app, "POST", &uri, workspace_id, user_id, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(error_message(&body), "plugin installation not found");
