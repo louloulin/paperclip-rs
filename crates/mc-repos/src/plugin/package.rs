@@ -31,8 +31,7 @@ const PACKAGE_COLUMNS: &str =
     "id, workspace_id, plugin_key, name, created_by, created_at, updated_at";
 const VERSION_COLUMNS: &str = "id, package_id, workspace_id, version, manifest, digest, \
                                size_bytes, published_by, created_at";
-const FILE_COLUMNS: &str =
-    "id, version_id, path, content, size_bytes, sha256, created_at";
+const FILE_COLUMNS: &str = "id, version_id, path, content, size_bytes, sha256, created_at";
 
 /// 一行 `plugin_package`（一个可发布的插件身份）。
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -247,29 +246,42 @@ pub async fn versions_tx(tx: &mut Tx<'_>, package_id: Id) -> Result<Vec<PackageV
     .map_err(map_sqlx_err)
 }
 
+/// 一次发布的输入（`insert_version_tx`）。
+///
+/// 做成结构体而不是 8 个位置参数：`digest` 与 `version` 都是字符串、`workspace_id` 与
+/// `published_by` 都是 `Id`，位置参数会让人一眼看不出谁是谁。
+#[derive(Debug, Clone)]
+pub struct NewVersion<'a> {
+    /// 所属包。
+    pub package_id: Id,
+    /// 冗余的 workspace（读面免 join）。
+    pub workspace_id: Id,
+    /// 版本号（`(package_id, version)` 唯一）。
+    pub version: &'a str,
+    /// 该版本的 manifest 快照。
+    pub manifest: &'a serde_json::Value,
+    /// bundle 的 sha256 hex（64 字符）。
+    pub digest: &'a str,
+    /// bundle 字节数（非负）。
+    pub size_bytes: i64,
+    /// 发布者。
+    pub published_by: Id,
+}
+
 /// 插入一个**新的**不可变版本；唯一索引撞车 ⇒ [`RepoError::Conflict`]（版本已存在）。
-pub async fn insert_version_tx(
-    tx: &mut Tx<'_>,
-    package_id: Id,
-    workspace_id: Id,
-    version: &str,
-    manifest: &serde_json::Value,
-    digest: &str,
-    size_bytes: i64,
-    published_by: Id,
-) -> Result<PackageVersionRow> {
+pub async fn insert_version_tx(tx: &mut Tx<'_>, new: &NewVersion<'_>) -> Result<PackageVersionRow> {
     sqlx::query_as::<_, PackageVersionRow>(&format!(
         "INSERT INTO plugin_package_version \
            (package_id, workspace_id, version, manifest, digest, size_bytes, published_by) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {VERSION_COLUMNS}"
     ))
-    .bind(package_id.0)
-    .bind(workspace_id.0)
-    .bind(version)
-    .bind(Json(manifest.clone()))
-    .bind(digest)
-    .bind(size_bytes)
-    .bind(published_by.0)
+    .bind(new.package_id.0)
+    .bind(new.workspace_id.0)
+    .bind(new.version)
+    .bind(Json(new.manifest.clone()))
+    .bind(new.digest)
+    .bind(new.size_bytes)
+    .bind(new.published_by.0)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_sqlx_err)
@@ -290,7 +302,10 @@ pub async fn insert_file_tx(
     .bind(version_id.0)
     .bind(path)
     .bind(content)
-    .bind(content.len() as i64)
+    .bind(
+        i64::try_from(content.len())
+            .map_err(|_| RepoError::Db("plugin package file exceeds i64 bytes".to_string()))?,
+    )
     .bind(sha256)
     .execute(&mut **tx)
     .await
@@ -329,4 +344,239 @@ pub async fn delete_package_tx(tx: &mut Tx<'_>, package_id: Id) -> Result<()> {
         .await
         .map_err(map_sqlx_err)
         .map(|_| ())
+}
+
+// ---------------------------------------------------------------------------
+// 真库集成测试（`#[ignore]` + `MULTICA_TEST_DATABASE_URL`，gate ⑥ 拉起）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod db_tests {
+    use super::*;
+    use crate::plugin::installation::{
+        count_installations_of_versions_tx, insert_tx, NewInstallation,
+    };
+    use serde_json::json;
+    use std::env;
+    use uuid::Uuid;
+
+    struct Fixture {
+        db: Db,
+        workspace_id: Id,
+        user_id: Id,
+    }
+
+    async fn setup() -> Option<Fixture> {
+        let url = env::var("MULTICA_TEST_DATABASE_URL").ok()?;
+        let db = Db::connect(&url, 4, 1).await.ok()?;
+        let workspace_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO workspace(name, slug) VALUES ('itest-m65pkg', $1) RETURNING id",
+        )
+        .bind(format!("itest-m65pkg-{}", Uuid::new_v4()))
+        .fetch_one(db.pool())
+        .await
+        .ok()?;
+        let user_id: Uuid = sqlx::query_scalar(
+            r#"INSERT INTO "user"(name, email) VALUES ('itest-m65pkg', $1) RETURNING id"#,
+        )
+        .bind(format!("itest-m65pkg-{}@example.com", Uuid::new_v4()))
+        .fetch_one(db.pool())
+        .await
+        .ok()?;
+        Some(Fixture {
+            db,
+            workspace_id: Id::from(workspace_id),
+            user_id: Id::from(user_id),
+        })
+    }
+
+    macro_rules! fixture {
+        () => {
+            match setup().await {
+                Some(fx) => fx,
+                None => {
+                    eprintln!("skipping: set MULTICA_TEST_DATABASE_URL to run");
+                    return;
+                }
+            }
+        };
+    }
+
+    async fn teardown(fx: &Fixture) {
+        for sql in [
+            "DELETE FROM plugin_installation WHERE workspace_id = $1",
+            "DELETE FROM plugin_package_version WHERE workspace_id = $1",
+            "DELETE FROM plugin_package WHERE workspace_id = $1",
+        ] {
+            let _ = sqlx::query(sql)
+                .bind(fx.workspace_id.0)
+                .execute(fx.db.pool())
+                .await;
+        }
+        let _ = sqlx::query("DELETE FROM workspace WHERE id = $1")
+            .bind(fx.workspace_id.0)
+            .execute(fx.db.pool())
+            .await;
+        let _ = sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(fx.user_id.0)
+            .execute(fx.db.pool())
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_upsert_package_reuses_row_and_tracks_name() {
+        let fx = fixture!();
+        let repo = PackageRepo::new(fx.db.clone());
+
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let first = upsert_package_tx(&mut tx, fx.workspace_id, fx.user_id, "a.plugin", "Alpha")
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        // 同 key 再发布 = 同一 package（只跟新名字走，不新建行）。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let renamed =
+            upsert_package_tx(&mut tx, fx.workspace_id, fx.user_id, "a.plugin", "Alpha v2")
+                .await
+                .expect("rename");
+        tx.commit().await.expect("commit");
+        assert_eq!(renamed.id, first.id);
+        assert_eq!(renamed.name, "Alpha v2");
+        assert_eq!(repo.list(fx.workspace_id).await.expect("list").len(), 1);
+
+        teardown(&fx).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_version_is_immutable_and_files_round_trip_as_bytes() {
+        let fx = fixture!();
+        let repo = PackageRepo::new(fx.db.clone());
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let package = upsert_package_tx(&mut tx, fx.workspace_id, fx.user_id, "b.plugin", "Beta")
+            .await
+            .expect("package");
+        let version = insert_version_tx(
+            &mut tx,
+            &NewVersion {
+                package_id: package.id(),
+                workspace_id: fx.workspace_id,
+                version: "1.0.0",
+                manifest: &json!({"name": "Beta"}),
+                digest: &"b".repeat(64),
+                size_bytes: 3,
+                published_by: fx.user_id,
+            },
+        )
+        .await
+        .expect("version");
+        tx.commit().await.expect("commit");
+
+        // 重复发布同一版本 ⇒ 唯一键冲突，绝不 UPDATE。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let dup = insert_version_tx(
+            &mut tx,
+            &NewVersion {
+                package_id: package.id(),
+                workspace_id: fx.workspace_id,
+                version: "1.0.0",
+                manifest: &json!({"name": "Beta"}),
+                digest: &"c".repeat(64),
+                size_bytes: 9,
+                published_by: fx.user_id,
+            },
+        )
+        .await;
+        assert!(matches!(dup, Err(RepoError::Conflict)));
+        tx.rollback().await.expect("rollback");
+        let versions = repo.versions(package.id()).await.expect("versions");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].digest, "b".repeat(64));
+
+        // 文件 content 是 BYTEA：非 UTF-8 字节能原样往返。
+        let raw = vec![0xff_u8, 0x00, 0xfe];
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        insert_file_tx(&mut tx, version.id(), "surface.js", &raw, &"d".repeat(64))
+            .await
+            .expect("file");
+        tx.commit().await.expect("commit");
+        let file = repo.file(version.id(), "surface.js").await.expect("read");
+        assert_eq!(file.content, raw);
+        assert_eq!(file.size_bytes, 3);
+
+        teardown(&fx).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_delete_package_cascade_and_installation_guard() {
+        let fx = fixture!();
+        let repo = PackageRepo::new(fx.db.clone());
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let package = upsert_package_tx(&mut tx, fx.workspace_id, fx.user_id, "c.plugin", "Gamma")
+            .await
+            .expect("package");
+        let version = insert_version_tx(
+            &mut tx,
+            &NewVersion {
+                package_id: package.id(),
+                workspace_id: fx.workspace_id,
+                version: "1.0.0",
+                manifest: &json!({"name": "Gamma"}),
+                digest: &"e".repeat(64),
+                size_bytes: 4,
+                published_by: fx.user_id,
+            },
+        )
+        .await
+        .expect("version");
+        insert_file_tx(&mut tx, version.id(), "index.js", b"x", &"f".repeat(64))
+            .await
+            .expect("file");
+        let install = insert_tx(
+            &mut tx,
+            &NewInstallation {
+                workspace_id: fx.workspace_id,
+                plugin_key: "c.plugin",
+                package_version_id: version.id(),
+                version: "1.0.0",
+                manifest: &json!({"name": "Gamma"}),
+                granted_scopes: &json!([]),
+                installed_by: fx.user_id,
+            },
+        )
+        .await
+        .expect("install");
+        tx.commit().await.expect("commit");
+
+        // 还有安装指着这些版本 ⇒ 不许删包。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let users = count_installations_of_versions_tx(&mut tx, package.id())
+            .await
+            .expect("count");
+        assert_eq!(users, 1);
+        tx.rollback().await.expect("rollback");
+
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        sqlx::query("DELETE FROM plugin_installation WHERE id = $1")
+            .bind(install.id().0)
+            .execute(&mut *tx)
+            .await
+            .expect("drop install");
+        delete_files_by_package_tx(&mut tx, package.id())
+            .await
+            .expect("files");
+        delete_versions_by_package_tx(&mut tx, package.id())
+            .await
+            .expect("versions");
+        delete_package_tx(&mut tx, package.id())
+            .await
+            .expect("package");
+        tx.commit().await.expect("commit");
+        assert!(repo.get(fx.workspace_id, package.id()).await.is_err());
+
+        teardown(&fx).await;
+    }
 }

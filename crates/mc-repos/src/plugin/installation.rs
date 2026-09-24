@@ -36,7 +36,8 @@ use mc_core::Id;
 pub type Tx<'a> = Transaction<'a, Postgres>;
 
 /// 上游 `PluginInstallation` 的列投影（15 列，顺序与 `RETURNING` 一致）。
-pub const COLUMNS: &str = "id, workspace_id, plugin_key, version, manifest, granted_scopes, config, \
+pub const COLUMNS: &str =
+    "id, workspace_id, plugin_key, version, manifest, granted_scopes, config, \
                            enabled, installed_by, token_hash, token_rotated_at, mcp_approvals, \
                            package_version_id, created_at, updated_at";
 
@@ -88,11 +89,7 @@ impl InstallationRow {
 
     /// `config` 解成对象（坏值 ⇒ 空对象）。
     pub fn config_object(&self) -> serde_json::Map<String, serde_json::Value> {
-        self.config
-            .0
-            .as_object()
-            .cloned()
-            .unwrap_or_default()
+        self.config.0.as_object().cloned().unwrap_or_default()
     }
 }
 
@@ -348,10 +345,7 @@ pub async fn delete_all_secrets_tx(tx: &mut Tx<'_>, installation_id: Id) -> Resu
 }
 
 /// 该安装是否还有其它 secret（升级剪枝后判定用；键名集合由调用方算）。
-pub async fn count_installations_of_versions_tx(
-    tx: &mut Tx<'_>,
-    package_id: Id,
-) -> Result<i64> {
+pub async fn count_installations_of_versions_tx(tx: &mut Tx<'_>, package_id: Id) -> Result<i64> {
     // 删包前的守卫：任何安装仍指着这些版本 ⇒ 拒（`CountInstallationsOfPackageVersions`）。
     sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM plugin_installation i \
@@ -404,4 +398,280 @@ pub async fn delete_cascade_tx(tx: &mut Tx<'_>, installation_id: Id) -> Result<(
         .await
         .map_err(map_sqlx_err)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 真库集成测试（`#[ignore]` + `MULTICA_TEST_DATABASE_URL`，gate ⑥ 拉起）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod db_tests {
+    use super::*;
+    use crate::plugin::package::{insert_version_tx, upsert_package_tx, NewVersion};
+    use serde_json::json;
+    use std::env;
+    use uuid::Uuid;
+
+    struct Fixture {
+        db: Db,
+        workspace_id: Id,
+        user_id: Id,
+        package_version_id: Id,
+    }
+
+    async fn setup() -> Option<Fixture> {
+        let url = env::var("MULTICA_TEST_DATABASE_URL").ok()?;
+        let db = Db::connect(&url, 4, 1).await.ok()?;
+        let workspace_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO workspace(name, slug) VALUES ('itest-m65', $1) RETURNING id",
+        )
+        .bind(format!("itest-m65-{}", Uuid::new_v4()))
+        .fetch_one(db.pool())
+        .await
+        .ok()?;
+        let user_id: Uuid = sqlx::query_scalar(
+            r#"INSERT INTO "user"(name, email) VALUES ('itest-m65', $1) RETURNING id"#,
+        )
+        .bind(format!("itest-m65-{}@example.com", Uuid::new_v4()))
+        .fetch_one(db.pool())
+        .await
+        .ok()?;
+        let workspace_id = Id::from(workspace_id);
+        let user_id = Id::from(user_id);
+        let mut tx = db.pool().begin().await.ok()?;
+        let package = upsert_package_tx(&mut tx, workspace_id, user_id, "hello.plugin", "Hello")
+            .await
+            .ok()?;
+        let version = insert_version_tx(
+            &mut tx,
+            &NewVersion {
+                package_id: package.id(),
+                workspace_id,
+                version: "1.0.0",
+                manifest: &json!({"name": "Hello"}),
+                digest: &"a".repeat(64),
+                size_bytes: 12,
+                published_by: user_id,
+            },
+        )
+        .await
+        .ok()?;
+        tx.commit().await.ok()?;
+        Some(Fixture {
+            db,
+            workspace_id,
+            user_id,
+            package_version_id: version.id(),
+        })
+    }
+
+    macro_rules! fixture {
+        () => {
+            match setup().await {
+                Some(fx) => fx,
+                None => {
+                    eprintln!("skipping: set MULTICA_TEST_DATABASE_URL to run");
+                    return;
+                }
+            }
+        };
+    }
+
+    async fn teardown(fx: &Fixture) {
+        for sql in [
+            "DELETE FROM plugin_installation WHERE workspace_id = $1",
+            "DELETE FROM plugin_package_version WHERE workspace_id = $1",
+            "DELETE FROM plugin_package WHERE workspace_id = $1",
+        ] {
+            let _ = sqlx::query(sql)
+                .bind(fx.workspace_id.0)
+                .execute(fx.db.pool())
+                .await;
+        }
+        let _ = sqlx::query("DELETE FROM workspace WHERE id = $1")
+            .bind(fx.workspace_id.0)
+            .execute(fx.db.pool())
+            .await;
+        let _ = sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(fx.user_id.0)
+            .execute(fx.db.pool())
+            .await;
+    }
+
+    macro_rules! new_install {
+        ($fx:expr, $key:expr) => {
+            NewInstallation {
+                workspace_id: $fx.workspace_id,
+                plugin_key: $key,
+                package_version_id: $fx.package_version_id,
+                version: "1.0.0",
+                manifest: &json!({"name": "Hello"}),
+                granted_scopes: &json!([]),
+                installed_by: $fx.user_id,
+            }
+        };
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_install_crud_and_conflict() {
+        let fx = fixture!();
+        let repo = InstallationRepo::new(fx.db.clone());
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let row = insert_tx(&mut tx, &new_install!(&fx, "hello.plugin"))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        assert!(row.enabled);
+        assert_eq!(row.version, "1.0.0");
+        assert_eq!(row.package_version_id, fx.package_version_id.0);
+        assert!(row.granted_scopes().is_empty());
+
+        assert_eq!(repo.list(fx.workspace_id).await.expect("list").len(), 1);
+        assert_eq!(
+            repo.find_by_key(fx.workspace_id, "hello.plugin")
+                .await
+                .expect("find")
+                .expect("row")
+                .id(),
+            row.id()
+        );
+        assert_eq!(
+            repo.get(fx.workspace_id, row.id()).await.expect("get").id(),
+            row.id()
+        );
+
+        // 同 key 再装 = 唯一索引冲突（不是新建）。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let dup = insert_tx(&mut tx, &new_install!(&fx, "hello.plugin")).await;
+        assert!(matches!(dup, Err(RepoError::Conflict)));
+        tx.rollback().await.expect("rollback");
+
+        // 配置 / 启停 / 升级。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let configured = set_config_tx(&mut tx, row.id(), &json!({"greeting": "hi"}))
+            .await
+            .expect("config");
+        assert_eq!(configured.config_object()["greeting"], "hi");
+        let off = set_enabled_tx(&mut tx, row.id(), false)
+            .await
+            .expect("disable");
+        assert!(!off.enabled);
+        let upgraded = upgrade_tx(
+            &mut tx,
+            row.id(),
+            &UpgradeInstallation {
+                package_version_id: fx.package_version_id,
+                version: "2.0.0",
+                manifest: &json!({"name": "Hello", "version": 2}),
+                granted_scopes: &json!(["issues:read"]),
+                config: &json!({}),
+            },
+        )
+        .await
+        .expect("upgrade");
+        assert_eq!(upgraded.version, "2.0.0");
+        assert_eq!(upgraded.granted_scopes(), vec!["issues:read".to_string()]);
+        tx.commit().await.expect("commit");
+
+        teardown(&fx).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_token_rotate_then_revoke_is_nullable() {
+        let fx = fixture!();
+        let repo = InstallationRepo::new(fx.db.clone());
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let row = insert_tx(&mut tx, &new_install!(&fx, "token.plugin"))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+        assert!(row.token_hash.is_none() && row.token_rotated_at.is_none());
+
+        // rotate：写入哈希并刷时间戳。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        set_token_hash_tx(&mut tx, row.id(), Some(&"f".repeat(64)))
+            .await
+            .expect("rotate");
+        tx.commit().await.expect("commit");
+        let rotated = repo.get_by_id(row.id()).await.expect("get");
+        assert_eq!(rotated.token_hash.as_deref(), Some("f".repeat(64).as_str()));
+        assert!(rotated.token_rotated_at.is_some());
+
+        // revoke：两列一起清空（幂等：再来一次仍是同一结果）。
+        for _ in 0..2 {
+            let mut tx = fx.db.pool().begin().await.expect("tx");
+            set_token_hash_tx(&mut tx, row.id(), None)
+                .await
+                .expect("revoke");
+            tx.commit().await.expect("commit");
+        }
+        let revoked = repo.get_by_id(row.id()).await.expect("get");
+        assert!(revoked.token_hash.is_none() && revoked.token_rotated_at.is_none());
+
+        teardown(&fx).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_secret_upsert_list_delete_and_cascade() {
+        let fx = fixture!();
+        let repo = InstallationRepo::new(fx.db.clone());
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let row = insert_tx(&mut tx, &new_install!(&fx, "secret.plugin"))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        upsert_secret_tx(&mut tx, row.id(), "api_key", b"sealed-1")
+            .await
+            .expect("upsert");
+        upsert_secret_tx(&mut tx, row.id(), "api_key", b"sealed-2")
+            .await
+            .expect("re-upsert");
+        upsert_secret_tx(&mut tx, row.id(), "other", b"sealed-3")
+            .await
+            .expect("upsert");
+        tx.commit().await.expect("commit");
+        assert_eq!(
+            repo.secret_keys(row.id()).await.expect("keys"),
+            vec!["api_key".to_string(), "other".to_string()]
+        );
+        let ciphertext: Vec<u8> = sqlx::query_scalar(
+            "SELECT ciphertext FROM plugin_secret WHERE installation_id = $1 AND key = 'api_key'",
+        )
+        .bind(row.id().0)
+        .fetch_one(fx.db.pool())
+        .await
+        .expect("ciphertext");
+        assert_eq!(ciphertext, b"sealed-2");
+
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        delete_secret_tx(&mut tx, row.id(), "other")
+            .await
+            .expect("delete");
+        tx.commit().await.expect("commit");
+        assert_eq!(
+            repo.secret_keys(row.id()).await.expect("keys"),
+            vec!["api_key".to_string()]
+        );
+
+        // 卸载级联把密钥一起带走。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        delete_cascade_tx(&mut tx, row.id()).await.expect("cascade");
+        tx.commit().await.expect("commit");
+        assert!(repo.get_by_id(row.id()).await.is_err());
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM plugin_secret WHERE installation_id = $1")
+                .bind(row.id().0)
+                .fetch_one(fx.db.pool())
+                .await
+                .expect("count");
+        assert_eq!(left, 0);
+
+        teardown(&fx).await;
+    }
 }
