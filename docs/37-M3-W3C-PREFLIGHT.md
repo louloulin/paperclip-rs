@@ -6536,3 +6536,13 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
 - **lesson 1（「在飞」的权威口径 = run 是否终态，不是 issue 状态）**：`LUM-1671` 的 issue 16:56:06Z 就 `in_review` 了，但它的 run 16:57:27Z 才终态、PR 也还开着 ⇒ **issue 状态不能当空位判据**；本轮若照抄「in_review ⇒ 已停」，会既错判空位又可能抢合并（§56.6）。三源（issue 状态 / `runs` 末条 / `/proc/*/cwd`）里**以 run 终态为准**。
 - **lesson 2（门禁等价论证的四件套，缺一不可）**：① 预检 `merge-base..head` 逐字 == PR API；② base 前进段的**非 docs 路径为 0**；③ `merge-tree --write-tree` **单哈希**（无冲突段）；④ head 上 CI 三 job 全绿。四件齐才允许用 CI 替代本地 `--with-db` 10/10；本轮四件全中（②是唯一"便宜"的一步 —— 只要基前进段只动 `docs/`，代码面就与 head **逐字相同**）。
 - **lesson 3（互斥要按「目录 + 注册段」判，不按「crate」判）**：`LUM-1673` 与 `LUM-1672` 分属不同切片、甚至不同 stage，但都落在 `crates/mc-http/src/routes/plugin_bridge/` 同一注册段 ⇒ **同 crate 不同文件也可能互斥**；反过来 `LUM-1674`（`mc-daemon`）与 `LUM-1672`（`mc-http`/`mc-repos`）才是真正的零交集。派发前必须**逐字列出两侧的写文件**再判。
+
+### 73.8 追记（17:1xZ，本轮**同 run 内**观察到的 `LUM-1672` 交付）
+
+- **PR #74 在本轮工作期间开出**（`~17:16Z`）：head **`93ccb020`**、分支 `agent/devbox5/dd993b504e67`、base `c7ca7cfb`（本 §73 的提交）、**21 文件 +5692/−94**、1 commit、**`mergeable_state = dirty`**。
+  **预检（本条已替下一轮做完）**：`git diff --numstat b91f786d..93ccb020` = 21 文件，与 `GET /pulls/74/files` **逐字一致**（`+5692/−94`）⇒ §64.5 第①步 **已过**，下轮直接接第②步。
+- **冲突点唯一且已定位**：`git merge-tree --write-tree c7ca7cfb 93ccb020` = `CONFLICT (content): Merge conflict in docs/32-M3-DAEMON-FACE.md`（该文件三阶段条目 `32782768 / 49a77dcb / 972e79ff`）。
+  原因 = **两片都往 `docs/32` 尾部追加节**：#73 落 §9.8（M6-6），#74 落自己的 M6-7 节 ⇒ 典型「尾行相邻追加」仲裁，**两侧都保留、按节号排序**（§9.8 在前）即可；**代码路径零冲突**（21 个文件里 19 个是 `mc-http`/`mc-repos` 新增或独占文件）。
+- **本轮不抢合并**：`LUM-1672` 的 run `01a0d419-0771` **仍 `running`**（15:46:45Z 起）⇒ 按 §56.6，片会自己合 base / 重跑门禁；cycle 只登记不动手（§73.7 lesson 1 的同一判据）。
+- **下轮判据链（`#74` 专用，逐条已备料）**：① 等 run 终态（`runs` 末条 + `/proc/*/cwd` 零命中该 workdir）；② `merge-base..head` 预检**已过**（见上，head sha 需重取，`93ccb020` 之后它还会动）；③ 真合 base 或 `merge-tree --write-tree` 等式 + 冲突按「两侧都保留、§9.8 在前」解法；④ head 上 CI **3/3**；⑤ API 钉 head sha ⇒ 落地后复核 `tree(base) == 预测树` + 代码路径 diff 0；⑥ **合并前先回收它那 19G `target/`**（本条与 §73.5 的回收预告配套）。
+- **⑦ 递推仍成立**：`#74` 合 ⇒ `local 401 / owners.M6 1`（只差 M6-8 那 1 条路由），随即 `LUM-1673` 互斥解除可派 ⇒ 合后 `402 / owners.M6 0`；`LUM-1675`（M6-INT）⇒ `406 / 330 real / 126 / M6 0`。
