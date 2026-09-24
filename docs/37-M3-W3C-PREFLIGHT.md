@@ -5670,7 +5670,7 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 
 ### 64.6 本轮产出与交接
 
-- **本轮 base 变更**：`15fc7bf` →（合并 #70，merge commit **`2559254`**）→ **本 §64 提交 `efb42e5`**。自证（**分段量，别把 merge 的量算进 cycle 自己**）：`git diff --stat 2559254 <本轮提交>` = **只 1 个 docs 文件（`docs/37`，+67）**；`git diff 2559254 <本轮提交> -- crates apps Cargo.toml Cargo.lock migrations scripts .github contracts` = **空**；而 `15fc7bf..2559254` 的 15 个代码文件 +5252 是 **M6-3 片自己的量**（另一条独立等式：`git diff --numstat 15fc7bf 2559254` = 16 文件 +5323/−55 == PR #70 的 API 读数）。
+- **本轮 base 变更**：`15fc7bf` →（合并 #70，merge commit **`2559254`**）→ **本 §64 提交 `2c95eac`**（§64.6 本体随它落地；`efb42e5` 是 amend 前的**本地**版本，**从未 push**）。自证（**分段量，别把 merge 的量算进 cycle 自己**）：`git diff --stat 2559254 2c95eac` = **只 1 个 docs 文件（`docs/37`，+67）**；`git diff 2559254 2c95eac -- crates apps Cargo.toml Cargo.lock migrations scripts .github contracts` = **空**；而 `15fc7bf..2559254` 的 15 个代码文件 +5252 是 **M6-3 片自己的量**（另一条独立等式：`git diff --numstat 15fc7bf 2559254` = 16 文件 +5323/−55 == PR #70 的 API 读数）。
 - **本轮远端分支动作（2 条）**：`agent/devbox5/f715ccaf9ad8`（M6-5 抢救分支，`7da7baf`，**已推、未开 PR**）；两个新 run（`01a0d1d0` / `01a0d1d1`）起手时都还没推分支。`agent/devbox5/2612b5932325`（M6-3）**已随 #70 合入 base**（此后无新提交）。
 - **回收**：`LUM-1668` 的热 `target/` **22G 整删**（三件套齐：PR 已合 + run 终态 + `/proc/*/cwd` 无该 workdir 进程）⇒ `/` 从 **13G 可用（75%）** 回到 **34G 可用（28%）**。`LUM-1670` 旧 workdir 的 722M **保留**（抢救材料的现场，等第 4 个 run 终态后再处置）。
 - **在飞 3/3**：cycle ∥ `LUM-1669`（run `01a0d1d0`，起手 base `2559254`，DoD ⑦ `363→369`）∥ `LUM-1670`（run `01a0d1d1`，起手分支 `agent/devbox5/f715ccaf9ad8@7da7baf`，DoD ⑦ `363→376`）。
