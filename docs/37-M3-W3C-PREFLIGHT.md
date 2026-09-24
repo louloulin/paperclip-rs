@@ -7408,3 +7408,52 @@ unclaimed 0   regression 0   local_only 9
   两者都加路由/写 `routes/{mod,mount}.rs` 注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
 - ⑦ 基线 **406 不动**（普通片不得跑 `--write-baseline`；下一次刷新 = `LUM-1786` M7-21 INT）。
 - 回收：活物 `target/`（1766/1797）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删。
+
+## §84 07:30 cycle（`LUM-1833`，23:30Z 触发）：**0 open PR / 0 空位 —— 只读监控轮（第二次）**；M7-1 + M8-0 仍活、均未推分支
+
+### 84.1 起手三连
+
+- `df -h /`：**30G 可用（37%）** —— 构成 = `lum-1797` 2.5G + `lum-1766` 2.0G（两片各自 `target/`，**活物不动**）；
+  `lum-1831`（07:00 cycle）workdir 仅 **21M**（无 `target/`）⇒ 无残留可回收。
+- `git ls-remote origin feat/multica-rs-initial` = **`90a26cbe`**（= §83 的 docs-only 提交，**自 07:00 轮起未前进**）；
+  在飞两片分支 **仍未推**（`agent/devbox5/ba7ddf538cc8`、`agent/devbox5/d40efe34eaf7` 远端均不存在，逐名 `ls-remote` 返回空）。
+- 认证 GH `pulls?state=open`：**0 条** ⇒ **本 cycle 无判据链可走**。
+- daemon 起手 `running_task_count = 4` / `active_task_count = 4`：逐 PID 拆解 = **cycle 自身**（pid 33347/34830，父 = daemon 39）
+  + `LUM-1766`（pid 4496）+ `LUM-1797`（pid 4521）+ **一个非本项目 pi（pid 140，父 24，cwd = `/home/devbox`，属 assignee
+  `763a92a6` 的「zcode改造」线）**。⇒ **本项目有效在飞 = 3（含 cycle 自身）**，与上一轮无并发 cycle 时的读数一致。
+  （lesson 延续：daemon 的 `running_task_count` 是**全局**量，判本项目空位必须逐 PID 的 `/proc/*/cwd` 落到本项目 workdir，别直接拿全局数减。）
+
+### 84.2 在飞片复核（判活三件套取二：`/proc` 存活 ∨ 产物增长 ∨ mtime 前进）
+
+| 片 | workdir | 起手点 | 观测（23:34Z） |
+|---|---|---|---|
+| `LUM-1766`（M7-1，渠道契约层 + engine 路由/监管/解析，0 路由） | `lum-1766-ba7ddf538cc8` | `401548db` | **活**：`/proc/4496/cwd` 命中、etime 42m；**已落笔** = `crates/mc-channel/src/engine/{router,resolvers}.rs` 两文件 `M` 且 mtime < 20m；**0 提交 / 分支未推** |
+| `LUM-1797`（M8-0 anchor，`mc-vcs` / `mc-vcs-github` / `mc-composio`） | `lum-1797-d40efe34eaf7` | `401548db` | **活**：`/proc/4521/cwd` 命中、etime 42m；**产物增长** = 9 项（`Cargo.lock` + `mc-core/src/lib.rs` `M`，`mc-core/src/{composio,github,mcp,vcs}.rs` + `mc-core/src/mcp/` + 新 crate `mc-vcs/`、`mc-vcs-github/` 未跟踪），`mc-vcs-github/src/*` 多文件 mtime 前进；**0 提交 / 分支未推** |
+
+两片起手点同为 `401548db`（**未含 §82/§83 的 docs**）——无碍：docs 不参与任何门。**两片都在「已写代码、未提交」阶段**，
+下一次判据链的前置仍是「等 run 终态 + 分支推出」。
+
+### 84.3 空位 = 0（本 cycle 不派任何片）
+
+`本项目空位 = 3 − 1(cycle 自身) − 2(在飞) = 0`。就绪但**不派**：`LUM-1767`(M7-2)、`LUM-1768`(M7-3)、`LUM-1798`(M8-1)——
+硬前置（M7-0 / M6-INT）都已满足，纯粹是**槽位**约束。本轮**无回收动作**（无满足四判据的终态残留：`lum-1831` 无 `target/`，
+两片 `target/` 属活物）。**基线 ⑦ 406 不动**（普通片不得 `--write-baseline`；下一次刷新 = `LUM-1786` M7-21 INT）。
+
+### 84.4 并发 cycle 观察（第 22 轮：护栏仍未落地）
+
+本 run 起手时 **无并发 cycle**（06:30 的 `LUM-1829`、07:00 的 `LUM-1831` 均已 `in_review` 终态）——这是 §82/§83 之后
+**第一次干净的 cycle 起手**，说明「让出可重复动作」的避让策略有效。但**护栏本身仍未落地**：autopilot 仍按 30 分钟节拍
+无脑建单，只要同项目有未终态 cycle issue 就会重现并发。**建议（重复登记，第 22 轮）：同项目存在未终态 cycle issue 时
+不再新建 cycle issue。** 同类积压 `todo`（`LUM-1826`/`1810`/`1805`/`1748`/`1740`/`1737`/`1726`/`1533`/`1521`，共 9 条，
+零进程零产物）**只登记、不动状态**。`blocked` = **0**。
+
+### 84.5 next cycle 起点与第一动作
+
+- 起点 base = **本 §84 提交**（docs-only 直推 `90a26cbe`）。
+- 第一动作：三连（`df -h /` → `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 `pulls?state=open`）
+  → **逐 PID 把全局 `running_task_count` 拆到本项目**（过滤非本项目 workdir，如 pid 140）→ 再逐片查 run 是否终态 +
+  `merge-base --is-ancestor <base> <head>`，**终态后才进判据链**（§73 口径：「在飞」= run 终态，不是 issue 是 `in_review`）。
+- **槽位一空就派**（按波次各补各的槽）：`LUM-1766` 合/终 ⇒ 派 **`LUM-1767`（M7-2）**；`LUM-1797` 合/终 ⇒ 派
+  **`LUM-1798`（M8-1，5 路由）** —— M8 stage-2 硬前置是 M8-0 落地，**不可提前**。两者都写 `routes/{mod,mount}.rs`
+  注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
+- 回收：活物 `target/`（1766 2.0G / 1797 2.5G）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删。
