@@ -157,7 +157,7 @@ mod db_tests {
         sqlx::query_scalar(
             "INSERT INTO plugin_invocation \
              (installation_id, workspace_id, hook_key, trigger, status, attempt, latency_ms, created_at) \
-             VALUES ($1, $2, $3, 'manual', 'failed', 1, 12, $4) RETURNING id",
+             VALUES ($1, $2, $3, 'manual', 'failed', 1, 12, $4::timestamptz) RETURNING id",
         )
         .bind(installation_id.0)
         .bind(Uuid::new_v4())

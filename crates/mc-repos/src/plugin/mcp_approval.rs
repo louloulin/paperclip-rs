@@ -89,6 +89,14 @@ impl PluginInstallationRow {
     pub fn granted_scopes(&self) -> Vec<String> {
         serde_json::from_value(self.granted_scopes.clone()).unwrap_or_default()
     }
+
+    /// `mcp_approvals` 整块（上游 `decodeMCPApprovals`：坏值同样吞成空表）。
+    ///
+    /// 与 [`PluginApprovalRepo::approvals`] 的区别只是「用已读到的这一行」还是「重新读一次」
+    /// —— `GET …/mcp/{hookKey}/tools` 已经握着这行了，不必为同一列再开一次连接。
+    pub fn mcp_approvals(&self) -> PluginMcpApprovals {
+        serde_json::from_value(self.mcp_approvals.clone()).unwrap_or_default()
+    }
 }
 
 /// `plugin_installation.mcp_approvals` + M6-6 两条窄读的仓储。
@@ -212,6 +220,35 @@ impl PluginApprovalRepo {
     /// # Errors
     ///
     /// [`RepoError::Db`]。
+    /// 一个已存 secret 的密文（`nonce‖ct‖tag`）—— 上游 `GetPluginSecret` 的**窄读**。
+    ///
+    /// 上游 `mcpCredentialHeaders` 取整行只为拿 `Ciphertext`；本片只选这一列（键名由调用方
+    /// 从 manifest 的 `<hookKey>_credential` 算出）。**明文只存在于调用方那一次出站请求里**，
+    /// 不落日志、不进响应。
+    ///
+    /// 这是 M6-6 的第二个窄读垫片（见文件头差异 3）：`installation.rs` 归 M6-5，本片不能改它，
+    /// 而 `plugin_secret` 在整个 `plugin/*` 模块里**只有写侧**（`upsert_secret_tx` / `delete_*`）。
+    /// 收敛点登记给 M6-INT（`LUM-1675`）。
+    ///
+    /// # Errors
+    ///
+    /// [`RepoError::Db`]。
+    pub async fn secret_ciphertext(
+        &self,
+        installation_id: Id,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        let sealed: Option<Vec<u8>> = sqlx::query_scalar(
+            "SELECT ciphertext FROM plugin_secret WHERE installation_id = $1 AND key = $2",
+        )
+        .bind(installation_id.0)
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(sealed)
+    }
+
     pub async fn package_file_sha256(&self, version_id: Id, path: &str) -> Result<Option<String>> {
         let sha: Option<String> = sqlx::query_scalar(
             "SELECT sha256 FROM plugin_package_file WHERE version_id = $1 AND path = $2",
@@ -407,6 +444,43 @@ mod db_tests {
             Err(RepoError::NotFound)
         ));
 
+        fx.cleanup().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+    async fn db_secret_ciphertext_reads_the_sealed_bytes_it_wrote() {
+        let fx = fixture!();
+        let repo = PluginApprovalRepo::new(fx.db.clone());
+        let sealed = vec![7_u8; 44];
+
+        sqlx::query(
+            "INSERT INTO plugin_secret (installation_id, key, ciphertext) VALUES ($1, $2, $3)",
+        )
+        .bind(fx.installation_id.0)
+        .bind("toolbox_credential")
+        .bind(&sealed)
+        .execute(fx.db.pool())
+        .await
+        .expect("insert secret");
+
+        assert_eq!(
+            repo.secret_ciphertext(fx.installation_id, "toolbox_credential")
+                .await
+                .expect("hit"),
+            Some(sealed)
+        );
+        assert_eq!(
+            repo.secret_ciphertext(fx.installation_id, "missing")
+                .await
+                .expect("miss"),
+            None
+        );
+
+        let _ = sqlx::query("DELETE FROM plugin_secret WHERE installation_id = $1")
+            .bind(fx.installation_id.0)
+            .execute(fx.db.pool())
+            .await;
         fx.cleanup().await;
     }
 

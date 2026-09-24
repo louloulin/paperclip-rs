@@ -52,6 +52,15 @@ pub(crate) fn deployment_key() -> PluginSecretKey {
 }
 
 fn build_state(db: Db, with_key: bool) -> Arc<AppState> {
+    build_state_with_origin(db, with_key, None)
+}
+
+/// `build_state` 的完整形态：`plugin_surface_origin` 也由调用方说了算。
+///
+/// M6-6（`tests/plugins/runtime.rs`）之前，**只有** `plugin_key` 需要覆写（`AppState::new` 从
+/// 进程级 env 读过一次，而测试是并发跑的）；surface 面多了一个同性质的字段，所以这里多一个
+/// 参数，而不是让调用方去 `Arc::try_unwrap` 一个刚造出来的 `Arc`。
+fn build_state_with_origin(db: Db, with_key: bool, surface_origin: Option<&str>) -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
@@ -74,6 +83,7 @@ fn build_state(db: Db, with_key: bool) -> Arc<AppState> {
     // `AppState::new` 已经从 env 读过一次；这里**显式覆写**，好让「有密钥 / 没密钥」
     // 由测试说了算，而不是由跑测试的机器的 env 说了算。
     state.plugin_key = with_key.then(deployment_key);
+    state.plugin_surface_origin = surface_origin.map(str::to_owned);
     Arc::new(state)
 }
 
@@ -96,6 +106,14 @@ pub(crate) fn app_with_plugins_v1_disabled(db: Db) -> Router {
         None,
     );
     app_from(state)
+}
+
+/// M6-6 的 surface 面：部署密钥与 `plugin_surface_origin` 各自可控。
+///
+/// 两个都是「缺 ⇒ 503」的配置项，所以两个都要能单独缺 —— 否则「未配置即禁用」
+/// 只能验到一半（另一个配置总是由跑测试的机器的 env 决定）。
+pub(crate) fn app_surface(db: Db, deployment_key: bool, surface_origin: Option<&str>) -> Router {
+    app_from(build_state_with_origin(db, deployment_key, surface_origin))
 }
 
 pub(crate) fn app_from(state: Arc<AppState>) -> Router {
