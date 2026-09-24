@@ -10,6 +10,7 @@ use mc_mcp::types::digest_bytes;
 use mc_mcp::types::{FAILURE_POLICY_OPTIONAL, TRANSPORT_HTTP};
 use serde_json::json;
 
+#[allow(clippy::needless_pass_by_value)] // 夹具按 `json!` 字面量的形状收参，改引用会让每个调用点都多一个 `&`
 fn tool(name: &str, schema: Value) -> Tool {
     let canonical = canonical_input_schema(Some(&schema));
     let digest = digest_bytes(&serde_json::to_vec(&canonical).expect("encode"));
@@ -41,7 +42,7 @@ fn connection(endpoint: &str, approved: Vec<Tool>, credential_header: &str) -> C
     }
 }
 
-/// DoD 的专属验收：**声明与实际不符 ⇒ 拒绝**。
+/// `DoD` 的专属验收：**声明与实际不符 ⇒ 拒绝**（`approved` 与 `discovered` 对不上）。
 #[test]
 fn pinned_tools_reject_missing_and_drifted_tools() {
     let pinned = vec![tool("read", json!({"type": "object"}))];

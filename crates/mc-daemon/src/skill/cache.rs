@@ -153,13 +153,14 @@ impl SkillBundleCache {
         if let Err(err) = fs::create_dir_all(&tmp) {
             return Err(SkillExecError::io("create bundle temp dir", &tmp, err));
         }
-        let result = self.store_into(&tmp, dir, &data);
+        let result = Self::store_into(&tmp, dir, &data);
         // 无论成功失败都不留临时目录（上游的 `defer os.RemoveAll(tmp)`）。
         let _ = fs::remove_dir_all(&tmp);
         result
     }
 
-    fn store_into(&self, tmp: &Path, dir: &Path, data: &[u8]) -> Result<()> {
+    /// 把临时目录整体顶上去（拆成自由函数：它不用 `self`，用 `&self` 只会让读者以为它碰缓存状态）。
+    fn store_into(tmp: &Path, dir: &Path, data: &[u8]) -> Result<()> {
         let file = tmp.join(BUNDLE_FILE_NAME);
         fs::write(&file, data).map_err(|err| SkillExecError::io("write bundle", &file, err))?;
         if let Err(err) = fs::remove_dir_all(dir) {
@@ -409,7 +410,7 @@ mod tests {
 
     /// `bundle(&[("a.md", "a"), ("b.md", "bb")])` 这一组输入在 `mc_core` 分节口径下的
     /// digest，由 `cargo test` 实测填入（**不是**手抄的值，也不会被本模块重算）。
-    /// 它是本片 DoD 的证物：「bundle 缓存校验用的是同一个函数」——
+    /// 它是本片 `DoD` 的证物：「bundle 缓存校验用的是同一个函数」——
     /// `crates/mc-http/src/routes/daemon/skills.rs` 的 `build_agent_bundle` 与本模块调的是
     /// `mc_core::skill::build_manifest` 同一个符号，而这条金标把它的字节口径钉死。
     const GOLDEN_HASH: &str =
@@ -420,7 +421,7 @@ mod tests {
     /// 两条断言合起来才成立：① 金标把 `mc_core` 的字节口径钉死（手工按分节口径重算过，
     /// 见 `crates/mc-core/src/skill.rs` 的同名用例）；② 「换一个 64 位 hex 就判不过」
     /// 证明本模块**没有**接受任何自己算出来的值。任何「同结果的新实现」都会在 ① 上先红，
-    /// 任何「本地又抄了一份哈希」都会在 ② 上露出（它不会正好等于 mc_core 的答案，除非
+    /// 任何「本地又抄了一份哈希」都会在 ② 上露出（它不会正好等于 `mc_core` 的答案，除非
     /// 它算的确实是同一套字节）。
     #[test]
     fn validate_accepts_exactly_the_mc_core_digest() {
@@ -535,7 +536,7 @@ mod tests {
         // store 是原子的：同级不留 `.bundle-*` 临时目录。
         let leftovers: Vec<String> = fs::read_dir(path.parent().expect("dir").parent().expect("p"))
             .expect("read")
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().to_string())
             .filter(|name| name.starts_with(TEMP_DIR_PREFIX))
             .collect();

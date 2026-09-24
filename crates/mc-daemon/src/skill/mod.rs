@@ -165,6 +165,7 @@ pub struct LocalSkillSummary {
     pub file_count: usize,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde 的 `skip_serializing_if` 只接受 `&T`
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -204,6 +205,7 @@ pub struct SkillFileData {
     pub size_bytes: i64,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // 同上
 fn is_zero_i64(value: &i64) -> bool {
     *value == 0
 }

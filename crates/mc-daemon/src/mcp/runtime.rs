@@ -273,7 +273,7 @@ pub fn load_runtime_mcp_server_configs(provider: &str) -> Result<ProviderMcpConf
     let home = user_home().map_err(|_| {
         McpConfigError::Shape("cannot resolve user home for runtime MCP config".to_string())
     })?;
-    let Some((path, key, format)) = runtime_config_source(provider, &home, false)? else {
+    let Some((path, key, format)) = runtime_config_source(provider, &home, false) else {
         return Ok(ProviderMcpConfig::Unsupported);
     };
 
@@ -307,7 +307,7 @@ fn runtime_config_source(
     provider: &str,
     home: &Path,
     inventory_only: bool,
-) -> Result<Option<(PathBuf, String, McpConfigFormat)>> {
+) -> Option<(PathBuf, String, McpConfigFormat)> {
     let source = if inventory_only {
         match provider {
             "claude" => (
@@ -364,7 +364,7 @@ fn runtime_config_source(
                 "mcp.servers".to_string(),
                 McpConfigFormat::Json,
             ),
-            _ => return Ok(None),
+            _ => return None,
         }
     } else {
         match provider {
@@ -403,10 +403,10 @@ fn runtime_config_source(
                 "mcp.servers".to_string(),
                 McpConfigFormat::Json,
             ),
-            _ => return Ok(None),
+            _ => return None,
         }
     };
-    Ok(Some(source))
+    Some(source)
 }
 
 /// `OpenClaw` 的配置路径：`$CLAWDBOT_CONFIG_PATH` 优先，否则 `$OPENCLAW_STATE_DIR`（缺省
@@ -448,7 +448,7 @@ pub fn list_runtime_local_mcp_servers(
     let home = user_home().map_err(|_| {
         McpConfigError::Shape("cannot resolve user home for runtime MCP inventory".to_string())
     })?;
-    let Some((path, key, format)) = runtime_config_source(provider, &home, true)? else {
+    let Some((path, key, format)) = runtime_config_source(provider, &home, true) else {
         return Ok(None);
     };
 

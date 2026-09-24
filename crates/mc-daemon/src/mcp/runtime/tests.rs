@@ -3,12 +3,11 @@
 //! 拆成独立文件的两个理由：① 上游就是把测试放同一个包的 `_test.go` 里（本 slice 沿用它
 //! 的分工）；② 门 ⑩ 是**逐文件** 800 行硬上限，实现与用例放在一个文件里会让实现本身被
 //! 用例的行数挤出上限。
-
 use super::*;
 
-/// 这些用例直接测 `strip_jsonc` / 归一 / 合并三件纯逻辑；涉及 home 与环境的用例走
-/// 显式传参的路径（[`code_arts_user_config_path`] / [`codebuddy_user_mcp_config_path`]），
-/// 于是不需要改写进程级 `HOME`。
+// 这些用例直接测 `strip_jsonc` / 归一 / 合并三件纯逻辑；涉及 home 与环境的用例走
+// 显式传参的路径（`code_arts_user_config_path` / `codebuddy_user_mcp_config_path`），
+// 于是不需要改写进程级 `HOME`。
 
 fn strip(text: &str) -> String {
     String::from_utf8(strip_jsonc(text.as_bytes()).expect("strip")).expect("utf8")
@@ -129,7 +128,7 @@ fn transport_classification_matches_upstream() {
         (r#"{"command": "x"}"#, "stdio"),
         (r#"{"url": "https://x"}"#, "http"),
         (r#"{"type": "nope"}"#, "unknown"),
-        (r#"{}"#, "unknown"),
+        (r"{}", "unknown"),
     ];
     for (raw, want) in cases {
         let entry: Map<String, Value> = serde_json::from_str(raw).expect("parse");
@@ -203,14 +202,13 @@ fn config_path_helpers_follow_the_documented_fallback_chains() {
 #[test]
 fn unsupported_providers_are_distinguishable_from_empty_configs() {
     // 没有 runtime MCP 面的 provider。
-    assert!(matches!(
-        runtime_config_source("kimi", Path::new("/home/t"), false).expect("lookup"),
+    assert_eq!(
+        runtime_config_source("kimi", Path::new("/home/t"), false),
         None
-    ));
+    );
     // inventory 面里 kimi 有。
-    let (path, key, format) = runtime_config_source("kimi", Path::new("/home/t"), true)
-        .expect("lookup")
-        .expect("inventory");
+    let (path, key, format) =
+        runtime_config_source("kimi", Path::new("/home/t"), true).expect("inventory");
     assert_eq!(path, Path::new("/home/t/.kimi-code/mcp.json"));
     assert_eq!(key, "mcpServers");
     assert_eq!(format, McpConfigFormat::Json);

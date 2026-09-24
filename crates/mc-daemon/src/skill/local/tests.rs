@@ -41,7 +41,9 @@ impl Drop for TestHome {
 /// 环境变量在这些用例里被改写，所以必须串行跑（`HOME` 是进程级的）。
 fn with_home<T>(home: &Path, action: impl FnOnce() -> T) -> T {
     static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = GUARD.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = GUARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = std::env::var_os("HOME");
     std::env::set_var("HOME", home);
     let out = action();
@@ -262,7 +264,7 @@ fn main_file_over_one_mib_is_rejected() {
     fs::create_dir_all(&dir).expect("mkdir");
     fs::write(
         dir.join(SKILL_MAIN_FILE),
-        vec![b'x'; (MAX_LOCAL_SKILL_FILE_SIZE + 1) as usize],
+        vec![b'x'; usize::try_from(MAX_LOCAL_SKILL_FILE_SIZE + 1).expect("fits in usize")],
     )
     .expect("write");
     let err = read_local_skill_main_file(&dir).expect_err("must reject");
@@ -296,7 +298,7 @@ fn load_matches_what_the_listing_surfaced() {
             .expect("supported");
         assert_eq!(bundle.name, "Deploy helper");
         assert_eq!(bundle.description, "d");
-        assert_eq!(bundle.content.ends_with("body\n"), true);
+        assert!(bundle.content.ends_with("body\n"));
         assert_eq!(bundle.files.len(), 1);
         assert_eq!(bundle.files[0].path, "scripts/run.sh");
         assert_eq!(bundle.files[0].content, "echo hi\n");

@@ -126,8 +126,6 @@ fn provider_root(provider: &str, home: &Path) -> Option<PathBuf> {
         "openclaw" => home.join(".openclaw").join("skills"),
         "pi" => home.join(".pi").join("agent").join("skills"),
         "cursor" => home.join(".cursor").join("skills"),
-        // ⚠️ 上游走 `execenv.ResolveHermesProfile`（不在本 slice）；见模块文档。
-        "hermes" => return None,
         "kimi" => home.join(".kimi").join("skills"),
         "reasonix" => env_or("REASONIX_HOME", || home.join(".reasonix")).join("skills"),
         "dsh" => env_or("DSH_HOME", || home.join(".dsh")).join("skills"),
@@ -140,6 +138,8 @@ fn provider_root(provider: &str, home: &Path) -> Option<PathBuf> {
         "qwen" => env_or("QWEN_HOME", || home.join(".qwen")).join("skills"),
         "qwenpaw" => qwenpaw_skill_pool(home),
         "mcode" => home.join(".minimax").join("skills"),
+        // 不支持（`None`）。⚠️ `hermes` 也走这一支：上游用 `execenv.ResolveHermesProfile`
+        // 解析它的 home（不在本 slice 的写集里），见模块文档。
         _ => return None,
     };
     Some(path)

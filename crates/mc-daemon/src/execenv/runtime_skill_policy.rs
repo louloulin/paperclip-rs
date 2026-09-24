@@ -25,6 +25,8 @@
 //!   （非 ASCII 路径在两边都按 UTF-8 原样写入，行为一致，登记在案）。
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::execenv::sidecar::{
@@ -213,7 +215,6 @@ pub fn ensure_codex_disabled_skills_config(
         body.push_str(&go_quote(path));
         body.push_str("\nenabled = false\n");
     }
-    use std::io::Write as _;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -248,7 +249,8 @@ pub fn go_quote(value: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             other if other.is_control() => {
-                out.push_str(&format!("\\u{:04x}", other as u32));
+                // 控制字符走 `\uXXXX`（与 `strconv.Quote` 同形）。
+                let _ = write!(out, "\\u{:04x}", other as u32);
             }
             other => out.push(other),
         }

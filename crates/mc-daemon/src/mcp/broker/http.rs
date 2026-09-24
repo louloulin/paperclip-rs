@@ -25,13 +25,13 @@ pub struct BrokerHttpResponse {
 }
 
 impl BrokerHttpResponse {
-    pub(super) fn json(body: Value) -> Self {
+    pub(super) fn json(body: &Value) -> Self {
         Self {
             status: 200,
             content_type: Some("application/json".to_string()),
             session_id: None,
             protocol_version: None,
-            body: serde_json::to_vec(&body).unwrap_or_default(),
+            body: serde_json::to_vec(body).unwrap_or_default(),
         }
     }
 
@@ -47,7 +47,7 @@ impl BrokerHttpResponse {
 
     /// JSON-RPC 错误（上游 `writeRemoteMCPError`：**HTTP 200** + `error` 对象）。
     pub(super) fn error(id: Option<&Value>, code: i64, message: &str) -> Self {
-        Self::json(json!({
+        Self::json(&json!({
             "jsonrpc": "2.0",
             "id": id_or_null(id),
             "error": { "code": code, "message": message },

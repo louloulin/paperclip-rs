@@ -211,6 +211,7 @@ impl RemoteMcpBrokerSet {
 /// - 某个连接**必须**成功（`failure_policy != "optional"`）却失败 ⇒ 已起的一起关掉、返回错误；
 /// - `optional` 的连接失败 ⇒ 记一条诊断、继续下一个；
 /// - 最后一条都没起来 ⇒ `config = None`、集合被关掉（上游 `set.Close()` + `nil, diagnostics, nil, nil`）。
+#[allow(clippy::too_many_lines)] // 上游单函数顺序照搬：闸的顺序本身就是语义，拆开就看不出来了
 pub async fn start_task_remote_mcp_brokers(
     task_id: &str,
     provider: &str,
@@ -269,7 +270,7 @@ pub async fn start_task_remote_mcp_brokers(
                 });
             };
             match resolver.resolve(&connection.contribution_id).await {
-                Ok(resolved) => headers = resolved,
+                Ok(resolved_headers) => headers = resolved_headers,
                 Err(message) => {
                     let text = format!(
                         "Remote MCP {} credential is unavailable",
@@ -473,6 +474,7 @@ async fn serve_broker_request(
 
 impl BrokerProxyState {
     /// broker 的请求处理核心（上游 `remoteMCPProxy.ServeHTTP`）。
+    #[allow(clippy::too_many_lines)] // 同上：闸的顺序 + 每档一份文案，拆成子函数反而看不出顺序
     async fn handle(
         &self,
         path: &str,
@@ -567,7 +569,7 @@ impl BrokerProxyState {
                 );
             };
             match resolver.resolve(&self.connection.contribution_id).await {
-                Ok(resolved) => credential_headers = resolved,
+                Ok(resolved_headers) => credential_headers = resolved_headers,
                 Err(_) => {
                     return BrokerHttpResponse::error(
                         rpc_request.id.as_ref(),
@@ -591,15 +593,12 @@ impl BrokerProxyState {
             upstream = upstream.header(name, value);
         }
 
-        let response = match upstream.body(raw.to_vec()).send().await {
-            Ok(response) => response,
-            Err(_) => {
-                return BrokerHttpResponse::error(
-                    rpc_request.id.as_ref(),
-                    error_code::REMOTE_UNAVAILABLE,
-                    "Remote MCP service is unavailable",
-                );
-            }
+        let Ok(response) = upstream.body(raw.to_vec()).send().await else {
+            return BrokerHttpResponse::error(
+                rpc_request.id.as_ref(),
+                error_code::REMOTE_UNAVAILABLE,
+                "Remote MCP service is unavailable",
+            );
         };
         let status = response.status();
         let content_type = response
@@ -637,15 +636,12 @@ impl BrokerProxyState {
         }
 
         let (body, content_type) = if rpc_request.method == "tools/list" {
-            let decoded = match decode_remote_mcp_sse_data(content_type.as_deref(), &body) {
-                Ok(decoded) => decoded,
-                Err(_) => {
-                    return BrokerHttpResponse::error(
-                        rpc_request.id.as_ref(),
-                        error_code::REMOTE_UNAVAILABLE,
-                        "Remote MCP service returned an invalid response",
-                    );
-                }
+            let Ok(decoded) = decode_remote_mcp_sse_data(content_type.as_deref(), &body) else {
+                return BrokerHttpResponse::error(
+                    rpc_request.id.as_ref(),
+                    error_code::REMOTE_UNAVAILABLE,
+                    "Remote MCP service returned an invalid response",
+                );
             };
             match filter_tools_list_response(&decoded, &self.connection.approved_tools) {
                 Ok(filtered) => (filtered, Some("application/json".to_string())),

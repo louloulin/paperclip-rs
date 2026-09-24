@@ -108,10 +108,10 @@ pub struct HookHttpResponse {
 }
 
 impl HookHttpResponse {
-    fn json(value: Value) -> Self {
+    fn json(value: &Value) -> Self {
         Self {
             status: 200,
-            body: serde_json::to_vec(&value).unwrap_or_default(),
+            body: serde_json::to_vec(value).unwrap_or_default(),
         }
     }
 
@@ -129,8 +129,8 @@ impl HookHttpResponse {
         }
     }
 
-    fn result(id: Option<&Value>, result: Value) -> Self {
-        Self::json(json!({
+    fn result(id: Option<&Value>, result: &Value) -> Self {
+        Self::json(&json!({
             "jsonrpc": "2.0",
             "id": id_or_null(id),
             "result": result,
@@ -138,7 +138,7 @@ impl HookHttpResponse {
     }
 
     fn error(id: Option<&Value>, code: i64, message: &str) -> Self {
-        Self::json(json!({
+        Self::json(&json!({
             "jsonrpc": "2.0",
             "id": id_or_null(id),
             "error": { "code": code, "message": message },
@@ -227,7 +227,7 @@ impl PluginHookMcpServer {
         match request.method.as_str() {
             "initialize" => HookHttpResponse::result(
                 request.id.as_ref(),
-                json!({
+                &json!({
                     "protocolVersion": PLUGIN_HOOK_PROTOCOL_VERSION,
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": PLUGIN_HOOK_SERVER_NAME, "version": "1" },
@@ -237,7 +237,7 @@ impl PluginHookMcpServer {
             "notifications/initialized" => HookHttpResponse::accepted(),
             "tools/list" => HookHttpResponse::result(
                 request.id.as_ref(),
-                json!({ "tools": self.tool_descriptors() }),
+                &json!({ "tools": self.tool_descriptors() }),
             ),
             "tools/call" => {
                 self.handle_call(request.id.as_ref(), request.params.as_ref())
@@ -296,7 +296,7 @@ impl PluginHookMcpServer {
                 };
                 HookHttpResponse::result(
                     id,
-                    json!({ "content": [ { "type": "text", "text": text } ] }),
+                    &json!({ "content": [ { "type": "text", "text": text } ] }),
                 )
             }
             Ok(Err(message)) => {
@@ -309,7 +309,7 @@ impl PluginHookMcpServer {
                 );
                 HookHttpResponse::result(
                     id,
-                    json!({
+                    &json!({
                         "isError": true,
                         "content": [ { "type": "text", "text": message } ],
                     }),
@@ -326,7 +326,7 @@ impl PluginHookMcpServer {
                 );
                 HookHttpResponse::result(
                     id,
-                    json!({
+                    &json!({
                         "isError": true,
                         "content": [ { "type": "text", "text": message } ],
                     }),
@@ -416,6 +416,7 @@ mod tests {
     }
 
     /// 夹具：记录每次调用的参数，并按 `outcome` 回答。
+    #[allow(clippy::type_complexity)] // 夹具的三元组就是被测签名本身，抽别名只会让它更难对回调用点
     fn invoker(
         seen: Arc<std::sync::Mutex<Vec<(String, String, String, Option<Value>)>>>,
         outcome: Result<Value, String>,
@@ -424,17 +425,15 @@ mod tests {
             let seen = Arc::clone(&seen);
             let outcome = outcome.clone();
             Box::pin(async move {
-                seen.lock().unwrap_or_else(|err| err.into_inner()).push((
-                    task,
-                    installation,
-                    hook,
-                    input,
-                ));
+                seen.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((task, installation, hook, input));
                 outcome
             })
         })
     }
 
+    #[allow(clippy::type_complexity)] // 同上：与 `invoker` 共用同一个「看到的调用」形状
     fn server_with(
         outcome: Result<Value, String>,
     ) -> (
@@ -581,7 +580,10 @@ mod tests {
         assert_eq!(body["result"]["content"][0]["type"], "text");
         assert!(body["result"]["isError"].is_null());
 
-        let calls = seen.lock().unwrap_or_else(|err| err.into_inner()).clone();
+        let calls = seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "task-1");
         assert_eq!(calls[0].1, "installation-1");
@@ -638,7 +640,10 @@ mod tests {
             "POST",
             br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
         ));
-        let calls = seen.lock().unwrap_or_else(|err| err.into_inner()).clone();
+        let calls = seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         assert_eq!(calls[0].2, "hook-read");
     }
 

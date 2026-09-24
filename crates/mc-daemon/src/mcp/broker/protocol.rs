@@ -123,7 +123,7 @@ pub fn merge_task_remote_mcp_config(
     match base {
         Some(Value::Object(base)) => {
             if let Some(Value::Object(existing)) = base.get("mcpServers") {
-                servers = existing.clone();
+                servers.clone_from(existing);
             }
         }
         Some(Value::Null) | None => {}
