@@ -544,3 +544,59 @@ bash scripts/gates.sh --with-db      # 10/10
 - ⑨：`crates/mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 /
   placeholder 0 / unevaluable 306`，`fixtures 365`）—— 本片 4 条端点在上游 fixture 里
   **一条都没有**（`runtime.rs` 的 30 例是自建真库 e2e）⇒ ⑨ 的**预期变化就是 0**，不是欠账。
+
+### 9.9 M6-7 公开 Action API + bridge + surface（`LUM-1672`）的落点与偏离登记
+
+**写集**（与 issue 的枚举一字不差）：`routes/v1/{context,issues,storage,policy}.rs`、
+`routes/plugin_bridge/{context,issues,storage}.rs`、`routes/surfaces.rs`、
+`mc-repos/src/plugin/storage.rs`，外加 `routes/v1/policy/caller.rs`（门 ⑩ 的拆分，见 D1）与
+`crates/mc-http/tests/public_api/**`（e2e）。**冻结面零编辑**：`routes/{mount,mod}.rs`、
+`routes/v1/mod.rs`、`routes/plugin_bridge/{mod,hooks}.rs`、`routes/plugins/**`、`state.rs`、
+根 `Cargo.{toml,lock}`、⑦ 基线、⑨ `report.json`、`slash-alias-allowlist.tsv`。
+
+#### 偏离（M6-7-D1～D8）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M6-7-D1** | `policy.rs` 拆成 `policy.rs` + `policy/caller.rs` | `routes/v1/policy/` | 门 ⑩ 单文件 800 行硬上限（原 837 行）。两者同属 `routes::v1::policy` 模块树，调用方仍写 `policy::resolve_caller(...)`；`v1/mod.rs`（锚点冻结）不需要 `mod` 声明（父模块 `policy.rs` 自己声明） |
+| **M6-7-D2** | 中间件层必须用 **`route_layer`**，不是 `layer` | `routes/v1/policy.rs` | `Router::layer` 连 **fallback** 一起包 ⇒ 未匹配的路径（尾斜杠别名、纯 404）被凭据门提前变成 **401**。实测把 `tests/autopilots/{deliveries,execution,triggers}` 的 3 条「单形态路由必须 404」用例打红；同一处也让 ⑨ 的两条 anonymous fixture 从 `unmounted` 翻成 `pass`（假绿）。`route_layer` 只包已声明的路由，行为与上游「中间件挂在路由组上」一致 |
+| **M6-7-D3** | `plugins_v1` 的本地口径沿用 M6-5 的**反转**（未登记 = 开启） | `policy/caller.rs` | 同 M6-5-D1 的理由：本仓 `FeatureFlagCatalog` 无持久化后端（唯一的 `register` 调用点在测试里），照抄上游默认 `false` 会让 `/v1` 面**永远** 403。`contracts/golden/context/001` 在上游是**测试里显式关掉开关**拿到的 403 ⇒ 本仓以「显式登记 false ⇒ 403」逐字满足（`tests/public_api/guard.rs` 同名用例） |
+| **M6-7-D4** | 回调令牌表（`CallbackTokens`）落在 `routes/v1/policy.rs` 的**进程内静态** | `policy.rs::callback_tokens()` | `state.rs`（锚点冻结）没有这个字段，而**两片**需要同一张表（M6-8 的 hook 派发签发、本片解析）。⚠️ **M6-8 必须复用 `mc_http::routes::v1::policy::callback_tokens()`**，不要再 new 一张 |
+| **M6-7-D5** | 安装令牌的 `token_hash` 读口用直查 | `policy/caller.rs::authenticate_install_token` | `mc-repos/src/plugin/installation.rs` 是 M6-5 的写集（没有按 token_hash 的读口，且本片不得编辑它）⇒ 复用那个文件**公开的** `installation::COLUMNS` 直查一次，列投影仍只有一份 |
+| **M6-7-D6** | `comment.via_plugin_id` 用一条后置 `UPDATE` 补写；`comment.type` 用一次后置查询补齐 | `routes/v1/issues.rs` | M2 的 `NewComment` 没有 `via_plugin_id`、`CommentRow` 的列投影没有 `type`（`mc-repos/src/comment.rs` 是本片写集外）⇒ 复用 `CommentRepo::create`（DoD 第 4 条：不新写评论服务）之后补一条单列 UPDATE / 一次 `SELECT id, type`。跨片缺口：M2 补齐列投影后应删掉这两段 |
+| **M6-7-D7** | 公开契约的 `author_type` 归一：`user`/`member` ⇒ **`member`** | `routes/v1/issues.rs::public_author_type` | M2 对「人」写 `'user'`（迁移 `538` 的 CHECK 同时放行 `user`/`member`），上游写 `'member'`。公开契约只有一份拼写，折成上游的；写侧仍是 M2 的口径 |
+| **M6-7-D8** | `ServePluginSurface` 的「未配置」是 **404**（不是 503）；Host 边界判定在 handler 内 | `routes/surfaces.rs` | ① M6-0 桩注释写「origin/密钥缺 ⇒ 503 `plugin_surfaces_not_configured`」，那是 **launch 段**（M6-6）的错误码；上游 serve 段对 origin 解析失败一律 `http.NotFound`。② 上游把 `PluginSurfaceHostBoundary` 挂在**整台 router** 上；本仓的挂载点在锚点冻结的 `mount.rs` 里 ⇒ 由 handler 内同一个判据承担，差别只在「内容主机上的 `/api/health` 会落到全局 router」这一条（M6-INT 可决定是否把该中间件提到 `main.rs`） |
+
+#### 跨片接口（M6-8 / M6-INT 请照用）
+
+- `mc_http::routes::v1::policy::callback_tokens()` —— 进程内回调令牌表（M6-8 签发侧的唯一入口）。
+- `mc_http::routes::surfaces::SURFACE_LAUNCH_TTL_SECS` = 120 —— 「2 分钟 TTL」的唯一真值。
+- `mc_http::routes::surfaces::SurfaceLaunchClaims`（`pub(crate)`）—— 令牌声明的**唯一**形状；
+  M6-6 的 launch handler 序列化它（`workspace_id` / `installation_id` / `version_id` /
+  `surface_key` / `digest` / `challenge` / `expires_at`）。
+- `mc_repos::plugin::storage::{StorageRepo, StorageError, SCOPE_*, MAX_*}` —— 存储面唯一实现点。
+
+#### 本片门禁读数（逐字取自当轮日志）
+
+- `bash scripts/gates.sh --with-db` ⇒ **10/10**（`383s`；①1s ②92s ③37s ④29s ⑤52s ⑥138s ⑧25s ⑦1s ⑨8s ⑩0s）。
+- ⑦：`upstream 456 | local 401 registered | baseline 344`、`implemented 325 real + 0 placeholder`、
+  `known_gap 131`、`unclaimed 0`、**`regression 0`**、`local_only 9`（基线**未刷** —— 归 M6-INT）。
+  本片 **+19**（382 → 401），`owners.M6` **24 → 5**。
+- ⑨：`crates/mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 /
+  placeholder 0 / unevaluable 306`，`fixtures 365`）。本片的 6 条 plugin fixture（`context/001` +
+  `issues/09x`×5）actor 全是 **member** ⇒ stateless 层结构性不可判（`Tier::Stateless.supports`
+  只认 anonymous），committed 报告不可能变；DB 层实测它们已从 `unmounted` 变**已判**（`401`，
+  见下）。
+- e2e：`tests/public_api` **40 例全绿**（真库 `mc_lum1672`）；`--features mc-http/test-util`。
+
+#### 登记的已知缺口（给 M6-INT）
+
+1. **⑨ 的 6 条 plugin fixture 在 DB 层判 `mismatch`（不是 `pass`）**：它们由上游**直接调 handler**
+   的测试抽取而来（`site: direct_handler`），replay 走的是 router 且 fixture 里**没有**
+   `Authorization` 头（上游用的是安装令牌）⇒ `/v1` 的凭据门答 **401**（`plugin_bearer_required`）。
+   上游自己的 `PluginBearerOnly` 在同样的 replay 下也会给 401 —— 这不是本片的实现分叉，而是
+   fixture 抽取丢掉了凭据。要让它变 `pass`，需要在 `mc-conformance` 的 harness 里为 plugin 面
+   伪造一枚真实令牌（**本片写集外** ⇒ 登记，不静默）。
+2. 桥面与公开面**不共享**限流桶（`tower_governor` 的桶按 router 实例分片；桥面的层挂在
+   `plugin_bridge/{context,issues,storage}.rs` 三处 ⇒ 同前缀下每面各自计数）。上游两档也区分
+   （`user_default` vs `plugin_strict`），故行为面等价；仅登记实现细节。
