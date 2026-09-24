@@ -5139,3 +5139,89 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【满载轮 ≠ 空转轮：把「下一片为什么能/不能起手」的前提实测掉】** 本轮 0 PR 可合、0 空位，若只回一句「无动作」就浪费一个 30 分钟周期。真正的产出是 57.3 的**冻结面体检**：10 项只读检查换来「anchor 无缺件」这条硬事实 ⇒ 后面 9 个切片失败时能被正确归因，而不是先怀疑 base。**规律：本波各片被禁止修的东西，就是 cycle 该逐条验证的东西。**
 - **【写集是「文件→写者矩阵」的镜像 ⇒ 描述会旧，anchor 落点一改就得逐条重核】** `LUM-1668` 仍指 `mc-skill/src/git.rs`，而 anchor 已按 §9.5 建成 `source.rs`。若照旧描述行事，切片会「新建一个越权文件」。这与 §54.6/§55.4 的「锚点后读数必须重取」**同型**，只是对象从**读数**换成了**文件名**：anchor 落点修订之后，同一波所有切片的写集必须重核一遍（本轮 1667 核过、1668 改了）。
 - **【形态门要按两种跑法读，报告里两个数都要写】** `slash_alias_audit.py` 无参 = 本地现状（本轮 **0 缺陷**）；`--declared docs/fixtures/m6-declared-routes.tsv` = 预测模式（本轮 **`FAIL: 5`**）。allowlist 清空后 `FAIL: 5` 是「5 个双形态键的欠账」，M6-2 交付后必须变 `0`；只写一个数会被误读成回归。
+
+---
+
+## §58 08:30 cycle（`LUM-1711`）：base 复核 4/4（`9472626` 未动、code-path diff **0 行**、GH 0 PR）；**3/3 满载 ⇒ 0 空位 / 0 可合**；新动作 = **M6 写集 × 文件矩阵独立复算**（11 子 issue 逐文件：2 处缺件 + 1 处 glob 歧义，**已就地修描述**）
+
+### 58.1 起手三连（00:31Z 实测）
+- 磁盘：`/` **28G 可用（41%）** → 本轮采集中段 24G（50%）；本 workspace 树 15G，其中两在飞片各自的 `target/`：`lum-1659-…` **4.7G**、`lum-1666-776562d33243` **5.4G**（另 `lum-1666-63133e110ef5` 死工作区 1.4G）。**未回收**，判据见 58.6。
+- `git fetch origin feat/multica-rs-initial` = **`9472626`**（= §57 自身那次 docs-only 提交）。**码树等价论证**：`git diff 14f4aaf 9472626` = **`docs/37` 单文件 +66 行**；限定代码路径（`crates apps scripts migrations Cargo.toml Cargo.lock`）的 diff = **0 行** ⇒ §57 的 10/10 与 ⑦/⑨/⑤/⑥ 读数对当轮 base **继续逐字有效**；本轮**不重跑整轮门禁**（省 336s 冷建，也避免与两在飞片抢同一 `target/` 的 cargo 锁）。
+- 认证 `pulls?state=open` = **0** 条；`git ls-remote` 两在飞片的分支 = **空**（`agent/devbox5/776562d33243` / `agent/devbox5/bdb4ce67bd83` 均未推）。
+- 在飞采样（`ps -eo pid,etime` + `/proc/*/cwd`）：`LUM-1666`（M6-1 重跑，pid **40164**）∥ `LUM-1659`（M5-9，pid **40178**）∥ 本 cycle ⇒ **3/3 满载、0 切片位**。两片都在写：`LUM-1659` 当场在跑 `./evidence-m5-9.sh`（内含 `timeout -s INT 100 ./target/debug/multica-server`）、`LUM-1666` 当场有 4 个在跑的 bash 子进程。
+- 两片与 base 的相对进度（只读 `git --no-optional-locks diff --stat`）：`LUM-1659` = **9 文件 +1322/−134**（`apps/mc-server/src/scheduler/{mod,schedule_port,wakeup_port,tests}.rs` 新增 1283 行 + `main.rs` 15 行 + `scripts/gates.sh` 9 行）；`LUM-1666` = **14 文件 +6779/−220**（`mc-plugin-host` 六个文件 + 新增 `manifest/cron.rs`；`mc-mcp` 4 文件与 `mc-openapi/v1.rs` 仍是骨架）。
+- ⚠️ **两条在飞工作的 diff 里都出现 `docs/37-M3-W3C-PREFLIGHT.md | 129 ---`** —— 这是**正常的**，不是回归：它们的 base 停在 `ee26c9c`（§56/§57 之前），而 §56(+63)/§57(+66) = **129 行**正是那两节。两片都不写 `docs/37` ⇒ 合并 base 时该文件由 base 侧胜出（无冲突）。**读法约定：在飞片 diff 里看到 `docs/37` 的负数行，先按「它 base 落后两节」解释，不要去抢救。**
+
+### 58.2 0 PR ⇒ 合并判据链本轮**无对象**（不是跳过）
+- §56.2 七步里「预检 stat vs PR API」「base 祖先判定」「合并树当场重跑」「钉 head 合并」四步都需要**已终态的片**；本轮 0 PR + 两片 0 推送 ⇒ 四步空转。
+- **不抢在飞片的 base merge**（§56.8 教训沿用）：两片 pid 健在、都在写、远端未推 ⇒ 本 cycle 只做**只读**动作（不进它们的 workdir、不在它们的 `target/` 上跑 cargo、不替它们合并 base、不跑 `--write-baseline`）。
+
+### 58.3 本轮新动作：**M6 写集 × 文件矩阵独立复算**（11 个子 issue，逐文件只读核对）
+动机：§57 修了 `LUM-1668` 的旧文件名，但只核对到「**那一片**」。本节把 §57.8 的规律**推到底** —— 以「锚点产出的真实文件树」为**唯一真值**，把 **11 个子 issue 描述里声明的每个写集条目逐个 `ls` 核一遍**，回答「照描述行事会不会（a）新建越权文件 /（b）漏挂路由 /（c）改到冻结文件」。全部只读、0 秒 cargo。
+
+**对账 1：路由账**（子 issue 标题声明的路由数 vs `docs/57` §1.1 的 57 键）
+
+| 片 | 声明 | 片 | 声明 | 片 | 声明 |
+|---|---|---|---|---|---|
+| M6-0 | 0 | M6-4 | 6 | M6-8 | 1 |
+| M6-1 | 0 | M6-5 | 13 | M6-9 | 0 |
+| M6-2 | 12 | M6-6 | 4 | M6-10 | 0 |
+| M6-3 | 2 | M6-7 | 19 | **合计** | **57 = 57** ✓ |
+
+`12+2+6+13+4+19+1 = 57`，与 `docs/57` §1.1 「57 条」**逐字相等**；`stage` 字段实测 = 1/2/2/2/3/3/3/4/4/4/5，与 §7 晋升表**一一对应**。
+
+**对账 2：写集逐个文件核对**（52 个文件条目；`✓` = base 已有骨架 / `新` = 本片新建且父模块声明已在锚点铺好）
+
+| 片 | 声明写集 | 实测 |
+|---|---|---|
+| M6-1 | `mc-plugin-host/src/{manifest,capabilities,bundle,scope,credentials,token}.rs`、`mc-mcp/src/{client,types,oauth,devorigin}.rs`、`mc-openapi/src/v1.rs` | 11/11 `✓` |
+| M6-2 | `mc-skill/src/{frontmatter,binary,reserved}.rs`、`routes/skills/{crud,files,labels}.rs`、`mc-repos/src/skill/{read,write}.rs` | 8/8 `✓`（`routes/skills/mod.rs` 已聚合 5 子 router） |
+| M6-3 | `mc-skill/src/{archive,source}.rs`、`routes/skills/{import,refresh}.rs`、`mc-repos/src/skill/import.rs` | 5/5 `✓`（`git.rs` 已于 §57.4 修正） |
+| M6-4 | `routes/agents/skills.rs`、`routes/agents/dto.rs`（+ 新拆 `dto/response.rs`）、`routes/daemon/skills.rs`、`mc-skill/src/builtin.rs` + `assets/**`、`mc-repos/src/skill/binding.rs` | 6/6 `✓`/`新`（`routes/agents/dto/` 目录已存在，内含 `input.rs` ⇒ `dto.rs` 与 `dto/response.rs` 同存合法）**＋1 处缺件（见 finding A）** |
+| M6-5 | `routes/plugins/{install,packages}.rs`、`mc-repos/src/plugin/{installation,package,skill}.rs` | 5/5 `✓` |
+| M6-6 | `routes/plugins/{mcp,surface_launch}.rs`、`mc-repos/src/plugin/{mcp_approval,invocation_read}.rs` | 4/4 `✓` |
+| M6-7 | `routes/v1/*.rs`、`routes/plugin_bridge/*.rs`、`routes/surfaces.rs`、`mc-repos/src/plugin/storage.rs` | 9/9 `✓`（glob 有歧义 ⇒ **finding C**） |
+| M6-8 | `routes/plugins/hooks_job.rs`、`routes/plugin_bridge/`(hook 段)、`mc-repos/src/{plugin/hook.rs,scheduler.rs}` | 4/4 `✓`（`hooks.rs` 与 `plugin/hook.rs` 都在；路由归位见 §9.2 表第 2 行） |
+| M6-9 | `mc-daemon/src/skill/**`、`mcp/**`、`execenv/*` | 3 目录**均不存在**⇒ 全为新建；**＋2 处缺件（见 finding B）** |
+| M6-10 | `docs/58-M6-INTEGRATION.md`、两份 ⑦ fixture、`scripts/file_size_baseline.tsv`、`conformance/report.json` | `✓`（⑩ `file_size_baseline.tsv` 白名单**只减不增**，INT 只许删行，不得加行） |
+
+**对账 3：单写者矩阵（本波内 0 冲突）** —— 逐文件扫描 11 个写集后确认：`routes/plugins/*` 五文件分属 M6-5（install/packages）/M6-6（mcp/surface_launch）/M6-8（hooks_job）；`routes/skills/*` 属 M6-2/M6-3；`routes/v1` + `routes/plugin_bridge` 属 M6-7（+ M6-8 的 `hooks.rs`）；`mc-repos/src/plugin/*` 七文件分属 M6-5/6/7/8；`routes/daemon/skills.rs` 属 M6-4（M6-5 描述里**显式声明「不碰」**）；`apps/mc-server/**` 属 M6 之外的在飞片 `LUM-1659`（M6-8 描述亦显式「不改」）。**没有任何文件被两片同时声明**。锚点的做法（把聚合点 `{skills,plugins,plugin_bridge,v1}/mod.rs` 与五个 `mount_slice_*` 一次性建好并冻结）是这条零冲突的直接原因 —— 唯一没被预置聚合器的是**落在 M2/M3 既成文件里的那两个面**，也正好是本轮的两处缺件（finding A/B），见 lesson。
+
+### 58.4 本轮 finding：2 处**写集缺件** + 1 处 glob 歧义（**已修，三个 backlog 片**）
+- **finding A｜`LUM-1669`（M6-4，stage 3）缺 `crates/mc-http/src/routes/agents.rs`** —— 它的 6 条路由**不在**锚点预置的聚合器里：`routes/mod.rs:71-72` 的锚点注释逐字写「那 6 条由 M6-4 在 `routes/agents.rs` 内部加 `mod skills;` + `merge`」，`docs/32` §9.2 表第 1 行逐字写「**M6-4 是该文件在 M6 内的唯一写者**」。而 `routes/agents.rs` 用的是**内联 `.route(...)`**（不是子 router），所以要改的是**两处**：`mod skills;` + 6 条 `.route()`。照原描述行事只能在「漏挂 6 条路由（功能缺）」与「越权写文件（纪律缺）」间二选一。**处置**：描述追加「写集修订」节，把该文件记入写集并写明两处改点。
+- **finding B｜`LUM-1674`（M6-9，stage 4）缺 `mc-daemon/src/lib.rs` + `mc-daemon/src/execenv/mod.rs`** —— `mc-daemon/src/lib.rs` 只声明 `client/execenv/state/transport/wire`（**无** `skill`/`mcp`）⇒ 新建 `src/skill/mod.rs`、`src/mcp/mod.rs` 若不声明就是**死代码**；`execenv/mod.rs` 只声明 `guard/lock/path/temp` ⇒ 新增 6 文件同样要加 `pub mod` 行。更糟的是**原描述自相矛盾**：写集写 `execenv/*`「**仅新增文件**」，「边界」又写「不改 `execenv/{guard,lock,path,temp}.rs` 既有文件」——字面合起来**禁止**这处必要编辑。**处置**：描述追加「写集修订」节，补这两个文件并**限定为「只加模块声明行」**（既有实现一行不改）。本波 `mc-daemon` 只有 M6-9 一个写者 ⇒ 无并发冲突。
+- **finding C｜`LUM-1672`（M6-7，stage 4）glob 歧义** —— 写集 `routes/plugin_bridge/*.rs` 与 M6-8 的 `hooks.rs` 同目录（`docs/32` §9.2 表第 2 行已把 hook 路由归位到 `routes/plugin_bridge/hooks.rs`）。描述里的「边界」已写「hook 段归 M6-8」，但 glob 形式留了误写的口子。**处置**：描述追加「写集收紧」节，按枚举写清**写** `{context,issues,storage}.rs` + `routes/v1/{context,issues,storage,policy}.rs`（`policy.rs` 文件头逐字「写者：M6-7」）+ `surfaces.rs` + `plugin/storage.rs`，**不写** `plugin_bridge/mod.rs`、`hooks.rs`、`v1/mod.rs`、`routes/plugins/**`。
+- **三个片都是 `backlog`（未启动）⇒ 修改描述不会与任何在飞 run 打架**；改后 `status` 实测仍 `backlog`（用了 `--no-start`，**没有误触发 run**）。
+- `LUM-1666`（在飞）的写集**已逐条核过无需修**：`mc-plugin-host/src/{manifest,capabilities,bundle,scope,credentials,token}.rs` + `mc-mcp` 4 文件 + `mc-openapi/v1.rs` 全在；其「冻结文件」清单（`routes/{mod,mount}.rs`、`Cargo.{toml,lock}`、`state.rs`、`mc-core/src/{skill,plugin}.rs`、⑦ 基线、allowlist）与 `docs/32` §9.1 的锚点冻结表**逐条一致**。
+
+### 58.5 并发与派发：3/3 ⇒ **0 空位 ⇒ 本轮不派发**（附下一轮排序，按 finding 更新）
+- 位图：`LUM-1666`（M6-1 重跑）∥ `LUM-1659`（M5-9）∥ 本 cycle = **3/3** ⇒ `LUM-1667`–`LUM-1675`、`LUM-1691` 继续 `backlog`。满员轮 cycle 的产出是**体检 + 判据链 + 交接**，不硬塞第三片（满员加派必然与在飞片争 `Cargo.lock` 或同一 `target/` 的 cargo 锁，§55/§56 已两次实测该成本）。
+- 下一轮空位排序（**写集 ∩ lock 逐条核过**，并已把本轮 finding 算进去）：
+
+  | 空位来源 | 可派 | 依据 |
+  |---|---|---|
+  | `LUM-1666` 合入 | `LUM-1667`（M6-2，12 路由，**含全部 5 个双形态键**） | stage 2 排序第一；写 `mc-skill/src/{frontmatter,binary,reserved}.rs` + `routes/skills/**` + `mc-repos/src/skill/{read,write}.rs`，**不写 lock/manifest** ⇒ 与在飞 1659 零交集 |
+  | `LUM-1667` 合入 | `LUM-1668`（M6-3，2 路由，写集已按 §57.4 修正） | stage 2 尾片；`routes/skills/import.rs` 的取件面在 M6-2 之上 |
+  | `LUM-1666` 合入后 | stage 3 的 `LUM-1670`（M6-5）/`LUM-1671`（M6-6）可起手 | `docs/57` §4.1；两片写集与 anchor 冻结面零交集 |
+  | `LUM-1667` 合入后 | `LUM-1669`（M6-4）**才**可起手 —— **派发前确认写集已含 `routes/agents.rs`**（§58.4 finding A 已改） | `routes/agents/dto.rs` 的拆分要在 M6-2 的 `mc-skill` 面之上 |
+  | `LUM-1659` 合入 | lock 写权释放 ⇒ `LUM-1691`（M2-A 尾）**才可**单独排 | 它写 `routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock`：与 1659 撞 lock、与 M6 注册路由片撞 `mod.rs` |
+  | `LUM-1659` 合入前 | `LUM-1673`（M6-8）**只交桩级证据 + 登记** | `docs/57` §6.1 专属验收尾条 |
+  | 派 `LUM-1674`（M6-9）前 | 确认写集已含 `mc-daemon/src/{lib.rs, execenv/mod.rs}`（§58.4 finding B 已改） | 否则新建的 `src/{skill,mcp}/` 是死代码 |
+
+### 58.6 看板 / 磁盘 / 观察项
+- 看板（本项目 `da4310b1`）：`in_progress` = `LUM-1666`/`LUM-1659`（+ 本 cycle，已置 `in_progress`）；`backlog` = `LUM-1667`–`LUM-1675` + `LUM-1691` + `LUM-1580`；**`blocked` 0**（workspace 另有 5 条 `blocked`，属 pi.rs / openbuddy / Dataflare / health 等**其他项目**）。`LUM-1665`（M6-0）、`LUM-1652`（M6 计划）、`LUM-1370`（M2-E）仍 `in_review` 待人心验收。
+- 磁盘：本轮 28G → **24G 可用（50%）**，两个在飞片 `target/` 合计 **10.1G** 且仍在长。**本轮不回收**（判据三条齐才整删：PR 已合 + run 终态 + `/proc/*/cwd` 扫不到该 workdir 进程；当前无一条满足）。**登记候选**：`lum-1666-63133e110ef5/workdir/paperclip-rs/target` = **1.4G**（第一个 run 的**死工作区**缓存，其代码已安全落在远端分支 `agent/devbox5/63133e110ef5` @ `5f7394a3`）——「PR 已合」未满足，**留到 1666 合并后一次清**。**提醒**：`--with-db` 两轮的片 `target/` 单块可达 30G（§56 实测）⇒ 交付即回收，别攒到下一轮。
+- 观察项（**连续第 7 轮**）：`LUM-1521` / `LUM-1533`（本项目 `todo`、标题仅 `multica-rs`、描述是 autopilot 模板、`created 2026-09-23 07:30/08:30`、**从未启动**、`/proc/*/cwd` 无其 workdir）。已连续 7 轮记录、无 owner 响应 ⇒ 建议 owner 裁决「取消 / 补描述后派」；也可考虑给 autopilot 加「槽位满时跳过本轮、不建新 issue」的前置条件。本轮**继续只记录不擅改**（改他人 issue 状态属越界）。
+
+### 58.7 下一轮起手（09:00 cycle）
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §58 的 docs-only 提交）→ 认证 `pulls?state=open`；另**必查两片远端分支**（`agent/devbox5/776562d33243` / `agent/devbox5/bdb4ce67bd83`）。
+2. **先判「片是否还在写」再进判据链**：远端 head 是否在动 + pid（40164/40178）是否健在 + 是否已置 `in_review`；片会自己 merge base、自己刷 ⑦ 快照，**cycle 不抢**。若某片死，判据链照 §56.4 三件套（`.gc_meta.json` 的 `completed_at` / `output/` 是否空 / 远端分支 + 注释数）⇒ **先抢救再 rerun**。
+3. **合并判据链照 §56.2 七步**；两片都是真库片 ⇒ 合并树当场重跑 `--with-db`（期望 10/10），一次性真库**起手带 `CREATEDB`**（否则 ⑧ 以 `0s / exit 2` 假红）。
+4. **空位分配**按 58.5 表；派 `LUM-1669` / `LUM-1674` 前各自确认写集修订已在描述里（58.4 已改，核对一次即可）。
+5. **⑦ 快照写者纪律**：M6 stage-2/3/4 各片一律**不得**跑 `route_parity.py --write-baseline`；刷新归 M6-INT（`LUM-1675`）。`slash-alias-allowlist.tsv` 现 0 数据行 ⇒ 任何片**不得**加行。
+6. 本轮新增口径可复用：**「写集 × 文件矩阵复算」应成为每波 anchor 合入后 cycle 的标准动作**（逐文件 `ls` 级别，0 秒 cargo，产出 =「照描述行事会不会越权/漏挂」）。它与 §57.3 的「冻结面体检」是一对：57.3 验**锚点给够了没有**，57.3+58.3 一起验**切片拿对了没有**。
+
+### 58.8 本轮 lesson
+- **【锚点的聚合器只覆盖「新建模块目录」，落在既成文件里的面必须由写集点名】** 锚点为 `skills`/`plugins`/`plugin_bridge`/`v1` 建了冻结聚合器 ⇒ 这些面的切片**只要填自己的子文件**，零冲突。但 M6-4 的 6 条 agent-skill 路由落在 M3-5 的既成文件 `routes/agents.rs`（内联 `.route()`、无子 router）、M6-9 的面落在既成的 `mc-daemon/src/lib.rs` + `execenv/mod.rs` ⇒ 这两处**没有**聚合器可依赖，**必须由写集显式点名那些既有文件**，否则切片只能在「漏挂」与「越权」之间选。**规律：写集审计要分两类查 —— ① 新建文件在不在锚点骨架里；② 为让新文件被编译器/路由器看见，要改哪个**既有**文件（`mod` 声明 / `.merge` / `.route()`）。第二类是最容易漏的，因为它不在「本片要写的功能文件」列表里。**
+- **【同一波内「文件的 diff 出现负数行」有第三种正常解释】** 本轮两在飞片的 diff 都显示 `docs/37 | 129 ---`。它不是删除、不是回退，而是**它们的 base 停在两节文档之前**（§56+§57 = 129 行），且它们**不写**该文件 ⇒ 合并 base 时 base 侧胜出、无冲突。**读法约定：先量「落后了几节文档」（`git diff <base> <片 head> -- <file>` 的负数行数 ≈ 该期间 docs-only 提交的行数），再决定要不要紧张。**
+- **【描述是「文件→写者矩阵」的镜像 ⇒ 每波 anchor 合入后要全波复算，而不是只修被点到的那一片】** §57.4 修了 `LUM-1668` 一个旧文件名（发现方式是「读到那一行」），本轮把同一检查**推给全部 11 片**后，又揪出 2 处缺件 + 1 处 glob 歧义（其中 finding B 是**描述自相矛盾**：写集「仅新增文件」与边界「不改既有文件」合起来禁止了自己必需的那次编辑）。**规律：点状修复会留下同型兄弟；把检查改成「对全波每条声明逐个 `ls`」才会收敛。** 成本：4 条 `ls`/`grep`，0 秒 cargo。
