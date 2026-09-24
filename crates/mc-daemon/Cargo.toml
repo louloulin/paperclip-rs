@@ -42,3 +42,17 @@ reqwest = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-daemon-proto = { path = "../mc-daemon-proto" }
+# M6-9（LUM-1674）两条 path 边。都不是新三方包：两个 crate 已在 workspace 里、
+# 也已在根 `Cargo.lock` 的 package 表内 ⇒ 锁文件只多两条依赖记录，无新 package 条目。
+#
+# - `mc-skill`：本地 skill 发现要用**与 M6-2/3/4 同一套** frontmatter 解析与「疑似二进制」
+#   判定（上游 daemon 同样调 `internal/skill`）—— 不这么接就得在 `mc-daemon` 里抄一份，
+#   而那正是本波「一处真值」纪律要避免的。
+# - `mc-mcp`：远端 MCP broker 消费 M6-1 的实现（`discover` / `validate_pinned_tools` /
+#   `EndpointPolicy` / `secure_client`），本片不自建 JSON-RPC 客户端与摘要算法。
+#
+# ⚠️ 这两行**不在** 00:30 cycle 预飞时读到的「零 manifest 编辑」断言里（那条只覆盖 bundle
+# hash 走 `mc-core` 这件事）—— 预飞没有把「broker 要消费 mc-mcp」这条动作清单条目对回
+# manifest。偏离登记在 `docs/32` §9.9。
+mc-mcp = { path = "../mc-mcp" }
+mc-skill = { path = "../mc-skill" }

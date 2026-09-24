@@ -2492,6 +2492,8 @@ dependencies = [
  "futures-util",
  "mc-core",
  "mc-daemon-proto",
+ "mc-mcp",
+ "mc-skill",
  "reqwest",
  "serde",
  "serde_json",

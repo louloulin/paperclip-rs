@@ -20,6 +20,16 @@ pub mod lock;
 pub mod path;
 pub mod temp;
 
+// M6-9（`LUM-1674`）新增：各 runtime 的 skill / MCP 注入口。
+// ⚠️ 本节**只加模块声明**；`{guard,lock,path,temp}.rs` 既有实现对本片只读（`docs/32` §9.9）。
+pub mod codex_skill_strip;
+pub mod codex_user_skills;
+pub mod cursor_mcp;
+pub mod omp_mcp;
+pub mod runtime_skill_policy;
+pub mod sidecar;
+pub mod skill_visibility;
+
 use std::io;
 use std::path::{Path, PathBuf};
 

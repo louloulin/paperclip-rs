@@ -600,3 +600,105 @@ bash scripts/gates.sh --with-db      # 10/10
 2. 桥面与公开面**不共享**限流桶（`tower_governor` 的桶按 router 实例分片；桥面的层挂在
    `plugin_bridge/{context,issues,storage}.rs` 三处 ⇒ 同前缀下每面各自计数）。上游两档也区分
    （`user_default` vs `plugin_strict`），故行为面等价；仅登记实现细节。
+
+### 9.10 M6-9 daemon 侧 skill/MCP 执行面（`LUM-1674`）的落点与偏离登记
+
+> 记录号说明：00:30 cycle（`LUM-1755`）派发时定的是 **§9.9**，但本片落笔前 `git fetch` 复核发现
+> 该号段已被并行合并的 M6-7（`LUM-1672` / PR #74）占用 ⇒ **顺延为 §9.10**（`docs/57` 的
+> 「落笔前先复核号段」纪律生效）。
+
+**落点**：**0 个注册键**（0 路由片）—— 上游 `internal/daemon/` 的六个文件 + `execenv/` 的六个
+注入口，全部是**本机执行面**：没有 handler、没有路由、没有迁移、没有 DB。上游对照：
+`local_skills.go`（726）+ `skill_cache.go`（192）+ `slash_skill.go`（35）+
+`runtime_mcp.go`（578）+ `remote_mcp_broker.go`（475）+ `plugin_hook_mcp.go`（246）+ `execenv/`
+六个文件（845）= **3,097 行**（全为 `90e0bdf` 实测，非测试）。
+
+| 文件（全部新建） | 行数 | 内容 |
+| --- | --: | --- |
+| `mc-daemon/src/skill/mod.rs` | 645 | 发现根/摘要/bundle/cache-ref 的 DTO、`path.Clean` 逐行移植、key 规范化、缓存段安全化、支持文件路径白名单、home 折算 |
+| `mc-daemon/src/skill/local.rs` | 531 | provider → 用户级 skill 根（22 个 provider + omp 描述符行）、递归枚举（深度 4 / 符号链接不跟 / visited 去环 / 按 key 去重）、支持文件收集（1 MiB · 256 条 · 8 MiB 三道闸 + 二进制/UTF-8/NUL 判据）、列表-装载一致性 |
+| `mc-daemon/src/skill/cache.rs` | 605 | `<root>/<ws>/<source>/<id>/<hash>/bundle.json` 的原子读写 + per-ref 锁 + **校验调 `mc_core::skill::build_manifest`** |
+| `mc-daemon/src/skill/slash.rs` | 217 | `[/label](slash://skill/<id>)` 提取（**手写扫描器**，无 `regex` 边）+ 按 id 去重 |
+| `mc-daemon/src/mcp/mod.rs` | 230 | JSON-RPC 信封、两处错误码表、per-task 随机 token、`PluginHookTool` |
+| `mc-daemon/src/mcp/runtime.rs` | 608 | JSONC `strip` 逐行移植、各 provider 的 MCP 配置路径/格式、去敏 inventory、嵌套键查找、传输档归类、runtime×agent **本地**合并 |
+| `mc-daemon/src/mcp/broker.rs` | 683 | 任务期 broker：端点解析（`mc-mcp`）、凭据解析器、`127.0.0.1:<随机端口>/<随机 token>` 真监听、闸的顺序、代理核心 |
+| `mc-daemon/src/mcp/broker/{http,protocol,tests}.rs` | 75/149/361 | HTTP 出口形状 / 纯协议件（SSE 解码、`tools/list` 过滤、配置合并）/ 用例（门 ⑩ 逼出来的拆分） |
+| `mc-daemon/src/mcp/hook.rs` | 702 | 把插件 hook 合成 MCP server：`initialize`/`notifications`/`tools/list`/`tools/call`、工具错误（非协议错误）、真监听 |
+| `mc-daemon/src/mcp/runtime/tests.rs` | 217 | 同上（用例与实现分开） |
+| `mc-daemon/src/execenv/cursor_mcp.rs` | 718 | `.cursor/mcp.json`、Cursor 数据目录的 approvals（**字节级**：stdio/remote 两种规范化形状 + 字段序）、`.workspace-trusted`、`mcp-auth.json` 播种（链接优先） |
+| `mc-daemon/src/execenv/runtime_skill_policy.rs` | 424 | claude 的 runtime-skill settings（overrides + **permission deny 两通道**）、codex 的 `[[skills.config]]` 追加、`cleanRuntimeSkillKey`（与 `normalize_local_skill_key` **口径不同**，见 M6D-8） |
+| `mc-daemon/src/execenv/codex_user_skills.rs` | 330 | 用户 `~/.codex/skills` → 每任务 `CODEX_HOME/skills` 的**链接**（不拷贝）、workspace skill 优先、只摘自己的链接 |
+| `mc-daemon/src/execenv/skill_visibility.rs` | 257 | 模型可见清单（名字换成盘上 slug）、批次内 slug 去重、`disable-model-invocation` 判定 |
+| `mc-daemon/src/execenv/codex_skill_strip.rs` | 185 | 剥掉 `[[skills.config]]`（Codex CLI 0.114 的 `missing field path` 会让它拒启动） |
+| `mc-daemon/src/execenv/omp_mcp.rs` | 184 | omp 的 `.omp/mcp.json` 注入（拒绝覆盖用户文件） |
+| `mc-daemon/src/execenv/sidecar.rs` | 411 | 本 slice 需要的写闸：拒绝覆盖的写入/目录创建、slug 候选序列、frontmatter 切片（见 M6D-6） |
+| `mc-daemon/src/lib.rs` | 59（+9） | **只加** `pub mod mcp; pub mod skill;` 与一段模块文档（08:30 cycle 的写集修订） |
+| `mc-daemon/src/execenv/mod.rs` | 88（+10） | **只加** 7 行 `pub mod`（既有 `{guard,lock,path,temp}.rs` **一行未改**） |
+| `mc-daemon/Cargo.toml` + `Cargo.lock` | +14 / +2 | 两条 `path` 边（见 M6D-1） |
+
+**冻结点零编辑**：路由表 / `route-parity-baseline.json` / `slash-alias-allowlist.tsv` /
+`mc-http/**` / `mc-skill/**` / `mc-mcp/**` / `mc-plugin-host/**` / `mc-repos/**` 全部零改动。
+
+#### 两条专属 DoD 的证据
+
+1. **bundle 缓存校验用的是同一个函数**（issue 原文：*有断言证明是同一个函数，而非「同结果的新实现」*）：
+   `cache.rs::validate_skill_bundle` 里只有一处 digest 来源 —— `mc_core::skill::build_manifest`
+   （`crates/mc-core/src/skill.rs:256`），与 `crates/mc-http/src/routes/daemon/skills.rs:164` 的
+   `build_agent_bundle` 是**同一个符号**。用例
+   `skill::cache::tests::validate_accepts_exactly_the_mc_core_digest` 把它钉在两处：
+   ① 金标 `sha256:e1fb47095775209b81c5d404e36f5b2285ac7744cb39960cc761cf211543d79d`
+   （`build_manifest` 在 `a.md="a" / b.md="bb"` 上的实测值），②「换一个 64 位 hex 就判不过」。
+   本文件**没有**任何自算哈希的代码路径。
+2. **broker 的 pinned tools 拒绝用例**（issue 原文：*声明与实际不符 ⇒ 拒绝*）：
+   `mcp::broker::tests::pinned_tools_reject_missing_and_drifted_tools` 三条断言 ——
+   **缺工具** ⇒ `approved tool "read" is missing`、**schema 漂移** ⇒ `schema drifted`、
+   **远端新增**工具 ⇒ 放行（没批准也不会被 `tools/call` 放过去）。比对本身调
+   `mc_mcp::client::validate_pinned_tools`（M6-1），本 crate **没有**第二份比对逻辑。
+
+#### 偏离（M6D-1～M6D-17）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M6D-1** | `crates/mc-daemon/Cargo.toml` **加两条 `path` 边**（`mc-mcp`、`mc-skill`）+ `Cargo.lock` **+2 行** | `mc-daemon/Cargo.toml` | 00:30 cycle 预飞的「零 manifest / 零 lock 编辑」**只覆盖 bundle hash 走 `mc-core` 这一条**，没有把动作清单第 5 条（*消费 M6-1 的 `mc-mcp`*）对回 manifest。不接边的代价：broker 要自建 JSON-RPC 客户端与钉定比对、本地 skill 发现要自抄 frontmatter 解析与二进制判定 —— 恰是本波「一处真值」纪律要避免的两份实现。两条边都指向**已在 workspace 与 lock 里的**成员 ⇒ 锁文件无新 package 条目（与 D-10 的 `reqwest` 同款：只多依赖数组里的两行）。**M6-INT 若要收紧，删这两行 + 本片对应的 `use` 即可**（影响面已隔离在 `skill/local.rs` / `mcp/{runtime,broker}.rs`） |
+| **M6D-2** | **TOML 未接**：codex 的 `config.toml` 读不了 | `mcp/runtime.rs::unmarshal_runtime_mcp_config` | 需要 TOML 解析器，而 `toml` 不在 workspace 依赖表里（M6-0 anchor 冻结「此后 M6 各切片不得再新增三方依赖」）。⇒ 返回**可区分**的 `McpConfigError::TomlUnsupported`（不是静默空表：那会把「解析不了」谎报成「没有 server」）。**写侧不受影响**：`codex_skill_strip` / `runtime_skill_policy` 只**追加** TOML 文本 |
+| **M6D-3** | **claude 插件段未接**（插件 skill 根 + 插件贡献的 MCP server） | `skill/local.rs`、`mcp/runtime.rs` | 上游要 `listEnabledClaudePlugins` / `readClaudePluginManifest` / `claudePluginComponentPaths`（`claude_plugins.go`，**不在本片写集**）。⇒ `root="plugin"` 的 skill 根与 `Claude Plugin · <name>` 来源的 MCP 条目本片不产出。前缀逻辑本身已落并有单测（`LocalSkillRoot::plugin` 的 `<plugin>:` 键前缀） |
+| **M6D-4** | `hermes` 的根解析未接 ⇒ 该 provider 报**不支持** | `skill/local.rs::provider_root` | 上游走 `execenv.ResolveHermesProfile`（Hermes home 解析，随 provider 配置切片进来）。**不**退回硬编码 `~/.hermes` —— 上游注释点名那样会在 Windows 上漏掉 Hermes 真正加载的全部 skill（GH #8310） |
+| **M6D-5** | 内置 runtime 描述符表只落 `omp` 一行 | `skill/local.rs::BUILTIN_USER_SKILLS_DIRS` | 上游查 `agent.BuiltinRuntimeByID`，该注册表当前**只有一行**（`omp` ⇒ `.omp/agent/skills`）。注册表本身归 agent 切片；一行硬编码把「今天的行为」逐字固定住 |
+| **M6D-6** | 新增 `execenv/sidecar.rs`（本片 execenv 的**第 7 个**文件），且 `sidecar_manifest.go` 的账本 / `CleanupSidecars` / `ensureSkillFrontmatter` **不做** | `execenv/sidecar.rs` | 本片的六个注入口共用三件**语义独立**的东西：拒绝覆盖的写入（上游 `errPathPreExists`）、slug 候选序列（`skillSlugCandidate` / `allocateCollisionFreeSkillDir`）、frontmatter 切片（`frontmatterParts`）—— 后两者上游自己就为「两个调用方必须同意」抽出来共用。**因此本片的 sidecar 写入不记账**（只用于随 env root 一起被 GC 的产物，如 `cursor-data/`）；合并回 `sidecar_manifest.go` 的 converge 点登记给任务准备切片 / M6-INT |
+| **M6D-7** | `disable-model-invocation` 是**一个键的窄口径读取**，不用 YAML 解析器 | `execenv/skill_visibility.rs` | `mc-daemon` 这一侧没有 YAML 解析器（`serde_yaml` 不是它的依赖，M6D-1 也只接了 `mc-skill`/`mc-mcp`）。窄口径覆盖：顶格键 + 标量 `true`/`false`/`"true"`（大小写不敏感、容忍行尾注释）。嵌套或锚点等写法**不认** —— 失败方向是「仍然列出该 skill」，与上游的 `switch` 默认分支一致 |
+| **M6D-8** | `cleanRuntimeSkillKey` 与 `normalize_local_skill_key` **口径不同**（照抄上游） | `execenv/runtime_skill_policy.rs` | 前者只拒 `.` / 绝对路径 / 恰好 `..` / `../` 前缀（`..foo` **合法**），后者按 `strings.HasPrefix(cleaned, "..")` 把 `..foo` 一并拒掉。两处都逐字照抄并各有单测钉住差异 —— 合并成一个函数会让**其中一处**与上游分叉 |
+| **M6D-9** | `SkillForEnv {name, content}` 是 `SkillContextForEnv` 的**子集** | `skill/mod.rs` | 三个消费者（`runtime_skill_policy` / `codex_user_skills` / `skill_visibility`）只读 `Name`（slug 与占位判定）与 `Content`（解 frontmatter）。其余列随 task-context 切片进来后应换成它的投影 |
+| **M6D-10** | `random_broker_token` 用两个 `Uuid::new_v4()` 拼 48 位 hex | `mcp/mod.rs` | 上游 `crypto/rand.Read(24)`；本 crate 没有 `rand` 边。`uuid` 的 v4 同样取自 OS CSPRNG（122 位/次）⇒ 熵不低于上游，**形态逐字相同**（48 位小写 hex）。这个 token 是路径上的访问控制 |
+| **M6D-11** | `go_quote` 是 `strconv.Quote` 的**窄口径** | `execenv/runtime_skill_policy.rs` | 覆盖 `"` / `\` / `\n` / `\r` / `\t` 与其余控制字符（`\uXXXX`）；非 ASCII 按 UTF-8 原样写（与 Go 一致）。Go 的 `\u` 转义全集本波不追 |
+| **M6D-12** | 目录链接只在 unix 实现 | `execenv/codex_user_skills.rs::create_dir_link` | 上游 Windows 建 junction（`codex_home_link_windows.go`）；本片在非 unix 平台返回**可区分**错误。Windows 面整波为登记缺口（`docs/33` §p3） |
+| **M6D-13** | broker **没有** `ReadHeaderTimeout` 的等价物 | `mcp/broker.rs` | 上游给 `http.Server` 设 5s 读头超时；axum/hyper 要装 `tower-http` 的 timeout 层，而它不在 `mc-daemon` 的依赖表里（M6D-1 只接了两条 `path` 边）。整条请求仍被「出网调用超时 + 连接生命周期」约束 |
+| **M6D-14** | broker 的 per-call 日志只有 `task_id` / `installation_id` / `contribution` / `tool` | `mcp/broker.rs::handle` | 上游那行还有 `duration_ms` 与 `result_class`。两者都只影响可观测性：拒绝类结果已经通过 JSON-RPC 错误码回到调用方。日志级别用 `debug`（上游是 `Info`），避免每次工具调用都在 daemon 日志里刷一行 |
+| **M6D-15** | bundle 校验对**未知 `source`** 收紧为「判不过」 | `skill/cache.rs::parse_source` | `ManifestInput::source` 是封闭枚举（`SkillSource` 三常量），而上游是把**任意字符串**喂进哈希。差异只出现在「源不是三个常量之一」这一种输入上，且方向是**收紧**（那种 ref 本来也不该命中缓存） |
+| **M6D-16** | `prepare_omp_mcp_config` 要求 `work_dir` 是**绝对路径** | `execenv/omp_mcp.rs` | 上游直接 `filepath.Join(workDir, ".omp")`：相对 `workDir` 会把 sidecar 落到 daemon 的 cwd，而不是用户的任务目录。与 `cursor_project_root` 一样先解析再写 |
+| **M6D-17** | Cursor approvals 的字节口径：U+2028/U+2029 **原样**写出 | `execenv/cursor_mcp.rs` | Go 的 `json.Encoder` 会把这两个码位转义成 `\u2028`/`\u2029`（即使 `SetEscapeHTML(false)`），`serde_json` 不转。它们出现在 MCP 服务器配置里属极端情形；**其余**（字段序、`omitempty` 的缺省、不转义 HTML）都已逐字对齐，并有单测钉住 |
+
+#### 门禁读数（逐字取自当轮日志；合并 #74 之后的 base `633660ee`）
+
+- `bash scripts/gates.sh`：**8/8 绿**（热 target 77s；起手冷跑 324s，③ 因 17 条 pedantic 先红，
+  修完复跑全绿）。⑦ 的第二条命令 `slash_alias_audit.py --quiet` 一并 exit 0。
+- ⑤：**1810 passed / 0 failed / 198 ignored** —— base 的 1673/198 之外**恰好 +137**，即本片新增的
+  137 条 `mc-daemon` 单测（全部为纯判定 / 真实文件系统 / 本机 socket，**0 条** `#[ignore]`）。
+  ⑥/⑧ **未跑**：本片不碰库（无 DB 代码、无迁移）⇒ 按 issue 的口径只需 8/8。
+- ⑦：**读数逐字不变**（0 路由片）：`local 405 / baseline 344 / implemented 329 real + 0 placeholder /
+  known_gap 127 / unclaimed 0 / regression 0 / local_only 9`，`owners.M6 1`（M6-9 不消费任何
+  `M6` 缺口键）。基线**未刷** —— 一次性刷新归 M6-INT（`LUM-1675`，目标末态 `406 / 330 / 126 / owners.M6 0`）。
+- ⑨：`crates/mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 /
+  placeholder 0 / unevaluable 306`，`fixtures 365`）—— 本片**不是 HTTP 面**，⑨ 的预期变化就是 0。
+- ⑩：本片 21 个 `.rs` 新文件里最大 **718 行**（`cursor_mcp.rs`），全部 ≤800；
+  `scripts/file_size_baseline.tsv` **未动**（只减不增）。
+
+#### 登记的已知缺口（给 M6-INT / 后续切片）
+
+1. `mc-daemon/Cargo.toml` 的两条 `path` 边（M6D-1）若被判定越出写集，收敛动作是：删边 +
+   把 `mc_skill::{frontmatter,binary}` 的调用换成 `mc-core` 侧的共享实现（需要先把它下沉到
+   `mc-core`，与 M6-4 的 bundle hash 同款处置），broker 的钉定比对则必须搬进 `mc-core` 或由
+   `mc-mcp` 暴露 —— **不要**在 `mc-daemon` 里复制第二份。
+2. `execenv/sidecar.rs`（M6D-6）应在任务准备切片落地 `sidecar_manifest.go` 后合并回去，
+   届时本片六个注入口改为接收 manifest 参数（写入记账 + 可回收）。
+3. `mcp/runtime.rs` 的 TOML 面（M6D-2）与 `claude` 插件段（M6D-3）是**两个独立的**补齐项：
+   前者只差一条依赖边（或一个窄 TOML 读取器），后者要等 `claude_plugins.go` 落地。
