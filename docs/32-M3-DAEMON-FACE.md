@@ -761,19 +761,23 @@ bash scripts/gates.sh --with-db      # 10/10
 
 #### 本片门禁读数（逐字取自当轮日志）
 
-- `bash scripts/gates.sh --with-db` ⇒ **10/10 / 161s**
-  （①2s ②1s ③10s ④8s ⑤34s ⑥76s ⑧24s ⑦1s ⑨5s ⑩0s；`overall: PASS`）。
+- `bash scripts/gates.sh --with-db` ⇒ **10/10 / 161s**（起手 base `81c58721`：
+  ①2s ②1s ③10s ④8s ⑤34s ⑥76s ⑧24s ⑦1s ⑨5s ⑩0s；`overall: PASS`）；
+  **合并 base `ec83f6e7` 后重跑 ⇒ 10/10 / 211s**（本片的证据取后者：它才是 PR 落地树）。
 - ⑦（**起手 base `81c58721` 的实测**）：`upstream 456 | local 406 registered | baseline 344`、
   `implemented 330 real + 0 placeholder`、`known_gap 126`、`unclaimed 0`、**`regression 0`**、
   `local_only 9`；`owners` 表 `{M9 33 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5}`
   （和 = 126✓，**无 `M6` 键**）。
-  ⚠️ **`real + placeholder` 的拆分会在合入后变化**：本片起手时基线上还没有 `#77`（`LUM-1580`
-  把门 ⑦ 的占位判据从「字面 `placeholder`」放宽到 `placeholder|not_implemented`，
-  `scripts/route_parity.py` 的 `PLACEHOLDER_HANDLER`）⇒ 在**今天**的 base 上同一条读数变成
-  **`implemented 330 = 326 real + 4 placeholder`**（4 条占位键的 owner 都不是 M6：
-  `attachments` / `pull-requests` / `timeline` / `comments/trigger-preview`）。口径与读数见
-  `docs/22-ROUTE-PARITY.md` §2.3 / §3.6 与 `docs/57` §9.9（14:00 cycle 已就地订正）。
-  **总数（330 / 126 / `owners.M6 0`）不受影响。**
+  ⚠️ **`real + placeholder` 的拆分随 base 变化，总数不变**：起手时基线上还没有 `#77`
+  （`LUM-1580` 把门 ⑦ 的占位判据从「字面 `placeholder`」放宽到 `placeholder|not_implemented`，
+  `scripts/route_parity.py` 的 `PLACEHOLDER_HANDLER`）⇒ 上表的 `0 placeholder` 是**旧正则**下的读数。
+  **合并 base（`ec83f6e7`）后同一棵树逐字实测 = `implemented 326 real + 4 placeholder = 330`**
+  （4 条占位键的 owner 都不是 M6：`attachments` / `pull-requests` / `timeline` /
+  `comments/trigger-preview`）。口径与读数见 `docs/22-ROUTE-PARITY.md` §2.3 / §3.6 与
+  `docs/57` §9.9（14:00 cycle 已就地订正）。
+  **合并后的门禁（`b0c053a0`，base `ec83f6e7`）⇒ 仍 10/10 / 211s**：
+  `local 406 / implemented 326 real + 4 placeholder = 330 / known_gap 126 / unclaimed 0 /
+  regression 0 / local_only 9`，`owners` 表同前（**无 `M6`**）。
   本片 **+1**（405 → 406），**`owners.M6 = 0`** —— M6 的路由面收口。
   ⚠️ 基线 **344 不刷**：唯一一次 `--write-baseline` 归 M6-INT（`LUM-1675`）。
 - ⑨：`crates/mc-conformance/report.json` **逐字未变**（本片 0 条 fixture 归属变化 —— M6-8 的
