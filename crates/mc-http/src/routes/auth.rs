@@ -985,7 +985,7 @@ async fn google_login(State(state): State<Arc<AppState>>, body: Bytes) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AdapterRegistry, ConfigSnapshot, RuntimeHandles};
+    use crate::state::{AdapterRegistry, ChannelKeys, ConfigSnapshot, RuntimeHandles};
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use mc_auth::{SessionStoreContainer, VerificationStoreContainer};
@@ -1043,6 +1043,8 @@ mod tests {
             // M6 anchor（LUM-1665）：插件部署配置显式 `None`；解析口径见 `state.rs` 的用例。
             plugin_key: None,
             plugin_surface_origin: None,
+            // M7 anchor（LUM-1765）：渠道部署密钥显式未配置（口径见 `state.rs`）。
+            channel_keys: ChannelKeys::default(),
         };
         Arc::new(state)
     }
@@ -1351,11 +1353,9 @@ mod tests {
     // ============================================================
     // POST /auth/google（W1-Google / LUM-1399）
     // ============================================================
-    //
-    // stub 用本机临时 axum listener（`127.0.0.1:0`）：不引入 wiremock 这类
-    // 新依赖，也不需要常驻服务。stub 的行为由**请求里的 code** 决定，
-    // 所以一个 stub 服务能跑完全部用例，测试之间没有环境变量串扰
-    // （base URL 是构 state 时注入的，不读进程 env）。
+    // stub 用本机临时 axum listener（`127.0.0.1:0`）：不引入 wiremock 这类新依赖，也不需要
+    // 常驻服务。stub 的行为由**请求里的 code** 决定，所以一个 stub 服务能跑完全部用例，
+    // 测试之间没有环境变量串扰（base URL 是构 state 时注入的，不读进程 env）。
 
     use serde_json::json;
 

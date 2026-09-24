@@ -6,7 +6,7 @@ use mc_core::actor::ActorRegistry;
 use mc_db::Db;
 use mc_feature_flags::FeatureFlagCatalog;
 use mc_realtime::{RealtimeHandle, WsState};
-use mc_secrets::Secrets;
+use mc_secrets::{SecretBox, Secrets};
 use mc_storage::Storage;
 use serde::Serialize;
 
@@ -250,6 +250,107 @@ impl std::fmt::Debug for PluginSecretKey {
     }
 }
 
+/// 渠道部署密钥的**唯一**读取口（M7 anchor / `LUM-1765`）。
+///
+/// 五个平台各一把 AES-256-GCM 密钥（env 名由 `mc_core::channel::ChannelKind::secret_key_env`
+/// 给出，**表只有一份**）：`MULTICA_{SLACK,LARK,DINGTALK,WECOM,TELEGRAM}_SECRET_KEY`。
+/// 它们封装各安装的凭据（Lark `app_secret`、Slack bot token、WeCom corpsecret、
+/// Telegram bot token、DingTalk appsecret），落 BYTEA / JSONB 里的 `nonce‖ct‖tag` 单块
+/// （逐字复刻上游 `internal/util/secretbox`，实现见 `mc_secrets::secretbox`）。
+///
+/// # 三条纪律（与 [`PluginSecretKey`] 同款，别开后门）
+///
+/// 1. **没有 trim**：上游只在 `raw == ""` 时判空；`" <b64> "` 会被 base64 解码拒掉
+///    （加 trim = 放行上游拒绝的输入）；
+/// 2. **未配置就是未配置**：缺 / 空 / 非法 base64 / 非 32 字节 ⇒ `None`；
+///    **绝不**用零密钥兑底、**绝不** panic —— 组合缺密钥时就**不装配**该平台
+///    （`docs/60` §2.4 / §2.6 第 3 条）；
+/// 3. **不新增 `AppState::new` 参数**：本结构在构造体内读 env（`PluginSecretKey::from_env` 先例），
+///    所以 21 个调用点全不动；测试要注入就手写字面量 / 用 [`ChannelKeys::from_env_with`]。
+///
+/// 密钥**不进 `Debug`**（手写脱敏），且本结构**不**暴露裸密钥字节：唯一出口是
+/// [`ChannelKeys::get`] 返回的 `&SecretBox`（能封/解、不能打印）。
+#[derive(Clone, Default)]
+pub struct ChannelKeys {
+    slack: Option<SecretBox>,
+    lark: Option<SecretBox>,
+    dingtalk: Option<SecretBox>,
+    wecom: Option<SecretBox>,
+    telegram: Option<SecretBox>,
+}
+
+impl ChannelKeys {
+    /// 从进程环境读五把部署密钥（生产装配点：`AppState::new`）。
+    pub fn from_env() -> Self {
+        Self::from_env_with(|name| std::env::var(name).ok())
+    }
+
+    /// 从任意「名字 → 值」查询函数读 —— 让映射本身能在不碰进程全局 env 的情况下被单测
+    /// （与 `PluginSecretKey::from_env_with` 同款）。
+    pub fn from_env_with<F>(get: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        use mc_core::channel::ChannelKind;
+
+        let mut keys = Self::default();
+        for kind in ChannelKind::BUILTIN {
+            // `secret_key_env()` 的 `None` 只可能来自 `Custom`，而 `BUILTIN` 不含它。
+            let Some(env_var) = kind.secret_key_env() else {
+                continue;
+            };
+            if let Some(boxed) = mc_secrets::secretbox::load_key_with(env_var, |name| get(name)) {
+                match kind {
+                    ChannelKind::Slack => keys.slack = Some(boxed),
+                    ChannelKind::Lark => keys.lark = Some(boxed),
+                    ChannelKind::DingTalk => keys.dingtalk = Some(boxed),
+                    ChannelKind::WeCom => keys.wecom = Some(boxed),
+                    ChannelKind::Telegram => keys.telegram = Some(boxed),
+                    ChannelKind::Custom => {}
+                }
+            }
+        }
+        keys
+    }
+
+    /// 该平台的封装盒；`None` = 该平台的部署密钥未配置（⇒ 该平台整体不装配）。
+    pub fn get(&self, kind: mc_core::channel::ChannelKind) -> Option<&SecretBox> {
+        match kind {
+            mc_core::channel::ChannelKind::Slack => self.slack.as_ref(),
+            mc_core::channel::ChannelKind::Lark => self.lark.as_ref(),
+            mc_core::channel::ChannelKind::DingTalk => self.dingtalk.as_ref(),
+            mc_core::channel::ChannelKind::WeCom => self.wecom.as_ref(),
+            mc_core::channel::ChannelKind::Telegram => self.telegram.as_ref(),
+            mc_core::channel::ChannelKind::Custom => None,
+        }
+    }
+
+    /// 是否配了该平台的密钥（装配判据的布尔形态，`apps/mc-server` 用它）。
+    pub fn is_configured(&self, kind: mc_core::channel::ChannelKind) -> bool {
+        self.get(kind).is_some()
+    }
+
+    /// 已配置的平台（**字典序**，诊断与测试要确定性）。
+    pub fn configured(&self) -> Vec<mc_core::channel::ChannelKind> {
+        let mut kinds: Vec<mc_core::channel::ChannelKind> = mc_core::channel::ChannelKind::BUILTIN
+            .into_iter()
+            .filter(|kind| self.is_configured(*kind))
+            .collect();
+        kinds.sort_by_key(|kind| kind.as_str());
+        kinds
+    }
+}
+
+impl std::fmt::Debug for ChannelKeys {
+    /// 手写脱敏实现（不派生）：五把密钥的**存在性**可以进日志（运维需要它判断哪个平台没配），
+    /// 密钥字节与 base64 **绝不可以**。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelKeys")
+            .field("configured", &self.configured())
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
@@ -296,7 +397,6 @@ pub struct AppState {
     /// **不得**跳校验、**不得**用零密钥（见 [`PluginSecretKey`]）。
     pub plugin_key: Option<PluginSecretKey>,
     /// 插件 surface 的**专用**内容 origin（`MULTICA_PLUGIN_SURFACE_ORIGIN`）—— M6 anchor 落下的读取口。
-    ///
     /// 语义照上游 `cmd/server/router.go:434`：`TrimRight(TrimSpace(v), "/")` ⇒ 空串即 `None`
     /// （surface 功能整体禁用）。`None` 时 M6-6 / M6-7 返回 503
     /// `plugin_surfaces_not_configured`（与 `writeFeatureDisabled` 逐字一致）。
@@ -310,6 +410,15 @@ pub struct AppState {
     /// 若留到 M6-6/M6-7，它们就得回来改锚点文件（本 anchor 存在的唯一理由就是消灭这种改动）。
     /// 已登记 `docs/32` §9。
     pub plugin_surface_origin: Option<String>,
+    /// 渠道部署密钥（M7 anchor / `LUM-1765`）—— 五个 `MULTICA_<CHANNEL>_SECRET_KEY` 的**唯一**读取口。
+    ///
+    /// 与 [`PluginSecretKey`] 同款纪律：读 env、解析失败 = 未配置（`None`）、**绝不**用零密钥兑底、
+    /// **绝不** panic；且**不新增 `AppState::new` 参数**（本字段在构造体内读 env ⇒ 21 个调用点
+    /// 一个不动，测试里的字面量构造点只有 `routes/auth.rs` 一处，与 M6-0 同判例）。
+    ///
+    /// 消费方：`apps/mc-server/src/channels.rs` 的装配判据（缺密钥 ⇒ 该平台整体不装配，
+    /// `docs/60` §2.6 第 3 条）。详见 [`ChannelKeys`]。
+    pub channel_keys: ChannelKeys,
 }
 
 impl AppState {
@@ -337,6 +446,7 @@ impl AppState {
             daemon_requests: Arc::new(crate::daemon_requests::RequestStore::new()),
             plugin_key: PluginSecretKey::from_env(),
             plugin_surface_origin: plugin_surface_origin_from_env(),
+            channel_keys: ChannelKeys::from_env(),
         }
     }
 }

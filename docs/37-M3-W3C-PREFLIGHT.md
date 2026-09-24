@@ -7194,3 +7194,80 @@ unclaimed 0   regression 0   local_only 9
 3. **空位判断的唯一合法来源是当轮 daemon 读数**（`running_task_count` 含 cycle 自身）：本轮起手 `1` ⇒ 空位 `2`；派完两片后实测 `3/3`（新 run 的 session 落在 `213636`/`213643`）。**禁抄上一轮 next-cycle 行**（§62 勘误后的固定纪律）。
 4. **`assign --to-id` 不会把 `backlog` 片拉起来**：本轮实测 `assign` 后 issue 仍 `backlog`、`status todo` 才起 run（两个 run 分别在 30s/20s 内落 session）。⇒ 「无 assignee 的 backlog 片」= **两步**（assign + status），漏第二步会静默不跑。
 5. **计划片的号段必须由 cycle 在描述里钉死并写「被抢走就顺延」**：`docs/62` 是本轮的空号（`61` 已被 M8 计划占），若同轮有别的片抢号，接收片按「顺延 + 首行注明」处理，不必回问。**号段冲突的成本 = 一次 rebase，回问的成本 = 一轮空转。**
+
+---
+
+## §81 M7-0 anchor（`LUM-1765`）：渠道骨架落地 —— 五轮里**第一个不刷 ⑦ 基线**的 anchor
+
+**起手 base = `f73d916d`**（= M6-INT / PR #80 的合并提交；`git fetch origin feat/multica-rs-initial`
+后当轮复核，与 `LUM-1812` 在描述里写的值一致）。本片是 M7 波的**唯一共享写者**（`docs/60` §3.1）。
+
+### 81.1 落地了什么（写集 18 项，逐字路径；零路由 / 零 SQL / 零迁移）
+
+- **新 crate `mc-channel`**：`Channel` 五方法 trait（`connect` 阻塞跑接收循环）+ `Registry`
+  （last-writer-wins / `ErrUnknownType` / 字典序 `kinds()`）+ `Capability` 8 位位图 +
+  `InboundHandler`（对象安全 trait，`Arc<dyn …>`）+ `engine/{mod,router,supervisor,resolvers}`
+  （端口先定，行为 `todo!()`）+ 五个平台 `mod.rs`（**空** `register()`）。
+- **`mc-secrets::secretbox`**：AES-256-GCM 封装盒，逐字复刻上游 `internal/util/secretbox`
+  （`nonce(12)‖ct‖tag`、`load_key` 不 trim、空/非法 base64/长度错 ⇒ `None`、手写 `Debug` 脱敏）。
+  6 条用例含**与 python `cryptography` 的交叉实现向量**。
+- **`mc-core::channel`**：`ChannelKind` 的三个字符串口径（`as_str` / `storage_str`（lark = `feishu`）/
+  `secret_key_env`）+ `Installation`（逐列对齐迁移 `124`）/ 归一化消息信封（逐条移植上游
+  `channel/message.go`）/ `BindingToken` + `BindingTokenTtl`（15 分钟上限）/ `InstallSession`
+  （三态 + first-writer-wins + 过期 pending 按 error 呈现）。
+- **`mc-repos::channel`**：22 张渠道表 → 8 个文件的归属表（含"lark 两套表并存、不得合并"）。
+- **`mc-http`**：`routes/channels/{mod,slack,telegram,dingtalk,lark,wecom}.rs`（24 条路由账，
+  逐条带 `router.go` 行号）+ `mount_slice_channel()` + `ChannelKeys`（五个
+  `MULTICA_<CHANNEL>_SECRET_KEY` 的唯一读取口，`AppState::new` 内读 env ⇒ **21 个调用点全不动**）。
+- **`apps/mc-server`**：`channels.rs`（装配点 + 停机句柄）+ `main.rs` 的停机链改成
+  **先停渠道连接 → 再停调度器 → 最后停 actor**。
+- **文档**：`docs/32` **§10**（文件→写者表 + 六处归位判断 + R-M7-1…R-M7-5 + 新登记 R-M7-10/R-M7-11）。
+
+### 81.2 门禁读数（逐字，当轮实测）
+
+```
+①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0
+⑥db 0(migrate=0,e2e=0) · ⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0
+⇒ 10/10 PASS / 251s（`--with-db`，真库 `mc_lum1765`，角色带 CREATEDB ⇒ ⑧ 不假红）
+```
+
+- ⑦ **当场实测**（本片**不刷基线**）：`upstream 456 (f41fae6b08fb) | local 406 registered |
+  baseline 406`、`implemented 326 real + 4 placeholder = 330 / 456`、`known_gap 126`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`owners: M9=33 M7=24 M8=24 M3+=16 M2-A=13
+  M3=11 M10=5` ⇒ 与 `docs/60` §6.1 的 M7-0 行**逐字相同**。**零删除、零新增**：渠道面在
+  `mount.rs` 没有 M0 占位可删（`docs/60` §1.3）⇒ 本 anchor **不动** ⑦ 基线——这是五轮里
+  第一次，"anchor = 必刷基线"的直觉在这里**不成立**。
+- ⑦ 第二条：`slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv` =
+  `declared 24 | dual-form required: 0 | 0 defect(s)`，exit 0（M7 **没有** allowlist 退路）。
+- ⑩：0 违规，`file_size_baseline.tsv` **未动**；`routes/auth.rs` **压回 1704 = 基线**（见 80.3 第 3 条）。
+- ⑨：`report matches`（零 fixture 改动 ⇒ 未漂移）。
+- `cargo metadata`：workspace 成员 **33**、`mc-channel` 在内。
+- `Cargo.lock`：`+31 −0` = **一个** `[[package]] mc-channel` + `mc-http` / `mc-server` 两条依赖边；
+  **零新外部包**（全部用 workspace 既有版本；根 `Cargo.toml` **一行未改**）。
+
+### 81.3 三条 lesson（第 23 轮）
+
+1. **"anchor 必刷 ⑦ 基线"是 M4/M5/M6 的**经验**，不是规律**：那三轮的 anchor 都**预删了 M0 占位**
+   （占位与上游真形态不同键 ⇒ 必须提前删，否则切片接线时 panic）。M7 的渠道面**从来**没有占位
+   ⇒ 本 anchor 的形态证据是"⑦ 读数**逐字不变**"而不是"基线变小"。判据要按**本波事实**重推，
+   照抄上一轮的预期表会把"正确"读成"漏刷"。
+2. **`Registry` 这类"纯数据结构"的语义必须在 anchor 实现**：装配点在**进程启动路径**上
+   （`channels.rs` 调 `register`）⇒ 留 `todo!()` 会让"配了部署密钥"的部署**起不来**，
+   比"没接上"更糟。而 `Channel` trait 的**实现**仍全归 M7-1 —— 判据是"这段代码会不会被
+   启动路径调用"，不是"它在哪个文件里"。
+3. **门 ⑩ 的基线行数会把"加一个字段"变成"压缩一段注释"**：`routes/auth.rs` 的基线是 1704
+   且**只允许变短**，而 `AppState` 的字面量必须补新字段（穷举结构体）⇒ 本片把 M7 的注释压成
+   1 行、并把一段 8 行的测试说明重排为 6 行，把行数**压回 1704**（M6-0 先例：压 M3 的 4 行注释）。
+   **教训**：碰基线清单里的文件时，先算行数缺口再动手；`file_size_check.py` 的提示
+   （"split / shrink / drop the entry"）里 `shrink` 往往是最小代价。
+
+### 81.4 下一轮起点与预置
+
+- **base 前进需等 PR 合入**（本片零代码参照物，cycle 的判据链应按 `docs/60` §6.1 的 M7-0 行
+  逐项比对本节的读数）。
+- **在飞**：`LUM-1814`（M9/W9 计划片，docs-only，与 `docs/37` 同域 ⇒ 合并时按"cycle/计划片
+  谁先"排号）；**本片合入前 stage 2 三片（`LUM-1766`/`LUM-1767`/`LUM-1768`）不得起跑**
+  （本片是 M7 波唯一共享写者）。
+- **预置给 M7-1 的硬事实**：`Registry` 已可用但 `Supervisor::spawn` / `Router::route` /
+  `Engine::new` / `InstallationResolver::new` 仍是 `todo!()`；`engine/mod.rs` 的四个
+  `pub mod` 由 M7-2 自己追加；M7 各片只写各自那格文件（`docs/32` §10.7 三条硬约束）。

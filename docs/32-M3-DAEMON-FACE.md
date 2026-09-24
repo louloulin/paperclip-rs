@@ -805,3 +805,117 @@ bash scripts/gates.sh --with-db      # 10/10
    `HookRuntime::standalone(db)` 里的**空**目录（未登记 = 开启）。生产进程的开关目录由
    `main.rs` 的 `AppState` 持有，而调度循环拿不到它（D6）⇒ 若将来要给 hook job 单独关开关，
    需要把目录也传给 `scheduler::start`（那要动 `main.rs`，本片不改）。
+
+
+---
+
+## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
+
+`docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
+（含锚点期做的六处归位判断）。M7 后续切片按本表认领写集，**不得**编辑左列之外的共享文件
+（`routes/mount.rs` / `routes/mod.rs` / `routes/channels/mod.rs` / `state.rs` / `routes/auth.rs` /
+根 `Cargo.toml` / `Cargo.lock` / 各 `lib.rs` / `mc-core/src/channel{,.rs 的子模块}` / `mc-secrets` /
+`apps/mc-server/src/{main.rs,channels.rs}` / ⑦ 基线 / `slash-alias-allowlist.tsv` 全部由锚点冻结）。
+
+### 10.1 锚点冻结的聚合/共享文件（M7 各片只读，写各自子文件）
+
+| 冻结文件 | 谁写 | 说明 |
+| --- | :-: | --- |
+| `crates/mc-http/src/routes/mount.rs` | anchor | 加 `mount_slice_channel()` + `.merge(...)` 一行；锚点期**零注册键** |
+| `crates/mc-http/src/routes/mod.rs` | anchor | 声明 `channels`（**一个**面：24 条路由） |
+| `crates/mc-http/src/routes/channels/mod.rs` | anchor | 24 条路由账（逐条带 `router.go` 行号）+ 5 个子模块声明 + 两个结构决策 |
+| `crates/mc-http/src/state.rs` | anchor | `ChannelKeys`（五个 `MULTICA_<CHANNEL>_SECRET_KEY` 的**唯一**读取口）+ `AppState::new` 内读 env |
+| `crates/mc-http/src/routes/auth.rs` | anchor | 测试里唯一的 `AppState { … }` 字面量补 `channel_keys`（**压缩注释回基线**，见 10.2 第 4 条） |
+| `crates/mc-core/src/channel.rs` + `channel/{installation,message,binding,install_session}.rs` | anchor | 跨 crate 的领域层：三个字符串口径 / `Installation` / 归一化消息信封 / `BindingToken` / `InstallSession` |
+| `crates/mc-channel/**`（`lib.rs` + 4 个类型文件 + `engine/{mod,router,supervisor,resolvers}.rs` + 5 个 `mod.rs`） | anchor | 运行时骨架；五个平台文件 anchor 期是**空** `register()` |
+| `crates/mc-repos/src/lib.rs` + `channel/mod.rs` | anchor | 模块树 + 22 张表 → 8 文件的归属表 |
+| `crates/mc-secrets/src/{lib.rs,secretbox.rs}` | anchor | 部署密钥封装盒（`cipher.rs` **不动**） |
+| `apps/mc-server/src/channels.rs` + `main.rs` | anchor | 长连接宿主位 + 停机链的一行（**先停渠道 → 再停调度器 → 最后停 actor**） |
+| `Cargo.lock` | anchor | 只重新生成：**+1 个成员 crate、0 个新外部包**（见 10.5） |
+
+### 10.2 锚点期**归位判断**（六处，`docs/60` §5 原表未覆盖或写法不同）
+
+| 事项 | 原表 | 本锚点落点 | 理由 |
+| --- | --- | --- | --- |
+| `engine/{session,batcher,lease,commands}.rs` 的 `pub mod` 声明 | 四文件归 **M7-2** | anchor **不**预声明它们（本片写集不含那四个文件）；M7-2 落自己的文件时自行在 `engine/mod.rs` 追加四行 `pub mod …;` | M7-1 与 M7-2 同 stage：先起跑的那片追加、另一片 rebase。若 anchor 预建那四个文件（空桩）就**越出本片写集**，且会在写集交叉审计里记成 `{M7-2}` 的文件被 anchor 创建 |
+| `Registry` 的三条语义（last-writer-wins / 忽略空 key / `ErrUnknownType`） | 「anchor 建类型位、实现归 M7-1」 | anchor **已实现**（纯数据结构），`Channel` trait 的**实现**仍全归 M7-1 | 装配点是**进程启动路径**（`channels.rs` 调 `register`）：一个 `todo!()` 会让服务器起不来。这是 anchor 期唯一"提前实现"的地方，且不含任何平台分支 |
+| 24 条 workspace 级路由的挂载法 | 未写 | **全路径注册**（`/api/workspaces/:id/<平台>/…`）+ 顶层 `merge`，**不** `nest` 进 `workspaces.rs` | 上游在同一个 `r.Route("/{id}", …)` 块内部注册；本仓若 `nest` 到 `workspaces.rs` 会与那里**已有**的 `/api/workspaces/:id` 抢同一挂载点（axum 0.7 嵌套与既有路径重叠会 panic） |
+| `mc-telemetry::redact::SENSITIVE_KEYS` 是否补渠道键名 | §2.3 第 4 条说「不足则 anchor 补齐」 | anchor **不动** `crates/mc-telemetry/src/redact.rs`（**不在本片写集**），把裁定写在这里 | 逐条实测：渠道凭据的键名（`app_secret` / `bot_token` / `app_token` / `corpsecret` / `tenant_access_token` / `webhook_secret`）**都已被** `secret` / `token` / `secret` 子串命中；未命中的两个是 `app_key` 与 `encrypt_key` —— 前者是**客户端标识**（上游只封装 `app_secret`，明文标识进日志是**想要的**），后者在本波五个平台里**没有对应字段**（wecom 的凭据列叫 `secret`）。⇒ 当前覆盖**足够**，不加（加了会把调试信息也抹掉） |
+| `engine` 的取消语义 | 上游靠 `context.Context` | anchor 的 `Channel::connect(&self)` **不带**取消令牌：取消 = supervisor 对承载 `connect` 的 tokio 任务 `abort` + 随后 `disconnect` | `docs/60` §5 的依赖表里**没有** `tokio-util`（锚点把依赖面一次定死）；契约不变（取消不是错误，`connect` 返回 `Ok(())`），M7-1 负责把它写成用例 |
+| `tests/` 里 `AppState` 字面量（`routes/auth.rs`） | 「唯一字面量构造点补字段」 | 补 `channel_keys` 的同时**压缩同文件的注释**，把行数**压回基线 1704** | 门 ⑩ 的基线 `crates/mc-http/src/routes/auth.rs 1704` **只允许变短**；M6-0 的先例是同一手法（当时把 M3 的 4 行注释压成 1 行）。⇒ **任何后续切片都不要再往 `auth.rs` 加行**（新字段由 anchor 加，加不下就压缩注释） |
+
+### 10.3 `mc-core` 的**不做什么**（登记为偏离，避免两处定义漂移）
+
+1. **三个字符串口径单列成函数，不许各片内联**：`ChannelKind::as_str()`（路由前缀 / `issue.origin`
+   = `lark`）、`ChannelKind::storage_str()`（`channel_*` 表的 `channel_type` 列 = **`feishu`**）、
+   `ChannelKind::secret_key_env()`（env 名）。上游把 Lark/Feishu 存成 `feishu` 而 HTTP 面写 `lark`；
+   20 个切片各自 `if kind == Lark { "feishu" }` 就是同一张表二十个真值。
+   **登记为锚点新发现的跨波口径**（`docs/60` 未提）。
+2. **不定义平台 wire 类型**：没有 Slack 信封、Lark 帧、DingTalk Stream、WeCom aibot、Telegram
+   update 的 Rust 结构 —— 那是各 adapter 的文件。
+3. **遗留 `ChannelInstallation` 的 shape 本片不动**（§5 的硬要求）：它的 `external_id` /
+   `display_name` / `enabled` 三列在真实 `channel_installation` 表里**不存在**；M7 的真值是
+   `channel::Installation`（逐列对齐迁移 `124`）。收敛（删或改名）**不在 M7 写集内**。
+4. **`InboundMessage` 保留上游的四个独立语义开关**（`has_selected_context` / `force_fresh` /
+   `skip_agent_run` / `addressed_to_bot`）：它们不是可以打包的状态位，所以对该结构的
+   `clippy::struct_excessive_bools` 是**显式豁免**（理由写在源码里，不是为了躲 lint）。
+5. **`BindingToken.raw` 与 `token_hash` 都不进序列化输出**：明文令牌只在 mint 的返回值里出现
+   一次，哈希是服务端比对用的内部值 —— 少一个出口少一个泄露面。
+
+### 10.4 依赖与工具链偏离
+
+| 事项 | 落法 | 为什么 |
+| --- | --- | --- |
+| 根 `Cargo.toml` | **一行未改**（`members = ["crates/*", "apps/*"]` 是 glob） | 新 crate 只加目录；M7 各片不再碰根 manifest |
+| `mc-channel` 的三方依赖 | 全部用 workspace 既有版本（`tokio` / `async-trait` / `serde` / `serde_json` / `reqwest` / `tokio-tungstenite` / `futures-util` / `thiserror` / `tracing` / `chrono` / `uuid` / `base64` / `hex` / `sha2` / `hmac`） | **无新外部包**；裁剪/加法都留到真需要时由集成方仲裁（`docs/15` §8.4） |
+| 新增两条 `path` 边 | `mc-http → mc-channel`、`apps/mc-server → mc-channel` | 与 M5-9 给 `mc-scheduler` 补边同一手法：让渠道运行时**真的被链进二进制** |
+| 不引 Redis | 进程内租约 / 去重 / 安装会话 / 重投递（R-M7-1） | 见 10.6 的 R-M7-1 |
+| 不引 `tokio-util` | 取消走 `abort`（10.2 第 5 条） | 依赖面一次定死 |
+
+### 10.5 本锚点的门禁读数（逐字取自当轮日志）
+
+```
+①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑥db 0(migrate=0,e2e=0)
+⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0      ⇒ 10/10 PASS / 251s
+```
+
+- ⑦（**当场实测，本片不刷基线**）：`upstream 456 (commit f41fae6b08fb) | local 406 registered |
+  baseline 406`、`implemented 326 real + 4 placeholder = 330 / 456`、`known_gap 126`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`gaps by owner: M9=33 M7=24 M8=24 M3+=16
+  M2-A=13 M3=11 M10=5` —— 与 `docs/60` §6.1 的 M7-0 行**逐字相同**（本 anchor 是五轮里
+  **第一个零删除的 anchor**：渠道面在 `mount.rs` 没有任何 M0 占位可删 ⇒ 基线不动）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv`
+  = `declared 24 | dual-form required: 0 | 0 defect(s)`、exit 0（M7 **没有** allowlist 退路）。
+- ⑩：0 违规；`scripts/file_size_baseline.tsv` **未动**（`routes/auth.rs` 压回 1704 = 基线）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片零 fixture 改动 ⇒ 未漂移）。
+- `cargo metadata`：workspace 成员 **33**，`mc-channel` 在内。
+- `Cargo.lock`：`+31 行` = **一个** `[[package]] mc-channel` + 两条依赖边（`mc-http` /
+  `mc-server`）；**零新外部包**。
+
+### 10.6 风险登记（承接 `docs/60` §8；R-M7-1…R-M7-5 由**本 anchor 一次落**）
+
+| ID | 内容 | 锚点落法 / 归属 |
+| --- | --- | --- |
+| **R-M7-1** | 无 Redis：上游 4 处跨副本协调（WS 租约 CAS / 入站去重 / 安装会话 / 出站重投递） | 进程内替身 + **单副本部署契约**；上游四处都有"无 Redis"的等价降级路径（`router.go:742` 有明文 warn）⇒ 换部署形态而非伪造行为。**本波不引入 Redis**；端口（`LeaseStore`）已由 anchor 定死，实现归 M7-2 |
+| **R-M7-2** | 5 个平台 API 无法在 CI 真连 ⇒ "真实收发回路"门禁可能被假绿绕过 | 替身三条纪律（只替 wire 不替业务 / 帧逐字段断言 / 两个反例必测）写进 M7-4/6/8/13/19 的 DoD（`docs/60` §4.2） |
+| **R-M7-3** | 5 个部署密钥的"未配置"语义**按端点而异**（lark 列表 200 空 + `install_supported:false`，wecom 端点 503） | 路由**仍然存在**、逐 fixture 对齐；**禁止统一 503**。anchor 把"判据 = 部署密钥存在"的装配点钉在 `apps/mc-server/src/channels.rs` |
+| **R-M7-4** | `secretbox` 会有**两份**实现 | M6 面（`mc-plugin-host::credentials`，已合、冻结）与 M7 面（`mc-secrets::secretbox`，本片落）。**真实方位**（订正 `docs/60` §2.3 的措辞）：方向是 `mc-plugin-host → mc-secrets` ⇒ `mc-secrets` **不能**复用它（会成环），反过来 M6 面也不必改。两者都是 AES-256-GCM + `nonce‖ct‖tag`，逐字同形；收敛票**不在 M7 写集内** |
+| **R-M7-5** | lark **两套表并存**（泛化 `channel_*` + 遗留 `lark_*`） | 22 张表的落点表里两套并列（`mc-repos/src/channel/mod.rs`）；M7-14 的 DoD 明写"不得合并" |
+
+**锚点新登记（`docs/60` 未列，编号顺延）：**
+
+| ID | 内容 | 处理 |
+| --- | --- | --- |
+| **R-M7-10** | **`channel_type` 的双口径**：`channel_*` 列存 `feishu`（上游 `channel.TypeFeishu`），而路由前缀与 `issue.origin` 是 `lark` | 已由 anchor **收敛成两个函数**（`ChannelKind::{as_str,storage_str}` + `from_storage_str`），有 3 条用例；M7 各片**不得**内联字面量。**不改 `ChannelKind::as_str`**（M4 的 `IssueOrigin` 与 24 条路由已按 `lark` 落） |
+| **R-M7-11** | `mc-plugin-host::credentials::SecretBox::seal(plaintext, rng)` 需要外部熵源，而 M7 面（`mc-secrets::secretbox`）的 `seal` 自己取随机 nonce、另给 `seal_with_nonce` 做可复现向量 | 两份实现**签名不同**是**故意的**：M7 面要给各 adapter 一个"拿来就用"的封装口（平台帧里没有 rng 参数），可复现性走 `seal_with_nonce`。收敛时统一签名即可（R-M7-4 的同一票） |
+
+### 10.7 交接给 M7 各片的三条硬约束（逐条可测）
+
+1. **`routes/channels/mod.rs` 的路由账是唯一真值**：24 条逐条带 `router.go` 行号；各片只填自己
+   那一份文件（`slack.rs` 4 / `telegram.rs` 4 / `dingtalk.rs` 7 / `lark.rs` 5 / `wecom.rs` 4），
+   **不新增文件、不改 `mod.rs`、不改 `mount.rs`**。
+2. **形态只有一种**：`dual-form required: 0` ⇒ 只注册上游字面量那一形态；补尾斜杠 = `EXTRA_ALIAS`，
+   漏 = `MISSING_EXACT`，**没有 allowlist 退路**。路径参数写 `:name`（`{name}` 恒 404）。
+3. **`group-routes` 必须保持不存在**（`GET /api/workspaces/:id/dingtalk/group-routes` 返回 404）——
+   M7 波唯一一条**反向**验收（`docs/60` §1.6），另一条 `GET /api/agents/:id/dingtalk/groups`
+   挂在既有 agents 子路由内部、由 M7-9 注册（不在 `mount.rs` 的合并点）。

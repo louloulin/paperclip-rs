@@ -6,8 +6,9 @@
 //! 3. 连接数据库（mc-db）
 //! 4. 运行迁移（可选；`MULTICA_DB_RUN_MIGRATIONS` 控制）
 //! 5. 装配 axum 路由（mc-http）
-//! 6. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
-//! 7. 监听 / graceful shutdown（先停调度器，再停 actor）
+//! 6. 启动渠道长连接宿主（mc-channel：五个 IM 平台的出站长连接，缺部署密钥则不装配）
+//! 7. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
+//! 8. 监听 / graceful shutdown（先停渠道连接，再停调度器，最后停 actor）
 
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 
+mod channels;
 mod scheduler;
 
 #[tokio::main]
@@ -151,10 +153,28 @@ async fn main() -> anyhow::Result<()> {
     // routes::router 以 A 的签名为基（接受 Arc<AppState>）；这里再 with_state 注入，
     // 使 Router<Arc<AppState>> → Router<()> 后套默认 middleware 链。
     let daemon_hub = state.daemon_hub.clone();
+    // 渠道密钥在这里 clone 一份：下面 `with_state(state)` 会把 `Arc<AppState>` **移进** router，
+    // 而第 7 步的渠道宿主仍要读它（`ChannelKeys` 是 `Clone`，内部就是五个 `SecretBox`）。
+    let channel_keys = state.channel_keys.clone();
     let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
 
-    // 7. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
+    // 7. 启动渠道长连接宿主（M7 anchor / `LUM-1765`）：五个 IM 平台全部是**出站长连接**
+    //    （无 webhook 路由，`docs/60` §1.5），所以它们与 HTTP 面**共享同一个进程**但走
+    //    自己的装配点。判据 = **部署密钥存在**（缺则整体不装配），装配与停机都在
+    //    `channels.rs`。
+    //    ⚠️ 第二个实参现在是 `None`（端口实现归 M7-1/M7-2）⇒ 即使配了密钥也**只 warn 不起连接**，
+    //    绝不假装连上了；接线后这里换成 `Some(deps)`，签名不变。
+    let channel_handles = channels::start(&channel_keys, None);
+    tracing::info!(
+        configured = ?channel_handles.configured(),
+        factories = ?channel_handles.registry().kinds(),
+        wired = channel_handles.is_wired(),
+        connections = channel_handles.has_connections(),
+        "channel host started"
+    );
+
+    // 8. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
     //    所以「进程起来了但调度器没接」这种静默失效在这里被消灭。失败即启动失败（`register_all`
     //    的错误只可能是规格错误，属于开发者错误，不该带病起服务）。
     //    wakeup 派发的第 7 步要广播 `task.queued` / `task.available`，所以取 `AppState` 里那一个
@@ -181,7 +201,10 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("axum serve")?;
 
-    // 先停调度器：让在跑的 handler 收尾（handle 内部会等当前 tick 结束），再停 actor 池。
+    // 停机顺序固定（`docs/60` §2.4 / R-M7-7）：**先停渠道连接**（挂着不退的长连接会让
+    // graceful shutdown 永远等在那里），**再停调度器**（让在跑的 handler 收尾 —— handle
+    // 内部会等当前 tick 结束），**最后停 actor 池**。
+    channel_handles.shutdown().await;
     scheduler_handle.shutdown().await;
     actors.shutdown().context("shutdown actors")?;
     tracing::info!("shutdown complete");
