@@ -6546,3 +6546,23 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
 - **本轮不抢合并**：`LUM-1672` 的 run `01a0d419-0771` **仍 `running`**（15:46:45Z 起）⇒ 按 §56.6，片会自己合 base / 重跑门禁；cycle 只登记不动手（§73.7 lesson 1 的同一判据）。
 - **下轮判据链（`#74` 专用，逐条已备料）**：① 等 run 终态（`runs` 末条 + `/proc/*/cwd` 零命中该 workdir）；② `merge-base..head` 预检**已过**（见上，head sha 需重取，`93ccb020` 之后它还会动）；③ 真合 base 或 `merge-tree --write-tree` 等式 + 冲突按「两侧都保留、§9.8 在前」解法；④ head 上 CI **3/3**；⑤ API 钉 head sha ⇒ 落地后复核 `tree(base) == 预测树` + 代码路径 diff 0；⑥ **合并前先回收它那 19G `target/`**（本条与 §73.5 的回收预告配套）。
 - **⑦ 递推仍成立**：`#74` 合 ⇒ `local 401 / owners.M6 1`（只差 M6-8 那 1 条路由），随即 `LUM-1673` 互斥解除可派 ⇒ 合后 `402 / owners.M6 0`；`LUM-1675`（M6-INT）⇒ `406 / 330 real / 126 / M6 0`。
+
+### 73.9 追加交付（同一 run 内）：**合并 #74（M6-7，19 路由）⇒ base `81c58721`** —— 唯一冲突按「尾行追加两侧都保留」解，合并树当场 `--with-db` **10/10**
+
+`#74` 的两个前置在 §73.8 记完后**恰好都满足**（`LUM-1672` 的 run `01a0d419-0771` 于 17:2xZ 转 `completed`；其 workdir `/proc/*/cwd` 由 12 → **0** 条）⇒ 本轮把它一并合掉。
+
+**判据链（现场实测）**：
+
+| # | 判据 | 实测 |
+| --- | --- | --- |
+| ① | 预检 `merge-base..head` == PR API | `b91f786d..93ccb020` = 21 文件 `+5692/−94`，与 `GET /pulls/74/files` **逐字一致**（§73.8 已记，本轮复核未变） |
+| ② | run 终态 | `01a0d419-0771` = **`completed`**；`git status --porcelain` = **0**、`HEAD == origin/agent/devbox5/dd993b504e67`（`93ccb020`）⇒ 产物全在远端，本地无唯一内容 |
+| ③ | **冲突裁决** | `docs/32-M3-DAEMON-FACE.md` **唯一冲突**：两片都把新节编号成 `§9.8`（#73 的 M6-6、#74 的 M6-7）。**解法 = 两侧都保留、按先来后到重编号**：M6-6 留 **§9.8**（它的代码注释 `surface_launch.rs:31/35/99/138/189`、`mcp.rs:31` 都逐字指向 §9.8），M6-7 顺延 **§9.9**（其代码只写 `docs/32` §9，**无需改代码**）。落地 diff 复核：vs base = `+56/−0`（M6-6 节原样）、vs 分支 head = `+68/−1`（+ M6-6 节 66 行 + 标题行重编号 1 行）⇒ **无内容丢失** |
+| ④ | 合并树门禁 | 合并提交 `e9b72e73`（树 `631547b0`）上 **`bash scripts/gates.sh --with-db` 10/10 / 554s**（冷跑：①1 ②132 ③53 ④45 ⑤34 ⑥200 ⑧30 ⑦1 ⑨58 ⑩0；真库 `mc_cyc1755`/`multica_cyc1755p`）。⑤ **1673 passed / 198 ignored**、⑥ **511 passed / 0 ignored** |
+| ⑤ | ⑦ 合并树读数 | `upstream 456 / local **405** / implemented **329 real + 0 placeholder** / known_gap **127** / unclaimed 0 / regression 0 / local_only 9`、**`owners.M6 = 1`**（其余 `M9 33 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5`，和 = 127 ✓）；`slash_alias_audit --quiet` 0 defect；⑩ 0；快照 md5 **未变**（仍 `0541eaf…` ⇒ 基线 344 未刷，归 `LUM-1675`） |
+| ⑥ | 落钉与复核 | 推 `e9b72e73` 到片分支（`93ccb020..e9b72e73`）⇒ 重取 PR 读数（head 已是 `e9b72e73`、`mergeable_state unstable` = CI 在跑、非冲突）⇒ `PUT /pulls/74/merge` 钉该 sha ⇒ merge commit **`81c58721`**；落地复核 **`tree(81c58721) == 631547b0`（逐字）**、`git diff --name-only e9b72e73 81c58721` = **0 行** ⇒ 本地 10/10 的读数**直接适用于落地提交**。合后 `pulls?state=open` = **0** |
+
+- **回收（判据：run 终态 + PR 已开/内容在远端 + `/proc/*/cwd` 零命中）**：整删 `lum-1672-dd993b504e67` 的 `target/`（**23G**）+ 本轮 cycle 自己门禁 workdir 的 `target/`（**19G**）⇒ `/` 由 11G 可用回升到 **32G（33%）**。
+- **空位再派**：本轮第二位 = **`LUM-1673`（M6-8，1 路由）** —— 它与 `LUM-1672` 的互斥已随合并解除。预飞在 `81c58721` 复验 **7/7 命中、0 缺件、0 处需改冻结面**（`plugins/mod.rs:36/:54`、`plugin_bridge/mod.rs:31`、`plugin/mod.rs:37`、`lib.rs:68`、`jobs/mod.rs:64/:76/:96/:97/:101`、构造点仍 2 处）；**⑩ headroom 写入描述**：`mc-repos/src/scheduler.rs` = **621/800 ⇒ 剩 179 行**（不在白名单），骨架文件 `hooks_job.rs 35` / `hooks.rs 44` / `plugin/hook.rs 21` 承载新逻辑。描述追加「起手交接（01:00 cycle / `LUM-1755`）」+ `--no-start`（revision **4**）⇒ `status todo` ⇒ **run `01a0d477-6b6c-73b0-88fa-3be5bf776e34` 于 17:29:51Z 起跑**。⇒ 派后 **3/3**：cycle ∥ `LUM-1674` ∥ `LUM-1673`。
+- **⑨ 口径**：本片 `mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`，`fixtures 365`）；`PASS (report matches)` 逐字来自本轮门 ⑨ 日志。
+- **⑨ 的一条自有登记（合并期发现）**：M6-7 自报 ⑥ 计数时写「⑤ 1648/198」而合并树上实测 ⑤ **1673**（= M6-6 的 1648 + M6-7 的 25？不成立）—— 逐项核对后确认：M6-6 与 M6-7 的 ⑤ 增量在合并树上**各自独立**相加（1648 + 25 = 1673），**不是**漂移；差异只是两片各自报的都是**自己分支的树**。⇒ 结论：跨片读数只能取**合并树当轮日志**，不能相加或相减推断。
