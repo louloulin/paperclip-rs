@@ -652,6 +652,86 @@ manifest / bundle / capabilities 校验器（`ManifestVersion1`、`Capabilities`
 
 ---
 
+### 9.7 M6-INT 验收向量与记账闭合审计（14:00 cycle `LUM-1743`，2026-09-24 06:0xZ 实测，base `c47c016`）
+
+`LUM-1675`（M6-10 INT，0 代码片）的全部动作就是「**一次性**刷新 ⑦ 快照 + 证明无回归」。本节把那次刷新**应当读到什么**先钉死，
+免得末态与预测差一个数时要在 11 片里回溯。下面每个数都在 base `c47c016` 上**实测**、可复算。
+
+**起手读数**（`python3 scripts/route_parity.py --json`，本轮实测）：
+
+| local | implemented | known_gap | owners.M6 | unclaimed | regression | local_only |
+|---|---|---|---|---|---|---|
+| **363** | **287 real + 0 placeholder** | **169** | **43** | 0 | 0 | 9（含 1 占位） |
+
+**记账闭合审计（三条独立校验得同一个数 ⇒ 零 slack、零重复认领）**：
+
+1. **声明侧**：`docs/fixtures/m6-declared-routes.tsv` 的 57 条 = M6-2 **12** · M6-3 **2** · M6-4 **6** · M6-5 **13** · M6-6 **4** · M6-7 **19** · M6-8 **1**
+   （M6-1 / M6-9 是 0 路由片），每行恰好一片（出处 = 该 fixture 第 34–37 行的归属清单）。
+2. **已落地侧**：`--json` 的 `implemented` 里 `owner == "M6"` = **14 条** = M6-2 的 12 + M6-3 的 2（两片随 #69 / #70 进 base）。
+3. **剩余侧**：`owners.M6` = **43** = 4 个待合片的 DoD `+N` 之和（6 + 13 + 4 + 19 + 1）
+   ⇒ **14 + 43 = 57 ✓**（左端由解析器数出，右端由各片描述加出，两处独立算得同一个数）。
+4. **`local` 的形态口径（本轮实证，最容易算错的一处）**：`local` 是**逐条注册路径**计数（同一路由的两种尾斜杠形态**各算一条**），
+   `implemented` 是**折叠形态后**与上游配对的条数 ⇒
+   **`local 363 = 344 (baseline) + 14 (M6 上游路由) + 5 (M6-2 那 5 个双形态键各自的第二形态)`**，逐项复算相等
+   （实测锚点：`crates/mc-http/src/routes/skills/crud.rs:58` 的 `/api/skills` 与 `:59` 的 `/api/skills/` **同时**注册）。
+   本波带尾斜杠的键**总在 M6-2**，其余片**一律单形态**（§1.4）。
+
+**末态验收向量（M6-4…M6-8 全部合入后，INT 刷新那一次应当逐字读到）**：
+
+| 指标 | 末态预期 | 由来 |
+|---|---|---|
+| `local` | **406** | 363 + 43（剩余 43 条**无双形态** ⇒ 加 1 就是加 1） |
+| `implemented` | **330 real + 0 placeholder** | 287 + 43 |
+| `known_gap` | **126** | 169 − 43 |
+| `owners.M6` | **0** | 43 − 43（§4.2「此后 `owners.M6 = 0`」= 本波收口判据） |
+| `unclaimed` / `regression` | **0 / 0** | 每片自检的不变式 |
+| `local_only` | **9**（占位 1） | 本波不改（M6 不动非 M6 面的本地路由） |
+| 不变式 | `implemented + known_gap == 456` | 门 ⑦ 硬约束 |
+
+⇒ `LUM-1675` 的 `--write-baseline` **只跑一次**（`344 → 406`）。末态与上表任一不等时，**先按 `owners.M6` 是否归零定位**：
+`owners.M6 ≠ 0` ⇒ 某片少交，用 `python3 scripts/route_parity.py --list-gaps` 逐条点名；
+`local > 406` 而 `owners.M6 == 0` ⇒ 有人多注册了上游没有的路径（本地独有账，不是回归）。
+
+> **同轮勘误**：§6.1 的**绝对列已经过期** —— 那是 M6-0 当时在 `eaba357` / `baseline 296` 上的预测；此后 #66 把 baseline 刷到 **344**，
+> 且 M2-E / M3 / M4 / M5 各波在 M6-0 之后也落了路由 ⇒ **只有 §6.1 的 ⊿ 列（+12/+2/+6/+13/+4/+19/+1）仍然有效**，
+> 绝对值一律以本节 + 起手实测为准（`local 381`、`local 344` 这类旧数**不要**再引用）。
+
+**复算（3 行，任意 workdir 只读）**：
+
+```bash
+python3 scripts/route_parity.py --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["counts"]);import sys as s;print("owners.M6 =",d["owners"]["M6"],"| M6 implemented =",sum(1 for r in d["implemented"] if r["owner"]=="M6"))'
+grep -v '^#' docs/fixtures/m6-declared-routes.tsv | tail -n +2 | wc -l    # 57 = 声明路由条数
+sed -n '34,37p' docs/fixtures/m6-declared-routes.tsv                      # 逐片归属的权威出处
+```
+
+---
+
+### 9.8 跨波缺口「掉棒」审计 + M6-INT 缺口清单订正（14:30 cycle `LUM-1744`，2026-09-24 06:3xZ，base `aa48674`）
+
+**结论**：M5-INT 的缺口裁定表里有**一项掉棒** —— **D8**（webhook 投递 worker 轮询循环）**无 owner、无生产调用点**；已补开 `LUM-1745`（`backlog`）。同时订正 `LUM-1675` 动作清单里**两处过期**内容。
+
+#### 9.8.1 D8 掉棒（裁定在文档里，接收片描述里没有 ⇒ 交付静默落空）
+
+| 项 | 裁定出处 | 裁定归谁 | 该片实际交付 | 判定 |
+| --- | --- | --- | --- | --- |
+| **D8** webhook 投递 worker 轮询循环（1s ticker + `Notify` + 4 并发） | `docs/56` §7 / `docs/44-M5-PLAN.md:750`「裁定归 `LUM-1659`（备选 M6-9）」 | `LUM-1659`（M5-9） | PR #68 / merge `5e7032a6`（8 文件 +1343/−5）= `mc-scheduler` 两个 job 的接线，**不含**本面 | **掉棒** |
+
+实证（逐条可复算）：① `crates/mc-autopilot/src/webhook/worker.rs:216` 文档自陈「只提供 `process_next_delivery`，不提供轮询循环」（`docs/54` §6.1 D8）；② `grep -rn "process_next_delivery" crates apps` 无生产调用点；③ 接收片已合入 base 且 `apps/mc-server/src/main.rs:162` 只有 `scheduler::start(...)`，无 webhook worker；④ 该片描述里**从未出现** D8/worker/轮询 ⇒ 裁定的归属没进它的 DoD；⑤ 备选 `M6-9`（`LUM-1674`）写的是 `crates/mc-daemon/src/**`，而本片落点在 `apps/mc-server` ⇒ 备选前提不成立。
+
+处置：**`LUM-1745`**（`parent = LUM-1334`、`backlog`、`high`）。其描述含上游参照（`internal/handler/webhook_delivery_worker.go` 301 行：`webhookWorkerPollInterval = 1s` / `MaxAttempts = 5` / `Concurrency = 4`、`Notify()` 非阻塞、每 loop 自带 ticker、`WaitWithTimeout(5s)`；触发点 4 处；`cmd/server/main.go:744/890` 起停）、写集、DoD 7 条、**排期约束：`Notify` 句柄大概率落 `crates/mc-http/src/state.rs`（M6 冻结/热区，见 §9.5）⇒ M6 收口前不开工**。
+
+#### 9.8.2 本波对 `LUM-1675`（M6-INT）的缺口清单订正
+
+`LUM-1675` 动作 4 原写「未接线的调度器（`LUM-1659`）」—— **已过期**（该片接线早在 #68 合入）。改为登记 **D8 → `LUM-1745`**，与 R-M6-1 / R-M6-3 / R-M6-13 并列。同轮还订正了动作 2 的 ⑦ 目标（`local 381` → §9.7 的 `local 406`）。
+
+#### 9.8.3 执行规则（写给后续 cycle / 派发者）
+
+1. **裁定的归属必须当场写进接收片的描述动作清单**，否则它不会发生 —— D8 为此付出了「整整一个波次无人接 + 一次独立开片」的代价。
+2. **订正 = 追加 + 回改旧址**：`LUM-1675` 的描述里曾同时存在 §9.7 的 `local 406` 与动作 2 的 `local 381`（上轮只追加、没回改）⇒ 未来 run 读哪条全凭运气。
+3. **核路由用 `scripts/route_parity.py`，不要用 `grep -c '\.route('`**：axum 方法链会把 2 条声明压成 1 次调用（M6-5 实测 10 次调用 = 13 条声明），按调用数比会稳定少数并诱发假欠账。
+
+---
+
 ## 10. 复算命令（全部只读，可在任意 workdir 复现）
 
 ```bash

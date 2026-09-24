@@ -28,9 +28,12 @@
 //! | GET | `/api/agent-activity-30d` | [`stats::activity_30d`] |
 //! | GET | `/api/agent-run-counts` | [`stats::run_counts`] |
 //!
-//! **不在本片**：`/api/agents/{id}/skills*`（M6）、`/api/agents/mika*`（M9），
-//! 以及 `runtime_availability` 的在线投影（M3-4）、`task` 状态机（M3-3/M3-6）。
-//! 有意偏离的完整清单见 `docs/40-M3-5-AGENTS.md` §5。
+//! **本片（M6-4）新增**：`/api/agents/{id}/skills*` 与 `/api/agents/{id}/runtime-skills/enabled`
+//! （6 条注册键，见 sibling `agents/skills.rs`；M6-0 anchor 在 `routes/mod.rs:71-72` 明写这 6 条
+//! 由 M6-4 在本文件内加 `mod skills;` + 逐条 `.route()`）。
+//!
+//! **不在本片**：`/api/agents/mika*`（M9），以及 `runtime_availability` 的在线投影（M3-4）、
+//! `task` 状态机（M3-3/M3-6）。有意偏离的完整清单见 `docs/40-M3-5-AGENTS.md` §5。
 //!
 //! 鉴权约定（与本仓 M1/M2 各切片一致）：
 //! - `X-Multica-User-Id` → [`AuthUser`]
@@ -45,7 +48,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use mc_core::Id;
 use mc_errors::Error;
@@ -63,6 +66,7 @@ mod crud;
 mod dto;
 mod env;
 mod labels;
+mod skills;
 mod stats;
 
 /// agent 面 16 条上游路由（+2 条尾斜杠别名 = 18 个注册键）。
@@ -109,6 +113,25 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/api/agents/:id/env",
             get(env::get_agent_env).put(env::update_agent_env),
+        )
+        // M6-4：agent 的 skill 绑定面（5 条）+ runtime-local skill 开关（1 条）。
+        // 静态段 `add` 与参数段 `:skill_id` 不冲突：matchit 0.7 静态优先。
+        .route(
+            "/api/agents/:id/skills",
+            get(skills::list_agent_skills).put(skills::set_agent_skills),
+        )
+        .route("/api/agents/:id/skills/add", post(skills::add_agent_skills))
+        .route(
+            "/api/agents/:id/skills/:skill_id/enabled",
+            put(skills::set_agent_skill_enabled),
+        )
+        .route(
+            "/api/agents/:id/skills/:skill_id",
+            delete(skills::remove_agent_skill),
+        )
+        .route(
+            "/api/agents/:id/runtime-skills/enabled",
+            put(skills::set_agent_runtime_skill_enabled),
         )
         .route("/api/agent-task-snapshot", get(stats::task_snapshot))
         .route("/api/agent-activity-30d", get(stats::activity_30d))

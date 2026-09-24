@@ -44,7 +44,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::Json;
 use mc_core::Id;
-use mc_repos::daemon::{DaemonRepo, SkillBundleRow};
+use mc_repos::daemon::DaemonRepo;
 use mc_repos::runtime::AgentRuntimeRow;
 use mc_repos::task::TaskRow;
 use serde::Deserialize;
@@ -59,9 +59,13 @@ use super::scope::{
     conflict, db_err, forbidden, internal, not_found, require_runtime_access, require_task_access,
     validation, workspace_allowed, DaemonAuth,
 };
-use super::skills::{build_bundle, SOURCE_WORKSPACE};
+use super::skills::{
+    build_agent_bundle, build_builtin_bundle, parse_source, SkillBundleData, SOURCE_BUILTIN,
+};
 use crate::error::ApiResult;
 use crate::state::AppState;
+use mc_core::skill::SkillSource;
+use mc_repos::skill::binding::SkillBindingRepo;
 
 /// prepare lease 的续租窗口（秒）—— upstream `prepareLeaseTTL` 同值 90s。
 const PREPARE_LEASE_SECS: i64 = 90;
@@ -445,7 +449,6 @@ pub(crate) async fn resolve_skill_bundles(
     Path((runtime_id, task_id)): Path<(String, String)>,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
-    let repo = DaemonRepo::new(&state.db);
     let runtime = require_runtime_access(&state, &auth, &runtime_id, "runtime not found").await?;
     let (task, task_workspace) =
         require_task_access(&state, &auth, &task_id, "task not found").await?;
@@ -460,47 +463,74 @@ pub(crate) async fn resolve_skill_bundles(
     if req.skills.is_empty() {
         return Ok(Json(json!({ "bundles": [] })));
     }
-    // 先校验再读：坏 ref 历来就是 400，不该先付一次读的代价。
-    let mut wanted = Vec::with_capacity(req.skills.len());
+
+    // `invalid skill ref` 只覆盖**空字段**（上游 handler 的那道门）；id 的形态由下面
+    // 的按源解析决定 —— 校验与解析分开，才能让 `builtin:<name>`（不是 uuid）可解析。
     for r in &req.skills {
         if r.id.is_empty() || r.source.is_empty() || r.hash.is_empty() {
             return Err(validation("invalid skill ref"));
         }
-        let Ok(parsed) = uuid::Uuid::parse_str(r.id.trim()) else {
-            return Err(validation("invalid skill ref"));
-        };
-        wanted.push(Id::from(parsed));
     }
 
-    let loaded: Vec<SkillBundleRow> = repo
-        .skill_bundles_for_agent(task.agent_id(), &wanted)
-        .await
-        .map_err(|e| {
-            // 5xx 而不是部分答案：daemon 的 resolve 重试能救回瞬时读失败，而一个
-            // 「读失败拼出来的」bundle 会通过客户端校验并被当成完整缓存下来。
-            tracing::error!(task_id = %task_id, error = %e, "resolve skill bundles failed");
-            internal("failed to load skill bundles")
-        })?;
-
-    let mut by_id: HashMap<Uuid, (mc_repos::daemon::SkillRow, Vec<(String, String)>)> = loaded
-        .into_iter()
-        .map(|b| (b.skill.id, (b.skill, b.files)))
+    // workspace / plugin 共用一次 `ListAgentSkillsByIDs`（同一张表、同一条授权谓词）；
+    // builtin 不查库（清单在编译期就定下了）。
+    let wanted: Vec<Uuid> = req
+        .skills
+        .iter()
+        .filter(|r| r.source != SOURCE_BUILTIN)
+        .filter_map(|r| Uuid::parse_str(&r.id).ok())
         .collect();
 
-    let mut resolved = Vec::with_capacity(req.skills.len());
+    let mut resolved: HashMap<String, SkillBundleData> = HashMap::with_capacity(req.skills.len());
+    if !wanted.is_empty() {
+        let loaded = SkillBindingRepo::new(state.db.clone())
+            .skill_bundles_for_agent(task.agent_id(), &wanted)
+            .await
+            .map_err(|e| {
+                // 5xx 而不是部分答案：daemon 的 resolve 重试能救回瞬时读失败，而一个
+                // 「读失败拼出来的」bundle 会通过客户端校验并被当成完整缓存下来。
+                tracing::error!(task_id = %task_id, error = %e, "resolve skill bundles failed");
+                internal("failed to load skill bundles")
+            })?;
+        for row in &loaded {
+            let bundle = build_agent_bundle(row);
+            let source = if row.is_plugin() {
+                SkillSource::Plugin
+            } else {
+                SkillSource::Workspace
+            };
+            resolved.insert(
+                mc_skill::builtin::agent_skill_bundle_key(source, &bundle.id),
+                bundle,
+            );
+        }
+    }
+
+    let mut out = Vec::with_capacity(req.skills.len());
     for r in &req.skills {
-        let key = uuid::Uuid::parse_str(r.id.trim()).unwrap_or_default();
-        let Some((skill, files)) = by_id.remove(&key) else {
+        // 三个常量之外的源没有服务端生产者（上游 `LoadRequestedAgentSkillBundles` 的
+        // `switch` 只认 builtin / workspace）⇒ 与「查不到」同一处理。
+        let Some(source) = parse_source(&r.source) else {
             return Err(not_found("skill bundle not found"));
         };
-        // 本仓只实现 `workspace` 源：builtin / plugin 的 ref 与「不存在」同一处理。
-        // 由此，上游对插件源的那道 pinned-hash 校验在本切片**不可达**（已登记在
-        // `docs/32` 偏离表），不伪造一个恒不成立的比较。
-        if r.source != SOURCE_WORKSPACE {
+        let bundle = if source == SkillSource::Builtin {
+            build_builtin_bundle(&r.id)
+        } else {
+            // 键用**原始** ref id（不是规范化后的 uuid 文本）：上游也是用 ref.ID 去查
+            // `resolved` 这张按行 id 建的 map，所以非规范形态的 id 落 not-found。
+            resolved.remove(&mc_skill::builtin::agent_skill_bundle_key(source, &r.id))
+        };
+        let Some(bundle) = bundle else {
             return Err(not_found("skill bundle not found"));
+        };
+        // 插件的 pinned hash 是**客户端缓存键**：装了插件的那台机器按安装时的版本缓存
+        // 过内容，服务端换了版本必须让它重新拉，而不是悄悄喂给它一份不同内容。
+        // 上游 `ResolveTaskSkillBundles` 里这道门一直存在，只是它前面的 `switch`
+        // 没有 plugin 分支 ⇒ 在 M6-4 让 plugin 可解析之前，程序里没有路径能走到它。
+        if source == SkillSource::Plugin && bundle.hash != r.hash {
+            return Err(conflict("pinned plugin skill bundle hash mismatch"));
         }
-        let bundle = build_bundle(&SkillBundleRow { skill, files });
-        resolved.push(serde_json::to_value(&bundle).unwrap_or(Value::Null));
+        out.push(serde_json::to_value(&bundle).unwrap_or(Value::Null));
     }
-    Ok(Json(json!({ "bundles": resolved })))
+    Ok(Json(json!({ "bundles": out })))
 }
