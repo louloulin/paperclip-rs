@@ -357,7 +357,7 @@ async fn version_for_workspace(
         })
 }
 
-fn installation_repo(state: &AppState) -> InstallationRepo {
+pub(super) fn installation_repo(state: &AppState) -> InstallationRepo {
     InstallationRepo::new(state.db.clone())
 }
 
@@ -366,7 +366,7 @@ pub(super) fn package_repo(state: &AppState) -> PackageRepo {
 }
 
 /// 部署密钥的**唯一**转写点（未配置 ⇒ `None`，调用方按缺失处理，绝不用零密钥兜底）。
-fn deployment_key(state: &AppState) -> Option<DeploymentKey> {
+pub(super) fn deployment_key(state: &AppState) -> Option<DeploymentKey> {
     state
         .plugin_key
         .as_ref()
@@ -424,8 +424,16 @@ fn manifest_of_version(version: &PackageVersionRow) -> PluginResult<Manifest> {
 }
 
 /// 上游 `ParseInstallationManifest`：读回**管理员同意过**的快照。
-fn installation_manifest(installation: &InstallationRow) -> PluginResult<Manifest> {
-    serde_json::from_value(installation.manifest.0.clone())
+pub(super) fn installation_manifest(installation: &InstallationRow) -> PluginResult<Manifest> {
+    parse_installation_manifest(&installation.manifest.0)
+}
+
+/// M6-6（`plugins/mcp.rs` / `plugins/surface_launch.rs`）的复用点：那两片读的是自己的**窄读
+/// 投影**（`mc_repos::plugin::mcp_approval::PluginInstallationRow`），不是 M6-5 的整行 ——
+/// 但「manifest 不可读」这句话只能有一处，所以由本文件（`PluginError` 的唯一所有者）
+/// 出这个折法，而不是让调用方各写一份 `serde_json::from_value` + 同一个字面量。
+pub(super) fn parse_installation_manifest(manifest: &Value) -> PluginResult<Manifest> {
+    serde_json::from_value(manifest.clone())
         .map_err(|_| PluginError::invalid("stored plugin manifest is unreadable"))
 }
 
@@ -508,7 +516,10 @@ fn hook_payload(hook: &Hook) -> Value {
 
 /// 上游 `pluginInstallationResponse`：**永不携带 secret 值**（`config` 只有非 secret 字段，
 /// secret 只以**键名**出现在 `configured_secrets`）。
-async fn installation_payload(state: &AppState, row: &InstallationRow) -> PluginResult<Value> {
+pub(super) async fn installation_payload(
+    state: &AppState,
+    row: &InstallationRow,
+) -> PluginResult<Value> {
     let manifest = installation_manifest(row)?;
     let secrets = installation_repo(state)
         .secret_keys(row.id())

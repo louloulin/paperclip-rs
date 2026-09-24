@@ -478,7 +478,74 @@ bash scripts/gates.sh --with-db      # 10/10
 - e2e：`tests/skills` **23 例全绿**（真库 `mc_lum1668`；`--test-threads=4`，21.4s），
   其中本片新增 11 例（导入 8 + 刷新 3）+ 1 条 zip 夹具自检（非 ignored）。
 
-### 9.8 M6-7 公开 Action API + bridge + surface（`LUM-1672`）的落点与偏离登记
+### 9.8 M6-6 插件运行时面（`LUM-1671`）的落点与偏离登记
+
+**落点**：**4 个注册键**（`GET …/invocations`、`GET|PUT …/mcp/{hookKey}/tools`、
+`GET …/surfaces/{surfaceKey}/launch`；都在 `routes/plugins/mod.rs` 里由 M6-0 冻结、逐字对齐
+`docs/fixtures/upstream-routes.tsv:425-428`，**无**尾斜杠形态 ⇒ ⑦ `local` 只 +4）。
+上游对照：`internal/handler/plugin_mcp.go`（159）+ `plugin_hook.go` 的 invocations 段（≈30）+
+`service/plugin_mcp_transport.go` 前半（≈150）+ `plugin_surface.go` 的 launch 段（≈183）。
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `mc-http/src/routes/plugins/mcp.rs` | 608（非测试 447） | 3 条路由 + 门（`load_installation`）/ 发现（`discover_hook_tools`）/ 采纳钉定（`pin_tools`）/ DTO（`invocation_payload`、`mcp_tool_payload`）；5 条纯判定单测 |
+| `mc-http/src/routes/plugins/surface_launch.rs` | 663（非测试 473） | 1 条路由 + origin 解析与专用判定 + `SurfaceLaunchClaims` / `mint_surface_launch` / `open_surface_launch_claims`（M6-7 复用）；6 条纯判定单测 |
+| `mc-http/tests/plugins/{runtime,runtime_surface,runtime_support}.rs` | 579/314/133 | 真库 e2e 10 例（4 条路由各有用例）+ 共用夹具（拆三个文件是门 ⑩ 的 800 行硬限逼出来的） |
+| `mc-repos/src/plugin/mcp_approval.rs` | +74 | `mcp_approvals()` 只读投影 + `secret_ciphertext` 窄读垫片（见 M6D-10）+ 1 条真库用例 |
+| `mc-repos/src/plugin/invocation_read.rs` | ±1 | 夹具 `created_at` 绑定改 `$4::timestamptz`（见下「纠正」） |
+| `mc-http/src/routes/plugins/install.rs` | +21/−8 | 四处可见性放开（见 M6D-11），无行为改动 |
+| `mc-http/tests/plugins/{main,support}.rs` | +12/+18 | 模块登记 + `app_surface(db, key, origin)` 夹具（`plugin_surface_origin` 也由测试说了算） |
+
+**冻结点零编辑**：`routes/plugins/mod.rs`、`routes/{mod,mount}.rs`、`state.rs`、
+`mc-plugin-host/**`、`mc-mcp/**`、`routes/surfaces.rs`、根 `Cargo.{toml,lock}`、⑦ 基线、
+`slash-alias-allowlist.tsv` **全部零改动**（本片**未加任何依赖**：`mc-mcp` / `mc-plugin-host`
+两条边由 M6-0 anchor 就位）。
+
+#### 偏离（M6D-1～M6D-12）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M6D-1** | `plugin_surfaces_not_configured` 是 **503**，上游是 **403** | `surface_launch.rs::surfaces_not_configured` | 上游 `writeFeatureDisabled` 落 `writeErrorCode(w, http.StatusForbidden, …)`（`handler.go:578`）。本仓口径取自 **M6-0 anchor 自己写的 `state.rs` 文档**（两处）、`routes/surfaces.rs` 的桩、`plugin_bridge/hooks.rs` 的 `plugin_disabled`（同款 503）以及本 issue 的 DoD —— 四处一致 ⇒ 按 503 落地。**码与文案逐字不变**，只有状态码这一位不同；⑨ 的 365 条 fixture 里没有任何一条打这个端点（全文 grep = 0 命中）⇒ 不判红 |
+| **M6D-2** | `mcp_approvals` 存**窄形态**（`name` + `schema_digest`），不是上游整个 `remotemcp.Tool` | `mcp.rs::pin_tools` | 迁移 `369` 的注释与 `mc_core::plugin::PluginApprovedTool` 的头表写的就是这个形状；少掉的 `description` / `inputSchema` 只用于展示，而比对（本文件唯一关心的语义）只用这两个字段。**不新增列、不改迁移** |
+| **M6D-3** | 暴露 `?limit=&offset=`（上游 `LIMIT 100` 硬编码、**无查询参数**） | `mcp.rs::page_params`、`mc-repos/src/plugin/invocation_read.rs` | 本 issue 的 DoD 要求「空页 / 越界 offset」两条边界可测 ⇒ 必须有分页能力。缺省 `100` / `0` 与上游行为逐字相同，上限 **500**（上游没有参数也就没有上限；加了参数就必须有）。查询串**手解**而不是 `Query<T>`：后者的拒绝体是 axum 的纯文本，会与插件面的 `{"error":{"code","message"}}` 信封不一致；拼错/非法值回缺省而**不是** 400（分页是能力，不是拒服务的理由） |
+| **M6D-4** | 单条 `UPDATE`（`mcp_approvals \|\| jsonb_build_object($2,$3::jsonb)` / `- $2`）代替上游「读-改-写 + 整块 `json.Marshal`」 | `mc-repos/src/plugin/mcp_approval.rs::set_hook_approval` | 读-改-写让两个管理员**同时**批准**不同** hook 时可能丢掉一个（read→write 窗口内的更新被整块覆盖）；单条语句语义完全等价（整块替换该 hook 的值、删掉该 hook 的键），却天然没有这个窗口。`updated_at = now()` 与上游 `SetPluginMCPApprovals` 逐字相同；`RETURNING` 让「安装已消失」照上游落成 `NotFound`。⚠️ 与 M6D-2 合并看：**整块写入仍是 per-hook 的**，其它 hook 一个字节都不动 |
+| **M6D-5** | 排序在 `created_at DESC` 之后**追加 `id DESC`** 作次键 | `mc-repos/src/plugin/invocation_read.rs::list` | `created_at` 默认 `now()`，同事务插入的行时间戳**完全相同**，只按它排会让本片新增的 `OFFSET` 在并列行上跳过或重复（上游没有分页所以看不见这个问题） |
+| **M6D-6** | `parse_plugin_surface_origin` **手写**，不新增 `url` 依赖 | `surface_launch.rs` | 依赖边冻结在 M6-0 anchor（「此后 M6 各切片不再改本 manifest、`Cargo.lock` 只在 anchor 重生成」）。两处比 Go `url.Parse` **更严**：空端口（`https://host:`）被拒；主机名按字符表校验（含 IPv6 方括号形态） |
+| **M6D-7** | 「专用 origin」的候选退化为「本进程 host（配了端口就连端口）」+「本次请求的 `Host` 头」 | `surface_launch.rs::surface_origin_is_dedicated` | 上游候选是 `cfg.PublicURL` / `cfg.AppURL` / `cfg.AttachmentFrameAncestors`；本仓**没有**这三个配置面（`ConfigSnapshot` 只有 `host`/`port`，`mc_config::ServerConfig::external_url` 没有被 anchor 接进 `AppState`，而 `state.rs` 是冻结文件）。**更严**的一面：同名的任意端口都算非专用、未写明端口折成 scheme 默认端口（Go 比 `Host` 字符串，不折）。**更宽**的一面：经别名（CNAME / 另一个 host）访问的 app origin 认不出来 |
+| **M6D-8** | `SurfaceLaunchClaims` / `mint_surface_launch` / `open_surface_launch_claims` **落在本片**（不是 M6-7） | `surface_launch.rs` | 上游 `pluginSurfaceLaunchClaims` 的类型与校验在 `plugin_surface.go` 里签发与承载**共用一份**。本仓由 M6-6 出、M6-7 **复用**（`routes/surfaces.rs` 在同一个 crate 里，`pub` 可见），避免两份 claims 契约漂移 —— `mc-plugin-host::credentials` 的注释原写「claims 的类型与校验归 M6-7」**已由本条更正**。承载段（Host 边界校验、cookie/Authorization 拒绝、CSP、HTML 文档渲染）**完全**归 M6-7，本片一行不写 |
+| **M6D-9** | dev-origin 策略在 **route 层**读 `MULTICA_PLUGIN_DEV_ORIGINS` / `MULTICA_PLUGIN_DEV_CA` | `mcp.rs::endpoint_policy` | `mc_mcp::devorigin` 按自己的头注「env 名字只导出、读值集中到入口层」；而 `AppState` 没有该字段、`state.rs` 又是冻结文件 ⇒ 入口层就是本 route。与 `packages.rs` 逐请求读 `MULTICA_PLUGIN_DIR` 同款先例。**未设置 ⇒ 空白名单 / 无额外 CA**，与上游「没配就是没有」同判 |
+| **M6D-10** | 三处**窄读垫片**落在 `mc-repos/src/plugin/mcp_approval.rs`（不是 `installation.rs` / `package.rs`） | `installation_for_workspace` / `package_file_sha256` / `secret_ciphertext` | 那两个文件归 M6-5（本片不能改），而 `plugin_secret` 在整个 `plugin/*` 模块里**只有写侧**（`upsert_secret_tx` / `delete_*`）。窄读只取「装了什么版本、管理员同意了什麼、manifest 快照、开关、一个文件的 sha256、一个 secret 的密文」——**故意不取** `config` / `token_hash`。收敛点（合并进 M6-5 的仓储）登记给 M6-INT（`LUM-1675`） |
+| **M6D-11** | `install.rs` 四处可见性放开：`parse_installation_manifest`（新抽）/ `installation_payload` / `installation_repo` / `deployment_key` → `pub(super)` | `routes/plugins/install.rs` | 本片要复用 ①「manifest 不可读」那一句文案 ②安装行 DTO（`PUT tools` 的响应就是上游 `pluginInstallationPayload(updated)`） ③部署密钥的**唯一转写点**。各写一份等于把同一句话/同一个转写点变成两处。**无行为改动**（`installation_manifest` 改为转调 `parse_installation_manifest`，行为逐字相同） |
+| **M6D-12** | `workspace_mcp_api.go` 的台账段与 `mcp_overlay.go` **不在本片** | —— | 本 issue 的动作清单把两者列为参考面，但 `/api/workspaces/:id/mcp-servers` 四条（`router.go:1686/1710-1712`）在 `docs/fixtures/upstream-routes.tsv:406-409` 里归属 **M8**；`mcp_overlay.go` 是 **per-task agent** overlay（`mcp_config` 合并），也是 M8 面。本片只做 `plugin_*` 的 3 条 + surface 的 1 条（`docs/57` §8 R-M6-5 已把「只做 workspace 级」写死） |
+
+#### 本片纠正的过期口径
+
+| 位置 | 原写 | 实际 |
+| --- | --- | --- |
+| `mc-plugin-host/src/credentials.rs`（M6-1 注释） | 「claims 的类型与校验归 M6-7」 | 归 M6-6（签发侧；`docs/57:519` 也是这么分的），M6-7 复用 `open_surface_launch_claims` —— 见 M6D-8 |
+| `docs/57` §7 M6-7 行（`:520`） | surface token 的「篡改/过期/错域三种拒绝」是 **M6-7** 的 DoD | 本 issue 的 DoD 把它给了 M6-6。实际：三条拒绝在**本片**的 `surface_launch.rs` `mod tests` 里逐条断言（篡改 = GCM 认证失败；过期 = `expires_at <= now`；错域 = 另一把部署密钥、或同一把密钥但**没有**域分离标签的那个盒子）；M6-7 的承载段只多 Host 边界与凭据拒绝 ⇒ 两处描述都已满足，**不重复实现** |
+| `mc-repos/src/plugin/invocation_read.rs`（M6-6 抢救产物） | 夹具把 `created_at` 当 `&str` 绑进 `VALUES (…, $4)` | **PG 会报 42804**（`column "created_at" is of type timestamp with time zone but expression is of type text`）—— 该文件的 3 条用例是本片**第一次**接真库跑，一跑就红。改为 `$4::timestamptz`。**这就是「新增测试必须接真库跑过再推」那条纪律的又一例**（M6-5 栽过同款） |
+| 桩注释的行预算 | `mcp.rs` ≤380 / `surface_launch.rs` ≤220 | 非测试 447 / 473。超出的是落地说明（4 条 / 4 条）+ 门·发现·采纳三段的分层注释（上游对应函数各自有一段「为什么」）。门 ⑩ 的 800 行硬限内（608 / 663），**不为凑数字砍注释** |
+
+#### 本片门禁读数（逐字取自当轮日志；`bash scripts/gates.sh --with-db`）
+
+- **10/10 green，144s**（热跑；①2s ②6s ③12s ④0s ⑤35s ⑥58s ⑧26s ⑦0s ⑨5s ⑩0s）。
+  ⚠️ 同一棵树的首轮全量跑**先红了一次**，红的**不是代码**：`/` 只剩 5.0G，`cargo` 在
+  `mc-conformance` 的指纹目录上报 `ENOSPC`，于是 ②③④⑤⑥⑨ 一起「红」。回收自己 workdir 的
+  `target/debug/incremental`（1.7G）后重跑即全绿 —— **ENOSPC 会伪装成门禁红**（`docs/37` 已记过）。
+  逐门 `--only` 跑完再全量复跑的读数与上表一致。
+- ⑦：`upstream 456 | local 386 registered | baseline 344`、`implemented 310 real + 0 placeholder`、
+  `known_gap 146`、`unclaimed 0`、**`regression 0`**、`local_only 9`；`owners.M6` **24 → 20**
+  （本片 +4 逐条落在 M6 名下）。**基线未刷** —— 一次性刷新归 M6-INT（`LUM-1675`）。
+- `slash_alias_audit.py`：**0 defect**（本片 4 条键都没有尾斜杠形态，也没有新增 allowlist 行）。
+- ⑤ + ⑥：**2119 passed / 198 ignored**（⑤ 1648/198、⑥ 471/0；本片新增 ⑤ **11** 例纯判定单测
+  → `mcp.rs` 5 + `surface_launch.rs` 6、⑥ **17** 例 = `tests/plugins` 的 e2e **10** 例
+  （`runtime.rs` 6 + `runtime_surface.rs` 4）+ `mc-repos::plugin` 的 7 例真库用例）。
+- ⑨：`crates/mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 /
+  placeholder 0 / unevaluable 306`，`fixtures 365`）—— 本片 4 条端点在上游 fixture 里
+  **一条都没有**（`runtime.rs` 的 30 例是自建真库 e2e）⇒ ⑨ 的**预期变化就是 0**，不是欠账。
+
+### 9.9 M6-7 公开 Action API + bridge + surface（`LUM-1672`）的落点与偏离登记
 
 **写集**（与 issue 的枚举一字不差）：`routes/v1/{context,issues,storage,policy}.rs`、
 `routes/plugin_bridge/{context,issues,storage}.rs`、`routes/surfaces.rs`、
