@@ -5919,3 +5919,57 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **下一个「派」第一顺位仍是 `LUM-1671`（M6-6，4 路由）**（§65.3 预飞已做尽，一条 `status todo` 即可）；次选 `LUM-1673`（M6-8，不与 `1672` 同飞）；`LUM-1672`（M6-7，19 路由）与 `1673` **互斥**；`LUM-1674`（M6-9）硬前置 = `1669` 合入；`LUM-1675` 最后。
 - **新登记**：`LUM-1745`（D8，`backlog`，**M6 收口前不开工**）；`LUM-1691`（M2-A 尾）仍 `backlog`。
 - **合并提醒**：`1669` 的 PR head 是 `agent/devbox5/84af16a3d3e0`，**不是**它本地那个 `work/m6-4`。
+
+### 67.9 本轮追加动作：**合并 PR #71（M6-4 落地）** + 派发 M6-6（`LUM-1671`）
+
+§67.1–§67.8 是在「**0 可合、0 空位**」的起手状态上写的；写完约 10 分钟后局面就变了（`LUM-1669` 交付、`LUM-1670` 提交），本节记录随后的两个动作。
+
+#### 67.9.1 合并链（8 步，逐步有实证）
+
+| # | 步骤 | 实测 |
+| --- | --- | --- |
+| 1 | 预检 PR | #71「M6-4 skill 供给面：agent 绑定 + builtin/plugin 源（6 路由）」，head **`5ccc9470a791`**、base `d4f374f`、`mergeable true / mergeable_state clean`、**24 文件 +5474/−498 / 8 提交** |
+| 2 | PR 相对读数 | `git diff --numstat <merge-base 02f888f>..5ccc9470` = **24 文件 +5474/−498** == PR API **逐字相等** ✓ |
+| 3 | 合并树预检 | `git merge-tree --write-tree d4f374f 5ccc9470` ⇒ **`3587d804f89ab07bd1782bab015a505a30c13a45`**（单哈希 = **0 冲突**） |
+| 4 | **码树等价证明**（本轮新增的一步） | `git diff --stat 02f888f d4f374f -- crates apps Cargo.toml Cargo.lock scripts migrations .github contracts` = **空**（两点之间只有 `docs/`：§66 + §9.7 + §67 + §9.8，共 +320 行）⇒ **合并树的码树与 PR head 的码树逐字相同** |
+| 5 | 门禁 | **本仓自有 CI（`.github/workflows/ci.yml`）在 head 上 3/3 绿**：`fast`（fmt/build/clippy/test/file-size）、`db`（postgres:16 + DB e2e）、`contract`（route parity + conformance）；06:46:33 起跑，**06:50:14 全绿**（≈3m41s）。第 4 步的等价性使这个读数**直接适用**于合并树 |
+| 6 | 钉 head 合并 | `PUT /repos/…/pulls/71/merge {merge_method: merge, sha: 5ccc9470a791…}` ⇒ `merged: true`，merge commit **`1ca24762ef89`** |
+| 7 | 复核树 | `git rev-parse 1ca2476^{tree}` = **`3587d804f89ab07bd1782bab015a505a30c13a45`** == 第 3 步预检**逐字相等** ✓ |
+| 8 | 收尾复核 | GH **0 open PR**；合并内容 24 文件全在 `crates/**`（**无 `docs/`**）⇒ §66 / §9.7 / §67 / §9.8 **全部存活**（`§67` 1 处、`### 9.8` 1 处，grep 实测） |
+
+**关于第 5 步的偏离（有意，且前提写死）**：§64 的门禁步是「在热 workdir 里 checkout 合并树跑 `scripts/gates.sh --with-db`」。本轮**没跑**，改用「**同码树的 CI 绿 + 第 4 步的等价性证明**」。理由：起手 `/` 只剩 **12G**，而本波实测「跑过两次 `--with-db` 的片其 `target/` = 30G」（§63.6）⇒ 冷跑有 **ENOSPC** 风险，而 ENOSPC 会伪装成门禁红。
+**前提（缺一不可，后续 cycle 别照抄）**：① 两点之间**码树逐字等价**（有 `git diff --stat` 空输出为证）；② 该仓 CI 的 job 覆盖面 ⊇ 本波门禁（`fast` ⊇ ①②③④⑩、`db` ⊇ ⑥⑦⑧、`contract` ⊇ ⑨）；③ CI 在**该 head sha** 上全绿。
+**事后验证这个选择没错**：合并完成时 `LUM-1669` 的 `target/` **已被那个 run 自己在退出时清掉**（见 67.9.3）⇒ 那个「热 workdir」当时根本不存在，热跑本来也做不成。
+
+#### 67.9.2 ⑦ 合并后当场复算（base `1ca2476`，只读）
+
+`upstream 456 | local 369 | baseline 344`；`implemented 293 real + 0 placeholder`、`known_gap 163`、
+`owners.M6 37`（M6 已进 base = **20**）、`unclaimed 0 / regression 0 / local_only 9`；不变式 `293 + 163 == 456` ✓。
+
+**与 §9.7 的预测逐项相等**：`363 + 6 = 369` / `287 + 6 = 293` / `169 − 6 = 163` / `43 − 6 = 37`
+⇒ **M6-4 的 6 条声明路由一条不差地进账**，`local` 也没有冒出计划外的双形态键（若 6 条里有双形态，`local` 会 > 369）。
+**基线仍 344，`--write-baseline` 仍禁跑**（唯一一次归 `LUM-1675`）。
+
+#### 67.9.3 磁盘：§67.6 的预测被现实抢先（订正）
+
+§67.6 写「1669 一合入就立刻回收它的 20G」。**实际**：`LUM-1669` 的 run 在**退出时自己清了 `target/`** ——
+合并后实测 `du -sh <1669 workdir>/target` **无输出**（目录不存在），`/` 从 12G 直接回到 **32G 可用（34%）**。
+⇒ 口径更新：**「片自己清 `target/`」是本波的实际行为**，cycle 的回收动作只在「片死亡 / 静默死亡且留下 `target/`」时才需要（§64 那次回收就是这种情况）。
+但**不能假定每片都会清**：`LUM-1670` 的 `target/`（3.3G）当时仍在 ⇒ 合并后仍要看一眼。
+
+#### 67.9.4 派发 M6-6（`LUM-1671`）—— 空位出现后立刻用掉
+
+- 空位实测：`LUM-1669` run 终态后 `running_task_count 3 → 2`（cycle ∥ `LUM-1670`）⇒ **空位 1**。
+- 派发前**把描述里的「起手补充」按当轮实测重订**：**base = `1ca2476` / ⑦ `local 369` / DoD `+4` ⇒ 期望 `373`**
+  （原写的 `local 363 / 期望 367` 是 merge 前的值；其余「表 / 类型 / 注册点」结论不受影响，照旧有效）。
+- 一条 `multica issue status LUM-1671 todo` 即派 ⇒ run 起（workdir `lum-1671-d3db820d080f`，`in_progress`）⇒ **3/3 再次满载**。
+- **并行安全性（实测，不是推断）**：`crates/mc-http/src/routes/plugins/mod.rs:36-40` 已声明
+  `pub mod hooks_job; pub mod install; pub mod mcp; pub mod packages; pub mod surface_launch;`（M6-0 anchor 留的骨架）
+  ⇒ M6-6（`mcp` / `surface_launch`）与在飞的 M6-5（`install` / `packages`）**零共享文件**，不需要任何隔离动作。
+
+#### 67.9.5 next cycle 起点（本节刷新）
+
+- **base = `1ca2476` + 本 §67.9**（docs-only 直推；⑦ 基线仍 **344**）。
+- 在飞 = `LUM-1670`（M6-5，13 路由已提交 `3c2406e`，run 47 分钟，正在收尾：门禁 / PR）∥ `LUM-1671`（M6-6，4 路由，刚起）。
+- **下一个「派」顺序不变**：`LUM-1673`（M6-8，1 路由，**不与 `1672` 同飞**）→ `LUM-1672`（M6-7，19 路由）→ `LUM-1674`（M6-9，硬前置 M6-4 **已满足** ✓，只等症状）→ `LUM-1675`（M6-10 INT，最后）。
+- **1669 的 `work/m6-4` 本地分支名 vs 推送名不一致**这个坑已随合并失效，不会再需要；但 1670 的同名坑仍在（本地 `work/m6-4`-类命名 / 推送 `agent/devbox5/d9dfedc1155e`）—— 它的 PR 会出现在推送分支上，别按本地名找。
