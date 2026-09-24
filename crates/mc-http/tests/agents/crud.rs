@@ -653,3 +653,84 @@ async fn malformed_bodies_are_rejected() {
 
     cleanup(&pool, ws, &[user]).await;
 }
+
+/// `GET` / `archive` / `restore` 三个响应位都带 `skills`（M6-4 / LUM-1669 `DoD`）。
+///
+/// 上游 GH #3459：`agentToResponse` 把 `skills` 初始化成 `[]` 之后必须**重新读一次**
+/// 绑定，否则每次元数据更新都回一个空数组、调用方以为绑定被清了。这里用真绑定证明
+/// 三者回的都是那一条，并且**不带** `content`（上游摘要形状只有 id/name/description/enabled）。
+#[tokio::test]
+#[ignore = "requires MULTICA_TEST_DATABASE_URL"]
+async fn get_archive_restore_responses_carry_skills() {
+    let Some((pool, db)) = connect().await else {
+        eprintln!("skipping: set MULTICA_TEST_DATABASE_URL to run");
+        return;
+    };
+    let (ws, user) = seed_workspace(&pool, "member").await;
+    let app = crate::support::app_with_db(db);
+    let runtime_id = seed_runtime(&pool, ws, Some(user), "public").await;
+    let created = create_agent(&app, ws, user, new_agent_body("skilled", runtime_id)).await;
+    let agent_id = id_of(&created);
+
+    // 手写 INSERT：`skill` / `agent_skill` 由 M6-2 / M6-4 拥有，此处只铺数据。
+    let skill_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO skill (workspace_id, name, description, content, config)
+         VALUES ($1, 'm6-4-probe', 'probe description', 'body', '{}'::jsonb) RETURNING id",
+    )
+    .bind(ws)
+    .fetch_one(&pool)
+    .await
+    .expect("insert skill");
+    sqlx::query("INSERT INTO agent_skill (agent_id, skill_id) VALUES ($1, $2)")
+        .bind(agent_id)
+        .bind(skill_id)
+        .execute(&pool)
+        .await
+        .expect("bind skill");
+
+    // GET → 带 skills
+    let (status, fetched) = call(
+        &app,
+        "GET",
+        &format!("/api/agents/{agent_id}/"),
+        ws,
+        user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{fetched}");
+    assert_eq!(fetched["skills"].as_array().map(Vec::len), Some(1));
+    assert_eq!(fetched["skills"][0]["id"], skill_id.to_string());
+    assert_eq!(fetched["skills"][0]["name"], "m6-4-probe");
+    assert_eq!(fetched["skills"][0]["description"], "probe description");
+    assert_eq!(fetched["skills"][0]["enabled"], true);
+    assert!(fetched["skills"][0].get("content").is_none(), "{fetched}");
+
+    // archive → 仍带 skills（上游 fixture `TestArchiveRestoreAgent_PreservesSkillsInResponse`）
+    let (status, archived) = call(
+        &app,
+        "POST",
+        &format!("/api/agents/{agent_id}/archive"),
+        ws,
+        user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{archived}");
+    assert_eq!(archived["skills"][0]["id"], skill_id.to_string());
+
+    // restore → 仍带 skills
+    let (status, restored) = call(
+        &app,
+        "POST",
+        &format!("/api/agents/{agent_id}/restore"),
+        ws,
+        user,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(restored["skills"][0]["id"], skill_id.to_string());
+
+    cleanup(&pool, ws, &[user]).await;
+}
