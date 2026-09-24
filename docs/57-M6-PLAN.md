@@ -282,14 +282,27 @@ X-Multica-Plugin-Installation: <uuid>   User-Agent: Multica-Hooks/1
 | `mc-repos/src/plugin/{installation,package,skill}.rs` | | | | | **写** | | | | |
 | `mc-http/src/routes/plugins/{mcp,surface_launch}.rs` | | | | | | **写** | | | |
 | `mc-repos/src/plugin/{mcp_approval,invocation_read}.rs` | | | | | | **写** | | | |
-| `mc-http/src/routes/plugin_bridge/*.rs` | | | | | | | **写** | hook 段**写** | |
+| `mc-http/src/routes/plugin_bridge/{context,issues,storage}.rs` | | | | | | | **写** | | |
+| `mc-http/src/routes/plugin_bridge/hooks.rs` | | | | | | | | **写** | |
 | `mc-http/src/routes/v1/*.rs`、`routes/surfaces.rs` | | | | | | | **写** | | |
 | `mc-repos/src/plugin/storage.rs` | | | | | | | **写** | | |
 | `mc-http/src/routes/plugins/hooks_job.rs` | | | | | | | | **写** | |
-| `mc-repos/src/{plugin/hook.rs,scheduler.rs}` | | | | | | | | **写** | |
+| `mc-repos/src/plugin/hook.rs` | | | | | | | | **写** | |
+| `mc-repos/src/scheduler.rs` | | | | | | | | **写** | |
 | `mc-daemon/src/skill/*`、`mcp/*`、`execenv/*` | | | | | | | | | **写** |
 
 > 同 stage 内两片**可以**读写同一张 DB 表，但必须走各自的本地文件（矩阵里「写 / 读」列区分的就是这个）。
+
+> ## ⚠️ 记法纪律（`LUM-1739` cycle / §63.6 起生效）
+>
+> **写集一律写「逐字路径」，禁止 glob / 花括号 / 「某某段」这类记法。** 三类记法各咬过一次：
+>
+> - `routes/{mod,mount}.rs` 通配（§58）：读者无法判断是「两个文件都写」还是「只读其一」；
+> - `routes/plugin_bridge/*.rs` + 「hook 段**写**」（§58 → 本节已改逐字）：`*` 会把 anchor 冻结的 `mod.rs` 也圈进去，而 anchor 明写「M6 后续切片不得编辑」；
+> - `mc-repos/src/{plugin/hook.rs,scheduler.rs}`（§63.6）：花括号展开**可被读成 `mc-repos/src/plugin/scheduler.rs`**，而该文件不存在、也不在（冻结的）`plugin/mod.rs` 声明清单里 ⇒ 照那个读法干活只能在「漏声明（编译看不见）」与「越权改冻结面」之间二选一。
+>
+> 判据：**每一格的文件路径，`ls` 一次必须存在（新建的除外），且其父模块声明必须已存在或在该片自己的写集里**。
+> 本矩阵已在 §63.4 对 5 个待派片逐格实测过父声明（0 处缺件）。
 
 ---
 
