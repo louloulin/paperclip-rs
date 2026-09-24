@@ -830,6 +830,14 @@ bash scripts/gates.sh --with-db      # 追加 ⑥db ⑧schema-drift（需 MULTIC
 
 ---
 
-## 11. M6-INT 落地记录（占位，由 M6-10 填写）
+## 11. M6-INT 落地记录（`LUM-1675` 已交付 —— 正文见 `docs/58-M6-INTEGRATION.md`）
 
-_（待 M6-10 交付后填写：⑦/⑨/基线与 allowlist 的最终读数、跨片缺口、与本文预测的差异。）_
+**结论（五行，可复算）**：
+
+1. `bash scripts/gates.sh --with-db` ⇒ **10/10 / 388s**（⑤ 106 target `1826 passed / 0 failed / 201 ignored`；⑥ 33 target `524 passed / 0 failed`；全日志 `FAILED|panicked` 0 次）。
+2. ⑦ 基线一次性刷新 **`344 → 406`（`+62 / −0`）** = 声明 **57** 条路由 + M6-2 的 **5** 个双形态键；逐片 ⊿ 独立重扫为 `+17/+2/+6/+13/+4/+19/+1 = 62`（M6-0 的 −4 在 344 那次基线之前）。
+3. 末态向量与 §9.7 / §9.9 的预测**逐字相符、零差异**：`local 406 / implemented 330 = 326 real + 4 placeholder / known_gap 126 / owners.M6 0 / unclaimed 0 / regression 0 / local_only 9（占位 2）`，`330 + 126 = 456` ✓ ⇒ **M6 路由面收口**。
+4. ⑨：真库模式下 M6 相关 **20 条全部离开 `unevaluable`**，但拆分为 **pass 5 / mismatch 13 / unmounted 1**；13 条 mismatch 的两类机制（agents 7 条 = fixture 写死上游 agent id 而 ⑨ 只种子 user+workspace ⇒ 404；`/v1` 6 条 = fixture 抽取丢了安装令牌 ⇒ 401）已在 `docs/58` §5.2 逐条点名，**不承诺契约等价率**；`report.json` 的 stateless 层逐字未变（`--check` = `report matches`）⇒ 未重生成。
+5. 跨片缺口 7 组集中在 `docs/58` §7：**D8（`LUM-1745`，唯一无人的掉棒项）**、R-M6-1、R-M6-3（归 W8）、R-M6-13、⑨ 的 plugin 凭据缺口、M6D-10 的收敛点，以及一处**文档缺口**（M6-1/M6-4/M6-5 无 `docs/32` §9.x 落地记录）；§8 R-M6-6 已因 `LUM-1659` 合入而**闭**。
+
+> 本文档的 §6.1 / §6.2 是**波前预测**，其绝对列已由 §9.7 / §9.9 订正、其 ⊿ 列已由 `docs/58` §4.2 的独立重扫**逐片验证**。此后报数一律读 `docs/58`。
