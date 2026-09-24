@@ -18,6 +18,10 @@
 //! - `skills/crud.rs`：列表 / 搜索 / 详情 / 创建 / 更新 / 删除 + 双形态 + 鉴权
 //! - `skills/files.rs`：支持文件的读 / 单文件 upsert / 删
 //! - `skills/labels.rs`：skill↔label 三条
+//! - `skills/import.rs`：导入两条（JSON 源 / multipart 归档）+ 四策略冲突 + 取件错误码
+//!   （出网被 `support::serve_mock` 起的假源站顶替，**用例串行** `support::MOCK_LOCK`）
+//! - `skills/refresh.rs`：`POST /{id}/refresh` 的覆盖 / 判权 / 422
+//! - `skills/zipfixture.rs`：归档夹具（store 方法的 zip 写入器，无新依赖）
 //!
 //! ⚠️ `GET /api/skills/search` 的**成功**路径要出站打 `clawhub.ai`（上游就是把
 //! 第三方搜索当数据源）。用例对它是「200 或 502」双断言，见 `crud.rs`。
@@ -25,5 +29,8 @@
 
 mod crud;
 mod files;
+mod import;
 mod labels;
+mod refresh;
 mod support;
+mod zipfixture;

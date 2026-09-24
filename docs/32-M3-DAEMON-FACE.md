@@ -406,3 +406,74 @@ bash scripts/gates.sh --with-db      # 10/10
   unevaluable 0`（`tiers.database.pass = 5`、`contract_equivalence_rate = 1.0`）——含 004 的**真实
   clawhub.ai 出站**（`q=react` ⇒ 200）。
 - e2e：`tests/skills` **12 例全绿**（真库；`--test-threads=4`，22s）。
+
+### 9.7 M6-3 skill 导入/刷新生态（`LUM-1668`）的落点与偏离登记
+
+**落点**：2 条上游路由 / **2 个注册键**（`POST /api/skills/import`、`POST /api/skills/:id/refresh`；
+两者上游都**没有**尾斜杠形态 ⇒ ⑦ `local` 只 +2）。**写集**（相对 M6-2 合并后基线的增量）：
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `mc-skill/src/source.rs` | 417 | 源判定：`detect_import_source` / `parse_clawhub_slug` / `parse_skills_sh_parts` / `parse_github_url`（**不是** `git.rs`，上游没有克隆路径） |
+| `mc-skill/src/archive.rs` | 622 | multipart zip 解包：4 个上限（1 MiB/文件、8 MiB/包、256 文件、16 MiB 上传）+ `SKILL.md` frontmatter 取名 + 包装目录回落 |
+| `mc-repos/src/skill/import.rs` | 504 | 整包一个事务：`create_imported` / `create_renamed_imported`（后缀 `2..52`）/ `overwrite_imported`（creator-only 与 creator-or-admin 两种策略）+ `ConflictStrategy` |
+| `mc-http/src/routes/skills/import.rs` | 592 | `ImportSkill` 的形状编排（JSON/multipart 分支、四策略、结构化 vs 旧形态） |
+| `mc-http/src/routes/skills/import/fetch.rs` | 571 | `ClawHub` / skills.sh 抓取 + 原始文件下载 + 端点覆写 + 错误分类（413/504/503/502） |
+| `mc-http/src/routes/skills/import/github.rs` | 451 | `api.github.com` 仓库/引用/tree + raw 支撑文件下载 + `Bearer` 闸门 |
+| `mc-http/src/routes/skills/import/github/tree.rs` | 363 | tree 遍历与「哪些条目算 skill 文件」的判定 |
+| `mc-http/src/routes/skills/import/github{,/tree}/tests.rs` | 42/112 | 上面两块的单测 |
+| `mc-http/src/routes/skills/refresh.rs` | 281 | `RefreshSkill`：`parse_skill_origin` + `fetch_imported_skill_from_origin` + `merge_skill_config_origin` |
+| `mc-http/tests/skills/{import,refresh,zipfixture}.rs` | 612/353/108 | e2e：导入 8 例、刷新 3 例、手写 zip 夹具（store 法 + 自算 CRC32）+ 1 条夹具自检 |
+| `mc-http/tests/skills/{main,support}.rs` | +7/+272 | 模块登记 + mock（`ClawHub` / GitHub api / GitHub raw / multipart 构造 / 端点覆写闸锁） |
+
+**冻结点零编辑**：`routes/skills/mod.rs`（M6-0 已 `merge(import::router(), refresh::router())`）、
+`routes/{mod,mount}.rs`、`state.rs`、`mc-skill/src/lib.rs`、`mc-repos/src/skill/mod.rs`、根
+`Cargo.{toml,lock}`、⑦ 基线、`slash-alias-allowlist.tsv` **全部零改动**（本片未加任何依赖：
+`reqwest`/`zip`/`serde_json` 都已在 `mc-http` 的清单里；`url` **没有**也**不新增**，见 M3-D7）。
+
+**文件拆分登记**（`docs/57` §5 的落点已细化，`mod` 声明由各自父文件承担，`routes/skills/mod.rs` 仍零编辑）：
+`routes/skills/import.rs` 内的 `mod fetch; mod github;` ⇒ `import/{fetch.rs, github.rs, github/tree.rs}`，
+单测随文件（`github/tests.rs`、`github/tree/tests.rs`）；`routes/skills/refresh.rs` 保持单片（281 行）。
+
+#### 偏离（M3-D1～M3-D12）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M3-D1** | GitHub 抓取是**自建临时实现**（`SkillSourceFetcher` port + `HttpSkillSourceFetcher`）；**跳过**「tree truncated 再逐层 crawl」的兜底 | `import/github{,/tree}.rs` | 上游 `fetchFromGitHub` 对 `truncated` 的 tree 会回落到「按需列目录」的多次 API 调用。本仓**不落**这条兜底：`truncated=true` 或 tree 请求失败 ⇒ `ImportFailure::Unavailable`（**503**，可重试），**绝不落半份包**。行为差异面 = 「超大仓库」这一个分支；port 是本片的正式交付物（写进 issue 的 DoD），W8 的 GitHub 客户端就位后由它实现该 port |
+| **M3-D2** | 源判定错误（`empty URL` / 不支持的域名 / 坏 slug）是 **400**，取件期错误才是 502/503/504/413 | `routes/skills/import.rs`、`import/fetch.rs` | 逐字对齐上游：`detectImportSource` 在**取件之前**返回错误，`ImportSkill` 用 `writeError(400, err)`；只有 `fetchFrom*` 的失败才走 `importFetchErrorResponse` |
+| **M3-D3** | multipart 路径的上限违例是 **400**，URL 路径才是 **413** | `routes/skills/import.rs`、`mc-skill/src/archive.rs` | 上游 `importSkillFromArchive` 对 `ParseMultipartForm`/解包错误一律 `writeError(400, err.Error())`；413 只属于 URL 路径的 `errImportCapExceeded`。**两条路径的 cap 语义是「整包失败」**（不截断、不降级） |
+| **M3-D4** | 错误体是**扁平** `{"error":"…"}`，且 refresh 的 404 文案带本仓前缀（`not found: skill`，上游是 `skill not found`） | `routes/skills/{import,refresh}.rs` | 与 M2-D9 同源：本仓 `mc_errors::Error::Display` 会加内部前缀，而本片两个端点选了「扁平体」这一种出口（`helpers::upstream_unavailable` 已是同款先例）。状态码逐条对齐（400/403/404/409/413/422/502/503/504）。**golden 契约只比状态码** ⇒ 不判红 |
+| **M3-D5** | JSON 请求体加了 **1 MiB** 上限（上游不设限） | `import.rs::JSON_IMPORT_BODY_LIMIT` | 防无上限读内存；超限报 400 `invalid request body`。另：**16–25 MiB** 的归档体在到达 `Multipart` 之前被全局 `RequestBodyLimitLayer`（25 MiB）截断 ⇒ 400，**>25 MiB** ⇒ 413（层自己回）——上游只有 16 MiB 这一道 |
+| **M3-D6** | 45s 总超时由 `tokio::time::timeout` 产生，折成 `ImportFailure::Timeout` | `import/fetch.rs` | 上游用 `context.WithTimeout` + `errors.Is(err, context.DeadlineExceeded)`。**状态码（504）与文案逐字不变**；单请求仍是 30s（上游 `http.Client.Timeout`） |
+| **M3-D7** | `host_of(url)` 手写（**不新增 `url` 依赖**）；`Bearer` 令牌只在 host 是 `raw.githubusercontent.com`（或测试覆写的端点）时加 | `import/fetch.rs`、`import/github.rs` | 上游用 `net/url` 的 `URL.Hostname()` + `strings.EqualFold`。手写实现覆盖「scheme://host[:port]/…」这唯一形态（大小写不敏感、去端口）；**只影响 URL 解析边角**，不影响请求路径 |
+| **M3-D8** | 保留路径（`SKILL.md` 等）过滤放在**请求映射**（`imported_skill_file_requests`），两条分支都过 | `routes/skills/import.rs` | 上游只在 `createSkillWithFilesInTx` 里 `IsReservedContentPath` 跳过，`overwriteSkillWithFiles` **不过滤**。本仓两条都过滤（**更严**：`SKILL.md` 永远只进 `skill.content`，不会额外进 `skill_file`） |
+| **M3-D9** | `mc-skill` 内自带 `validate_archive_file_path`；`import.rs` 里 `sanitize_null_bytes` 是 3 行副本 | `mc-skill/src/archive.rs`、`routes/skills/import.rs` | 依赖方向冻结：`mc-skill` **不能**依赖 `mc-http`（`helpers::validate_file_path` 在 `pub(crate)` 且方向相反）。`sanitize_null_bytes` 同 M2-D6 的理由；`with_files_dto` 的 3 行副本是因为 `crud.rs` 那份是私有函数，而 `helpers.rs` 已 **793/800 行**（门 ⑩ 硬限内没有余量放共享件） |
+| **M3-D10** | 归档/出网内容一律 `String::from_utf8_lossy`（非 UTF-8 字节被替换为 U+FFFD）；JSON 路径下的 body 也按 lossy 文本进库 | `mc-skill/src/archive.rs`、`import/fetch.rs` | `skill.content` / `skill_file.content` 是 `TEXT`，上游 Go 的 `string(bytes)` 保留原始字节（PG 在非 UTF-8 时会在写入期报错）。本仓选择「降级为 U+FFFD」而不是把整包判废（导入不该因为一个二进制附件而全废）；`is_likely_binary_file_path`（M2-D2）仍是调用方的可选闸 |
+| **M3-D11** | `ImportError` / `ImportFailure` / `SourceError` 落在 **`mc-skill`**，不进 `mc-core` | `mc-skill/src/{archive,source}.rs` | `mc-core` 是公共底座，塞导入错误类型会把「zip/出网」的语义扩散到所有 crate（同 9.3 第 1 条的理由） |
+| **M3-D12** | 不广播 WS 事件；测试用**进程级**端点覆写（`set_source_endpoints`，`test-util` 门控）代替上游的包级变量 | `import.rs`、`tests/skills/support.rs` | 事件总线缺口同 M2-D15（M6-8 的 hook/job 面若需要再补）。端点覆写是全局单值 ⇒ 用 `support::MOCK_LOCK`（`tokio::sync::Mutex`）串行所有 mock 用例；e2e 必须带 `--features mc-http/test-util` |
+
+#### 本片纠正的过期口径（桩注释 / 文档）
+
+| 位置 | 原写 | 实际 |
+| --- | --- | --- |
+| `routes/skills/import.rs`（M6-0 桩） | 请求体字段 `source` | 上游 json tag 是 **`url`**；`on_conflict` 可选 |
+| `routes/skills/refresh.rs`（M6-0 桩） | 「没有 origin ⇒ 400」 | **422**（`errSkillNotRefreshable`）；且空 `source_url`、类型与 URL 不匹配、不可刷新类型（`archive`/`runtime_local`）**都折进同一句** |
+| `routes/skills/import.rs`（M6-0 桩） | 「`PUT /files` 是整批替换」一类旧口径的连带假设 | 见 M2-D14；本片 `finishSkillImport` 的两条形态都按上游「整包 upsert + 删旧文件」 |
+| `docs/57` §5 的 `mc-skill/src/git.rs` | 建 `git.rs` | 上游**没有** git 路径 ⇒ 文件叫 `source.rs`（9.2 第 3 行同一条） |
+| 本 issue 的 DoD | 「⑨ 本片的 fixture 离开 `unevaluable`」 | **本片两个端点在上游 fixture 里一条都没有**（`report.json` 全文 grep `skills/import` = 0 命中）⇒ ⑨ 的**预期变化就是 0**，不是欠账 |
+
+#### 本片门禁读数（逐字取自当轮日志，`fc4971c` + 本片工作树）
+
+- `bash scripts/gates.sh --with-db` ⇒ **10/10**（交付树的最后一次全量热跑 **109s**：
+  ①1s ②1s ③0s ④0s ⑤34s ⑥42s(migrate=0,e2e=0) ⑧25s ⑦0s ⑨5s ⑩1s；同一棵树的首次冷跑 **296s**，
+  含 ⑥ 自己的一次 `mc-migrate run`）。
+- ⑦：`upstream 456 | local 363 registered | baseline 344`、`implemented 287 real + 0 placeholder`、
+  `known_gap 169`、`unclaimed 0`、**`regression 0`**、`local_only 9`（**+2**，基线**未刷**——
+  刷新一次性归 M6-INT `LUM-1675`）。
+- `slash_alias_audit.py`：**0 defect**（本片两条键都没有尾斜杠形态，也没有新增 allowlist 行）。
+- ⑨：`crates/mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 /
+  placeholder 0 / unevaluable 306`，`fixtures 365`）—— 见上表最后一行。
+- ⑤ + ⑥ 合计：**2016 passed / 176 ignored**（⑤ 1600/176、⑥ 416/0；M6-2 自报基线 1556 + 405 ⇒
+  +44/+11 = 本片新增单测 44 例 + e2e 11 例）。
+- e2e：`tests/skills` **23 例全绿**（真库 `mc_lum1668`；`--test-threads=4`，21.4s），
+  其中本片新增 11 例（导入 8 + 刷新 3）+ 1 条 zip 夹具自检（非 ignored）。
