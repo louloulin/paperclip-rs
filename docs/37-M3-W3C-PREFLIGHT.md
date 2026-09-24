@@ -5394,3 +5394,99 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【`update` 自带启动 ⇒ 一律 `--no-start` 再显式 `rerun`】** `multica issue update`（以及 assign/status）在 agent 名下会**起 run**；与紧跟的 `rerun` 叠加就是两个 run 抢一个 issue。本轮 `update --no-start` + `rerun` 后 daemon 恰好 `3/3`，可作对照读数。
 - **【「硬前置」与「stage 波次」是两件事，派发只看前者】** `docs/57` §4.1 的「硬前置」列是**真依赖**，§4.3 的 stage 是**并发预算分组**。§59.7 把 `1671`/`1672` 挂到「`LUM-1670` 合入后」是拿波次当依赖 ⇒ 白等一个合并周期。**正确读法**：`就绪 = 硬前置全满足 ∧ 与每个在飞片文件交集为空 ∧ 无同目录互斥`；槽位不够只影响**排序**，不影响**就绪判定**。
 - **【契约的单一实现点要问「谁能 import 它」，而不是「它在哪个 crate」】** `pub(crate)` 是**不可共享**的：只要消费者跨 crate（`mc-skill` / `mc-daemon`），单一实现点就必须落在**它们都能依赖的 crate**里。上游用**共享包** `pkg/skillbundle` 同时喂服务端与 daemon，本地却把它塞进 `mc-http::routes::daemon::skills` 的 `pub(crate)` ⇒ 三处 DoD 互斥（60.5③）。**派发前用「消费者 × 可见性 × 依赖边」三列复算一次**，比事后仲裁便宜。
+
+---
+
+## §61 11:30 cycle（`LUM-1729`）：base 未动（`a65394f`）、GH 0 PR、3/3 满载 ⇒ **0 可合 / 0 空位**；`LUM-1670`（M6-5）**静默死亡（零产物）⇒ 追加交接 + `rerun`**；新动作 = **裁定 bundle hash 共享点落 `mc_core::skill`**（把 §60.5③ 的「manifest 写者空位」消成 0）+ 修 `docs/57` §3.2 过期矩阵行 + 纠正「`LUM-1521`/`LUM-1533` **从未启动**」（实为**秒级静默死亡**）
+
+### 61.1 起手三连（02:30Z 实测）
+
+- 磁盘：`/` **19G 可用（60% 用）** —— 本轮**未回收任何 `target/`**（在飞两片的目标目录属活运行，见 61.6）。
+- base 复核 4/4：`git fetch origin feat/multica-rs-initial` = **`a65394f`**（= §60 那次 docs-only 提交）；`a65394f^{tree} = 54b8befa…`，其父 `dac9b95^{tree} = 022c61d0…`（**与 §60.1 的树逐字相等**）。`git diff --stat dac9b95 a65394f` = **`docs/37-M3-W3C-PREFLIGHT.md` 单文件 +74 行**，**限代码路径的 `git diff --numstat` = 0 行** ⇒ **§59 的合并树门禁 10/10 与 ⑤/⑥/⑦/⑨ 读数对本轮 base 继续逐字有效，本 cycle 不重跑门禁**（与 §60.1 同一读法）。
+- 认证 `pulls?state=open` = **0 条**；`git ls-remote` 两片分支（`agent/devbox5/85f1aa73011d`、`agent/devbox5/5294bfa0b58b`）**均不存在**。
+- daemon `running_task_count` = **2**（本 cycle + `LUM-1667`）⇒ 空位 **1**。
+
+### 61.2 `LUM-1667`（M6-2）**仍活着，且在「自测红 → 自己改 → 重跑」的迭代里**（cycle 不介入）
+
+| 项 | 实测（02:31Z） |
+|---|---|
+| 进程 | pid **28738** 活，`/proc/28738/cwd` → `lum-1667-85f1aa73011d/workdir`（01:32:04Z 起） |
+| 分支 / HEAD | `agent/devbox5/85f1aa73011d`，**远端不存在**；`HEAD == base dac9b95`，**0 提交** |
+| 工作区 | 10 改 = `routes/skills/{crud,files,helpers,labels}.rs`、`mc-repos/src/skill/{read,write}.rs`、`mc-skill/src/{binary,frontmatter,reserved}.rs` + 未跟踪 `crates/mc-http/tests/skills/`；**限代码 `+2560/−65`**（与 base 比，`docs/**` 0 行） |
+| 最近动作 | **02:31:47** 落 `/tmp/gates_lum1667.log`：**8/10（355s 冷跑）** —— 红的是 ⑤（`routes::skills::crud::tests::decode_body_treats_literal_null_as_all_fields_absent`，223 passed / **1 failed**）与 ⑥（e2e `crud::crud_roundtrip_includes_both_include_modes`，11 passed / **1 failed**，`migrate=0,e2e=101`）；绿 = ①②③④⑦⑧⑨⑩（② 92s / ③ 33s / ⑥ 143s / ⑦ 0s / ⑨ 46s） |
+
+- ⇒ **判定：活跃迭代中**（两条红门**都在本片自己的新测试面**，第二条正是 §60.5② 的 `include=metadata` 同形问题）—— **不是静默死亡**，cycle 不介入、不评论、不动其工作区。
+- ⚠️ **风险登记（本轮新增）**：该片已写 **2,560 行却 0 提交**（`git log` 停在 base）。此刻若静默死亡，抢救成本 ≈ 2.6k 行（对比 §56 抢救 4.5k 行 ≈ 2 分钟，仍属可抢救档），但**主动打断它更贵** ⇒ 只登记，不行动。
+- 与本轮新派/新改的片**零文件交集**（1667 写 `routes/skills/**` + `mc-skill/src/{frontmatter,binary,reserved}.rs` + `mc-repos/src/skill/{read,write}.rs`）。
+
+### 61.3 `LUM-1670`（M6-5）静默死亡：三件套 → 抢救判定 → 追加交接 → `rerun`
+
+| 项 | 实测 |
+|---|---|
+| run / workdir | `task_id = 01a0d0f5-bb1b-7b74-85b8-5294bfa0b58b`，workdir `lum-1670-5294bfa0b58b` |
+| 时间 | 起 **01:09:20Z** → 终 **01:44:49Z**（`.gc_meta.json` `completed_at`，**存活 35m29s**） |
+| 三件套 | `/proc/*/cwd` 无该 workdir 进程 ✓；`output/` **空（0 项）**、`logs/` **空（0 项）** ✓；`HEAD == base dac9b95`、`git status --porcelain` **0 行**、0 提交 / 0 推送 / 0 注释、远端无 `agent/devbox5/5294bfa0b58b` ✓ |
+| 结论 | **零产物 ⇒ 抢救是空操作**（无未提交工作可固化），按 §60.8 的正确顺序直接交接 + 重跑 |
+
+**动作三条**（全部本轮完成）：① `multica issue update LUM-1670 --description-file … --no-start` 追加「起手补充 · 第二个 run」（含三件套证据、**新起手 base = `a65394f`**、并行片 `LUM-1667` 的写集、静默死亡已 3 例的「每单元即提交」纪律）；② `multica issue rerun LUM-1670`；③ **同轮勘误**：交接文里写死的分支名 `…/5294bfa0b58b` 是**旧 run 的**，新 run 的 workdir 是 **`lum-1670-ad445cd89959`** ⇒ 再补一段要求它按 `git rev-parse --abbrev-ref HEAD` 取分支名推送（否则会推到旧 run 的分支名下）。停手读数：daemon `running_task_count = 3`（= 满载 3/3，空位回 0）。
+
+### 61.4 本轮唯一新动作：**bundle hash 共享点裁定 = `mc_core::skill`**（把 §60.5③ 的「manifest 写者空位」消成 0）
+
+§60.5③ 登记了「§57 计划里 bundle hash 的单一实现点**不可达**」，并把它留给下一轮决定（当时的候选是「下沉 `mc-skill` + 给 `mc-daemon/Cargo.toml` 加边」）。本轮**把候选逐个复算后改判落点**：
+
+| 项 | 实测（本轮逐条复算） |
+|---|---|
+| 现状不可达 | `crates/mc-http/src/routes/daemon/skills.rs:38` 的 `write_hash_part` 是**私有 `fn`**、`:102` `build_bundle` 是 **`pub(crate)`** ⇒ 跨 crate 够不到 |
+| `mc-skill` 方案的成本 | 要动**被 §9.1 冻结**的 `crates/mc-skill/src/lib.rs`（加 `pub mod`）；且 `mc-daemon/Cargo.toml` **没有** `mc-skill` 边（实测只有 `mc-core` + `mc-daemon-proto`）⇒ **必须改 manifest + 重生成根 `Cargo.lock`** |
+| `mc-core` 方案的成本 | `crates/mc-core/src/skill.rs` **已有**「bundle hash 的口径（不可漂移）」文档段 + `Manifest` / `FileRef`（注释写着「与 `skillbundle.BuildManifest` 逐字一致」）；`mc-core/Cargo.toml` **已声明 `sha2` + `hex`**；`mc-core/src/lib.rs` 已 `pub mod skill;`；**`mc-http` 与 `mc-daemon` 都已依赖 `mc-core`** ⇒ **零依赖边、零 `Cargo.toml`、零 `Cargo.lock`** |
+
+⇒ **裁定：唯一实现点落 `mc_core::skill`**（消掉了「`crates/mc-daemon/Cargo.toml` 无写者」这个空位——**不需要任何切片去填**）。落地分三处，**一文件一写者不变**：
+
+| 落点 | 写者 | 内容 |
+|---|:-:|---|
+| `crates/mc-core/src/skill.rs`（§9.1 冻结面，**M6 内一次性豁免**：只追加函数与用例） | **M6-4** | `write_hash_part` + 分节 sha256 manifest digest（沿用现有 `Manifest`/`FileRef`，不建平行 wire 类型） |
+| `crates/mc-http/src/routes/daemon/skills.rs`（M6 内仍是 M6-4 独占） | **M6-4** | 改为**调用**上述函数（可留 `pub(crate)` 薄壳投影），**不留第二份实现** |
+| `crates/mc-daemon/src/skill/**`（`mc-core` 边已在） | **M6-9** | `skill_cache` 校验消费同一 `fn`，**不加** `mc-skill` 边 |
+
+**顺序约束（本轮新增）**：`LUM-1674`（M6-9）的「同一个函数（有断言证明）」**必须在 `LUM-1669`（M6-4）合入之后**才能交 ⇒ 其硬前置由「M6-1」变为「**M6-1 + M6-4**」；在 1669 合入前，1674 只交桩级证据 + 欠账登记，**不得**在 `mc-daemon` 里复制一份哈希算法。
+
+**本轮落地（3 处写动作，全部 `--no-start`，0 个新 run）**：
+1. `docs/57-M6-PLAN.md` **§9.6（新节）**：写入上面的裁定表 + 顺序约束（供 M6-1…M6-9 按计划读）。
+2. `docs/57-M6-PLAN.md` §3.2 矩阵行 `mc-skill/src/{archive,git}.rs` → **`mc-skill/src/{archive,source}.rs`**（§9.5 第 1 行与 `LUM-1668` 描述早已改对，**矩阵行是漏改的最后一处**；`git.rs` 不存在 ⇒ 对即将派发的 M6-3 是活陷阱，本轮清掉）。
+3. `LUM-1669` 描述追加「写集修订 · 第二轮」（新增写集文件 `crates/mc-core/src/skill.rs` + 4 条具体动作 + 冻结面豁免说明 + 联动）；`LUM-1674` 描述追加「写集/DoD 修订」（DoD 该条改写为「调用 `mc_core::skill` 共享实现并指名该 `fn`」+ 顺序约束 + 写集不变）。
+
+### 61.5 纠正：`LUM-1521` / `LUM-1533` **不是「从未启动」**，是「启动后秒级静默死亡」；`LUM-1726` 同型
+
+观察项连记 9 轮（§56…§60）的结论一直是「`LUM-1521`/`LUM-1533` 仍 `todo`、**从未启动**」。本轮**第一次去翻它们的 workdir**，结论作废：
+
+| issue | `.gc_meta.json` `completed_at` | `output/` | workdir 内容 | 判定 |
+|---|---|---|---|---|
+| `LUM-1521` | 2026-09-23T**07:34:16Z**（issue 07:34 创建 ⇒ **秒级**死亡） | 0 项 | `AGENTS.md` + **`paperclip-rs`（已 checkout）** | **启动过，秒级静默死亡** |
+| `LUM-1533` | 2026-09-23T**08:30:35Z**（08:30 创建） | 0 项 | 只有 `AGENTS.md`（**连 repo 都没 checkout**） | **启动过，更早死亡** |
+| `LUM-1726`（本轮新增同型） | 2026-09-24T**02:00:56Z**（issue 02:00:00Z 创建，`task_id = 01a0d124-1f06-…`） | 0 项 | `paperclip-rs` @ **pc 代际** `4fc96f3`、`git status` 干净 | **56 秒静默死亡，0 注释、0 分支** |
+
+- ⇒ 这三条与 §56/§60 抢救过的 `LUM-1666`/`LUM-1667` 是**同一故障模式**（`.gc_meta.json` 有 `completed_at` + `output/` 空 + 0 提交/0 推送/0 注释），只是**存活时间在 1 分钟内**、连「有产物可抢救」那档都够不到。
+- **本轮处置**：`LUM-1726` **不 `rerun`**（它与本 cycle 是**同一小时职责**，重跑只会产出重复报告；且平台口径下「hourly cycle 由谁执行」不应由我给同小时建第二个写者）；三条都保持 `todo` 不动（不擅改他人 issue），只把**判定纠正**写进本报告。
+- **给 owner 的建议（第 11 轮升级为可执行项）**：给 autopilot 加**前置条件「同项目存在未终态的 cycle issue 时不建新 issue」**，否则每小时都可能在槽位满时创建一个「必然秒死」的 issue（`1521`/`1533`/`1726` 已是 3 例）。
+
+### 61.6 看板 / 磁盘 / 观察项
+
+- 看板（本轮实测）：`in_progress` = `LUM-1729`（本 cycle）+ `LUM-1667` + `LUM-1670`（rerun）；`in_review` 待人工 = `LUM-1665`、`LUM-1652`、`LUM-1370`、`LUM-1666`、`LUM-1659`、`LUM-1714`、`LUM-1724` 等（项目 `in_review` **50 条**，多为往轮 cycle 报告）；`backlog` = `LUM-1668`、`LUM-1669`、`LUM-1671`、`LUM-1672`、`LUM-1673`、`LUM-1674`、`LUM-1675`、`LUM-1691`、`LUM-1580`；`blocked` **0**。
+- 磁盘：起手 **19G 可用（60%）** ⇒ 02:34 实测 **18G（63%）**（本 cycle 不跑门禁、不建冷 target，漂移来自两片在飞片）。
+- 观察项（**第 11 轮**）：见 61.5 —— 本轮**换了读法**（翻 workdir 的 `.gc_meta.json`），把「从未启动」纠正为「秒级静默死亡」，并升级为给 owner 的可执行建议。
+
+### 61.7 下一轮起手（12:30 cycle）
+
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = §61 的 docs-only 提交，**代码路径 diff 仍为 0**）→ 认证 `pulls?state=open`；再 `git ls-remote origin agent/devbox5/85f1aa73011d agent/devbox5/ad445cd89959` 查两片分支是否出现。
+2. **先判活跃再进判据链**：`LUM-1667` 与 `LUM-1670`（新 run `lum-1670-ad445cd89959`）都要先做三件套判定；任一先交 PR 即按 §56.2 七步走。
+3. 合入前**必查三条**：§60.5② 的 `content_hash` 口径（裸 hex、无 `sha256:` 前缀）+ 本 §61.4 的「不留第二份哈希实现」+ `include=metadata` 同形。
+4. 空位按 §60.4 修正表补：`{1668, 1671, 1672, 1674}` 任一可直接 `todo`（`1672` 与 `1673` 互斥）；`1669` 等 `1667` 合；`1673` 等 `1670`+`1671` 合；**`1674` 的「同一个函数」须等 `1669` 合（§61.4）**。
+5. 报数沿用：⑤ **1531 / 102**、⑥ **393 / 29**、⑦ **344 / 273 / 183**（未刷，刷新归 M6-INT `LUM-1675`）、⑨ `unmounted 31`。
+6. 若 `LUM-1667` 死亡 ⇒ 按 §60.2/§61.3 同法（**三件套 → 有产物才抢救 → 描述追加交接 → `rerun`**）；本轮登记的 2.6k 行未提交风险届时按「有产物」档处理。
+
+### 61.8 本轮 lesson
+
+- **【「留给下一轮决定」的缺口必须带复算表，否则下一轮会照抄上一轮的候选】** §60.5③ 给的候选是「下沉 `mc-skill` + 给 `mc-daemon/Cargo.toml` 加边」。**一旦把候选写成结论**，下一轮就会去填那个 manifest 空位；本轮把三个 crate 的**现有依赖边 / 已声明依赖 / 已有类型**各查一次，才发现 `mc-core` 早就把口径文档、`Manifest`/`FileRef` 类型、`sha2`+`hex` 依赖**全备好了** —— **空位的正解是让它不需要存在**（零 manifest 编辑），而不是找人去填它。
+- **【冻结面的正确语义是「并发约束」，不是「永久禁止」】** §9.1 把 `mc-core/src/skill.rs` 标成「M6 各片只读」，是因为 anchor 已经写完了它。当某个函数**必须**跨 crate 共享、而 anchor 未预留位置时，正解是**指定唯一写者 + 一次性豁免 + 只追加**，而不是绕开冻结面另立第二份实现。判据：**冻结面此刻有没有并发写者**（有 ⇒ 等；无 ⇒ 可指定唯一写者）。
+- **【交接文里的「常量」要区分「跨 run 不变」与「本 run 专属」】** 本轮交接文把**旧 run 的分支名**当成通用纪律写死（「推送一律 `…/5294bfa0b58b`」），而新 run 的 workdir 是 `…-ad445cd89959` ⇒ 自己制造了一个会推错分支的陷阱，只能同轮勘误。**写交接时对每一项标注「跨 run 不变」（如 base、写集、纪律）与「本 run 专属」（如 workdir / 分支名，一律用 `git rev-parse --abbrev-ref HEAD` 现场取）**。
+- **【观察项连续 N 轮无结论 ⇒ 换读法，别只加轮次】** 「`LUM-1521`/`LUM-1533` 从未启动」记了 9 轮，都是**只读 issue 的 `status`**；本轮改读 workdir 的 `.gc_meta.json` 一次就定性（秒级静默死亡）。**同一观察项连续两轮以上无进展时，必须换一个数据源**（issue → workdir → daemon 日志），否则「记录」会退化成「复述」。

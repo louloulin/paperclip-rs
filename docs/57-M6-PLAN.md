@@ -270,7 +270,7 @@ X-Multica-Plugin-Installation: <uuid>   User-Agent: Multica-Hooks/1
 | `mc-mcp/src/*` | **写** | | | | | 读 | 读 | 读 | 读 |
 | `mc-openapi/src/v1.rs` | **写** | | | | | | 读 | | |
 | `mc-skill/src/{frontmatter,binary,reserved}.rs` | | **写** | 读 | 读 | | | | | |
-| `mc-skill/src/{archive,git}.rs` | | | **写** | | | | | | |
+| `mc-skill/src/{archive,source}.rs` | | | **写** | | | | | | |
 | `mc-skill/src/builtin.rs` + `assets/**` | | | | **写** | | | | | |
 | `mc-http/src/routes/skills/{crud,files,labels}.rs` | | **写** | | | | | | | |
 | `mc-http/src/routes/skills/{import,refresh}.rs` | | | **写** | | | | | | |
@@ -616,6 +616,26 @@ manifest / bundle / capabilities 校验器（`ManifestVersion1`、`Capabilities`
 `known_gap 193`、`owners.M6 57`、`local_only 9`；`slash-alias-allowlist.tsv` **已空**
 （`slash_alias_audit --declared docs/fixtures/m6-declared-routes.tsv` = `5 defect`，即 5 个双形态键全在 M6-2，**非回归**）。
 注意 §6.1 的预测表是在 `eaba357` 上测的：**delta 有效，绝对值过期**（`docs/37` §51.4 已按 delta 平移过一轮）。
+
+### 9.6 落地修订二：bundle manifest hash 的共享点落在 `mc_core::skill`（11:30 cycle `LUM-1729` 裁定）
+
+**背景（§60.5③ 登记、本轮裁定）**：上游 `pkg/skillbundle` 是**共享包**，服务端（`internal/handler/daemon.go:38`）与 daemon
+（`internal/daemon/daemon.go:36`、`skill_cache.go:14/138`）都 import 它；本地把同一算法移植成了
+`crates/mc-http/src/routes/daemon/skills.rs:38` 的**私有** `fn write_hash_part` 与 `:102` 的 **`pub(crate)`** `fn build_bundle`
+⇒ **`mc-skill` / `mc-daemon` 都够不到**，而 `LUM-1674`（M6-9）的 DoD 要求「有断言证明是同一个函数」。
+
+**裁定**：唯一实现点落在 **`crates/mc-core/src/skill.rs`**（`mc-core` 已声明 `sha2` + `hex`，且该文件里已有「bundle hash 的口径
+（不可漂移）」文档段与 `Manifest` / `FileRef` 类型；`mc-http` 与 `mc-daemon` **都已依赖 `mc-core`**
+⇒ **零依赖边变更、零 `Cargo.toml` 编辑、零 `Cargo.lock` 变更**，「`crates/mc-daemon/Cargo.toml` 无写者」的空位随之消失）。
+
+| 项 | 落点 | 写者 |
+| - | --- | :-: |
+| `write_hash_part` + 分节 sha256 manifest digest（共享唯一实现） | `crates/mc-core/src/skill.rs`（§9.1 冻结面，**M6 内一次性豁免**：只追加函数与用例） | **M6-4**（`LUM-1669`） |
+| `routes/daemon/skills.rs` 改为**调用**上述函数（不留第二份实现） | `crates/mc-http/src/routes/daemon/skills.rs`（该文件在 M6 内仍是 M6-4 独占） | **M6-4** |
+| daemon 侧 `skill_cache` 校验消费同一 `fn` | `crates/mc-daemon/src/skill/**`（`mc-core` 边已在，**不加** `mc-skill` 边） | **M6-9**（`LUM-1674`） |
+
+**顺序约束**：`LUM-1674` 的「同一个函数（有断言）」必须**在 `LUM-1669` 合入之后**才能交（其硬前置由「M6-1」变为「M6-1 + M6-4」）；
+在此之前 1674 只交桩级证据 + 欠账登记，**不得**在 `mc-daemon` 里复制一份哈希算法。
 
 ---
 
