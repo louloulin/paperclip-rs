@@ -7059,3 +7059,80 @@ OK: every upstream route is either implemented or owned
 3. **在飞片的门禁日志是最富信息量的只读取证源**：本轮没碰它的工作树（一个写者原则），却从 `/tmp/gates1673.log` 取到「7/10 汇总 + 三门红的文件:行 + ⑦ 读数」三样，其中 ⑦ 读数把 §77.3 的**推导变成了双边实测**。⇒ **每次在飞片跑完 `--with-db`，cycle 都该把它的读数抄进报告**（那片自己未必来得及写文档）。
 4. **磁盘紧张时 base 复核要挑「不需要全量构建」的门**：`①fmt / ⑦route-parity / ⑧schema-drift / ⑩file-size` 全是 python / rustfmt 级成本（本轮 4 门 <40s、**零 `target/`**），而 `②③④⑤⑥⑨` 每道都起一次全量构建。**码树等式（限代码路径 numstat == 0）能把「不重跑」证成等价**，比在 16G 余量上硬跑安全得多。
 5. **`multica issue list --project … --limit 100` 只回一页**（本项目 191 条 ⇒ 需 `--offset 0/100/200` 拼三页）。做「全仓无 issue 认领」这类断言前**必须先拼全**，否则是拿半张表下的结论。（本轮 `--limit 100` 的默认页里根本没有 `LUM-1691`。）
+
+---
+
+## §79 04:00 cycle（`LUM-1794`，20:00Z 触发）：**合并 #78（M6-8，1 路由）⇒ base `94f3ecfc` —— M6 代码面（M6-0…M6-8）全部合入**；base 复核 4/4 且**末态向量当场实测到**；**外科式回收 11.8G**（在飞片的 `incremental`）；空位 1 ⇒ 派 **M8 波次计划片（`LUM-1796`）** + 晋升 **`LUM-1675`（M6-INT）**
+
+### 79.1 起手三连与在飞体检
+
+- `df -h /` ⇒ **7.8G 可用（84%）**；`git ls-remote` ⇒ base `ec83f6e7`、`agent/devbox5/3be5bf776e34` **未推**（当刻）；认证 GH `pulls?state=open` ⇒ **0**；daemon `running_task_count = 2`（cycle 自身 + `LUM-1673`）⇒ **空位 1**。
+- **唯一在飞片 `LUM-1673`（M6-8）**：pid/session 判活三件套取三（`~/.multica/pi-sessions/20260924T173006.441719139.jsonl` 1.50MB→**2.03MB**、写侧 19 项、`clippy-driver` 子进程在跑）；**只读**它的门禁日志取证（不碰工作树）：
+  `/tmp/gates1673.log` 7/10（19:34，红 ①④⑥）→ `/tmp/gates1673b.log` 8/10（19:47，④ 转绿）→ `/tmp/gates1673c/d.log` 9/10（19:51/19:55）→ `/tmp/gates1673final.log` **10/10 / 161s**（20:05）。
+  ⇒ 上一轮（§78.5）定位的三门红（① `hooks_job/bridge.rs` 换行、④ `clippy-test-util`、⑥ `tests/plugins/hooks.rs` 六处 `E0308` + `unused variable: pool`）**全部自行修绿**，且是「路由面+job 面」片自己在 run 内迭代完成 —— 印证 §56.6 的规矩：**cycle 不介入在飞片的红门**。
+
+### 79.2 合并 #78（M6-8，1 路由）—— 判据链逐条（**FF 形态 + 片内已合 base**）
+
+| 步 | 判据 | 实测 |
+|---|---|---|
+| 1 | 预检 `merge-base..head` numstat == PR API 逐字 | `23 files +4555 −79` == API `changed_files 23 / additions 4555 / deletions 79` ✓ |
+| 2 | 形态判定 | `git merge-base --is-ancestor base head` = **YES**（片自己已合 base）⇒ **FF 形态** |
+| 3 | 合并树预测 | `git merge-tree --write-tree base head` = `4bf7901c` == `head^{tree}` == 落地 `94f3ecfc^{tree}` ✓ |
+| 4 | 门禁证据 | 片内**合并树** `--with-db` **10/10 / 211s**（`/tmp/gates1673merged.log`：①2s ②20s ③20s ④16s ⑤48s ⑥68s `migrate=0,e2e=0` ⑧30s ⑦1s ⑨5s ⑩0s） |
+| 5 | 门禁后增量 | `git diff b0c053a0..head` = **仅 `docs/32`**（13/9）⇒ 码树与受测树逐字相同，证据可平移 |
+| 6 | CI | head `4b8f5854` 的 workflow **completed / success**（20:12:17Z 触发） |
+| 7 | 钉 sha 合并 | `PUT /pulls/78/merge`（`sha=4b8f5854`，`merge_method=merge`）⇒ **`94f3ecfc`**；复核 `git diff 4b8f5854 94f3ecfc` **空**、GH **0 open PR** |
+
+- **唯一冲突 = `docs/32-M3-DAEMON-FACE.md` 尾节追加**（两片都要「`### 9.10`」）：M6-9（先合）留 **§9.10**、M6-8 **顺延 §9.11**，两侧正文逐字保留。**片自己已按同一结论解完并写进 `b0c053a0` 的提交信息** —— cycle 的独立解（`486db291`，未推）与它**逐字一致**，故第 3 步退化为「核对 trees 相等」而不是重解（见 §79.9 lesson 3）。
+- 片交付：`fb95351a`（hook 引擎 + `plugin_bridge/hooks.rs` 挂载 + `hooks_job/**` 六文件 + `mc-repos/plugin/hook.rs` + `mc-scheduler/jobs/plugin_hook.rs` + `apps/mc-server/src/scheduler/hook_port.rs` + 用例）→ `d01accc0`（`docs/32` §9.11 落点与 M6-8-D1～D10）→ `40ea34a0`（⑦ 拆分追记）→ `b0c053a0`（合 base 解冲突）→ `4b8f5854`（合并后 10/10 补记）。
+
+### 79.3 base 复核 **4/4** + 末态向量**当场实测**（base `94f3ecfc`，26s）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 406 registered | baseline 344
+implemented 326 real + 4 placeholder = 330 / 456   known_gap 126
+unclaimed 0   regression 0   local_only 9
+```
+
+- 门选型沿用 §78.9 lesson 4（**零 `target/`**）：①fmt 2s / ⑦route-parity 0s（`slash_alias_audit` 0 defect）/ ⑧schema-drift 36s（scratch `multica_cyc1794`）/ ⑩file-size 0s ⇒ **4/4 PASS**（`/tmp/cyc1794_base_gates.log`）。
+- **与 `docs/57` §9.7 的末态验收向量逐值相符**（`local 406` / `known_gap 126` / `owners.M6 **0**` / `330 = 326 real + 4 placeholder`，即 §9.9 的订正口径）⇒ **M6-INT（`LUM-1675`）的「起手读数」不再需要推导，已是实测值**；⑦ 快照仍是 `baseline 344`（**未刷**，唯一一次 `344 → 406` 归 `1675`）。
+
+### 79.4 磁盘：**外科式回收 11.8G**（在飞片的 `target/debug/incremental`，不等 run 终态）
+
+- 现况：全盘只有一个大件 —— 在飞片 `lum-1673-…/paperclip-rs/target`（**26G**：`incremental` 14G / `deps` 13G / `build` 157M）；其余 249 个 workdir 全部 ≤ 188M。**`deps` 不能动**（动一次就全量重编 = 更费盘），于是取 `incremental`。
+- **分桶实测**：`target/debug/incremental` 下 **521 个 crate 目录 / 867 个 session 目录**；按 session 目录 mtime 分桶 = **`<2min` 128 个（2,235MB，活跃构建）/ `2–10min` 38 个 / `>10min` 650 个（12,519MB，死缓存）**。rustc 只会复用某个 crate **最新**的 session，活跃编译的 session 必然刚被写过 ⇒ **只删 `>10min` 的**。
+- **删除前三判据**：① `>10min` 未写；② `ls -l /proc/[0-9]*/fd | grep -o "$T/…"` ⇒ **开放句柄 0 条**（没有任何进程正持有它）；③ 逐条排除「是开放路径或其后代」的候选（本轮 0 条被排除）。⇒ 实删 650 个 session，**释放 11,784MB**（7.7G → **20G 可用 / 59%**），**未碰** `deps` / `build` / 任何源码 / 任何其他 workdir。
+- 事后验证：在飞片 5 分钟后交出 **10/10 / 161s** 的最终门禁（未因缓存被删而失败）⇒ 手段安全，且顺带把它后续构建的增量缓存体量压下来。
+- scratch 库回收：本轮 ⑧ 用的 `multica_cyc1794` / 角色 `mc_cyc1794` 跑完即删，不留垃圾库。
+
+### 79.5 派发决策：空位 1 ⇒ **M8（W8）波次计划片**（`LUM-1796`）
+
+- **候选与排除**（三条判据：① 硬前置价值 ② 是否写 `Cargo.lock` / 锚点冻结文件 ③ 与每个在飞片的文件交集）：
+  - `LUM-1675`（M6-INT）：硬前置（1673 合入）**本轮才刚满足**，且它是 `--write-baseline` 的唯一执行者 ⇒ 本片**先派 1796、后晋升 1675**（两者写集零交集）。
+  - `LUM-1691`（M2-A 尾 12 条）/ `LUM-1793`（第 13 条）：**都是加路由片**，与 `1675` 的基线快照争夺同一件东西（`--write-baseline` 快照当轮的路由集合）⇒ **必须排在 `1675` 之后**，本轮不派。
+  - M7 切片：`docs/60` §7.1 明文「M6 收口前不得提前开 M7-0」⇒ 不派。
+  - `LUM-1745`（M5-D8 掉棒）：文档口径「M6 收口后开工」⇒ 不派。
+  - ⇒ **空位给「下一波（W8）的计划片」**：docs + fixture + 建 backlog 子 issue，**不改 `.rs` / 不动 `Cargo.lock` / `migrations` / 不刷基线**，与 `1675` 的写集零交集。这与 `LUM-1652`（M6 计划，M5 在飞时立项）、`LUM-1764`（M7 计划，M6 在飞时立项）的时点**同构**。
+- **选波依据（当轮 ⑦ 实测）**：`M9=33 / M7=24 / M8=24 / M3+=16 / M2-A=13 / M3=11 / M10=5 / M6=1`（和 = 127 = `known_gap` ✓）。M7 已有计划（`docs/60`），按 `plan1.md` 的波次顺序下一波 = **W8（`mc-vcs` / `mc-vcs-github` / `mc-attachment`）**。
+- `LUM-1796` 已建并派：`parent = LUM-1334`（mission）、`project = da4310b1`、`assignee = cycle agent`、`status = todo` ⇒ workdir `lum-1796-acda8320923f` 已起。描述里钉进：24 条 `[M8]` 缺口逐字、`plan1.md` §1.2 的 `ghsnapshot 7 / composio 6 / vcs 4`（**单位待裁定**）、号段（**`docs/61`**，`58` 归 1675 / `59` M2-E / `60` M7）、以及**七条必须裁定的问题** —— 其中两条是本轮新发现的**文档-代码不一致**：① `docs/15` §580/§581 把 attachments 面判给 W8/M8，但当轮 fixture 那 6 条 owner 是 **`M3+`**；② `plan1.md` §5 的 DAG 写 **`W8 after w5`（不是 after w7）** ⇒ 计划片必须给出「M7 ∥ M8 可否并行」的**单值结论**（这决定 M6 收口后是「M7 独占 3 槽」还是「M7 ∥ M8」）。
+
+### 79.6 晋升 `LUM-1675`（M6-INT）+ 描述回填（rev 5 → **6**）
+
+- `1673` 一合入 ⇒ 立即 `status todo`（它已有 assignee）⇒ 20:19:49Z 起 run，workdir `lum-1675-14ec3a6d1f09`，issue 已 `in_progress`。
+- **回填（§78.9 lesson 的落地）**：给它的描述追加「起手补充 · M6-8 已合入」节 —— 合并 commit `94f3ecfc` + 完整判据链 + **在 base 上实测到的末态向量逐字**（替代此前的「预期」表）+ 起手 base 由 `55d6a1c0` 更正为 `94f3ecfc` + 同轮在飞（`LUM-1796`，零交集）+ 「除它之外本轮不得派加路由片」+ 磁盘读数。**教训落地要点：接收片读的是自己的描述，不是 cycle 的报告** ⇒ 口径类片一合入，接收片描述必须同轮改。
+
+### 79.7 下一轮起点与预置
+
+- **终点状态**：base = **`94f3ecfc`**（本节 docs 提交将使其前移）、GH **0 open PR**、在飞 **3/3** = `LUM-1796`（M8 计划）∥ `LUM-1675`（M6-INT）∥ cycle；`1673`/`1674` 等已合片保持 `in_review`（`done` 归人工）。
+- **第一动作**：① 起手三连（`df -h /`（现 **20G / 59%**）→ `git ls-remote origin feat/multica-rs-initial` → 认证 `pulls?state=open`）；② 两片判活按三件套（**注意 `1675` 是新 run：无前序产物**，若静默死亡按「抢救 → 合 base → 描述追加 → rerun」，它的产物是 3 个快照 + `docs/58`）；③ 任一交 PR ⇒ 判据链：预检 numstat == PR API → 形态判定（FF 优先）→ `merge-tree` 单哈希 + 落地树等式 → 门禁证据（**改基线的片必须当场重跑 ⑦/⑨/⑩，不继承读数**）。
+- **`1675` 合入 ⇒ M6 全波收口**（⑦ 快照 `344 → 406`）⇒ 之后：① `LUM-1691`（12 条，**无 assignee ⇒ 必须 `assign --to-id`**）→ ② `LUM-1793`（第 13 条；两者**串行**，同写注册段）；③ M7 从 **M7-0 anchor（`LUM-1765`，无 assignee）单独跑**（`docs/60` §7）；④ W8 的排期按 `LUM-1796` 的 §7 裁定执行。
+- **⑦ 递推**：`1691` 合 ⇒ `+12/+12/−12`（`owners.M2-A` 13 → 1）；`1793` 合 ⇒ `+1/+1/−1`（`owners.M2-A` → 0）。
+
+### 79.8 lesson（第 22 轮）
+
+1. **在飞片的 `target/debug/incremental` 可以「按 session mtime 分桶」外科式回收，不必等它终态**：`>10min` 未写的 session 是死缓存（rustc 只复用**最新** session），本轮 650 个 session / **11.8G** 一次放掉，而 `<2min` 的 128 个（活跃构建，2.2G）**分毫未动** ⇒ 5 分钟后那片照样跑出 10/10。**删之前必须查 `/proc/*/fd`**（本轮开放句柄 0 条）——把「活物纯缓存」从口号变成可执行的三判据。（`deps` 永远不要动：省不下钱还会全量重编。）
+2. **cycle 的下手时点是「分支静默 + 0 进程」，不是「PR 已开」**：本轮 `1673` 在 **20:06 开 PR 之后**又自己合了 base（`b0c053a0`）、重跑 `--with-db`（10/10/211s）、再推 `4b8f5854`（20:12）。若在「PR 已开」时就抢合，会白跑一整条判据链（我确实为此白做了一次合并提交 `486db291`）。
+3. **「片自解的冲突」可能与 cycle 独立解出的结论逐字一致**：两边都把 M6-8 顺延 §9.11 ⇒ 判据链里「重解冲突」应退化为**核对 `trees` 相等**。**做合并前先看片本地 HEAD 是否已含 base 合并**（`merge-base --is-ancestor`），别默认「它没合」。
+4. **空位的第三类选项 = 「下一波的计划片」**：前两轮 cycle 只在「派代码片 / 刻意不派」之间选；本轮证明还存在一类**与 `--write-baseline` 零冲突**、且能推进关键路径的片型（docs + fixture + 建 issue，零路由、零 manifest）。判据是三条的交集为空，而不是「有没有空位」。
+5. **`multica issue update --description-file` 只接受 run workdir 内的路径**（`/tmp/...` 被拒），失败时**返回非 0 且 stdout 无 JSON** ⇒ `python3 -c json.load` 链会抛 `JSONDecodeError`；**别把「解析失败」当「更新失败」，也别当「更新成功」** —— 回读 `issue get` 的 `revision` 才是判据（本轮第一次就是被路径规则挡下、第二次才落盘 rev 6）。
+6. **口径类片合入必须同轮三件事**（§78 lesson 的复现与收口）：新 base 重跑门禁 + **回填接收片描述** + 计划文档就地订正。本轮三件都做齐（4/4 门、`1675` 描述 rev 6、`docs/57` §9.7 的过期拆分已由 §9.9 覆盖）⇒ **M6-INT 的起手读数从「推导」变成「实测」**，这类「推导值」是下一轮最容易踩空的地方。
