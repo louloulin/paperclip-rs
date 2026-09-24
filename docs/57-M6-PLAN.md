@@ -732,6 +732,35 @@ sed -n '34,37p' docs/fixtures/m6-declared-routes.tsv                      # 逐�
 
 ---
 
+### 9.9 §9.7 末态向量就地订正：**⑦ 分类口径已变更**（03:00 cycle `LUM-1789`，2026-09-24 19:0xZ，base `956f387f`）
+
+`LUM-1580`（门 ⑦ 占位正则修复）已随 **PR #77** 合入 base（merge commit `956f387fab44320bc4eef2b99061b9334c93ebed`）。
+它把 501 占位 handler 的判定从「handler 名字含 `placeholder`」改为 `\b(?:placeholder|not_implemented)\b` ⇒
+**`implementation_placeholder` 的计数变了，`implemented` 的拆分列随之过期**。§9.7 的末态表里那一格须按下表读（**其余数字一律不变**）：
+
+| 指标 | §9.7 原写（新口径**之前**，过期） | **正确读法（新口径，`956f387f` 实测推导）** |
+| --- | --- | --- |
+| `local` | 406 | **406** |
+| `implemented` | 330 real + 0 placeholder | **330 = 326 real + 4 placeholder** |
+| `known_gap` | 126 | **126** |
+| `owners.M6` | 0 | **0** |
+| `local_only` | 9（占位 1） | 9（占位 **2**） |
+| 不变式 | `implemented + known_gap == 456` | 同（`330 + 126 = 456` ✓） |
+
+**合并后 base `956f387f` 的实测锚点**（`python3 scripts/route_parity.py`，本轮 cycle 跑到）：
+`local 405 / baseline 344 / implemented 329 = 325 real + 4 placeholder / known_gap 127 / owners.M6 1 / unclaimed 0 / regression 0 / local_only 9（占位 2）`。
+⇒ `326 real = 325 + 1`（`LUM-1673` 的那条 `POST /api/plugin-bridge/v1/hooks/{key}`，即 `known_gap` 里 `owner == "M6"` 的唯一一条）。
+
+**4 条占位键（owner 均非 M6 ⇒ M6 合入不改变这个数）**：`GET /api/issues/{id}/attachments`（M3+）、`GET /api/issues/{id}/pull-requests`（M8）、
+`GET /api/issues/{id}/timeline`（M9）、`POST /api/issues/{id}/comments/trigger-preview`（M2-A）。
+
+**对 `LUM-1675` 的约束**（已同轮追加进其描述「起手补充」）：刷新那一次读到 `implemented_placeholder ≠ 4` ⇒ **有别的片改动了占位键，先按 `--list-gaps` 点名查清再写**（不许抹平差异）；
+`known_gap == 126` 但 `owners.M6 ≠ 0` ⇒ 某片少交。**`--write-baseline` 仍是全波唯一一次（`344 → 406`）。**
+
+> 本轮 cycle 的完整记录见 `docs/37` §77（含合并判据链四步、在飞片健康三件套、空位取舍矩阵、19.1G 回收）。
+
+---
+
 ## 10. 复算命令（全部只读，可在任意 workdir 复现）
 
 ```bash

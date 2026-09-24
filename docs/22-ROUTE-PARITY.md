@@ -70,9 +70,46 @@ python3 scripts/route_parity.py --no-baseline          # 只出板子，关掉�
 
 ### 2.3 `placeholder` 不等于 implemented
 
-M0/M1 留下的占位（`health::placeholder`，返回 501）也是"已注册"。计数行因此把
-`implemented` 拆成 **real + placeholder** 两段；`local_only` 列表里也逐条标 `[placeholder]`。
-只有 real 那部分才算真的实现了合同。
+**判定口径（`LUM-1580` 起）**：handler 表达式的**函数名**含 `placeholder` 或 `not_implemented`
+即判为占位 —— `scripts/route_parity.py` 的 `PLACEHOLDER_HANDLER = re.compile(r"\b(?:placeholder|not_implemented)\b")`。
+本仓实测存在的两个族：
+
+| handler | 响应 | 位置 |
+| --- | --- | --- |
+| `health::placeholder` | **200** + body `{"code":"not_implemented"}`（**不是** 501；`health.rs` 的函数注释写 501 是笔误） | `crates/mc-http/src/routes/health.rs` |
+| `not_implemented` | 501 + body `error.code = "not_implemented"` | `crates/mc-http/src/routes/issues/mod.rs` |
+
+M0/M1 留下的占位也是"已注册"。计数行因此把 `implemented` 拆成 **real + placeholder** 两段；
+`local_only` 列表里也逐条标 `[placeholder]`。只有 real 那部分才算真的实现了合同。
+
+**判空看名字，所以有一个已知边界（1 条，实测、非人工清单）**：**路由专属**的 501 stub
+（函数名不含上述词）仍被计进 `implemented_real`。当前全仓唯一一条：
+`POST /api/comments/{commentId}/sub-issues` → `crates/mc-http/src/routes/comments/mod.rs` 的
+`create_comment_sub_issue`。复算（`crates/mc-http/src` 里 body 带 501/`not_implemented` 标记的
+函数应恰好 3 个：`placeholder` / `not_implemented` / `create_comment_sub_issue`）：
+
+```bash
+python3 - <<'PY'
+import re, glob, sys
+sys.path.insert(0, 'scripts'); import route_parity as rp
+for p in sorted(glob.glob('crates/mc-http/src/**/*.rs', recursive=True)):
+    src = open(p, encoding='utf-8').read(); masked, _ = rp.mask_rust(src)
+    for m in re.finditer(r'\bfn\s+(\w+)', masked):
+        b = masked.find('{', m.end()); e = rp.matching_paren(masked, b)
+        if b > 0 and re.search(r'NOT_IMPLEMENTED|"not_implemented"', re.sub(r'//[^\n]*', '', src[b:e])):
+            print(m.group(1), p)
+PY
+```
+
+⇒ 用 `implemented_real` 讲进度时，**扣掉 `implemented_placeholder` 之后还要再扣这 1 条**。
+
+**保留了另一条修法**：不靠名字、按 handler 是否 501 占位判定（issue 备选 ②）能把上面那条也收进来，
+但会**再改一次读数**（`implemented_real` 再 −1）⇒ 必须先落本片的口径，再单独派一片，否则本片 DoD 的
+读数与预测表无法对齐。
+
+**已过期的代码注释（本片未改，写集只含 `scripts/` + docs）**：`crates/mc-http/src/routes/issues/mod.rs:53`、
+`crates/mc-http/src/routes/mount.rs:281`、`crates/mc-http/src/routes/issues/wakeups.rs:13` 仍写
+「占位正则只认 `\bplaceholder\b`」—— 修完后这句不再成立，下次动这三个文件时顺手更正。
 
 ## 3. 实测快照（`9c57592` vs 上游 `f41fae6`）
 
@@ -151,6 +188,33 @@ $ python3 scripts/route_parity.py --json | python3 -c 'import json,sys; r=json.l
 `/api/tokens*`、`POST /api/cli-token`），它们在本 base `9c57592` 上仍是缺口——PR #5 合入后本表会自动
 从 9 降到 1（只剩 `POST /auth/google`，Google 登录本仓未移植，仍记 M1）。这不影响本工具的正确性，
 但说明**快照要随集成重跑**（§5 的刷新流程）。
+
+### 3.6 占位口径修订后的当轮读数（`LUM-1580`，base `fd6c4aa6`）
+
+第七道门在 `LUM-1580` 之前把 `not_implemented` 算成真实现 ⇒ `implemented_real` 虚高。
+同一条命令、同一棵树，唯一差异是 `PLACEHOLDER_HANDLER` 那一行：
+
+| 读数 | 修订前（只认 `placeholder`） | 修订后 |
+| --- | ---: | ---: |
+| `local` | 405 | 405 |
+| `implemented` | 329 | 329 |
+| `implemented_real` | **329** | **325** |
+| `implemented_placeholder` | 0 | **4** |
+| `known_gap` | 127 | 127 |
+| `unclaimed` / `regressions` | 0 / 0 | 0 / 0 |
+| `local_only` | 9 | 9 |
+| `local_only_placeholder` | 1 | 2 |
+
+被改判的 4 条上游键（两次 `--json` 取差集，逐键可复算）：`GET /api/issues/{id}/attachments`（M3+）、
+`GET /api/issues/{id}/pull-requests`（M8）、`GET /api/issues/{id}/timeline`（M9）、
+`POST /api/issues/{id}/comments/trigger-preview`（M2-A）；另加 1 条 local-only
+（`GET /api/issues/:id/quick-actions`）。`implemented + known_gap = 456` 全程成立。
+
+**历史数字不要互相转抄**：`231→218`（13 条）是 `8521544` 时点的口径，`329→325`（4 条）是本片时点；
+`docs/15` §9.7 的「23 条」更早（M3 6 + M5 7 + M2-A 4 + M2-D 3 + M8/M9/M3+ 各 1）。三个数字是同一件事的三时点。
+
+**基线不动**：`docs/fixtures/route-parity-baseline.json` 记的是「曾经注册过」的键集合（= `local`），
+与 handler 怎么分类无关 ⇒ 本片一次都没跑 `--write-baseline`（下一次归 M6-INT `LUM-1675`）。
 
 ## 4. owner 词表与规则表
 

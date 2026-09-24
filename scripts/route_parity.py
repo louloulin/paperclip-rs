@@ -56,9 +56,13 @@ This script reads source; it never starts the server.
 5. Parameters are compared by position, name-blind: `:id` == `{id}` ==
    `:workspaceId`.  Trailing slashes are stripped once per side, because chi
    registers both `/api/inbox` and `/api/inbox/`.
-6. A `placeholder` handler (upstream-parity placeholder, 501) counts as
-   registered but is flagged per route in `--json` and summarised in the human
-   output: "registered" must not be read as "implemented".
+6. A *placeholder* handler — a route registered ahead of its implementation —
+   counts as registered but is flagged per route in `--json` and summarised in
+   the human output: "registered" must not be read as "implemented".  The
+   criterion is the handler *name* (`PLACEHOLDER_HANDLER` below).  The two
+   families it matches here, the historical readings taken under the narrower
+   one-word criterion, and the one known key a name-based test cannot classify
+   are all in `docs/22-ROUTE-PARITY.md` §2.3 and §3.6.
 7. `any(...)` (all methods) is treated as satisfying any method on that path.
 
 Usage
@@ -103,7 +107,13 @@ METHOD_ROUTERS = (
 # NOT `.route(`-based: reported as limitations instead of silently missed.
 OTHER_ROUTE_APIS = (".nest(", ".nest_service(", ".route_service(", ".fallback_service(")
 
-PLACEHOLDER_HANDLER = re.compile(r"\bplaceholder\b")
+# Placeholder handlers are recognised by *name*: `health::placeholder` (M0/M1
+# leftovers) and `not_implemented` (`routes/issues/mod.rs`, the shared upstream-
+# parity stub; slices replace it with real handlers as they land).  Before
+# LUM-1580 only the literal word `placeholder` matched, so every `not_implemented`
+# registration was counted as a *real* implementation — see
+# docs/22-ROUTE-PARITY.md §2.3 (criterion) and §3.6 (readings).
+PLACEHOLDER_HANDLER = re.compile(r"\b(?:placeholder|not_implemented)\b")
 
 UNCLAIMED_OWNERS = {"", "-", "?", "tbd"}
 

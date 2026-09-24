@@ -618,7 +618,7 @@ receipt 失效；M5-7 租约四条（§6.2）；M5-8 plan_time 分桶与过期 p
 | # | 风险 | 处置 |
 | --- | --- | --- |
 | **R10** | `mc-core` 两个 stub 与迁移列大面积不符；沿用即写错实现 | M5-0 **重写**（§5.1 逐字段对照）；各片 DoD 要求「类型来自迁移列，不得来自旧 stub」 |
-| **R3** | 7 条 wakeup 501 被 ⑦ 记成 `implemented_real`（检测器只认 `\bplaceholder\b`） | 本波**不修** `route_parity.py`（改检测器会动门禁语义，属独立 issue `LUM-1580`）；M5-6 落地后自动成真；汇报时扣掉。**全仓口径是 13 条**（M5 7 + M2-A 3 + M8/M9/M3+ 各 1，base 逐键实测见 `docs/37` §32.4）——讲全仓进度时扣 13，讲本波时扣 7 |
+| **R3** | 7 条 wakeup 501 被 ⑦ 记成 `implemented_real`（检测器只认 `\bplaceholder\b`） | 本波**不修** `route_parity.py`（改检测器会动门禁语义，属独立 issue `LUM-1580`）；M5-6 落地后自动成真；汇报时扣掉。**全仓口径是 13 条**（M5 7 + M2-A 3 + M8/M9/M3+ 各 1，base 逐键实测见 `docs/37` §32.4）——讲全仓进度时扣 13，讲本波时扣 7。**已修（`LUM-1580`，2026-09-24）**：正则改为同时识别 `placeholder` 与 `not_implemented`，口径见 `docs/22` §2.3、当轮读数见 §3.6 |
 | **R1** | 凭据（webhook token / signing secret）泄漏到响应或日志 | C4：走 `mc-telemetry` redaction；M5-3/M5-5 DoD 各加一条「不含完整 secret」断言 |
 | **R5** | `/api/webhooks/autopilots/{token}` 是**无认证**入口：token 爆破、签名伪造、重放、大 body | M5-5 必须落地限流 + 签名校验 + dedupe 幂等 + body 上限；三条 e2e |
 | **R2** | 调度器 exactly-once：并发 claim、租约被偷、stale、retry 退避 | M5-7 四条租约测试（§6.2）；`sys_cron_executions.lease_token` 轮换语义不得简化 |
