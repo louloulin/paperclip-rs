@@ -6208,3 +6208,84 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
 - 下一轮第一动作：查 1671 / 1672 的终态 —— **对每一片都要查两件**：① 它的 head 分支 CI **3/3**（`fast`/`db`/`contract`）；② `merge-base --is-ancestor <base> <head>`（为假 ⇒ 先本地合树 + 跑门禁 + 推合并提交，再合）。
 - ⑦ 期望：1671 合入后 `local 386 / owners.M6 20`；1672 合入后再 `+19`。**快照刷新仍只归 `LUM-1675`**（M6-INT）。
 - 仍**不派** `LUM-1673`（M6-8）：它依赖 `LUM-1659`（M5-9）合入；`LUM-1745`（M5 偏差 D8）的排期约束不变（M6 收口前不开工）。
+
+## §70 23:30 cycle（`LUM-1750`，15:40Z 触发）：**本机 runtime 离线 4h20m（≈11:11Z–15:33Z）⇒ `1671`/`1672` 共 3 个 run 全部基础设施失败、零产物**；两片带完整交接文重派（run-3 / run-2）；base 码树未动
+
+### 70.1 起手状态（15:41Z 实测）
+
+- base **`b91f786d`**（= §69 的 `2e18514` 码树 + §69 / §69.5 两个 docs 提交）。
+  **码树逐字等价已核**：`git diff --stat 2e18514 b91f786d -- crates apps Cargo.toml Cargo.lock scripts migrations .github contracts` **输出为空**，
+  `docs/` 侧只有 `docs/37` +84 行、`docs/fixtures/**` **零改动**（基线快照仍未刷新）⇒ §69.4 的 ⑦ 读数与"快照未动"结论**直接继承**。
+- GH **0 open PR**；daemon `uptime` 7m42s（≈**15:33Z 重启**）；`/` **33G 可用（31%）**。
+- 起手 `running_task_count = 1`（cycle 自己）⇒ 表面像有 2 个空位，但**两个"在飞"片其实都是死的**（70.2）。
+
+### 70.2 死因取证：**三个 run 全是基础设施错，与实现无关**
+
+`multica issue runs` 逐条实测：
+
+| 片 | run | 创建 | 终态 | `error` |
+| --- | --- | --- | --- | --- |
+| `LUM-1671` | `01a0d22e-9a0e`（run-1） | 06:51:04Z | 07:21:20Z completed（静默死亡） | — |
+| `LUM-1671` | `01a0d275-3f12`（run-2） | 08:08:14Z | 11:11:30Z failed | `runtime went offline` |
+| `LUM-1671` | `01a0d31d-08c2`（自动重排） | 11:11:30Z | 14:12:00Z failed | `runtime did not reconnect within the configured grace period` |
+| `LUM-1672` | `01a0d275-567c`（run-1） | 08:08:20Z | 08:09:52Z failed | `Upstream stream ended before terminal chunk` |
+| `LUM-1672` | `01a0d277-921a`（rerun） | 08:10:46Z | 11:11:30Z failed | `runtime went offline` |
+| `LUM-1672` | `01a0d31d-08c7`（自动重排） | 11:11:30Z | 14:12:00Z failed | `runtime did not reconnect within the configured grace period` |
+
+**结论**：本机 runtime 在 **≈11:11Z–15:33Z 离线约 4h20m**。`LUM-1671` 的 run-2 排到队、刚 `checkout` 完并合好 base 就掉线
+（证据：其 worktree `lum-1671-444dac3da033` 留着一个**未推送**的 merge 提交 `14289524` = 把 `2e18514` 合进抢救分支，零冲突）；
+`LUM-1672` 三个 run **0 提交 / 0 推送 / 0 注释 / 无分支**（工作区 `target/` 都没建起来）。**没有一行产物因本轮而损失。**
+
+- 〖口径·新〗**`runs[].error` 是分辨"任务错 vs 基础设施错"的唯一权威字段**。三个特征串全部属基础设施类：
+  `Upstream stream ended before terminal chunk` / `runtime went offline` / `runtime did not reconnect within the configured grace period`。
+  **不要**据此怀疑写集、依赖或实现难度 —— 本轮若按"跑了三次都没结果 ⇒ 拆片"处理，纯属浪费（§69.5 的 `1672` run-1 也是同一类）。
+- 〖口径·新〗**`running_task_count` 不能当"在飞片数"**：本轮起手它是 1，但按 issue 状态是 2 片未终态。
+  **两个来源都要看**：daemon 计数（本轮 = 3 − 1(cycle) − 真正的活 run）＋ 每片的 `runs` 列表（最后一条是否 `running`/`queued`）。
+
+### 70.3 本轮动作（两片重派，0 新派发）
+
+两片描述各追加一节交接文（死因表 + 远端分支的准确 sha + 可直接粘的起手命令 + "以本节为准"的口径说明），再 `rerun`：
+
+- **`LUM-1671`（M6-6）⇒ 第三个 run `01a0d418-f278`**。起手 = 在**自己的工作分支**上
+  `git merge origin/agent/devbox5/d3db820d080f`（= `2f2086a9`，拿回 §69.5 抢救的 683 行：`invocation_read.rs` +267/−17、`mcp_approval.rs` +432/−17）
+  → `git merge origin/feat/multica-rs-initial`（`b91f786d`）。**不要重写这两个 repo 模块**，只在其上补 route 层 4 条 + 真库测试。
+  ⚠️ 交接文特别写明**不要试图 `git checkout agent/devbox5/d3db820d080f`**（见 70.7 第 3 条）。
+- **`LUM-1672`（M6-7）⇒ 第二个 run `01a0d419-0771`**。起手 = 干净 `origin/feat/multica-rs-initial @ b91f786d`（零产物可续）。
+  写集枚举、注册点、⑨ 待拉绿条目一字不改。
+- 空位：**3/3 满**（cycle ∥ 1671 ∥ 1672）⇒ 本轮**不派**新片。
+
+### 70.4 ⑦ 当场实测（`b91f786d`，与 §69.4 逐值一致）
+
+`python3 scripts/route_parity.py --json` ⇒ `ok: true`、`upstream 456 / local 382 / implemented 306（**implemented_real 306 + placeholder 0**）/ known_gap 150 / unclaimed 0 / regressions 0 / local_only 9（其中 placeholder 1）`；
+`owners` = `M9 33 / M6 24 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5`。
+`docs/fixtures/route-parity-baseline.json` **未动**（唯一一次 `--write-baseline` 仍归 M6-INT `LUM-1675`）。⑤/⑥ 沿用 §69（码树未动）。
+`known_gap` 里 M6 的 24 条正好等于 `1671`(4) + `1672`(19) + `1673`(1，`POST /api/plugin-bridge/v1/hooks/{key}`) —— 记账闭合，无 slack。
+
+### 70.5 下一轮起点与就绪板
+
+- base **`b91f786d`**（本轮报告提交后 base 再前进一个 docs 提交，码树仍 `2e18514`）；GH **0 open PR**；在飞 **3/3**（cycle ∥ `1671` run-3 ∥ `1672` run-2）。
+- 下轮第一动作与 §69.7 相同：对每一片查**两件** —— ① head 分支 CI **3/3**（`fast`/`db`/`contract`）；② `git merge-base --is-ancestor <base> <head>`（为假 ⇒ 先本地合树 + 按 §69.3 跑门禁 + 推合并提交让 CI 复核，再合）。
+- **就绪可派（本轮重新判定，任一合入出现空位即按此序）**：
+  1. `LUM-1673`（M6-8，1 路由）—— **依赖已解除**：其前置 `LUM-1659`（M5-9）已于 09:0xZ 随 #68 合入 base（§65/§60 记录），本轮复核 `apps/mc-server/Cargo.toml` 的 `mc-scheduler` 边**已在 base**；
+  2. `LUM-1674`（M6-9，0 路由）—— 硬前置 M6-1（`1666`）+ M6-4（`1669`）**均已合入**；
+  3. 两片都合后才是 `LUM-1675`（M6-10 INT，⑦ 快照唯一刷新者，终态向量见 `docs/57` §9.7）。
+  - **互斥检查（本轮实测）**：`1672` 与 `1673` **文件级零交集**（`1673` 只写 `routes/plugin_bridge/hooks.rs`，`1672` 的枚举已排除它）⇒ 可并行；
+    任一 M6 片都不得动 `routes/mount.rs`、`routes/{v1,plugin_bridge}/mod.rs`（anchor 冻结面）。
+- 合入后 ⑦ 期望：`1671` ⇒ `local 386 / owners.M6 20`；两片都合 ⇒ `local 401 / owners.M6 1`（只剩 M6-8 那 1 条）；M6-INT ⇒ `local 406 / implemented 330 / known_gap 126 / owners.M6 0`。
+- 仍**不派**：`LUM-1745`（M5 偏差 D8，M6 收口前不开工）、`LUM-1691`（M2-A 尾，争 `Cargo.lock`/注册点）、`LUM-1580`。
+
+### 70.6 观察项与护栏（第 13 轮）
+
+- **`LUM-1748`（"16:00 cycle / 08:00Z"，`todo`，从未启动）保持不动**：它是离线窗口前的建单，其起手读数（base ≤ `2e18514`）已被 §69 与本轮取代 ⇒
+  启动它只会得到第二个与本文互相矛盾的 cycle。**建议 owner 归档**。
+- autopilot 在 08:00Z→15:40Z 之间**没有**再建 cycle issue（8h 空白，仅 `LUM-1750` 一条）⇒ 与 runtime 离线窗口重合；
+  而"同项目已有未终态 cycle issue 时不建新单"的护栏**仍未落地**（`todo` 态旧 cycle issue 已积 **5** 条：`LUM-1521`/`1533`/`1726`/`1737`/`1740`）。
+
+### 70.7 本轮 lesson（3 条）
+
+1. **`runs[].error` 才是死因的权威**（见 70.2）：基础设施类三串必须与"任务错"分开记账，否则会把机器故障算成实现难度。
+2. **`running_task_count` ≠ 在飞片数**：死 run 可能仍被计数；判"有没有空位"必须同时看 issue 状态与 `runs` 末尾状态。
+3. **共享裸仓 + `git worktree` 语义（本仓实测）**：所有 workdir 都是同一个裸仓的 worktree（`.repos/.../<repo>.git/worktrees/*`），
+   **分支 ref 是共享的**，因此(a) 死 worktree 会把分支名"占住" ⇒ 交接文要写"在你的分支上 `merge` 那个 ref"，**不能**写"`checkout` 那个分支"；
+   (b) 一个 worktree 里移动分支 ref 会让别的 worktree 显示成"大量暂存改动"（本轮 `lum-1671-d3db820d080f` 的 16 文件 / −6043 行即此假象，
+   用 `git diff --stat 2f2086a` 为空即可证伪 ⇒ **不要去"抢救"这类假改动**）。
