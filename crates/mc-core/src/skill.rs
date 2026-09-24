@@ -299,6 +299,7 @@ fn as_i64(n: usize) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     #[test]
     fn skill_source_strings_match_upstream_bundle_constants() {
@@ -387,10 +388,10 @@ mod tests {
             "main",
             "a.md",
         ] {
-            expected.push_str(&format!("{}:{}\n", part.len(), part));
+            writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
         for part in [digest_a.as_str(), "a", "b.md", digest_b.as_str(), "bb"] {
-            expected.push_str(&format!("{}:{}\n", part.len(), part));
+            writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
 
         let want_hash = format!("sha256:{}", hex::encode(Sha256::digest(expected.as_bytes())));
@@ -475,7 +476,7 @@ mod tests {
             "",
             "",
         ] {
-            expected.push_str(&format!("{}:{}\n", part.len(), part));
+            writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
         let want = format!("sha256:{}", hex::encode(Sha256::digest(expected.as_bytes())));
         assert_eq!(manifest.hash, want);

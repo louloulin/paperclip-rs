@@ -301,6 +301,7 @@ const fn str_eq(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     fn sha256_hex(content: &str) -> String {
         use sha2::{Digest, Sha256};
@@ -459,14 +460,14 @@ mod tests {
             "",
             platform.content,
         ] {
-            expected.push_str(&format!("{}:{}\n", part.len(), part));
+            writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
         // 支持文件按 path 升序，每节 path / sha256:<hex> / content。
         for file in &manifest.files {
             let content = file_content(platform, &file.path);
             let digest = format!("sha256:{}", hex::encode(Sha256::digest(content.as_bytes())));
             for part in [file.path.as_str(), digest.as_str(), content.as_str()] {
-                expected.push_str(&format!("{}:{}\n", part.len(), part));
+                writeln!(expected, "{}:{}", part.len(), part).unwrap();
             }
         }
         let want = format!(
