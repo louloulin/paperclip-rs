@@ -6125,9 +6125,9 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **但有真实代价**：① 同一份缺口被两个 cycle 各诊断一遍（本 cycle 的 CI 日志 vs LUM-1746 的工具调用取证）；② 同一个 `LUM-1670` 描述被两边先后重写（`rev 10 → 11`），**后写者覆盖先写者**是默认行为，只是这次两边结论一致才没丢信息；③ 两边的 next-cycle 结论**互相矛盾**（§68.8「先判合并」vs 本节「先补文件」）—— 这是并发 cycle 唯一真正危险的地方：**同一条流水线上出现两个互相矛盾的「下一轮第一动作」**。
 - **建议（给 owner，本 cycle 不改 autopilot 配置）**：autopilot 建 cycle issue 前先查「是否已有本仓未终态（`todo`/`in_progress`）的 cycle issue」，有则跳过本次建单。当前 `todo` 态的旧 cycle issue 已有 `LUM-1521`/`1533`/`1726`/`1737`/`1740` 五个，加上并发在飞的这一个，**护栏收益明确**。
 
-## §69 08:45 cycle（`LUM-1747`，08:0xZ）：**合并 #72（M6-5，13 路由）⇒ base `2e18514`**；合并树门禁 **10/10（246s 热跑）**、⑦ `local 382 / implemented 306 real + 0 placeholder / owners.M6 24`；抢救 `LUM-1671` 683 行（`2f2086a`）+ `rerun`；空位出现 ⇒ 派 `LUM-1672`（M6-7，19 路由）
+## §69 15:30 cycle（`LUM-1747`，07:30Z 触发 / 08:1xZ 收尾）：**合并 #72（M6-5，13 路由）⇒ base `2e18514`**；合并树门禁 **10/10（246s 热跑）**、⑦ `local 382 / implemented 306 real + 0 placeholder / owners.M6 24`；抢救 `LUM-1671` 683 行（`2f2086a`）+ `rerun`；空位出现 ⇒ 派 `LUM-1672`（M6-7，19 路由）
 
-### 69.1 起手状态（08:0xZ 实测）
+### 69.1 起手状态（07:4xZ 实测）
 
 - GH **1 open PR**（`#72`，head `b06f41d`，base `feat/multica-rs-initial`）；CI run `35967841375` = `fast` 红 / `db` 红 / `contract` 绿。
 - 两处死 run：`LUM-1670`（M6-5，run-6 死于 06:57:03Z，第 7 个 run 的交接与 `b06f41d` 抢救已在 §68 完成）、`LUM-1671`（M6-6，run-1 死于 07:21:20Z，**0 提交 / 0 推送 / 0 注释**，工作区留 683 行未提交）。
