@@ -7271,3 +7271,93 @@ unclaimed 0   regression 0   local_only 9
 - **预置给 M7-1 的硬事实**：`Registry` 已可用但 `Supervisor::spawn` / `Router::route` /
   `Engine::new` / `InstallationResolver::new` 仍是 `todo!()`；`engine/mod.rs` 的四个
   `pub mod` 由 M7-2 自己追加；M7 各片只写各自那格文件（`docs/32` §10.7 三条硬约束）。
+
+## §82 06:30 cycle（`LUM-1829`，22:30Z 触发）：**合并 #82（M7-0 anchor）+ #81（M9 计划）⇒ base `401548db`**；**取消 `LUM-1765` 的冗余重试 run**；空位 2 ⇒ 派 **M7-1（`LUM-1766`）+ M8-0（`LUM-1797`）**
+
+### 82.1 起手三连与基础设施事件
+
+- `df -h /`（起手）：**5.0G 可用（90%）** —— 红色；在飞片 `lum-1765-ca4917ec0ad7` 的 `target/` 占 **24G**。
+- `git ls-remote origin`：`feat/multica-rs-initial` = **`e8e565c3`**；在飞两片分支均已推：
+  `agent/devbox5/ca4917ec0ad7` = `7c717c23`（M7-0 head）、`agent/devbox5/858fc76ec0c2` = `181512c2`（M9 计划 head）。
+- 认证 GH `pulls?state=open`：**2 条** = **#82**（M7-0，`49 files +4188/−13`，`mergeable:true`）+ **#81**（M9 计划，`2 files +1020/−0`）。
+- **daemon 于 22:30 重启**（`uptime 1m51s`）：① 它把 `LUM-1765` 的 attempt-1 run（`ca4917ec0ad7`）标成
+  **`failed / runtime_recovery`（「daemon restarted while task was in flight」）**——尽管该 run **已完成交付**
+  （22:26:31Z 发交付评论 + PR #82 + issue `in_review`）；② 平台自动起 **attempt-2 run `29d73338d462`**（22:30:38Z），
+  在飞数 +1；③ 平台 **GC 掉全部陈旧 workdir**（`multica_workspaces/lumos-659117e3ca3d/` 从 ~250 个目录只剩 2 个）
+  ⇒ 磁盘 **5.0G → 35G 可用（27%）**（一次放掉 30G）。
+- **cycle 动作：取消冗余重试**。`LUM-1765` 交付已由「评论 + PR + `in_review`」三件证据钉死；重试只会在
+  **M7 波唯一共享写者**上产出第二个重复 PR ⇒ `multica issue cancel-task 01a0d58a-cdca-…-29d73338d462 --issue LUM-1765`。
+  取消后 daemon `running_task_count = 1`（仅 cycle）⇒ **空位 = 3 − 1 = 2**。
+
+### 82.2 判据链
+
+**PR #82（M7-0 anchor，0 路由）**
+
+| # | 步骤 | 证据 |
+|---|---|---|
+| 1 | 预检：`git diff --numstat <merge-base>..<head>` == PR API | `49 files / +4188 / −13`，与 API **逐字相符** |
+| 2 | 形态判定：`merge-base --is-ancestor e8e565c3 7c717c23` = **真** | ⇒ 合并树 **== head 树**（`12979d54`），免真合 |
+| 3 | `git merge-tree --write-tree e8e565c3 7c717c23` | **`12979d54`** == `head^{tree}` ✓ |
+| 4 | API `PUT /pulls/82/merge`，钉 head sha | 合并提交 **`8b6f339c`**；`merged:true` |
+| 5 | 落地树等式 | `tree(origin/feat/multica-rs-initial)` == `12979d54`；`git diff 7c717c23 <base>` **0 行** ✓ |
+
+**PR #81（M9/W9 计划，docs-only）**
+
+| # | 步骤 | 证据 |
+|---|---|---|
+| 1 | 预检 numstat == API | `2 files / +1020 / −0`（`docs/62` 899 + fixture 121）逐字相符 |
+| 2 | 形态判定 | `merge-base --is-ancestor e8e565c3 181512c2` = **假**（merge-base `f73d916d`）⇒ **必须真合** |
+| 3 | `merge-tree --write-tree` 单哈希 + **实合 `write-tree`** | 预测 `c9d7720d` == 本地 `merge --no-commit` 后的 `git write-tree` `c9d7720d` ✓ |
+| 4 | API 合并（base 已因 #82 前移，重取 head 后钉 sha） | 合并提交 **`401548db`**，parents `[8b6f339c, 181512c2]` |
+| 5 | 落地树等式 | `tree(401548db)` == `merge-tree --write-tree 8b6f339c 181512c2` = **`f180218c`** ✓；两文件在树中 |
+
+（PR #82 的门禁读数**继承自其交付树**：`merge-base --is-ancestor` 为真 ⇒ 合并树与它跑过 `--with-db 10/10 / 251s`
+的树**逐字同一棵树**，故 ①–⑥/⑧ 不重跑；⑦/⑨/⑩ 见下。）
+
+### 82.3 base 复核（4/4）与 ⑦ 实测
+
+在**合并后** base `401548db` 上当场复跑 ⑦b/⑩：
+
+- **⑦ route-parity**（`python3 scripts/route_parity.py --quiet`，exit 0）：
+  `upstream 456 | local 406 registered | baseline 406`；
+  `implemented 326 real + 4 placeholder = 330 / 456   known_gap 126   unclaimed 0   regression 0   local_only 9`；
+  `gaps by owner: M9=33 M7=24 M8=24 M3+=16 M2-A=13 M3=11 M10=5`（和 = 126 ✓）。
+  ⇒ 与 M7-0 交付树**逐字相同**（M7-0 是五轮里第一个不刷基线的 anchor，证据 = ⑦ 不变）。
+- **⑦b slash-alias**（`--quiet`）exit 0；**⑩ file-size**（`--quiet`）exit 0。
+- ⑨ `report.json` 未变（0 路由片 + docs 片不改 conformance 快照）⇒ 沿用「matches」。
+- 基线仍 **406**；**下一次（= M7 唯一一次）刷新归 `LUM-1786`（M7-21 INT）**，普通片不得顺手刷。
+
+### 82.4 派发（空位 2）
+
+- **槽位口径**：daemon `running_task_count` **含 cycle 自身** ⇒ 上限 3 时可派 **2** 片。
+  `docs/61` §7.2 R2 的「M7-1 ∥ M7-2 ∥ M8-0」三片基线排法**降级为 1+1**：
+  **M7 保 1 槽 + M8 保 1 槽**（M8 在关键路径：`W9 after W8`，W8 无 W7 前置）。
+- **`LUM-1766`（M7-1，0 路由）**：描述追加「起手补充」（当轮 base `401548db` + 实测 ⑦ 逐字读数 + **不刷基线**
+  + 同轮在飞零交集 + 真库 `CREATEDB` + 上游副本钉 `f41fae6b08fb`）⇒ `assign --to-id` + `status todo`
+  （它无 assignee **且** `backlog` ⇒ 两步都要）⇒ run `ba7ddf538cc8`（22:53:10Z）。
+- **`LUM-1797`（M8-0 anchor，0 路由）**：同法；描述里**订正正文过期的 ⑦ 预测**（正文写「M7 全波后 `local 430`」，
+  实际起手 `406`——M7 尚未收口）⇒ run `d40efe34eaf7`（22:53:14Z）。**「M8-0 与 M7-0 不同飞」的硬规则随 #82 合入解除**。
+- **刻意不派**：`LUM-1767`/`1768`（M7-2/3，等槽位）；`LUM-1691`/`1793`（加路由 + 争注册段/lock；
+  且 `LUM-1691` 无 assignee）；`LUM-1745`（M5-D8，争 `state.rs`）。
+- 派后实测 daemon **`running_task_count = 3`**（cycle ∥ `lum-1766-ba7ddf538cc8` ∥ `lum-1797-d40efe34eaf7`）。
+
+### 82.5 终点状态与下一轮起点
+
+- **base = `401548db`**（本节 docs 提交将使其前移为 cycle 提交）；GH **0 open PR**；**在飞 3/3**。
+- 看板：`LUM-1765`/`LUM-1814` = `in_review`（等验收）；`LUM-1826`（06:00 autopilot cycle issue）曾以
+  **`502 (no body)` / `agent_error.provider_server_error`** 在 22:03:53Z 死亡、零产物、仍 `todo` ⇒ **只登记不动状态**（观察项第 21 轮）。
+- **下一轮第一动作**：三连 → 两片判活（`LUM-1766`/`LUM-1797` 皆新 run、无前序产物；静默死亡 ⇒ 抢救 + 合 base + rerun）
+  → 任一交 PR 走判据链 → 空位递补 **`LUM-1767`/`1768`（M7 stage 2 余片）+ `LUM-1798`/`1799`/`1800`（M8 stage 2，
+  等 M8-0 合入）**。**新增 docs 章节号前先 `git fetch`**（并发 cycle 可能抢号）。
+
+### 82.6 lesson（第 24 轮）
+
+1. **「daemon 重启」会把**已交付**的 run 标成 `failed` 并自动重试** ⇒ cycle 必须按**交付证据**（评论 id / PR / `in_review`）
+   判定，而不是按 run 状态。对**共享写者**（anchor）的冗余重试应当**取消**——否则会产出第二个重复 PR，
+   与正在走的判据链互相打架。取消是 `multica issue cancel-task <run-id> --issue <key>`（不是杀 daemon PID）。
+2. **平台 GC 陈旧 workdir 会一次放掉几十 G**（本轮 30G）：磁盘告急时**先看平台是否会自动回收**，
+   再决定是否手工删 `target/`；手工回收的判据（PR 已合 + run 终态 + `/proc/*/cwd` 零命中 + 0 未提交）不变。
+3. **3 槽上限含 cycle 自身** ⇒ 实派上限 = **2 片**。任何计划表的「3 片并行」在 cycle 在场时都要降级为
+   「2 片」；跨波排序按**关键路径**（`W9 after W8` ⇒ M8 优先保 1 槽）而非计划表行号。
+4. **`merge-tree --write-tree` 的预测必须与「实合一把的 `write-tree`」比对**，尤其当 base 在两次合并之间前移时
+   （#82 合完 base 前进，#81 的预检值来自旧 base；重取 head/base 后才钉 sha）。
