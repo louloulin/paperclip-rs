@@ -340,3 +340,69 @@ bash scripts/gates.sh --with-db      # 10/10
 - `crates/mc-plugin-protocol/` 已删（343 行的 stdio JSON-RPC，**零代码依赖者**：
   唯一外部引用只剩 `README.md` / `AGENTS.md` / 历史文档）—— 上游 `pkg/plugincontract` 是
   **声明式 manifest/bundle/capabilities 校验器**，不是 JSON-RPC（`docs/57` §9.3）。
+
+### 9.6 M6-2 skill 读写面（`LUM-1667`）的偏离登记
+
+**落点**：12 条上游路由 / **17 个注册键**（12 + 5 个尾斜杠双形态＝`/api/skills`(GET,POST)、
+`/api/skills/:id`(GET,PUT,DELETE)）。**写集**（相对 M6-0 冻结基线的增量）：
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `mc-skill/src/frontmatter.rs` | 406 | 不可失败的 frontmatter 解析（+16 用例） |
+| `mc-skill/src/binary.rs` | 113 | `is_likely_binary_file_path`（60 条扩展名黑名单） |
+| `mc-skill/src/reserved.rs` | 125 | `is_reserved_content_path` + Go `filepath.Clean` 移植 |
+| `mc-repos/src/skill/read.rs` | 262 | `SkillRepo` + 4 个行结构 + 6 个 SELECT |
+| `mc-repos/src/skill/write.rs` | 322 | 建/改/删 + 文件/标签写（含唯一冲突 → 409） |
+| `mc-http/src/routes/skills/helpers.rs` | 793 | 共享件：投影 DTO / `SkillScope` / ClawHub 客户端 |
+| `mc-http/src/routes/skills/{crud,files,labels}.rs` | 322/188/158 | 三个 `router()` |
+| `mc-http/tests/skills/**` | 1298 | e2e：`main.rs` + `support.rs` + 3 个用例文件（12 例） |
+
+**`mod.rs` / `lib.rs` 冻结口径成立**：`mc-skill/src/lib.rs` 与 `skill/mod.rs`、`routes/skills/mod.rs`
+在 M6-0 就已声明全部子模块，本片**零编辑**（写集只有上面这些文件 + 新增 `tests/skills/`）。
+
+#### 偏离（M2-D1～M2-D17）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M2-D1** | `parse_skill_frontmatter(&str) -> Frontmatter` **不可失败**（无 `Result`） | `mc-skill/src/frontmatter.rs` | 上游 `ParseFrontmatter` 在「围栏在但 YAML 非法」时返回 error，但**本波 12 条路由没有一条读 frontmatter**（读它的是 M6-3 的导入）。「非法 YAML 该拒还是该降级」的自由度留给**唯一调用方**；桩注释「围栏存在但 YAML 非法 = Err」是过期信息 |
+| **M2-D2** | 只落 `is_likely_binary_file_path`，**没有** `is_likely_binary_content` | `mc-skill/src/binary.rs` | 上游 `internal/skill/binary.go` **不存在** `IsLikelyBinaryContent`（plan 里的假想 API）。调用方只有 M6-3 的导入路径；`put_file`/`create`/`update` 与上游一样**没有**二进制闸（桩注释「binary 必须跳过」是过期信息） |
+| **M2-D3** | 保留路径名比较是 **ASCII** `eq_ignore_ascii_case` | `mc-skill/src/reserved.rs` | Go `strings.EqualFold` 是 Unicode 全折叠（`SKİLL.md` 这类会折叠成 `SKILL.md`）。差异面只有 Unicode 折叠，M6-3 复用**同一函数**即口径一致 |
+| **M2-D4** | `SkillRepo` 落在 `read.rs`（私有 `db` + `impl RepoWithDb`），外部路径是 `mc_repos::skill::read::SkillRepo` | `mc-repos/src/skill/read.rs` | `skill/mod.rs` 冻结且**没有 `pub use`**；`write.rs` 用 `impl SkillRepo` 续写（同一类型、两个文件） |
+| **M2-D5** | 事务走 `self.db().pool().begin()` | `mc-repos/src/skill/write.rs` | `mc-db::Db` 只有 `.pool()`，没有 tx helper；与 `mc-repos` 其他模块写法一致 |
+| **M2-D6** | `sanitize_null_bytes` 在 `write.rs` **本地复制 3 行**（`replace('\0', "")`） | `mc-repos/src/skill/write.rs` | `property/validation.rs:181` 的同名函数是 `pub(crate)` 且 `property.rs:246` 是**私有** `mod validation;` ⇒ 从 `crate::skill::write` **不可达**；语义与上游 `SanitizeTextForPostgres` 逐字等价 |
+| **M2-D7** | 写路径**不做** frontmatter / 二进制校验 | `routes/skills/crud.rs`、`files.rs` | 上游 `CreateSkill` / `UpdateSkill` / `UpsertSkillFile` 也只做 `validateFilePath` + 保留路径 + null 字节；多一道闸就会拒掉上游收下的请求 |
+| **M2-D8** | `load_skill` 把 `RepoError::Db` 折成 **500**（其余 → 404） | `helpers.rs::SkillScope::load_skill` | 上游把 `GetSkillInWorkspace` 的任何错误都折成 404；本仓区分真库故障，避免「库挂了」被伪装成「skill 不存在」 |
+| **M2-D9** | 404 错误体：本仓 `{"error":{"code","message":"not found: skill"}}` vs 上游 `"skill not found"` | `helpers.rs` + `routes/agents.rs::not_found` | 契约的 5 个 golden 只比**状态码**（`json_subset: {}`）⇒ 不判红；测试断言裸资源名 `"skill"` / `"skill file"` / `"skill label"`（同 `tests/agents` 既有形态） |
+| **M2-D10** | 保留路径过滤在**路由层**（`supported_files`），仓储的 `upsert_file` **无过滤** | `routes/skills/helpers.rs` | `skill_file` 列上没有 CHECK；上游也是在 handler 里 `IsReservedContentPath` 跳过。⇒ M6-3 若直接调 `upsert_file` 要自己挡 |
+| **M2-D11** | `SkillScope` 持 `Arc<AppState>` 克隆；`require_can_manage` **懒查**角色 | `helpers.rs` | 上游只有 `canManageSkill` 查成员；list / get / list_files 三条**零角色查询**（提前查会把「非成员读列表」从 200 变 404） |
+| **M2-D12** | `query_escape` / `path_escape` **手写**（不新增 `url` 依赖） | `helpers.rs` | 逐字对齐 Go `QueryEscape`（空格→`+`、`+`→`%2B`）与 `PathEscape`（空格→`%20`、`/`→`%2F`）的保留集；`mc-http` 的依赖面不变 |
+| **M2-D13** | 请求体**只接受对象或字面 `null`**，数组/标量 → 400 `invalid request body` | `helpers.rs::decode_body` | 上游 `json.Decode` 进结构体对 `[]` 报错，而 `serde` 给结构体派生的 visitor **能吃数组**（`[]` = 一个字段都没给）⇒ 必须显式判。**这是门 ⑤ 抓出的真 bug**（原实现 `[]` 会静默变成「全缺省」） |
+| **M2-D14** | 创建/更新响应里的 `files` 是**请求体顺序**，`GET` 才是 `ORDER BY path ASC` | `routes/skills/crud.rs` | 上游 `createSkillWithFilesInTx` 边 upsert 边 append（`req.Files == nil` 那条分支才回落到 list 顺序）。⚠️ 桩注释「`PUT /files` 是整批替换语义」是**错的**：它只 upsert **一个**文件（`CreateSkillFileRequest{Path,Content}`）；整批替换只发生在 `PUT /api/skills/{id}`。**这是门 ⑥ 抓出的真 bug**（原用例假定创建响应有序） |
+| **M2-D15** | 标签面：字段名 `label_id`、**不发** `label:updated`、`usage_count` 恒 0 | `routes/skills/labels.rs` | ① 桩注释写的 `labelId` 是错的；② 上游 `AttachLabelToSkill`/`DetachLabelFromSkill` 会 publish 事件，本仓 M6-2 **不接事件总线** ⇒ 登记为**行为缺口**（hook/job 面 M6-8 若需要再补）；③ `usage_count` 上游 `labelToResponse` 本来也是 0 |
+| **M2-D16** | UUID 错误文本沿用上游字段名（`skill id` / `label_id` / `label id` / `file id`），错误码走本仓 `mc-errors`（400 `validation`） | `helpers.rs`、`files.rs`、`labels.rs` | 上游 `parseUUIDOrBadRequest` 是 400 + 明文；本仓统一信封，状态码一致 |
+| **M2-D17** | 工具函数改名为 `to_new_skill` / `with_files_dto(&SkillWithFiles)` | `routes/skills/*` | 只为过 `clippy::wrong_self_convention`（`into_*` 要求 `self`）与 `needless_pass_by_value`；plan 里的 `into_new_skill` 不落地 |
+
+**`skill_to_label` 无外键（迁移 `162`）** ⇒ 删 skill 时**必须**显式删关联行（repo `delete` 的
+事务里做）；`skill_file` / `agent_skill` 有 `ON DELETE CASCADE`，不用管。
+
+#### 本片纠正的过期文档（`mc-skill/src/lib.rs` 等仍是 M6-0 桩口径）
+
+| 位置 | 桩写的 | 实际 |
+| --- | --- | --- |
+| `mc-skill/src/lib.rs` 头 | 「本 crate 现在没有任何公开类型」 | 本片落了三组 `pub fn`（frontmatter / binary / reserved） |
+| `routes/skills/files.rs` 头 | 「PUT 是整批替换语义」+「binary 必须跳过」 | 单文件 upsert；二进制闸只在 M6-3 的导入路径 |
+| `routes/skills/labels.rs` 头 | 请求体 `{"labelId": …}` | `{"label_id": …}` |
+| `routes/skills/mod.rs` 头 | 「14 个注册键 = 12 + 2」 | **17**（12 + 5 双形态；`/api/skills/search` 无双形态） |
+| `mc-skill/src/frontmatter.rs` 头 | 「围栏存在但 YAML 非法 = Err」 | 见 M2-D1（不可失败） |
+| `mc-repos/src/skill/mod.rs` 头 | 「手写 `sqlx::FromRow`」 | 本片用裸 `Uuid` 字段 + `#[derive(FromRow)]` 行结构（`Id` 仍无 sqlx impl，故行结构不用 `Id`） |
+
+#### 本片门禁读数（逐字取自当轮日志）
+
+- ⑦：`upstream 456 | local 361 registered | baseline 344`、`implemented 285 real + 0 placeholder`、
+  `known_gap 171`、`unclaimed 0`、**`regression 0`**、`local_only 9`（`+17` = 12 条上游路由 + 5 个双形态键）。
+- `slash_alias_audit.py`：**0 defect**，且 `docs/fixtures/slash-alias-allowlist.tsv` **未新增行**（仍空）。
+- ⑨ 契约：committed `report.json` **逐字未变**（5 个 skills fixture 都是 stateless 层 ⇒ `unevaluable`）；
+  本地真库层复跑 `mc-conformance --filter skills --db-url …` ⇒ `fixtures 5 · pass 5 · mismatch 0 ·
+  unevaluable 0`（`tiers.database.pass = 5`、`contract_equivalence_rate = 1.0`）——含 004 的**真实
+  clawhub.ai 出站**（`q=react` ⇒ 200）。
+- e2e：`tests/skills` **12 例全绿**（真库；`--test-threads=4`，22s）。
