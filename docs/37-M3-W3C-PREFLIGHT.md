@@ -5490,3 +5490,46 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【冻结面的正确语义是「并发约束」，不是「永久禁止」】** §9.1 把 `mc-core/src/skill.rs` 标成「M6 各片只读」，是因为 anchor 已经写完了它。当某个函数**必须**跨 crate 共享、而 anchor 未预留位置时，正解是**指定唯一写者 + 一次性豁免 + 只追加**，而不是绕开冻结面另立第二份实现。判据：**冻结面此刻有没有并发写者**（有 ⇒ 等；无 ⇒ 可指定唯一写者）。
 - **【交接文里的「常量」要区分「跨 run 不变」与「本 run 专属」】** 本轮交接文把**旧 run 的分支名**当成通用纪律写死（「推送一律 `…/5294bfa0b58b`」），而新 run 的 workdir 是 `…-ad445cd89959` ⇒ 自己制造了一个会推错分支的陷阱，只能同轮勘误。**写交接时对每一项标注「跨 run 不变」（如 base、写集、纪律）与「本 run 专属」（如 workdir / 分支名，一律用 `git rev-parse --abbrev-ref HEAD` 现场取）**。
 - **【观察项连续 N 轮无结论 ⇒ 换读法，别只加轮次】** 「`LUM-1521`/`LUM-1533` 从未启动」记了 9 轮，都是**只读 issue 的 `status`**；本轮改读 workdir 的 `.gc_meta.json` 一次就定性（秒级静默死亡）。**同一观察项连续两轮以上无进展时，必须换一个数据源**（issue → workdir → daemon 日志），否则「记录」会退化成「复述」。
+
+## §62 11:30 cycle（`LUM-1738`，03:30Z）：**合并 #69（M6-2）⇒ base `fc4971c`**；合并树门禁 **10/10（236s 热跑）**；⑦ `local 344→361`；空位 2 个 ⇒ 派 `LUM-1668`（M6-3）∥ `LUM-1670`（M6-5，**第 3 个 run**）；回收 20G 热 `target/`
+
+### 62.1 起手三连（03:3xZ 实测）
+- 磁盘：`/` **15G 可用（69% 已用）**。本 workspace 唯一的热 `target/` = `lum-1667-85f1aa73011d` **20G**（该片 PR 已合、run 已终态、无进程占用）⇒ 收尾按 §59.8/§56.4 三件套回收，**释放 20G ⇒ 35G 可用（26%）**（两个新起 run 各自会建 ~30G 的 `target/`，不回收必撞墙）。
+- `git fetch origin feat/multica-rs-initial` = **`e54bf84`**（= §61 自身那次 docs-only 提交，未再前进）；认证 `pulls?state=open` = **1 条（#69）**。
+- 在飞采样：daemon `running_task_count = 1`（仅本 cycle）；`/proc/*/cwd` 扫不到其他 workdir 进程 ⇒ **0 在飞片 ⇒ 2 个空位 + 本 cycle = 3/3 上限**。
+
+### 62.2 PR #69（M6-2 skill 读写面）合并判据链（§56.2 七步）
+| 步 | 动作 | 实测 |
+|---|---|---|
+| 1 | 采样 | PR #69：head `9f35463`、base `e54bf84`、**15 文件 +3920/−65**、`mergeable=true / clean` |
+| 2 | 冻结确认 | 远端分支在（`git ls-remote` = `9f35463`）；issue `LUM-1667` = `in_review`；run 终态（`.gc_meta.json` `completed_at = 02:47:35Z`） |
+| 3 | 预检 stat | 三点 diff（`merge-base e54bf84 9f35463` = **`dac9b95`**）本地实测 = **15 文件 +3920/−65**，**与 PR API 逐字相等** ✓；其中代码路径 14 文件 +3854/−65，`docs/32` +66/0 |
+| 4 | base 祖先 | `merge-base --is-ancestor e54bf84 9f35463` = **no** ⇒ 真 merge；`git merge-tree --write-tree e54bf84 9f35463` = **`ad69a236…`** |
+| 5 | 合并树门禁 | 见 62.3 —— 真 merge 出来的树与预测树**逐字相等** |
+| 6 | 钉 head 合并 | `PUT /pulls/69/merge {sha:9f35463, merge_method:merge}` ⇒ **`fc4971c2f6e3f612678733c2583eb95803f8323e`**；复核 `rev-parse origin/feat/multica-rs-initial^{tree}` = **`ad69a236…` 与第 4 步预测逐字相等** ✓ |
+| 7 | 收尾复核 | 本地验证分支 `cyc1738-verify` vs 远端 base = **空 diff**；GH `pulls?state=open` = **0** |
+
+### 62.3 合并树门禁：**10/10 PASS / 236s（热跑）**
+- **方法**：在 `lum-1667-85f1aa73011d` 的 20G 热 `target/` 上原地真 merge 出本地分支 `cyc1738-verify`（路径不变 ⇒ 指纹不变 ⇒ 热），`HEAD^{tree}` = `ad69a236…` == `merge-tree` 预测 ⇒ 被跑的树 == GitHub 最终 base 树（62.2 第 6 步确认）。
+- 命令：`MULTICA_TEST_DATABASE_URL=postgres://mc_cyc1738:***@127.0.0.1:5432/mc_cyc1738 bash scripts/gates.sh --with-db`（一次性真库 `mc_cyc1738`，角色带 `CREATEDB` ⇒ ⑧ **0 假红**）。
+- 汇总：**overall PASS — 10/10 in 236s**（① 1s / ② 24s / ③ 22s / ④ 10s / ⑤ 35s / ⑥ 101s / ⑧ 26s / ⑦ 0s / ⑨ 16s / ⑩ 1s）。**⑤ = 1556 passed / 176 ignored**（103 个 result 行）、**⑥ = 405 passed**（30 个 result 行）—— 与 M6-2 自报读数**逐字相等** ⇒ **两门基线不变（1556/102、405/29 口径维持）**，本片只增不减。
+- **⑦（+17，未刷快照）**：`upstream 456 (f41fae6b08fb) | local 361 registered | baseline 344`、`implemented 285 real + 0 placeholder = 285/456`、`known_gap 171`、`unclaimed 0 / regression 0 / local_only 9`。**+17 = 12 路由 + 5 个尾斜杠双形态**（与 M6-2 交付说明一致）⇒ 快照仍归 M6-INT（`LUM-1675`）一次性刷新，本轮**未**跑 `--write-baseline`。
+- **⑨**：`report matches crates/mc-conformance/report.json`（同样未刷）。
+- **冻结面合规复核**（`git diff --numstat e54bf84 fc4971c`，逐路径实测）：`routes/{mod,mount}.rs`、`state.rs`、`mc-core/src/{skill,plugin}.rs`、`routes/skills/mod.rs`、`mc-skill/src/lib.rs`、`mc-repos/src/skill/mod.rs`、根 `Cargo.toml`、`Cargo.lock`、`docs/fixtures/**`（含 allowlist）—— **全部 0 行改动** ✓。实际改动只有 `routes/skills/{crud,files,helpers,labels}.rs` + `tests/skills/**`（新增 5 文件）+ `mc-repos/src/skill/{read,write}.rs` + `mc-skill/src/{binary,frontmatter,reserved}.rs` + `docs/32`。
+- 规模：`e54bf84..fc4971c` = **15 文件 +3920/−65**（其中新增测试 1298 行 = `crates/mc-http/tests/skills/**`）。
+
+### 62.4 派发（2 空位用满 ⇒ daemon `running = 3/3`）
+| 片 | issue | 动作 | 起手 base | 写集 |
+|---|---|---|---|---|
+| **M6-3** | `LUM-1668` | `backlog → todo` | `fc4971c` | `mc-skill/src/{archive,source}.rs` + `routes/skills/{import,refresh}.rs` + `mc-repos/src/skill/import.rs` |
+| **M6-5** | `LUM-1670` | 描述追加「起手补充 · 第三个 run」+ `rerun` | `fc4971c` | `routes/plugins/**` + `mc-repos/src/plugin/{installation,package,skill}.rs` |
+
+- 两片**零文件交集**（`skills/**` vs `plugins/**`），且都取自 `fc4971c` ⇒ 不会互相撞 `Cargo.{toml,lock}`（两片都声明 0 新依赖）。
+- **`LUM-1670` 的交接口径（本轮重点）**：前两个 run 都是**零产物静默死亡**（35m29s / 31m15s），本轮把第二个 run 的 session 拆开定性 —— **441 个事件只有 `bash` 173 + `read` 51、零写文件调用**（`cache_read 17.5M / output 50k`），末事件是 `context_edit` 后会话终止 ⇒ **死因是「整文件通读上游 Go 与迁移」把上下文撑爆，一行 Rust 没写**。交接文据此改成硬纪律：**开工 20 分钟内必须出现第一个「能编译 + 已 commit + 已 push」的单元**、**读上游只许 `grep -n` + `sed -n 'A,Bp'`**、给出**单元推进顺序**，并把 8 张存活 plugin 表的 DDL 事实（`plugin_installation` 在 392 迁移后 `DROP source_url` + `ADD package_version_id`、`plugin_package(_version/_file)`、`plugin_secret`、`plugin_storage` 的列与唯一索引、「版本不可变 ⇒ 重复发布是唯一键冲突而非原地更新」）**替它抽好写进交接文**，省掉再读迁移的整段预算。
+- `LUM-1668` 的交接文同样带上：合并后的 ⑦ 读数、门禁基线（1556/405）、真库自建、**离线环境的出站真相**（M6-2 实测：`/api/skills/import` 的抓取是真实出站，不可达必须回 `502 upstream_unavailable`，用例断言两分支）。
+
+### 62.5 本轮 lesson
+- **【静默死亡的第三种形态：长研究、零写】** 本波 4 例零产物死亡里，`LUM-1666`（抢救 4.5k 行）、`LUM-1667` 首跑属「写了一点就死」，而 `LUM-1670` 两次都是**研究阶段撑爆上下文**。判别特征不是存活时长，而是**工具调用构成**：`bash + read` 占 100%、**写文件调用为 0** ⇒ 结束时必然零产物，抢救必为空操作。**对策是交接纪律（先写后读、单元即提交），不是换模型或加时长**。
+- **【cycle 标签从 §60 起漂了一小时，按 Z 时间对齐才不会错序】** `LUM-1711` 及更早 = UTC+8（`00:30Z → 08:30 cycle`），但 `LUM-1724`（`01:30Z`）标成「10:30 cycle」、`LUM-1729`（`02:30Z`）标成「11:30 cycle」⇒ 本轮（`03:30Z` = 北京 11:30）按 UTC+8 只能沿用「11:30」这个**已被 §61 用过**的标签。**报数/引用一律以 `created_at` 的 Z 时间为准**，标签只当别名。
+- **【热 `target/` 的复用前提是「路径不变」】** 本轮没在新 workdir 里另建验证树，而是在**片自己的 workdir 内** `git checkout -B cyc1738-verify` 后原地 merge ⇒ 指纹不变 ⇒ 门禁 236s（冷跑同规模 550s+）。**代价是必须等该片 run 终态且工作区干净**（否则会覆盖别人未提交的工作树）。
+- **【回收时机 = 交付即回收，不攒到下一轮】** 起手 15G 可用显然是上个 cycle 回收过的结果；本片 PR 一合就删它的 20G `target/`，两个新起 run 的 `-with-db` 建目录才有余量（§56 已记过「不回收 ⇒ 中途只剩 4.6G」）。
