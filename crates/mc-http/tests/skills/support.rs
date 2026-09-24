@@ -5,14 +5,16 @@
 //! 或公共 dev-dep —— 两者都比复制这 200 行更难维护。
 
 use axum::body::Body;
+use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::http::{Request, StatusCode};
+use axum::response::IntoResponse;
 use axum::Router;
 use http_body_util::BodyExt;
 use mc_core::actor::ActorRegistry;
 use mc_db::Db;
 use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::env;
 use std::sync::Arc;
@@ -259,4 +261,273 @@ pub(crate) fn files_of(skill: &Value) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// M6-3：导入取件面的 mock 源站
+// ---------------------------------------------------------------------------
+
+/// 进程级端点覆写（`set_source_endpoints`）是**全局**的 —— 上游替换包级 `clawHubAPIBase`
+/// 也是全局。所以所有依赖 mock 的用例必须串行；这把锁就是那个串行点
+/// （`tokio::sync::Mutex` 不会因为某个用例 panic 而毒化）。
+pub(crate) static MOCK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(crate) use mc_http::routes::skills::import::{set_source_endpoints, SourceEndpoints};
+
+/// 起一个只服务本用例的 mock 源站（端口由内核分配），返回 `http://{host}:{port}`。
+///
+/// `host` 传 `127.0.0.1` 或 `localhost`：两条**不同主机名**指向同一台机器是
+/// `GITHUB_TOKEN` 出站闸门（`host_of(file_url) == host_of(github_raw)`）唯一可测的手法。
+pub(crate) async fn serve_mock(host: &str, app: Router) -> String {
+    let listener = tokio::net::TcpListener::bind((host, 0))
+        .await
+        .unwrap_or_else(|e| panic!("bind mock source on {host}: {e}"));
+    let port = listener.local_addr().expect("mock addr").port();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{host}:{port}")
+}
+
+/// mock `ClawHub` 的状态：`files` 放在 `Mutex` 里，让刷新用例能在两次请求之间换内容。
+pub(crate) struct MockClawhub {
+    display_name: std::sync::Mutex<String>,
+    summary: std::sync::Mutex<String>,
+    pub files: std::sync::Mutex<Vec<(String, String)>>,
+}
+
+impl MockClawhub {
+    pub(crate) fn new(display_name: &str, summary: &str) -> Arc<Self> {
+        Arc::new(Self {
+            display_name: std::sync::Mutex::new(display_name.to_string()),
+            summary: std::sync::Mutex::new(summary.to_string()),
+            files: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    pub(crate) fn with_files(self: &Arc<Self>, files: &[(&str, &str)]) -> Arc<Self> {
+        *self.files.lock().expect("mock clawhub lock") = files
+            .iter()
+            .map(|(path, content)| ((*path).to_string(), (*content).to_string()))
+            .collect();
+        self.clone()
+    }
+
+    /// 换元数据（`ClawHub` 的名字/描述取自元数据接口，**不是** `SKILL.md` 的 frontmatter
+    /// —— 刷新用例改「上游改名」必须走这里）。
+    pub(crate) fn set_metadata(&self, display_name: &str, summary: &str) {
+        *self.display_name.lock().expect("mock clawhub lock") = display_name.to_string();
+        *self.summary.lock().expect("mock clawhub lock") = summary.to_string();
+    }
+
+    pub(crate) fn replace_file(&self, path: &str, content: &str) {
+        let mut files = self.files.lock().expect("mock clawhub lock");
+        for entry in files.iter_mut() {
+            if entry.0 == path {
+                entry.1 = content.to_string();
+            }
+        }
+    }
+}
+
+/// mock `ClawHub` 的三条端点（与 `fetch_from_clawhub` 的三步一一对应）。
+pub(crate) fn clawhub_mock(state: Arc<MockClawhub>) -> Router {
+    Router::new()
+        .route("/api/v1/skills/:slug", axum::routing::get(clawhub_metadata))
+        .route(
+            "/api/v1/skills/:slug/versions/:version",
+            axum::routing::get(clawhub_version),
+        )
+        .route(
+            "/api/v1/skills/:slug/file",
+            axum::routing::get(clawhub_file),
+        )
+        .with_state(state)
+}
+
+async fn clawhub_metadata(
+    AxumState(state): AxumState<Arc<MockClawhub>>,
+    AxumPath(slug): AxumPath<String>,
+) -> axum::Json<Value> {
+    if slug != "demo-skill" && slug != "renamed-skill" {
+        return axum::Json(json!({"error": "not found"}));
+    }
+    axum::Json(json!({
+        "skill": {
+            "displayName": *state.display_name.lock().expect("mock clawhub lock"),
+            "summary": *state.summary.lock().expect("mock clawhub lock"),
+            "tags": {"latest": "1.0.0"},
+        },
+        "latestVersion": {"version": "1.0.0"},
+    }))
+}
+
+async fn clawhub_version(
+    AxumState(state): AxumState<Arc<MockClawhub>>,
+    AxumPath((_slug, _version)): AxumPath<(String, String)>,
+) -> axum::Json<Value> {
+    let files: Vec<Value> = state
+        .files
+        .lock()
+        .expect("mock clawhub lock")
+        .iter()
+        .map(|(path, _)| json!({"path": path}))
+        .collect();
+    axum::Json(json!({"version": {"files": files}}))
+}
+
+async fn clawhub_file(
+    AxumState(state): AxumState<Arc<MockClawhub>>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let path = query.get("path").cloned().unwrap_or_default();
+    let files = state.files.lock().expect("mock clawhub lock");
+    match files.iter().find(|(entry, _)| *entry == path) {
+        Some((_, content)) => (StatusCode::OK, content.clone()).into_response(),
+        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+/// mock GitHub 的状态：tree 条目 + raw 文件内容。
+pub(crate) struct MockGithub {
+    pub tree: Vec<Value>,
+    pub truncated: bool,
+    pub files: Vec<(String, String)>,
+}
+
+impl MockGithub {
+    pub(crate) fn new() -> Self {
+        Self {
+            tree: Vec::new(),
+            truncated: false,
+            files: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_file(mut self, path: &str, content: &str) -> Self {
+        self.tree.push(json!({
+            "path": path,
+            "type": "blob",
+            "size": content.len(),
+        }));
+        self.files.push((path.to_string(), content.to_string()));
+        self
+    }
+
+    pub(crate) fn truncated(mut self, truncated: bool) -> Self {
+        self.truncated = truncated;
+        self
+    }
+}
+
+/// mock api.github.com 的三条端点（`default_branch` / ref 探针 / 递归 tree）。
+pub(crate) fn github_api_mock(state: Arc<MockGithub>) -> Router {
+    Router::new()
+        .route("/repos/:owner/:repo", axum::routing::get(github_repo))
+        .route(
+            "/repos/:owner/:repo/commits/:reference",
+            axum::routing::get(github_commit),
+        )
+        .route(
+            "/repos/:owner/:repo/git/trees/:reference",
+            axum::routing::get(github_tree),
+        )
+        .with_state(state)
+}
+
+async fn github_repo() -> axum::Json<Value> {
+    axum::Json(json!({"default_branch": "main"}))
+}
+
+/// `commits/main` 拿不到文件内容（只判存在性）：200 + 一个假 SHA（`Accept: vnd.github.v3.sha`）。
+async fn github_commit(
+    AxumPath((_owner, _repo, reference)): AxumPath<(String, String, String)>,
+) -> axum::response::Response {
+    if reference == "main" {
+        (StatusCode::OK, "0".repeat(40)).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "no such ref").into_response()
+    }
+}
+
+async fn github_tree(
+    AxumState(state): AxumState<Arc<MockGithub>>,
+    AxumPath((_owner, _repo, _reference)): AxumPath<(String, String, String)>,
+) -> axum::Json<Value> {
+    axum::Json(json!({"tree": state.tree, "truncated": state.truncated}))
+}
+
+/// mock raw.githubusercontent.com：`/{owner}/{repo}/{ref}/{path...}` → 文件内容。
+pub(crate) fn github_raw_mock(state: Arc<MockGithub>) -> Router {
+    Router::new()
+        .route(
+            "/:owner/:repo/:reference/*path",
+            axum::routing::get(github_raw_file),
+        )
+        .with_state(state)
+}
+
+async fn github_raw_file(
+    AxumState(state): AxumState<Arc<MockGithub>>,
+    AxumPath((_owner, _repo, _reference, path)): AxumPath<(String, String, String, String)>,
+) -> axum::response::Response {
+    match state.files.iter().find(|(entry, _)| *entry == path) {
+        Some((_, content)) => (StatusCode::OK, content.clone()).into_response(),
+        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+/// multipart 请求体（M6-3 的归档导入路径）：`on_conflict` 文本字段 + `file` 文件字段。
+pub(crate) fn multipart_req(
+    uri: &str,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    on_conflict: &str,
+    filename: &str,
+    archive: &[u8],
+) -> Request<Body> {
+    const BOUNDARY: &str = "----multica-rs-m6-3-boundary";
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"on_conflict\"\r\n\r\n{on_conflict}\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/zip\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(archive);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(USER_ID_HEADER, user_id.to_string())
+        .header(WORKSPACE_HEADER, workspace_id.to_string())
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .body(Body::from(body))
+        .expect("multipart request")
+}
+
+/// 发一次已经拼好的请求（multipart 用）。
+pub(crate) async fn call_raw(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
+    let res = app.clone().oneshot(request).await.expect("router call");
+    let status = res.status();
+    (status, body_json(res.into_body()).await)
+}
+
+/// 读取库里某条 skill 的 `config` 列（验证溯源落库，而不是只看响应）。
+pub(crate) async fn skill_config(pool: &PgPool, skill_id: Uuid) -> Value {
+    sqlx::query_scalar("SELECT config FROM skill WHERE id = $1")
+        .bind(skill_id)
+        .fetch_one(pool)
+        .await
+        .expect("select config")
 }
