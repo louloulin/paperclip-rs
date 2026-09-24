@@ -607,6 +607,11 @@ bash scripts/gates.sh                    # 纯库切片（M3-1/2/3 亦建议带 
 
 建议（**不在本 issue 范围**，属门禁维护方）：把正则改为 `placeholder|not_implemented`（或改成按返回码/白名单判定），并在 `docs/22-ROUTE-PARITY.md` 回填这个口径；在此之前，M3 切片的验收**不看** `implemented_real` 这个数，改看 §8.2 的抽样证据。
 
+> **2026-09-24 更新 —— 已修（`LUM-1580`）**：`PLACEHOLDER_HANDLER` 已改为同时识别
+> `not_implemented`；口径回填在 `docs/22` §2.3，当轮读数（`implemented_real` 329→325 /
+> `implemented_placeholder` 0→4，base `fd6c4aa6`）在 §3.6。本节上面引用的「23 条」与
+> 112/89 是当时的时点 —— 引用时须写清口径（同一件事的三个时点是 23 → 13 → 4）。
+
 ---
 
 ## 10. 立项与晋升 playbook
