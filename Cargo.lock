@@ -2393,6 +2393,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-channel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "futures-util",
+ "hex",
+ "hmac 0.12.1",
+ "mc-chat",
+ "mc-core",
+ "mc-realtime",
+ "mc-repos",
+ "mc-secrets",
+ "mc-task",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mc-chat"
 version = "0.1.0"
 dependencies = [
@@ -2580,6 +2609,7 @@ dependencies = [
  "mc-auth",
  "mc-authz",
  "mc-autopilot",
+ "mc-channel",
  "mc-chat",
  "mc-config",
  "mc-core",
@@ -2807,6 +2837,7 @@ dependencies = [
  "chrono",
  "mc-auth",
  "mc-autopilot",
+ "mc-channel",
  "mc-config",
  "mc-core",
  "mc-db",

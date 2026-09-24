@@ -84,6 +84,11 @@ zip = { workspace = true }
 # `internal/util/secretbox/secretbox.go` 的 `LoadKey` 口径），`state.rs` 解析它需要 base64 ——
 # 本 crate 之前没有这条边（workspace 里已有 `base64 = "0.22"`，无新包）。
 base64 = { workspace = true }
+# M7-0 anchor（docs/60-M7-PLAN.md §5）：渠道面的一次性接线。本 crate 里**只有**
+# `routes/channels/**` 与 `state.rs` 的两个类型会用到它（`ChannelKeys` 消费 `mc-channel`
+# 的上游 counterpart 是不必要的 —— 密钥盒自 `mc-secrets`），但依赖边必须在 anchor 一次
+# 接好：否则 M7-4/5/9/14/15 五个写者会各自回来改本 manifest（而它是共享文件）。
+mc-channel = { path = "../mc-channel" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

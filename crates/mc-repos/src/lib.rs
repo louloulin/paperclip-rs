@@ -31,6 +31,11 @@
 //! 只填自己那格的文件（各文件的写者在 `skill/mod.rs` 与 `plugin/mod.rs` 的表里），不再编辑
 //! 本 `lib`。
 //!
+//! M7 anchor scaffold（LUM-1765 / docs/60-M7-PLAN.md §3.3）：M7 的 1 个模块一次性声明 ——
+//! `channel`（8 个文件，22 张渠道表按面分文件）。**本文件自本片起对 M7 是只读的**：
+//! M7-1…M7-20 只填自己那格的文件（写者表在 `channel/mod.rs`），不再编辑本 `lib`。
+//! 表清单与「两套表并存（`lark_*` 不得并入 `channel_*`）」的口径见 `channel/mod.rs`。
+//!
 //! ⚠️ 两个模块名与 `mc-core` 的同名模块**不冲突**：`mc_repos::skill` 是**表访问**（`skill` /
 //! `skill_file` / `agent_skill` / `skill_to_label`），`mc_core::skill` 是**列投影**；既有的每一波
 //! 都是这样一层对一层（`mc_repos::autopilot` ↔ `mc_core::autopilot`），不要为了「名字重复」改名。
@@ -43,6 +48,7 @@ use mc_db::Db;
 
 pub mod agent;
 pub mod autopilot;
+pub mod channel;
 pub mod chat_draft_restore;
 pub mod chat_history;
 pub mod chat_message;

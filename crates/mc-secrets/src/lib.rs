@@ -2,12 +2,19 @@
 
 pub mod cipher;
 pub mod provider;
+// M7-0 anchor（`LUM-1765` / `docs/60-M7-PLAN.md` §5）：渠道部署密钥的封装盒（上游
+// `internal/util/secretbox` 的逐字复刻）。**与 `cipher.rs` 不同形**：那边是 better-auth
+// 兼容的 JSON payload（`{nonce, ciphertext}`），这边是单块字节 `nonce‖ct‖tag`，落 BYTEA 列。
+pub mod secretbox;
 pub mod store;
 
 #[cfg(feature = "aws")]
 pub mod aws;
 
 pub use cipher::{decrypt, encrypt, EncryptedPayload};
+// ⚠️ 只导出**类型与入口**，不导出 `decode_key`（裸密钥字节的唯一出口是
+// `SecretBox::new`，别让 `[u8; 32]` 在 crate 外自由流动）。
+pub use secretbox::{SecretBox, SecretBoxError};
 pub use store::{InMemorySecretsStore, SecretValue, SecretsBackend, SecretsStore};
 
 use std::sync::Arc;

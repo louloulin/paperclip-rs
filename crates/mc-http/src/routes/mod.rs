@@ -84,6 +84,20 @@ pub mod v1;
 pub mod labels;
 pub mod properties;
 
+// M7 anchor scaffold（LUM-1765 / docs/60-M7-PLAN.md §3.1 / §5）：**一个**面一次声明，
+// 24 条渠道路由按 5 个平台分文件（`channels/{slack,telegram,dingtalk,lark,wecom}.rs`），
+// 五个写者各自只写自己那一份，**都不再编辑本文件**。`channels/mod.rs` 自己聚合 5 个子
+// router，`mount.rs` 已接好 `mount_slice_channel()`（anchor 期全为空 `Router::new()`
+// ⇒ 合并本片后**注册键集合逐字不变**；这也是五轮里第一个不刷 ⑦ 基线的 anchor）。
+//
+// ⚠️ 两条只属于本波的纪律（详情见 `channels/mod.rs`）：
+// 1. **全路径注册、不 nest**：18 条 workspace 级路由写完整路径 `/api/workspaces/:id/<平台>/…`，
+//    避免与 `workspaces.rs` 已有的 `/api/workspaces/:id` 抢同一个挂载点；
+// 2. **不实现 `group-routes`**：`GET /api/workspaces/:id/dingtalk/group-routes` 上游已退役，
+//    且 `/api/agents/:id/dingtalk/groups` 那条挂在既有 agents 子路由内部 —— 都必须**保持 404**
+//    或按表里的位置注册（docs/60 §1.6）。
+pub mod channels;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

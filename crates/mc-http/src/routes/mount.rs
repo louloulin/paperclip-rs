@@ -88,6 +88,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(mount_slice_plugin_bridge())
         .merge(mount_slice_plugin_surface())
         .merge(mount_slice_v1())
+        // ----- M7 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        // ⚠️ 五个平台文件 anchor 期都是空 `Router::new()` ⇒ 本行**不加任何注册键**
+        // （⑦ 读数与基线逐字不变，`docs/60` §6.1 的 M7-0 行）。
+        .merge(mount_slice_channel())
 }
 
 /// workspace + member + me 切片。
@@ -338,4 +342,34 @@ fn mount_slice_plugin_surface() -> Router<Arc<AppState>> {
 /// 限流桶按 router 实例分片，子文件各挂一层会变成 3 倍配额（见 `routes/v1/mod.rs` 的 ⚠️ 段）。
 fn mount_slice_v1() -> Router<Arc<AppState>> {
     super::v1::router()
+}
+
+// ---------------------------------------------------------------------------
+// M7 anchor scaffold（LUM-1765 / docs/60-M7-PLAN.md §3.1 / §5）
+// ---------------------------------------------------------------------------
+//
+// **一个**面（24 条渠道路由，5 个平台文件）一次性接好，M7-4 / M7-5 / M7-9 / M7-14 / M7-15
+// 五个写者各自只实作自己的平台文件，**都不再改本文件**（与 M4-0 / M5-0 / M6-0 同一手法）。
+// 五个子 router 目前都是**空** `Router::new()` ⇒ 合并本片后**注册键集合逐字不变**
+// （∅ 删除、∅ 新增；与别的 anchor 不同，M7 波**没有** M0 占位可删 ⇒ 本 anchor 是五轮里
+// 第一个**不刷 ⑦ 基线**的 anchor）。
+//
+// ⚠️ 三条接线纪律（与 M5-0 / M6-0 同款）：
+// 1. 同 path+method 重复注册 ⇒ axum 在**启动时 panic**（docs/15 §9.6.6）；
+// 2. 渠道面**只注册上游那一形态**（`docs/60` §1.4 实测 `dual-form required: 0`）：
+//    补尾斜杠形态 = `EXTRA_ALIAS` 缺陷，漏字面量 = `MISSING_EXACT` —— M7 **没有** allowlist
+//    退路（`slash-alias-allowlist.tsv` 已空）；
+// 3. 路径参数写 `:name`（matchit 0.7 把 `{{name}}` 当字面量：编译通过但恒 404）。
+//
+// 另：`groups-routes` 之外还有一条**反向**验收（`docs/60` §1.6）：
+// `GET /api/workspaces/:id/dingtalk/group-routes` 上游已退役、⑨ 里有一条 fixture 要求它 **404**
+// ⇒ 本切片与 M7-9 **都不得**顺手把它补上。
+
+/// 渠道面切片：24 条渠道路由（M7-4 slack 4 / M7-5 telegram 4 / M7-9 dingtalk 7 /
+/// M7-14 lark 5 / M7-15 wecom 4）。
+///
+/// 本函数只合并 `routes/channels/mod.rs` 的聚合 router，后者再合并 5 个平台文件 ⇒
+/// 五个写者**都不改本文件**。anchor 期五个子 router 全空 ⇒ 零注册键。
+fn mount_slice_channel() -> Router<Arc<AppState>> {
+    super::channels::router()
 }
