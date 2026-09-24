@@ -5073,3 +5073,69 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【抢救后的第一件事是 `cargo check -p <crate>`】** 0.76s 换来一条可写进交接的硬事实（「编译通过、未跑门」），使下一个 run **敢**直接 `cherry-pick` 而不是重写。比在交接里写「大概能编译」有用得多。
 - **【磁盘要按「每片各自的 `target/`」预算，且交付即回收】** 一个跑了两次 `--with-db` 的片其 `target/` = **30G**（本轮实测），两个这样的片就能把 49G 卷打到 91%。三判据回收（PR 已合 / run 终态 / 无进程占 workdir）本轮释放 **30G**；**不要等下一轮**。
 - **【docs-only 直推 base 之前先确认门 ⑩ 的范围】** `scripts/file_size_check.py` 的注释逐字写着文档**故意不查**（只查 `crates/**`、`apps/**`、`scripts/**`、`.github/workflows/**`）⇒ cycle 报告追加进已 5,012 行的 `docs/37` **不触门**；反之**基线清单内的代码文件只减不增**（§54.6）。「要不要拆文件」必须先看门 ⑩ 的适用面，再看行数。
+
+## §57 08:00 cycle（`LUM-1705`）：base 复核 4/4（`14f4aaf` 未动、GH 0 PR）；**3/3 满载 ⇒ 0 空位 / 0 可合**；新动作 = **M6 冻结面独立体检**（10 项 0 违例）+ 修 `LUM-1668` 写集旧文件名
+
+### 57.1 起手三连（00:04Z 实测）
+- 磁盘：`/` **33G 可用**（14G/49G，30%）；本 workspace 树 5.7G ⇒ **本轮无需回收**（§56 已回收 30G）。两个在飞片各自的 `target/`：`lum-1666-63133e110ef5`（第一个 run 的**死工作区**）1.4G、`lum-1666-776562d33243`（重跑）938M。
+- `git fetch origin feat/multica-rs-initial` = **`14f4aaf`**（与 §56 收尾值**逐字一致**）；认证 `pulls?state=open` = **0** 条；`git ls-remote` 两在飞片的分支名 = **空**（`agent/devbox5/776562d33243` / `agent/devbox5/bdb4ce67bd83` 均未推）。
+- 在飞采样（`ps -o pid,etime` + `/proc/*/cwd`）：`LUM-1666`（M6-1 重跑，pid **40164**，cwd `lum-1666-776562d33243/workdir`）∥ `LUM-1659`（M5-9，pid **40178**，`lum-1659-bdb4ce67bd83/workdir`）∥ 本 cycle ⇒ 起手 **3/3 满载、0 个切片位**；两片 elapsed 均 **8:06**（同起于 `23:55:46Z`），`multica issue runs` 两边的 run 状态均 = `running`。
+- **码树复核**：`git diff ee26c9c 14f4aaf` = **`docs/37` 单文件 +63 行**；限定代码路径（`crates apps scripts migrations Cargo.toml Cargo.lock`）的 diff = **0 行** ⇒ §56.2 的 10/10 与 ⑦/⑨/⑤/⑥ 读数**对本轮 base 继续逐字有效**。本轮**不重跑整轮门禁**：既省 336s 冷建，也避免与两在飞片抢同一 `target/` 的 cargo 锁（§56.2 第 1 步、§55 同型风险）。
+
+### 57.2 0 PR ⇒ 合并判据链本轮**无对象**（不是跳过）
+- §56.2 七步里，「预检 stat vs PR API」「base 祖先判定」「合并树当场重跑」「钉 head 合并」四步都需要一个**已终态的片**；本轮 GH 0 PR + 两片 0 推送 ⇒ 四步空转。
+- **不抢两片的 base merge**（§56.8 教训沿用）：两片都在早期（8 分钟、0 推送）、pid 健在 ⇒ 本 cycle 只做**只读**动作，不进它们的 workdir、不在它们的 `target/` 上跑 cargo、不替它们合并 base。
+
+### 57.3 本轮新动作：**M6 冻结面独立体检**（两在飞片共同依赖的 anchor 面，10 项只读）
+动机：`LUM-1666`（M6-1）与其后 9 个切片都被禁止「写 manifest / 写 lock / 写 `routes/{mod,mount}.rs`·`state.rs` / 写 ⑦ 基线 / allowlist 加行」。**这条纪律的前提是 M6-0 anchor 的冻结面真的完整** —— 若 anchor 漏一条依赖边或一个挂点，后续切片会「按纪律不能修、按功能修不了」地卡死，且失败会被误记成切片的问题。本轮把前提逐条实测（**全部只读，未跑 cargo**）：
+
+| # | 体检项 | 位置 / 命令 | 实测 |
+|---|---|---|---|
+| 1 | `mc-plugin-protocol` 删净 | `ls crates` + `grep -rl` | 目录**不在**；仅 `mc-plugin-host/src/lib.rs`、`mc-mcp/src/lib.rs` 的**注释**提到旧名（代码引用 0） |
+| 2 | 三个新 crate 骨架 | `crates/{mc-skill,mc-plugin-host,mc-mcp}/src` | 均在；`lib.rs` = 53 / 54 / 52 行，全部子模块文件已建（见 5、6 行） |
+| 3 | 5 个挂点 | `routes/mount.rs` | `mount_slice_{skill,plugin,plugin_bridge,plugin_surface,v1}` 全部存在（:315/:321/:327/:332/:339）且已 `.merge()`（:86–:90） |
+| 4 | 占位残留 | 同上 | `GET /api/feature-flags` 的 `health::placeholder` **仍在**（= `local_only 9` 里的那 1 个占位）——它是**本地键、不属上游 456**，故不触 M6（⑦ `implemented_placeholder 0` 与它不矛盾） |
+| 5 | `routes/mod.rs` 声明 | 同上 | `pub mod {skills,plugins,plugin_bridge,surfaces,v1}` 5 条齐 + 逐字注释「`/api/agents/{id}/skills*` 那 6 条归 M6-4 在 `routes/agents.rs` 内部加 `mod skills;` + `merge`」 |
+| 6 | `state.rs` 部署密钥面 | `crates/mc-http/src/state.rs` | `PluginSecretKey` newtype（:207，`from_env`/`from_env_with`、32 字节 base64、`Debug` = `<redacted, 32 bytes>` :246）+ `AppState.plugin_key: Option<…>`（:297）+ `plugin_surface_origin`（:312）+ 环境读取器（:348）；**含单元测试 1 组（:483–:529）** |
+| 7 | `mc-core` 契约类型重写 | `mc-core/src/{skill,plugin}.rs` | **221 + 462 行**（43 + 108 个 `pub` 项）；`SkillSource{Workspace,Builtin,Plugin}`（skill.rs:124）、`PluginTokenKind{Install,Callback}::prefix()`（plugin.rs:397/:405）等 M6 各片要用的类型**已就位** |
+| 8 | manifest 依赖边（四份） | 四份 `Cargo.toml` | `mc-http`：三条新 crate 边（`mc-skill`/`mc-plugin-host`/`mc-mcp`）+ `tower_governor` + `zip` + `base64`，注释逐字「此后 M6 各切片**不再改本 manifest**」；`mc-skill`：`serde_yaml`+`zip`+`url`+`sha2`+`hex`（**无 http/repos 边** = 层向正确）；`mc-plugin-host`：`hmac`+`aes-gcm`+`zip`+`base64`+`mc-secrets`；`mc-mcp`：`reqwest`+`tokio`+`url`+`base64` |
+| 9 | `Cargo.lock` 风险（§9.5） | `Cargo.lock` | `tower_governor 0.4.3` / `zip 2.4.2` / `serde_yaml 0.9.34+deprecated`；**`axum` 只有一个版本 `0.7.9`** ⇒ §9.5 担心的「lock 里出现第二个 axum 大版本」**未发生** |
+| 10 | ⑩ 声明键集合 + 形态门 + ⑦ 归属 | `diff` / `slash_alias_audit.py` / `route_parity.py --json` | `diff upstream(M6行) vs m6-declared-routes.tsv` = **集合逐字相等（57 = 57，无输出）**；形态门无参 = **0 缺陷 / 0 警告**（348 个已注册上游键），`--declared …m6-declared-routes.tsv` = **`FAIL: 5`**（与 `docs/57` §1.4 预测**逐字一致**，5 个双形态键全在 M6-2，**非回归**）；`slash-alias-allowlist.tsv` 只剩表头（**0 数据行**）⇒ 无 `STALE`；⑦ `owners.M6 = 57`、`upstream 456 / local 344 / baseline 344`、`implemented_real 273`、`placeholder 0`、`known_gap 183`、`regressions 0`、`unclaimed 0`、`local_only 9`（`local_only_placeholder 1`） |
+
+**结论**：anchor 冻结面**完整无缺件**，两在飞片与后续 9 片的纪律前提成立 ⇒ 之后任何 slice 失败**不能归因于 base 缺件**（这条对下一轮判死/抢救很重要）。顺带确认 slice 骨架文件也已按矩阵铺好：`routes/skills/{crud,files,labels,import,refresh,mod,helpers}.rs`、`routes/plugins/{install,packages,mcp,surface_launch,hooks_job,mod}.rs`、`routes/plugin_bridge/{context,hooks,issues,storage,mod}.rs`、`routes/v1/{context,issues,policy,storage,mod}.rs`、`routes/surfaces.rs`、`mc-repos/src/skill/{read,write,import,binding,mod}.rs`、`mc-skill/src/*` 7 文件。
+
+### 57.4 本轮唯一 finding：`LUM-1668`（M6-3）写集里有一个**已不存在的文件名**
+- `LUM-1668` 描述写集 = `crates/mc-skill/src/{archive,git}.rs`，但 M6-0 anchor 按 `docs/57` §9.5 的落点修订建的是 **`source.rs`** —— `ls crates/mc-skill/src/` = `archive.rs binary.rs builtin.rs frontmatter.rs lib.rs reserved.rs source.rs`，**没有 `git.rs`**。
+- 影响：该片若照旧描述行事，会**新建一个不在 `docs/32` 文件→写者矩阵里的文件**（越权新增面，且与 §9.5「单一实现点」口径冲突）。
+- **处置（本轮已做）**：把 `LUM-1668` 描述里的 `git.rs` 就地改成 `source.rs`（附一行出处「M6-0 anchor 落点，见 `docs/57` §9.5」，**不新增起手补充节**，避免与下一轮口径打架）。`LUM-1667` 的写集**逐文件核过都在**（`routes/skills/{crud,files,labels,mod,helpers}.rs` + `mc-repos/src/skill/{read,write}.rs`）⇒ 无需修正。`LUM-1668` 另外还写 `mc-repos/src/skill/import.rs`（存在 ✓）与 `routes/skills/{import,refresh}.rs`（存在 ✓）。
+
+### 57.5 并发与派发：3/3 ⇒ **0 空位 ⇒ 本轮不派发**（附下一轮排序）
+- 位图：`LUM-1666`（M6-1 重跑 `01a0d0b2-61a6-…776562d33243`）∥ `LUM-1659`（M5-9，`01a0d0b2-6271-…bdb4ce67bd83`）∥ 本 cycle = **3/3** ⇒ `LUM-1667`/`LUM-1668` 继续 `backlog`。
+- 满员轮 cycle 的产出是**体检 + 判据链 + 交接**，不是硬塞第三片：满员下加派必然与在飞片争 `Cargo.lock` 或同一 `target/` 的 cargo 锁（§55/§56 已两次实测该互锁成本）。
+- 下一轮空位排序（写集 ∩ lock 逐条核过）：
+
+  | 空位来源 | 可派 | 依据 |
+  |---|---|---|
+  | `LUM-1666` 合入 | `LUM-1667`（M6-2，12 路由，**含全部 5 个双形态键**） | stage 2 排序第一；写 `mc-skill/src/{frontmatter,binary,reserved}.rs` + `routes/skills/**` + `mc-repos/src/skill/{read,write}.rs`，**不写 lock/manifest** ⇒ 与在飞 1659 零交集 |
+  | `LUM-1667` 合入 | `LUM-1668`（M6-3，2 路由；**写集已按 57.4 修正**） | stage 2 尾片；需 `routes/skills/import.rs`（M6-2 的取件面在其之上） |
+  | `LUM-1659` 合入 | lock 写权释放 ⇒ `LUM-1691`（M2-A 尾）**才可**单独排 | 它写 `routes/{mod,mount}.rs` + `state.rs` + `Cargo.lock`：与 1659 撞 lock、与 M6 注册路由片撞 `mod.rs` |
+  | `LUM-1666` 合入后 | stage 3 的 `LUM-1670`（M6-5）/`LUM-1671`（M6-6）可起手；`LUM-1669`（M6-4）等 M6-2 先合 | `docs/57` §4.1 |
+  | `LUM-1659` 合入前 | `LUM-1673`（M6-8）**只交桩级证据 + 登记**，不留「假绿」 | `docs/57` §6.1 专属验收尾条 |
+
+### 57.6 看板 / 磁盘 / 观察项
+- 看板（本项目 `da4310b1`）：`in_progress` = `LUM-1666`/`LUM-1659`（+ 本 cycle，已置 `in_progress`）；`backlog` = `LUM-1667`–`LUM-1675` + `LUM-1691` + `LUM-1580`；`blocked` **0**（workspace 另有 5 条 `blocked`，属 pi.rs / openbuddy / Dataflare / health 等**其他项目**，非本波）。`LUM-1665`（M6-0）、`LUM-1652`（M6 计划）、`LUM-1370`（M2-E）仍 `in_review` 待人心验收。
+- 磁盘：**33G 可用（30%）**，本轮**不回收**（当前没有同时满足「PR 已合 + run 终态 + `/proc/*/cwd` 无该 workdir 进程」的整块）。**登记一条候选**：`lum-1666-63133e110ef5/workdir/paperclip-rs/target` = **1.4G**（第一个 run 的**死工作区**缓存；其代码已安全落在远端分支 `agent/devbox5/63133e110ef5` @ `5f7394a3`）——三判据里的「PR 已合」未满足（1666 尚未合并），**本轮明确不动它**：33G 余量下不值得为 1.4G 冒「需要对照死工作区原始产物」的风险，留到 1666 合并后一次清。
+- 观察项（**连续第 6 轮**）：`LUM-1521` / `LUM-1533`（本项目 `todo`，标题仅 `multica-rs`、描述无内容、从未启动、`/proc/*/cwd` 无其 workdir）。已连续 6 轮记录且无 owner 响应 ⇒ 建议由 owner 裁决「取消 / 补描述后派」，本轮**继续只记录不擅改**。
+
+### 57.7 下一轮起手（08:30 cycle）
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §57 的 docs-only 提交）→ 认证 `pulls?state=open`；另**必查两片的远端分支**（`agent/devbox5/776562d33243` / `agent/devbox5/bdb4ce67bd83`）。
+2. **先判「片是否还在写」再进判据链**（远端 head 是否在动 + pid 是否健在 + 是否已置 `in_review`）——本节已连续两轮踩实（§56.2 等了 ~9 分钟）；片会自己 merge base、自己刷快照，**cycle 不抢**。`LUM-1666` 的起手点 = `5f7394a3`（已抢救），若**再**死，判据链照 §56.4（workdir 三件套：`.gc_meta.json` 的 `completed_at` / `output/` 是否空 / 远端分支 + 注释数）。
+3. **合并判据链照 §56.2 七步**；两片都是真库片 ⇒ 合并树当场重跑 `--with-db`（期望 10/10），一次性真库**起手带 `CREATEDB`**（否则 ⑧ 以 `0s / exit 2` 假红）。
+4. **空位分配**按 57.5 表；派 `LUM-1668` 前确认其写集已是 `source.rs`（57.4 已改）。
+5. **`LUM-1673`（M6-8）在 `LUM-1659` 合入前只交桩级证据**（`docs/57` §6.1）。
+6. 本轮新增的**体检口径可复用**：任何「切片被禁止改 manifest」的波次，cycle 都应在该波 anchor 合入后**逐条实测**依赖边 / 挂点 / 骨架文件是否齐（57.3 的表即模板）——这是把后续切片的卡死从「不可归因」变成「可归因」的最便宜手段（10 项只读检查，0 秒 cargo）。
+
+### 57.8 本轮 lesson
+- **【满载轮 ≠ 空转轮：把「下一片为什么能/不能起手」的前提实测掉】** 本轮 0 PR 可合、0 空位，若只回一句「无动作」就浪费一个 30 分钟周期。真正的产出是 57.3 的**冻结面体检**：10 项只读检查换来「anchor 无缺件」这条硬事实 ⇒ 后面 9 个切片失败时能被正确归因，而不是先怀疑 base。**规律：本波各片被禁止修的东西，就是 cycle 该逐条验证的东西。**
+- **【写集是「文件→写者矩阵」的镜像 ⇒ 描述会旧，anchor 落点一改就得逐条重核】** `LUM-1668` 仍指 `mc-skill/src/git.rs`，而 anchor 已按 §9.5 建成 `source.rs`。若照旧描述行事，切片会「新建一个越权文件」。这与 §54.6/§55.4 的「锚点后读数必须重取」**同型**，只是对象从**读数**换成了**文件名**：anchor 落点修订之后，同一波所有切片的写集必须重核一遍（本轮 1667 核过、1668 改了）。
+- **【形态门要按两种跑法读，报告里两个数都要写】** `slash_alias_audit.py` 无参 = 本地现状（本轮 **0 缺陷**）；`--declared docs/fixtures/m6-declared-routes.tsv` = 预测模式（本轮 **`FAIL: 5`**）。allowlist 清空后 `FAIL: 5` 是「5 个双形态键的欠账」，M6-2 交付后必须变 `0`；只写一个数会被误读成回归。
