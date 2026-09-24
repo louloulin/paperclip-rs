@@ -18,6 +18,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use uuid::Uuid;
 
 use mc_repos::autopilot::{AutopilotRow, AutopilotTriggerRow};
+use mc_repos::plugin::hook::HookScheduleRow;
 use mc_repos::scheduler::{ExecutionStatus, LatestPlanInfo, Lease};
 use mc_repos::wakeup::WakeupRow;
 use mc_scheduler::db_ops;
@@ -27,6 +28,7 @@ use mc_scheduler::jobs::autopilot::{
     TriggerConfig,
 };
 use mc_scheduler::jobs::issue_wakeup::{self as wakeup, WakeupDispatchPort, WakeupOutcome};
+use mc_scheduler::jobs::plugin_hook::{PluginHookPort, ScheduleDispatchRequest, ScheduleOutcome};
 use mc_scheduler::jobs::{json_object, JsonObject, PortFuture};
 use mc_scheduler::spec::{CatchUpMode, PlansHook, Scope};
 use mc_scheduler::{Manager, Options, SchedulerRepo};
@@ -422,6 +424,115 @@ impl WakeupDispatchPort for OutcomeWakeup {
     fn touch_dispatch(&self, wakeup_id: Uuid) -> PortFuture<'_, SchedulerResult<()>> {
         self.touched.lock().expect("lock").push(wakeup_id);
         Box::pin(async move { Ok(()) })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M6-8（`LUM-1673`）：hook job 的桩端口
+// ---------------------------------------------------------------------------
+
+/// `plugin_hook` job 的桩端口。
+///
+/// 放在共享夹具里而不是各自的用例文件里：M5 的 `register_all` 用例要**构造**它（端口包是
+/// 四实参、没有缺省），M6-8 自己的用例要**驱动**它。两边的默认行为都是「什么都不做」。
+#[derive(Default)]
+pub struct StubPluginHook {
+    pub schedules: Mutex<Vec<HookScheduleRow>>,
+    pub dispatched: Mutex<Vec<ScheduleDispatchRequest>>,
+    pub advanced: Mutex<Vec<(Uuid, Uuid)>>,
+    /// 让 `dispatch_schedule` 回投递成功（默认回 `Skipped`）。
+    pub deliver: bool,
+}
+
+impl StubPluginHook {
+    pub fn with_schedules(rows: &[HookScheduleRow]) -> Self {
+        Self {
+            schedules: Mutex::new(rows.to_vec()),
+            ..Self::default()
+        }
+    }
+
+    pub fn delivering(rows: &[HookScheduleRow]) -> Self {
+        Self {
+            deliver: true,
+            ..Self::with_schedules(rows)
+        }
+    }
+}
+
+impl PluginHookPort for StubPluginHook {
+    fn list_enabled_schedules(&self) -> PortFuture<'_, SchedulerResult<Vec<HookScheduleRow>>> {
+        let rows = self.schedules.lock().expect("lock").clone();
+        Box::pin(async move { Ok(rows) })
+    }
+
+    fn load_schedule(
+        &self,
+        schedule_id: Uuid,
+    ) -> PortFuture<'_, SchedulerResult<Option<HookScheduleRow>>> {
+        let found = self
+            .schedules
+            .lock()
+            .expect("lock")
+            .iter()
+            .find(|row| row.id == schedule_id)
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn dispatch_schedule(
+        &self,
+        request: ScheduleDispatchRequest,
+    ) -> PortFuture<'_, SchedulerResult<ScheduleOutcome>> {
+        self.dispatched.lock().expect("lock").push(request);
+        let deliver = self.deliver;
+        let delivery_id = format!("psd_{}", request.plan_time.timestamp());
+        Box::pin(async move {
+            Ok(if deliver {
+                ScheduleOutcome::Delivered { delivery_id }
+            } else {
+                ScheduleOutcome::Skipped("installation_disabled".to_owned())
+            })
+        })
+    }
+
+    fn advance_next_run(
+        &self,
+        schedule_id: Uuid,
+        generation: Uuid,
+        plan_time: DateTime<Utc>,
+    ) -> PortFuture<'_, SchedulerResult<u64>> {
+        let _ = plan_time;
+        self.advanced
+            .lock()
+            .expect("lock")
+            .push((schedule_id, generation));
+        Box::pin(async move { Ok(1) })
+    }
+}
+
+/// 一行 `plugin_hook_schedule` 夹具（表**没有外键** ⇒ 不需要 workspace / 安装行）。
+pub fn hook_schedule_row(
+    id: Uuid,
+    installation_id: Uuid,
+    hook_key: &str,
+    cron: &str,
+    timezone: &str,
+    activated_at: DateTime<Utc>,
+) -> HookScheduleRow {
+    HookScheduleRow {
+        id,
+        installation_id,
+        workspace_id: Uuid::new_v4(),
+        hook_key: hook_key.to_owned(),
+        cron_expression: cron.to_owned(),
+        timezone: timezone.to_owned(),
+        generation: Uuid::new_v4(),
+        activated_at,
+        next_run_at: None,
+        enabled: true,
+        created_at: activated_at,
+        updated_at: activated_at,
     }
 }
 

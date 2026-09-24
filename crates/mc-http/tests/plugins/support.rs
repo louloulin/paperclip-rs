@@ -51,7 +51,7 @@ pub(crate) fn deployment_key() -> PluginSecretKey {
         .expect("fixture deployment key is 32 bytes of base64")
 }
 
-fn build_state(db: Db, with_key: bool) -> Arc<AppState> {
+pub(crate) fn build_state(db: Db, with_key: bool) -> Arc<AppState> {
     build_state_with_origin(db, with_key, None)
 }
 
@@ -60,7 +60,11 @@ fn build_state(db: Db, with_key: bool) -> Arc<AppState> {
 /// M6-6（`tests/plugins/runtime.rs`）之前，**只有** `plugin_key` 需要覆写（`AppState::new` 从
 /// 进程级 env 读过一次，而测试是并发跑的）；surface 面多了一个同性质的字段，所以这里多一个
 /// 参数，而不是让调用方去 `Arc::try_unwrap` 一个刚造出来的 `Arc`。
-fn build_state_with_origin(db: Db, with_key: bool, surface_origin: Option<&str>) -> Arc<AppState> {
+pub(crate) fn build_state_with_origin(
+    db: Db,
+    with_key: bool,
+    surface_origin: Option<&str>,
+) -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
@@ -85,6 +89,13 @@ fn build_state_with_origin(db: Db, with_key: bool, surface_origin: Option<&str>)
     state.plugin_key = with_key.then(deployment_key);
     state.plugin_surface_origin = surface_origin.map(str::to_owned);
     Arc::new(state)
+}
+
+/// 带部署密钥的 **`AppState`**（M6-8 / `LUM-1673`）：hook 引擎的 job 侧入口
+/// （`hooks_job::dispatch_scheduled_hook`）拿的是 `HookRuntime`，而不是 `Router` ——
+/// 所以那一片需要 state 本身。`pool` 只用于断言读库，`db` 必须来自同一个池。
+pub(crate) fn state_for(_pool: &PgPool, db: Db) -> Arc<AppState> {
+    build_state(db, true)
 }
 
 /// 带部署密钥的 app（绝大多数用例）。

@@ -18,6 +18,7 @@ use mc_repos::scheduler::ExecutionStatus;
 use mc_scheduler::db_ops;
 use mc_scheduler::jobs::autopilot as sched;
 use mc_scheduler::jobs::issue_wakeup::{self as wakeup, WakeupDispatchPort, WakeupOutcome};
+use mc_scheduler::jobs::plugin_hook as hook_job;
 use mc_scheduler::jobs::{json_object, JsonObject};
 use mc_scheduler::spec::{CatchUpMode, Scope};
 use mc_scheduler::{Manager, Options};
@@ -263,7 +264,15 @@ async fn real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops() {
     let candidates: Vec<Uuid> = (0..2).map(|_| Uuid::new_v4()).collect();
     let port = Arc::new(StubWakeup::with_candidates(&candidates));
     let port_dyn: Arc<dyn WakeupDispatchPort> = port.clone();
-    let ports = mc_scheduler::jobs::JobPorts::new(catalog.clone(), dispatch.clone(), port.clone());
+    // M6-8（`LUM-1673`）：端口包变**四实参**（hook job 的端口是必填，见 `jobs/mod.rs` 的
+    // 类型文档）⇒ M5 的这一个构造点多传一个桩端口；M5 的行为断言不变。
+    let hook_port = Arc::new(StubPluginHook::default());
+    let ports = mc_scheduler::jobs::JobPorts::new(
+        catalog.clone(),
+        dispatch.clone(),
+        port.clone(),
+        hook_port.clone(),
+    );
 
     let mut manager = Manager::new(
         repo.clone(),
@@ -271,10 +280,14 @@ async fn real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops() {
             .with_runner_id("itest-m5-8-register")
             .with_tick_interval(StdDuration::from_millis(50)),
     );
-    mc_scheduler::jobs::register_all(&mut manager, &ports).expect("两行注册");
-    // 两行注册的**直接证据**（不依赖时钟）：登记表里恰好是这两个 job，顺序与 `register_all` 一致。
+    mc_scheduler::jobs::register_all(&mut manager, &ports).expect("注册");
+    // 注册的**直接证据**（不依赖时钟）：登记表恰好是这三个 job，顺序与 `register_all` 一致
+    // （M6-8 的 hook job 是第三个 —— 它由本片加进 `register_all`）。
     let names: Vec<&str> = manager.jobs().iter().map(|job| job.name.as_str()).collect();
-    assert_eq!(names, vec![sched::JOB_NAME, wakeup::JOB_NAME]);
+    assert_eq!(
+        names,
+        vec![sched::JOB_NAME, wakeup::JOB_NAME, hook_job::JOB_NAME]
+    );
     // 同名二次注册必须被拒 —— 否则「接线时多写一行」会静默变成两个 job 抢同一个桶。
     assert!(
         mc_scheduler::jobs::register_all(&mut manager, &ports).is_err(),

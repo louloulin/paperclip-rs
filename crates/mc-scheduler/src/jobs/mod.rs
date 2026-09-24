@@ -35,6 +35,7 @@
 
 pub mod autopilot;
 pub mod issue_wakeup;
+pub mod plugin_hook;
 
 use std::fmt::Write as _;
 use std::pin::Pin;
@@ -45,21 +46,29 @@ use crate::manager::Manager;
 
 use autopilot::{AutopilotSchedulePort, ScheduleDispatch};
 use issue_wakeup::WakeupDispatchPort;
+use plugin_hook::PluginHookPort;
 
 /// 端口的 future：借用 `&self`（**不是** `'static`）—— 这样桩实现与真实现都不必把自身
 /// 塞进 `Arc<Self>`，也不需要 `async_trait`（M5-0 的依赖表已冻结，加不了）。
 pub type PortFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
-/// 两个 job 需要的全部**数据面端口**（生产接线方构造，见模块文档的 D1）。
+/// 四个 job 需要的全部**数据面端口**（生产接线方构造，见模块文档的 D1）。
 ///
-/// 三个端口分开是因为它们的成熟度不同：
+/// 端口分开是因为它们的成熟度与来源不同：
 ///
 /// * [`ScheduleDispatch`]：**已有真实现** —— `impl ScheduleDispatch for AutopilotDispatcher`
 ///   就在 [`autopilot`] 里（M5-4 的派发面，编译期受检）；
 /// * [`AutopilotSchedulePort`]：trigger 的读面 + 展示列写面 —— 生产实现**待 P0 接线**
 ///   （4 条 SQL 的清单写在 trait 文档里）；
 /// * [`WakeupDispatchPort`]：wakeup 的取行 + 单行派发 + 收尾 —— 生产实现**待 P0 接线**
-///   （7 步事务顺序写在 trait 文档里，与 M5-6 `dispatch.rs` 模块头的清单逐条对应）。
+///   （7 步事务顺序写在 trait 文档里，与 M5-6 `dispatch.rs` 模块头的清单逐条对应）；
+/// * [`PluginHookPort`]：M6-8 的 hook job 数据面 —— 生产实现在
+///   `apps/mc-server/src/scheduler/hook_port.rs`（它把活交给 `mc-http` 的 hook 引擎）。
+///
+/// **为什么 `plugin_hook` 是必填而不是 `Option`**：`Option` + 默认 `None` 会让「忘了接线」
+/// 退化成「job 静默不注册」，而那正是本波最忌讳的假绿（issue `LUM-1673` 的「不要走
+/// `Option<Arc<dyn …>>` + 默认 `None` 的回避路」）。必填的实际代价只有一处：
+/// `crates/mc-scheduler/tests/jobs_issue_wakeup.rs`（M5 的用例）多传一个实参（已在本片登记）。
 #[derive(Clone)]
 pub struct JobPorts {
     /// autopilot job 的 trigger 读面 + 展示列写面。
@@ -68,37 +77,44 @@ pub struct JobPorts {
     pub autopilot_dispatch: Arc<dyn ScheduleDispatch>,
     /// issue wakeup job 的数据面。
     pub wakeup: Arc<dyn WakeupDispatchPort>,
+    /// M6-8 的 plugin hook 计划投递数据面。
+    pub plugin_hook: Arc<dyn PluginHookPort>,
 }
 
 impl JobPorts {
-    /// 组装端口包。
+    /// 组装端口包（四个实参，**没有缺省**）。
     #[must_use]
     pub fn new(
         autopilot_catalog: Arc<dyn AutopilotSchedulePort>,
         autopilot_dispatch: Arc<dyn ScheduleDispatch>,
         wakeup: Arc<dyn WakeupDispatchPort>,
+        plugin_hook: Arc<dyn PluginHookPort>,
     ) -> Self {
         Self {
             autopilot_catalog,
             autopilot_dispatch,
             wakeup,
+            plugin_hook,
         }
     }
 }
 
-/// 把本波所有 job 注册进管理器（**恰好两行 `register`**）。
+/// 把本波所有 job 注册进管理器（每片**恰好一行 `register`**）。
 ///
 /// `register` 必须在 `spawn()` **之前**调用（`Manager::spawn` 消费 `self`）；
 /// 注册完就是上游 `scheduler.New(...)` + `Start(ctx)` 的等价物。
 ///
-/// 调用方：`apps/mc-server/src/main.rs` 的 spawn 块（`docs/48` §7.1 有现成代码段）。
-/// **顺序有语义**：两个 job 之间无依赖，但都必须在 `spawn` 前登记，否则第一轮 tick 不会带上它们。
+/// 调用方：`apps/mc-server/src/scheduler/mod.rs` 的 `build`（M5-9 的接线点，M6-8 只往它
+/// 多传一个端口）。**顺序有语义**：job 之间无依赖，但都必须在 `spawn` 前登记，否则第一轮
+/// tick 不会带上它们；顺序也进了 `manager.jobs()`，用例按它断言登记表。
 pub fn register_all(manager: &mut Manager, ports: &JobPorts) -> SchedulerResult<()> {
     manager.register(autopilot::job(
         ports.autopilot_catalog.clone(),
         ports.autopilot_dispatch.clone(),
     ))?;
     manager.register(issue_wakeup::job(ports.wakeup.clone()))?;
+    // M6-8：端口是必填 ⇒ 这一行无条件注册（不能靠 `Option::is_some` 把注册藏起来）。
+    manager.register(plugin_hook::job(ports.plugin_hook.clone()))?;
     Ok(())
 }
 
