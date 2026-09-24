@@ -1,0 +1,101 @@
+# m8-declared-routes.tsv — M8（W8 代码与制品：GitHub App / VCS 连接 / MCP 服务器库 / composio）的
+#   **声明路由**，25 条。
+#
+# 用途：M8 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m8-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M8 各切片**必须两形态一起注册**的键（实测结论见 docs/61-M8-PLAN.md §1.4）。
+#   与 docs/fixtures/{m3-6,m4,m5,m6,m7}-declared-routes.tsv 同性质：这是**输入**，
+#   不是本地已注册路由的快照。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 **owner=M8 行**（method + path + router.go 行号，
+#   25/25 实测逐条相等）。上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M8"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空（下表按「GitHub App 面 → VCS 面 → MCP 面 → composio 面 →
+#     issue↔PR 读面」分组，行序不同）：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M8"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m8-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# ⚠️ **本表 25 行，不是 24 行**（与 `LUM-1796` 描述里写的「24 条」差 1，口径见
+#   docs/61-M8-PLAN.md §1.7）：`24` 是 ⑦ 的 **known_gap** 计数（M8 名下尚未实现的路由数），
+#   而本表照 M7 的构造配方取的是 **owner=M8 的 fixture 行**（25 行）—— 多出来的那一条是
+#   `GET /api/issues/{id}/pull-requests`，它**已经在本地注册**（`crates/mc-http/src/routes/issues/mod.rs:193`
+#   的 `not_implemented` 占位），因此不计入 known_gap，但它确属 M8 的账（本波要把它换成真实现）。
+#   ⇒ M8 的账 = **25 条**（24 缺口 + 1 已注册占位）；⑦ 读数因此有两条不同的口径，别混用。
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   **本波 25 键上游全部是 plain 注册（0 个带尾斜杠）** ⇒ 预测模式实测
+#   `declared 25 / dual-form required: 0` 且 **exit 0**（不是 `FAIL: N`）。
+#   这不是「无需判红」，而是「**本波形态欠账为 0**」——该结果同样要实测，不许按 M4/M5/M6 的
+#   `FAIL: N` 反向推断（M7 也是 0，见 docs/60 §1.4 的四波对照表）。
+#   本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 归属（每行恰好一片；见 docs/61-M8-PLAN.md §4.1）：
+#   M8-1 GitHub App 安装/浏览 5 · M8-2 VCS 连接与入站 webhook 5 · M8-3 MCP 服务器库与 agent 绑定 8 ·
+#   M8-4 GitHub 入站 webhook 与 PR 镜像 2 · M8-5 ghsnapshot 管道 0 · M8-6 composio 5。
+#   路由账 5+5+8+2+0+5 = 25 ✓
+#
+# ⚠️ **attachments 面（9 条）不在本表内**：`docs/15-M3-PLAN.md` §580/§581 把附件面判给
+#   「W8 / M8」，但 `docs/fixtures/upstream-routes.tsv` 这 9 行的 owner 单元格是 **`M3+`**
+#   （显式规则 `^/api/attachments`、`^/api/upload-file`、`^/api/issues/[^/]+/attachments`、
+#   `^/uploads/`、`^/api/avatars/`，不是兜底命中）。裁定与依据见 docs/61 §9.2：
+#   **维持 `M3+`**（本片不得改 owner 单元格——那会改 ⑦ 读数），附件面登记为 **W8 尾账**。
+#   实际存在的 9 行为（复算：`awk -F'\t' '!/^#/ && $2 ~ /^\/api\/attachments|^\/api\/upload-file|^\/api\/issues\/[^/]+\/attachments|^\/uploads\/|^\/api\/avatars\//' docs/fixtures/upstream-routes.tsv`）：
+#     GET    /api/attachments/{id}                     router.go:2149
+#     DELETE /api/attachments/{id}                     router.go:2156   ← docs/15 §580 漏列这一条
+#     GET    /api/attachments/{id}/content              router.go:2155
+#     GET    /api/attachments/{id}/download             router.go:1655
+#     GET    /api/attachments/{id}/signed-download      router.go:1447
+#     GET    /api/issues/{id}/attachments              router.go:2001   ← 已在本地注册（not_implemented 占位）
+#     POST   /api/upload-file                          router.go:1633
+#     GET    /uploads/*                                router.go:1435
+#     GET    /api/avatars/{sig}/*                      router.go:1456
+METHOD	PATH
+# —— GitHub App 面（6）：安装引导 / 回调 / 列表 / 仓库浏览 / 撤销 + 入站 webhook ——
+# 其中 GET /api/github/setup 与 POST /api/webhooks/github 在上游注册于 **Auth 组之外**
+# （router.go:1489-1491 的公开块，见 docs/61 §1.5），其余 4 条挂在 /api/workspaces/{id} 下
+# （列表条是 member 级，connect/repos/delete 是 admin 级，见 docs/61 §1.6 的授权面矩阵）。
+GET	/api/github/setup
+POST	/api/webhooks/github
+GET	/api/workspaces/{id}/github/connect
+GET	/api/workspaces/{id}/github/installations
+DELETE	/api/workspaces/{id}/github/installations/{installationId}
+GET	/api/workspaces/{id}/github/installations/{installationId}/repositories
+# —— VCS 连接面（5）：token 型自建 Git（Forgejo/Gitea/GitLab）的连接管理与入站 webhook ——
+# 前 4 条挂在 /api/workspaces/{id}/vcs 下（列表 member 级、其余 admin 级）；
+# POST /api/webhooks/vcs/{connectionId} 在公开块，凭据是**每条连接自己的** webhook secret
+# （路径里的 connectionId 决定 workspace + provider + 解密密钥，见 docs/61 §2.4）。
+GET	/api/workspaces/{id}/vcs/connections
+POST	/api/workspaces/{id}/vcs/connections
+DELETE	/api/workspaces/{id}/vcs/connections/{connectionId}
+POST	/api/workspaces/{id}/vcs/connections/{connectionId}/rotate-webhook
+POST	/api/webhooks/vcs/{connectionId}
+# —— MCP 服务器库面（8）：workspace 库 4 条 + agent 绑定 4 条 ——
+# workspace 4 条挂在 /api/workspaces/{id}/mcp-servers（列表 member 级、写 3 条 admin 级）；
+# agent 4 条挂在 /api/agents/{id}/mcp-servers（与 M6-4 的 /skills* 同一手法，router.go:2206-2209）。
+# ⚠️ 能力面属 W6 尾账，但**账与实现归 M8**（裁定与「不得重复实现」清单见 docs/61 §2.3 / §9.4）。
+GET	/api/workspaces/{id}/mcp-servers
+POST	/api/workspaces/{id}/mcp-servers
+PUT	/api/workspaces/{id}/mcp-servers/{serverId}
+DELETE	/api/workspaces/{id}/mcp-servers/{serverId}
+GET	/api/agents/{id}/mcp-servers
+POST	/api/agents/{id}/mcp-servers
+PUT	/api/agents/{id}/mcp-servers/{serverId}/enabled
+DELETE	/api/agents/{id}/mcp-servers/{serverId}
+# —— composio 面（5）：user 级第三方工具集成（OAuth 回调在公开块，其余 4 条会话级） ——
+# 上游 router.go:1863-1870 的 Route("/api/integrations/composio") 是 Mount，但 4 个子路由
+# 都是**完整子路径**（`/connect/init`、`/toolkits`…），不是 `Get("/")` ⇒ 单形态（见 §1.4）。
+GET	/api/integrations/composio/callback
+POST	/api/integrations/composio/connect/init
+GET	/api/integrations/composio/toolkits
+GET	/api/integrations/composio/connections
+DELETE	/api/integrations/composio/connections/{id}
+# —— issue ↔ PR 读面（1）：**已注册占位**，本波把 not_implemented 换成真实现 ——
+# router.go:2011，挂在既有 r.Route("/api/issues/{id}") 内部。
+GET	/api/issues/{id}/pull-requests
