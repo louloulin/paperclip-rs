@@ -600,3 +600,90 @@ bash scripts/gates.sh --with-db      # 10/10
 2. 桥面与公开面**不共享**限流桶（`tower_governor` 的桶按 router 实例分片；桥面的层挂在
    `plugin_bridge/{context,issues,storage}.rs` 三处 ⇒ 同前缀下每面各自计数）。上游两档也区分
    （`user_default` vs `plugin_strict`），故行为面等价；仅登记实现细节。
+
+### 9.10 M6-8 hook 引擎 + MCP 传输 + hook job（`LUM-1673`）的落点与偏离登记
+
+**落点**：上游 **1 条注册键**（`POST /api/plugin-bridge/v1/hooks/{key}`，`router.go:1598`）+
+**0 路由**的 job 粘合（`scheduler/jobs_plugin_hook.go`353）。上游体量 ≈2,082 行，本片按
+「路由面 + job 面 + 引擎面」拆成本地 4 组文件。
+
+**写集**（相对 `81c58721` 的增量，逐字路径）：
+
+| 文件 | 性质 | 内容 |
+| --- | :-: | --- |
+| `crates/mc-http/src/routes/plugin_bridge/hooks.rs` | 改（44 → 54） | **唯一注册键**的挂载点（`policy::apply_bridge` + `post(hooks_job::invoke_bridge_hook)`） |
+| `crates/mc-http/src/routes/plugins/hooks_job.rs` | 改（35 → 568） | 模块根：`HookInvocation` / `HookCallResult` / `HookError` / `HookRuntime` / 引擎四道前置 / 出站目的地判据 / `build_hook_headers` / `schedule_delivery_id` / `router()` |
+| `crates/mc-http/src/routes/plugins/hooks_job/{bridge,outbound,schedule,wire,tests}.rs` | **新建** | 门 ⑩ 的拆分（见 D1）：桥面 handler / 出站发送 / job 粘合 + 日程对齐 / wire 结构与触发器折点 / 单元用例 |
+| `crates/mc-repos/src/plugin/hook.rs` | 改（21 → 701） | `plugin_hook_schedule` 与 `plugin_invocation` 的写侧 + `reconcile_tx` / `set_enabled_tx`（12 列投影、三连守卫、按尝试计数的限流/熔断读口、TTL 清扫） |
+| `crates/mc-scheduler/src/jobs/plugin_hook.rs` | **新建**（461） | job 本体：`SCOPE_KIND` / scope 枚举 / 计划折叠 / 分页枚举 / handler / 规格 |
+| `crates/mc-scheduler/src/jobs/mod.rs` | 改（204 → 220） | `pub mod plugin_hook;` + `JobPorts` 第 4 个端口 + 第 3 行 `register`（见 D5） |
+| `apps/mc-server/src/scheduler/hook_port.rs` | **新建**（127） | `PluginHookPort` 的生产实现（薄适配层，把活交给 `mc-http` 的引擎） |
+| `apps/mc-server/src/scheduler/mod.rs` | 改 | `build()` 多传一个端口实参（**只此一处**；`main.rs` 一行未动） |
+| `crates/mc-http/src/routes/plugins/install/{lifecycle,settings}.rs` | 改 | 安装/升级/启停三处调用日程对齐（见 D9，回填 M6-5-D2 的跨片缺口） |
+| `crates/mc-scheduler/tests/jobs_plugin_hook.rs`、`crates/mc-http/tests/plugins/{hooks,hooks_job}.rs` | **新建** | 用例（纯逻辑 16 + 真库 14） |
+| `crates/mc-scheduler/tests/{common/mod,jobs_issue_wakeup}.rs`、`crates/mc-http/tests/plugins/{main,support}.rs` | 改 | 夹具（见 D4/D8） |
+
+**冻结面只读**：`routes/{mount,mod}.rs`、各 `routes/**/mod.rs`（含 `plugins/mod.rs` 的
+`.merge(hooks_job::router())`）、`state.rs`、根 `Cargo.{toml,lock}`、`apps/mc-server/src/main.rs`、
+`Cargo.toml`（任何 crate）、⑦ 基线、⑨ `report.json`、`slash-alias-allowlist.tsv` —— 逐条 `git diff` 空。
+
+#### 偏离（M6-8-D1～D10）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M6-8-D1** | `hooks_job.rs` 拆成 6 个文件 | `routes/plugins/hooks_job/**` | 门 ⑩ 单文件 800 行硬上限（一次成文的引擎 + job + 桥面 handler + 用例 = 1,389 行）。`routes/plugins/mod.rs` 是 anchor 冻结面（**不能**加 `mod`）⇒ 只能靠**子模块目录**（与 `install.rs` / `install/` 同款）：`hooks_job.rs` 声明 `mod {bridge,outbound,schedule,wire}`，公开路径不变 |
+| **M6-8-D2** | 路由实现在 `hooks_job::bridge`，注册在 `plugin_bridge/hooks.rs` | 两处 | anchor 的 §9.2 归位（注册点按路径前缀）与「引擎与错误映射全在 `routes::plugins` 下」两条约束同时满足：bridge 文件只挂载（M6-7 的 `context/issues/storage` 同款），实现留在插件面文件树里。**注册键总数不变（57 条 / 本仓 406 条）** |
+| **M6-8-D3** | 部署密钥缺失时的 `plugin_disabled` 是 **503**，但 `plugin_invocation.status` 按上游分类 = `failed` | `hooks_job::HookError::disabled` | 503 沿用 `M6D-1` 的四处一致口径；**调用记录**不跟着本地状态码走 —— 上游把「签名密钥缺失」归 `PluginErrorUnavailable` ⇒ `failed`（`refused` 只给 Forbidden/Quota/Incompatible）。两者分开登记，免得下一次有人「统一」成一种 |
+| **M6-8-D4** | 写集追加 6 个**非本片文件**（逐条给理由） | 见下 | ① `tests/jobs_issue_wakeup.rs` + `tests/common/mod.rs`：`JobPorts` 变四实参（D5）必须改 M5 的构造点；② `tests/plugins/{main,support}.rs`：e2e 分片声明 + `build_state` 提为 `pub(crate)`（job 数据面用例需要 `Arc<AppState>`，而不是 `Router`）；③ `install/{lifecycle,settings}.rs`：D9 的回填；④ `apps/mc-server/src/scheduler/mod.rs`：`build()` 的端口装配（issue 已授权「只改 `build()`」） |
+| **M6-8-D5** | `JobPorts::new` 取**四实参**（不是 builder、不是 `Option`） | `mc-scheduler/src/jobs/mod.rs` | issue 的裁定是「builder」或「`new` 加一参」二选一，并明确**禁止** `Option<Arc<dyn …>> + 默认 None`（那会让 job 静默不注册）。取后者：注册无条件（`register_all` 第 3 行），代价是 M5 的用例多传一个实参（已在 D4 登记，`register_all` 的登记表断言同步改成三个 job） |
+| **M6-8-D6** | 引擎的上下文是 `HookRuntime`，不是 `AppState` | `hooks_job.rs` | `apps/mc-server/src/main.rs`（M5-9）调的是 `scheduler::start(&db, daemon_hub)` 且**一行不改** ⇒ 端口实现只有 `Db`。把引擎的依赖面收窄成 `{db, plugin_key, feature_flags}` 后，路由侧 `HookRuntime::from_state(&state)`、job 侧 `HookRuntime::standalone(db)` 都能构造它 |
+| **M6-8-D7** | **未做**的四面（全部登记，不静默） | 见下 | ① `event` 触发的分发器（上游 `plugin_event_dispatch.go` 323 + `plugin_event_bridge.go` 108）：它要挂到事件总线上，而总线的落点（`mc-realtime` / M2 的资源服务）不在本片写集内 ⇒ `plugin_invocation.trigger='event'` 目前**没有生产者**；② MCP 传输段（上游 `plugin_mcp_transport.go` ≈150）：本地对 `transport.type="mcp"` 的 hook **逐字照抄上游**拒绝（422 `hook transport "mcp" is not supported yet`），真正要动的文件（`mc-mcp` / `plugins/mcp.rs`）分属 M6-1 / M6-6；③ `agent` 触发（`POST /api/daemon/tasks/:id/plugin-hooks`）：那条键归 M3 的 daemon 面，本仓至今恒 403（插件面恒禁用）；④ 调用记录的 TTL 清扫的上游宿主是 event dispatcher 的计时器 ⇒ 本地只落了查询（`delete_expired`），没有计时器；`CallbackBaseURL` 同理（上游配置项，本地无此配置 ⇒ 出站体里恒不出现 `callback_url`） |
+| **M6-8-D8** | 夹具的 2 处改动 | `tests/plugins/support.rs` | ① `build_state` / `build_state_with_origin` 提为 `pub(crate)` 并加 `state_for`；② 新增 `cleanup_schedules`：`plugin_hook_schedule` **没有外键**（`399` 的注释写明关系由应用拥有），共享的 `cleanup` 够不着它 ⇒ 不显式删就会攒孤儿行。两处都只影响测试 |
+| **M6-8-D9** | 日程投影对齐的**三处调用点**回填（M6-5-D2 的跨片缺口） | `install/{lifecycle,settings}.rs` | 上游在安装/升级/启停里调 `reconcilePluginHookSchedules` / `setPluginHookSchedulesEnabled`；M6-5 把该表整体划给 M6-8（`docs/32` §9.6 的 D2「M6-8 落地后需回填」）⇒ 本片补上，且**与安装行同事务**。不补的话 job 有消费者没生产者 = 死代码 |
+| **M6-8-D10** | `delivery_id` **不是**行级唯一键；幂等由 `sys_cron_executions` 保证 | `plugin/invocation` 写侧 + job | anchor 的桩注释写「同一次计划投递重复执行时用 `delivery_id` 去重」—— 那句话指的是**投递**（同一格不双跑），不是**行**。上游一次计划投递重试三次就写三行（`attempt` 递增），`delivery_id` 让接收方认得出它们是同一次投递；行级唯一会吃掉重试行 ⇒ 限流/熔断计数与「这个端点为什么在失败」都会失真。本片取上游语义，幂等屏障是内核的唯一键 `(job_name, scope_kind, scope_id, plan_time)` |
+
+#### 跨片接口（M6-INT / 后续波请照用）
+
+- `mc_http::routes::plugins::hooks_job::{HookRuntime, HookError, invoke_hook, build_hook_headers,
+  schedule_delivery_id, dispatch_scheduled_hook, advance_schedule_next_run, list_enabled_schedules,
+  load_schedule}` —— hook 面的**唯一**实现点（路由、job、端口三方共用）。
+- `mc_repos::plugin::hook::{HookScheduleRepo, reconcile_tx, set_enabled_tx, HookScheduleInput,
+  SCHEDULE_COLUMNS}` —— `plugin_hook_schedule` 的**唯一**写者（M6-5 只读）。
+- `mc_scheduler::jobs::plugin_hook::{JOB_NAME, SCOPE_KIND, PluginHookPort, ScheduleOutcome}` ——
+  内核侧的契约；`apps/mc-server/src/scheduler/hook_port.rs` 是生产实现。
+- **`plugin_invocation` 的读面**仍是 M6-6 的 `mc_repos::plugin::invocation_read`（本片只写）。
+
+#### 本片门禁读数（逐字取自当轮日志）
+
+- `bash scripts/gates.sh --with-db` ⇒ **10/10 / 161s**
+  （①2s ②1s ③10s ④8s ⑤34s ⑥76s ⑧24s ⑦1s ⑨5s ⑩0s；`overall: PASS`）。
+- ⑦：`upstream 456 | local 406 registered | baseline 344`、`implemented 330 real + 0 placeholder`、
+  `known_gap 126`、`unclaimed 0`、**`regression 0`**、`local_only 9`；`owners` 表
+  `{M9 33 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5}`（和 = 126✓，**无 `M6` 键**）。
+  本片 **+1**（405 → 406），**`owners.M6 = 0`** —— M6 的路由面收口。
+  ⚠️ 基线 **344 不刷**：唯一一次 `--write-baseline` 归 M6-INT（`LUM-1675`）。
+- ⑨：`crates/mc-conformance/report.json` **逐字未变**（本片 0 条 fixture 归属变化 —— M6-8 的
+  那条键没有 fixture）。
+- ⑤：`cargo test --workspace` ⇒ **2213 passed / 0 failed / 201 ignored**。
+- ⑥：真库 `mc_lum1673`（`CREATEDB`，模板 `CREATE ROLE mc_lum1673 LOGIN CREATEDB …`）⇒
+  `migrate=0 e2e=0`（**524 passed / 0 failed**）—— 含本片新增的 16 个真库用例
+  （mc-http 的 11 个 hook 用例、mc-scheduler 的 `real_db_the_loop_delivers_each_schedule_bucket_exactly_once`、
+  mc-repos 的 2 个 `plugin::hook::db_tests`）。
+- **幂等证据**（DoD）：`real_db_the_loop_delivers_each_schedule_bucket_exactly_once` 用
+  **50ms tick / 5 分钟计划格**的循环跑满 ~0.5s（十几次 tick）⇒ 桩端口只被派发**一次**，
+  再补一条 `db_ops::try_claim` 对同一个 SUCCESS 桶的确定性探针（`Conflicted`）。
+  幂等屏障是内核的唯一键 `(job_name, scope_kind, scope_id, plan_time)`，不是本片的代码。
+
+#### 登记的已知缺口（给 M6-INT）
+
+1. **`event` 触发的生产者缺位**（D7 ①）：`plugin_invocation.trigger='event'` 只有表没有调用点。
+   接法：在事务提交后的事件出口（M2/M3 的资源服务）调 `hooks_job::invoke_hook`，并把
+   `trigger=Event` + `event_type` 传进去；限流、熔断、`net:` 判据、调用记录都已就绪。
+2. **MCP 传输段未接**（D7 ②）：`transport.type="mcp"` 的 hook 目前按上游拒绝（422）。
+   上游那条路径要 `mc-mcp` 的 client，而那是 M6-1 / M6-6 的文件。
+3. **⑥ 的 ⑨ 面**：本片没有新增 fixture，所以 `report.json` 不需要动；若 M6-INT 想给
+   `plugin-bridge/v1/hooks` 加契约快照，需先在上游侧有对应 fixture（目前 0 条）。
+4. **两个 `plugins_v1` 判定点**：路由侧走 `policy::plugins_v1_enabled(state)`，job 侧走
+   `HookRuntime::standalone(db)` 里的**空**目录（未登记 = 开启）。生产进程的开关目录由
+   `main.rs` 的 `AppState` 持有，而调度循环拿不到它（D6）⇒ 若将来要给 hook job 单独关开关，
+   需要把目录也传给 `scheduler::start`（那要动 `main.rs`，本片不改）。
