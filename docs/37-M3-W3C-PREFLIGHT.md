@@ -5320,3 +5320,77 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【在飞片 diff 的「负数行」第三次出现，这次把它变成验收式】** 59.2 / 59.3 第 3 步里两片相对 base 的 stat 是 `+10748/−306` 与 `+1343/−220`，而 PR API 是 `−91` 与 `−5`：差额 **215 = 63+66+86**（§56/§57/§58 三节 docs-only 行数，`git diff --numstat` 逐节核过）。**判据**：`git diff --numstat <base> <片 head> -- <代码路径>` 与 PR API **逐字相等** ⇒ 通过；差额**只许**出现在 `docs/**`，且应等于该片 base 之后 base 侧的 docs-only 行数。§58.8 给的是读法，本节给的是**验收式**。
 - **【磁盘濒危时的回收例外必须写进交接，不能悄悄变成惯例】** 起手 98% 只允许「删 `target/`、不碰源码树」这一种放宽 —— 删除对象里没有工作产物，唯一有风险的那条判据（未推送提交）自动不适用。**代价**：删掉的 17G 在门禁跑完后要重建；本轮之所以敢删，是因为那片的门禁它自己已经跑过。**反例警告**：若删的是**待验片**的 `target/`，本轮这次 `--with-db` 就从 97s 变 500s+。
 - **【热跑与冷跑的读数都要写出来，否则下一轮会把 97s 当基线】** 97s 里 ② 只编了一个 crate（`mc-server` 2.53s），但 ⑤/⑥ 的 **1531 / 393 例是本轮实跑的**。报告必须同时给「时长」与「跑了多少用例」：只给时长会让下一轮误判回归，只给用例数会掩盖缓存复用的前提。
+
+---
+
+## §60 10:30 cycle（`LUM-1724`）：**base 未动（`dac9b95`）、GH 0 PR、3/3 满载 ⇒ 0 可合 / 0 空位**；`LUM-1667`（M6-2）**静默死亡（0 提交、工作区干净）⇒ 追加交接 + `rerun`**；新动作 = **M6 派发就绪度审计**（4 片硬前置已满足）+ **修 M6-2 的 `content_hash` 口径**（上游是 SQL 侧裸 sha256）
+
+### 60.1 起手三连（01:30Z 实测）
+- 磁盘：`/` **35G 可用（26%）**——本轮**未回收任何 `target/`**（在飞片的目标目录不回收；见 60.7）。
+- base 复核 4/4：`git fetch origin feat/multica-rs-initial` = **`dac9b95c6eb51f4af5584a086512a183c9918ff3`**（= §59 那次 docs-only 提交）；`dac9b95^{tree} = 022c61d0…`，其父 `c3aa19d8^{tree} = c9366b41…`（**与 §59.2 第 4 步的预测树逐字相等**）。`git diff --stat c3aa19d dac9b95` = **`docs/37` 单文件 +95 行**，**限代码路径的 `git diff --numstat` = 0 行** ⇒ **§59 的合并树门禁 10/10 与 ⑦/⑨/⑤/⑥ 读数对本轮 base 继续逐字有效，本 cycle 不重跑门禁**。
+- 认证 `pulls?state=open` = **0 条**；`git ls-remote` 两片分支（`agent/devbox5/f67c231c5ad5` / `agent/devbox5/5294bfa0b58b`）**均不存在**。
+- daemon `running_task_count` = **2**（本 cycle + `LUM-1670`）；`/proc/*/cwd` 只在 `lum-1670-5294bfa0b58b`（pid 25479）扫到活进程。
+
+### 60.2 `LUM-1667`（M6-2）静默死亡：判定 → 抢救判定 → `rerun`
+| 项 | 实测 |
+|---|---|
+| run / workdir | `task_id = 01a0d0f5-bad0-7690-8672-f67c231c5ad5`，workdir `lum-1667-f67c231c5ad5` |
+| 时间 | 起 **01:09:20Z**（`task_id` 前缀解码）→ 终 **01:13:53Z**（`.gc_meta.json` `completed_at`，**存活 4m33s**） |
+| 终态证据 | 平台在该 issue 落了一条 `system` 注释 ×1：**`Upstream stream ended before terminal chunk`** |
+| 产物（三件套） | `/proc` 无进程 ✓、`output/` **空**、**0 提交 / 0 推送 / 0 注释**（除那条 system 注释）、远端无分支 ✓ |
+| 抢救结论 | **无需抢救**：`paperclip-rs` 停在 `dac9b95`（`HEAD == base`）、`git status --porcelain` **空** ⇒ 起手工作量为零，不存在「半成品」 |
+- **处置**：`multica issue update LUM-1667 --description-file … --no-start`（追加「第二个 run 交接」段）→ `multica issue rerun LUM-1667` ⇒ 新 run **`01a0d10a-2caf-7c78-8a1c-85f1aa73011d`**，新 workdir **`lum-1667-85f1aa73011d`**（01:5xZ 起，pid 28738 活）。rerun 后 daemon `running_task_count = 3/3`。
+- **纪律**：`update` 一律带 `--no-start`，再显式 `rerun` —— 否则 update 自带的那次启动 + rerun 会**同时**起两个 run。
+- **口径**（第三次静默死亡：`LUM-1666`(07:30 cycle 抢救 4.5k 行)、`LUM-1667`）：判据三件套不变，但**「有产物 ⇒ 先抢救、零产物 ⇒ 直接交接 + rerun」**要分开走：本轮 0 提交时抢救步骤是空操作，**不要在干净的 base 工作区里翻找**（那只会浪费一个槽位的时间）。
+
+### 60.3 可合 PR / base 变更：**0**
+两片均无 PR、无推送；base 自 §59 起未动 ⇒ 本轮**没有判据链要走**（§56.2 七步本 cycle 全部空转），也**没有任何基线/读数需要刷新**。
+
+### 60.4 新动作：M6 派发就绪度审计（硬前置 × 写集 × 在飞交集）
+在飞写集：`1667` = `mc-skill/src/{frontmatter,binary,reserved}.rs` + `routes/skills/{crud,files,labels}.rs` + `mc-repos/src/skill/{read,write}.rs`；`1670` = `routes/plugins/{install,packages}.rs` + `mc-repos/src/plugin/{installation,package,skill}.rs`。
+
+| 片 | issue | 硬前置（`docs/57` §4.1） | **现在就绪？** | 与在飞文件交集 |
+|---|---|---|---|---|
+| M6-3 skill 导入/刷新（2 路由） | `LUM-1668` | M6-0 ✅ | **是** | **0** |
+| M6-4 skill 供给面（6 路由） | `LUM-1669` | M6-0 ✅ / M6-2 ⏳ | 否（等 1667 合） | 0（只读 1667 的 `mc-skill` 面） |
+| M6-6 插件运行时面（4 路由） | `LUM-1671` | M6-0/1 ✅ | **是** | **0**（与 1670 同目录、不同文件） |
+| M6-7 公开 Action API（19 路由） | `LUM-1672` | M6-0/1 ✅ | **是**（但**不可与 `LUM-1673` 同飞**：同写 `routes/plugin_bridge/`） | **0** |
+| M6-8 hook + job（1 路由） | `LUM-1673` | M6-1 ✅ / M6-5 ⏳ / M6-6 ⏳ / `LUM-1659` ✅ | 否（等 1670 + 1671 合） | — |
+| M6-9 daemon 执行面（0 路由） | `LUM-1674` | M6-1 ✅（hook MCP 段另需 `LUM-1659` ✅） | **是**（但见 60.5 缺口 ③） | **0**（全在 `mc-daemon/**`） |
+
+**结论（修正 §59.7）**：§59.7 把 `LUM-1671`/`LUM-1672` 记成「`LUM-1670` 合入后解锁」是**过度约束** —— `docs/57` §4.1 里这两片的硬前置只有 **M6-0/1**（都已合）。真实约束只有**槽位**与**同目录互斥**（`1672` × `1673`）。⇒ 下一轮起，**任一槽位空出即可从 `{1668, 1671, 1672, 1674}` 里直接补**（`1669` 等 1667 合、`1673` 等 1670+1671 合），不必等某一特定片合入。
+
+### 60.5 文档 / 写集缺口三连（本轮最值钱的部分，逐条带证据）
+① **`docs/57` §3.2 矩阵的 `git.rs` 是旧名**：矩阵写 `mc-skill/src/{archive,git}.rs`（M6-3 写），而 base 实测 `crates/mc-skill/src/` = `archive.rs binary.rs builtin.rs frontmatter.rs lib.rs reserved.rs source.rs`（**无 `git.rs`**）。§57 §9.5 的落点修订与 `LUM-1668` 的描述都已改成 `source.rs`（08:00 cycle `LUM-1705` 修），**只有矩阵行没同步** ⇒ M6-3 派发前若有人照矩阵读，会去找一个不存在的文件名。
+
+② **`LUM-1667`（M6-2）的 `content_hash` 口径错**，已就地修描述并在描述里写全证据：
+- 上游 `content_hash` 是 **Postgres 侧**算的：`server/pkg/db/queries/skill.sql:85` = `encode(sha256(convert_to(content,'UTF8')),'hex')` ⇒ **裸 `hex(sha256(utf8))`，64 位、无 `sha256:` 前缀、不分节**；
+- 它**只出现在 metadata 形态**（`include=metadata`）：`SkillFileMetadataResponse.content_hash`（每文件）+ `SkillWithFileMetadataResponse.content_hash`/`content_size`（`SKILL.md` 正文），上游 `server/internal/handler/skill.go:118/147`，值被 `skill_metadata_test.go` 逐字钉死；
+- 这与 **bundle manifest hash**（`pkg/skillbundle/hash.go`：分节 + `path` 升序 + **`sha256:` 前缀**）**是两个不同函数**；
+- 而 `contracts/golden/skills/*` 的 5 条 fixture **都不覆盖 `content_hash` / `include=metadata`** ⇒ 这条契约在 ⑨ 门里**没有兜底**。
+- ⇒ **M6-2 的合并门新增检查项**：(a) `content_hash` 必须 64 位小写 hex、**无前缀**；(b) `mc-skill` 里**不得**出现第二套分节 sha256；(c) `include=metadata` 的丢 `content` 语义要与上游 `SkillWithFileMetadataResponse` 同形。任一条不符**不得合并**，并按 §60.5③ 的归属登记。
+
+③ **「bundle hash 单一实现点」在计划里不可达（跨片架构缺口）**：
+- 上游的单一实现点是**共享包** `server/pkg/skillbundle`，**服务端与 daemon 都 import**：`internal/handler/daemon.go:38`、`internal/service/task.go:35`、**`internal/daemon/daemon.go:36`**（`daemon.go:7453` 调 `skillbundle.BuildManifest`）、**`internal/daemon/skill_cache.go:14`**（`skill_cache.go:138` 同调）。
+- 本地把它移植进了 `crates/mc-http/src/routes/daemon/skills.rs:38`（`write_hash_part`）/ `:102`（`build_bundle`），两者都是 **`pub(crate)`** ⇒ **`mc-skill`（M6-3/M6-4 的落点）与 `mc-daemon`（M6-9）都够不到**；且 `crates/mc-daemon/Cargo.toml` **没有 `mc-skill` 依赖边**（只有 `mc-core` + `mc-daemon-proto`）。
+- 与三处 DoD 直接冲突：`LUM-1674`（M6-9）DoD 写「用 M3-7 同款 hash（**有断言证明是同一个函数**）」；`LUM-1668`（M6-3）写「复用 `skillbundle/hash.go`，不重写」；`crates/mc-skill/src/lib.rs`（anchor）写「不重写 bundle 哈希：唯一实现点是 `routes/daemon/skills.rs`（归 M6-4）」。**三者不可能同时成立于当前文件布局**。
+- 建议（**留给下一轮决定，本 cycle 只登记不动手**）：把 `write_hash_part` + 分节算法**下沉到 `mc-skill`**（它已声明 `sha2`/`hex`，且是「skill 前端件」的既定家），`mc-http` 的 `build_bundle` 保留为投影层只调它，并给 **`mc-daemon/Cargo.toml` 加 `mc-skill` 边**。⚠️ **`crates/mc-daemon/Cargo.toml` 当前不在任何 M6 切片的写集里**（M6-9 的写集只有 `mc-daemon/src/{skill,mcp,execenv}/**` + `lib.rs`/`execenv/mod.rs` 的 `pub mod` 行）⇒ 这是**一个 manifest 写者空位**，锚点已合、只能由 M6-INT 或一个专门小片执行。
+
+### 60.6 看板 / 磁盘 / 观察项
+- 看板：`in_progress` = `LUM-1724`（本 cycle）+ `LUM-1667`（rerun 中）+ `LUM-1670`；`in_review` 待人工 = `LUM-1665`、`LUM-1652`、`LUM-1370`、`LUM-1666`、`LUM-1659`、`LUM-1714`；`backlog` = `LUM-1668`–`LUM-1675` 中未派的 + `LUM-1691` + `LUM-1580`；本项目 `blocked` **0**。
+- 磁盘：**35G 可用（26%）**，起手 ≈ 收尾（本 cycle 不跑门禁、不建冷 target）。在飞两片的 `target/` 属活运行，不回收。
+- 观察项（**连续第 9 轮**）：`LUM-1521` / `LUM-1533` 仍 `todo`、标题仅 `multica-rs`、描述是 autopilot 模板、**从未启动**。九轮只记录、不擅改他人 issue 状态；建议 owner 裁决（取消 / 补描述后派 / 给 autopilot 加「槽位满时不建新 issue」前置）。
+
+### 60.7 下一轮起手（11:30 cycle）
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §60 的 docs-only 提交）→ 认证 `pulls?state=open`；再 `git ls-remote origin agent/devbox5/85f1aa73011d agent/devbox5/5294bfa0b58b` 查两片分支是否出现。
+2. **先判活跃再进判据链**：`LUM-1667` 是**第二个 run**（起手点仍是干净的 `dac9b95`，无前序产物可续），`LUM-1670` 自 01:09Z 起 0 提交 —— 两片任一先交 PR 即按 §56.2 七步走；`base` 已是它们 merge-base 的祖先与否逐个判（`1667` 的 base 未动 ⇒ 免真合；`1670` 同）。
+3. 合入前**必查 60.5② 的三条**（`content_hash` 无前缀 / `mc-skill` 无第二套哈希 / `include=metadata` 同形）。
+4. 空位按 **60.4 修正表**补：`{1668, 1671, 1672, 1674}` 任一可直接 `todo`（`1672` 与 `1673` 互斥）；`1669` 等 `1667` 合；`1673` 等 `1670`+`1671` 合。
+5. 报数沿用：⑤ **1531 / 102**、⑥ **393 / 29**、⑦ **344 / 273 / 183**（未刷，刷新归 M6-INT `LUM-1675`）、⑨ `unmounted 31`。
+6. 若 `LUM-1667` 再死（第 3 次）⇒ 按 60.2 同法：三件套判定 → 有产物才抢救 → 描述追加交接 → `rerun`；**连续两次零产物时**改判「本片在本机不可稳定运行」，把 12 路由面按 `routes/skills/{crud,files,labels}.rs` 三分并登记给 owner（本轮**未**触发）。
+
+### 60.8 本轮 lesson
+- **【静默死亡要分两档处理，别把空操作当流程】** 「抢救（固化未提交 + 推分支）」的前提是**有未提交产物**；本轮 `LUM-1667` 起手 4m33s 内零产物、工作区干净，抢救是**空操作** —— 正确顺序是「三件套确认零产物 → 描述追加交接 → `rerun`」，**不要**在干净的 base 工作区里翻找「半成品」。判据仍然只有三个：`.gc_meta.json` 有 `completed_at`、`output/` 为空、**0 提交/0 推送/0 注释**。
+- **【`update` 自带启动 ⇒ 一律 `--no-start` 再显式 `rerun`】** `multica issue update`（以及 assign/status）在 agent 名下会**起 run**；与紧跟的 `rerun` 叠加就是两个 run 抢一个 issue。本轮 `update --no-start` + `rerun` 后 daemon 恰好 `3/3`，可作对照读数。
+- **【「硬前置」与「stage 波次」是两件事，派发只看前者】** `docs/57` §4.1 的「硬前置」列是**真依赖**，§4.3 的 stage 是**并发预算分组**。§59.7 把 `1671`/`1672` 挂到「`LUM-1670` 合入后」是拿波次当依赖 ⇒ 白等一个合并周期。**正确读法**：`就绪 = 硬前置全满足 ∧ 与每个在飞片文件交集为空 ∧ 无同目录互斥`；槽位不够只影响**排序**，不影响**就绪判定**。
+- **【契约的单一实现点要问「谁能 import 它」，而不是「它在哪个 crate」】** `pub(crate)` 是**不可共享**的：只要消费者跨 crate（`mc-skill` / `mc-daemon`），单一实现点就必须落在**它们都能依赖的 crate**里。上游用**共享包** `pkg/skillbundle` 同时喂服务端与 daemon，本地却把它塞进 `mc-http::routes::daemon::skills` 的 `pub(crate)` ⇒ 三处 DoD 互斥（60.5③）。**派发前用「消费者 × 可见性 × 依赖边」三列复算一次**，比事后仲裁便宜。
