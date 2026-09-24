@@ -78,7 +78,7 @@ use mc_repos::RepoError;
 
 use super::install::{
     begin, commit, decode, package_repo, require_plugins_v1, require_supported, timestamp,
-    workspace_admin, workspace_member, PluginError, PluginResult,
+    workspace_admin, PluginError, PluginResult,
 };
 use crate::routes::auth_user::AuthUser;
 use crate::state::AppState;
@@ -178,9 +178,11 @@ async fn publish_package(
     request: Request,
 ) -> Response {
     let user_id = auth.id();
-    // 成员门在**读体之前**（上游 `MaxBytesReader` 之前就已 gate 过）：
-    // 开关关着时应当回 403，而不是先把 2MiB 的包收进来再拒。
-    let workspace_id = match member_scope(&state, &workspace, user_id).await {
+    // 发布在**上游的 admin 组**里（`cmd/server/router.go` 那四条 `plugins/packages*` 全在
+    // `RequireWorkspaceRoleFromURL(owner, admin)` 之下），所以这里的门是 admin；handler 自己
+    // 那句 `workspaceMember` 被它包含（非成员仍回 404，不是 403）。
+    // 门在**读体之前**：开关关着/权限不够时应当回 403，而不是先把 2MiB 的包收进来再拒。
+    let workspace_id = match admin_scope(&state, &workspace, user_id).await {
         Ok(workspace_id) => workspace_id,
         Err(err) => return err.into_response(),
     };
@@ -230,7 +232,8 @@ async fn publish_local_package(
     body: Bytes,
 ) -> Response {
     let user_id = auth.id();
-    let workspace_id = match member_scope(&state, &workspace, user_id).await {
+    // 同 `publish_package`：admin 组（`workspaceMember` 被包含）。
+    let workspace_id = match admin_scope(&state, &workspace, user_id).await {
         Ok(workspace_id) => workspace_id,
         Err(err) => return err.into_response(),
     };
@@ -594,12 +597,7 @@ fn clean_path(path: &FsPath) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 /// `requirePluginsV1` + `workspaceMember`（发布面的两道门；上游顺序也是门在前、收体在后）。
-async fn member_scope(state: &AppState, raw_workspace: &str, user_id: Id) -> PluginResult<Id> {
-    require_plugins_v1(state)?;
-    workspace_member(state, raw_workspace, user_id).await
-}
-
-/// `requirePluginsV1` + `workspaceAdmin`（列表与删除的路由在 admin 组里）。
+/// `requirePluginsV1` + `workspaceAdmin`（`plugins/packages*` 四条路由都在 admin 组里）。
 async fn admin_scope(state: &AppState, raw_workspace: &str, user_id: Id) -> PluginResult<Id> {
     require_plugins_v1(state)?;
     workspace_admin(state, raw_workspace, user_id).await
