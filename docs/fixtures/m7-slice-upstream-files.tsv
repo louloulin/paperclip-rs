@@ -1,0 +1,175 @@
+# m7-slice-upstream-files.tsv — M7 切片表的**上游文件 → 片**逐文件分配（docs/60-M7-PLAN.md §4.1 的可复算底稿）。
+#
+# 用途：§4.1「上游行数」一栏与「每片 ≤3,500 行」这条约束，必须能被任何人在只读副本上复算，
+#   而不必相信文档里的求和。本表把 144 个非测试 .go 文件（`internal/integrations/{channel,slack,telegram,dingtalk,lark,wecom}`）
+#   与 5 个 handler 文件**恰好分给 20 个代码片**（无重复、无遗漏）。
+#
+# 复算（UP = f41fae6b08fb 只读副本的 server/ 目录）：
+#
+#   awk -F'\t' '{s[$1]+=$3} END{for(k in s) printf "%-6s %6d\n", k, s[k]}' docs/fixtures/m7-slice-upstream-files.tsv | sort
+#   awk -F'\t' '{s+=$3} END{print "合计", s}' docs/fixtures/m7-slice-upstream-files.tsv      # ⇒ 合计 48366
+#   # 逐文件行数核对（应无输出 = 表内行数与真实行数一致）：
+#   while IFS=$'\t' read -r slice path loc; do
+#     case "$path" in \#*) continue;; esac
+#     real=$(wc -l < "$UP/$path")
+#     [ "$real" = "$loc" ] || echo "MISMATCH $path $loc != $real"
+#   done < docs/fixtures/m7-slice-upstream-files.tsv
+#
+# 字段：片<TAB>上游路径（相对 `server/`）<TAB>非测试行数。
+# 说明：
+#   · 只含 M7 面。`internal/integrations/` 的另外 9 个非测试 .go 文件（composio 3 / ghsnapshot 3 / vcs 3）
+#     归 W9 / W8 / W8，**不在本表**（docs/60 §1.2 末段）。
+#   · `internal/integrations/**` 一律非测试口径；`internal/handler/*.go` 是 24 条路由的 handler 所在文件，
+#     整文件行数记到该渠道的「安装与绑定面」片（M7-4/5/9/14/15）。
+#   · 本表是**输入**（计划期的分配），不是本地产出清单；切片实际落地时若拆得更细，
+#     只更新 docs/60 §4.1 与本表，**不改**上游基线。
+SLICE	UPSTREAM_PATH	LOC
+M7-1	internal/integrations/channel/channel.go	109
+M7-1	internal/integrations/channel/message.go	222
+M7-1	internal/integrations/channel/capability.go	94
+M7-1	internal/integrations/channel/registry.go	77
+M7-1	internal/integrations/channel/history.go	92
+M7-1	internal/integrations/channel/quoted_message.go	33
+M7-1	internal/integrations/channel/handler.go	30
+M7-1	internal/integrations/channel/issue_link.go	21
+M7-1	internal/integrations/channel/member_text.go	10
+M7-1	internal/integrations/channel/doc.go	45
+M7-1	internal/integrations/channel/engine/router.go	1124
+M7-1	internal/integrations/channel/engine/supervisor.go	996
+M7-1	internal/integrations/channel/engine/resolvers.go	433
+M7-1	internal/integrations/channel/engine/doc.go	31
+M7-2	internal/integrations/channel/engine/session.go	1316
+M7-2	internal/integrations/channel/engine/batcher.go	169
+M7-2	internal/integrations/channel/engine/redis_lease_store.go	167
+M7-2	internal/integrations/channel/engine/issue_command.go	150
+M7-2	internal/integrations/channel/engine/fresh_command.go	99
+M7-2	internal/integrations/channel/engine/title.go	63
+M7-2	internal/integrations/channel/engine/provenance.go	34
+M7-3	internal/integrations/slack/slack_channel.go	268
+M7-3	internal/integrations/slack/inbound.go	241
+M7-3	internal/integrations/slack/resolvers.go	429
+M7-3	internal/integrations/slack/media_ingest.go	445
+M7-3	internal/integrations/slack/config.go	144
+M7-3	internal/integrations/slack/mrkdwn.go	134
+M7-3	internal/integrations/slack/channel.go	125
+M7-4	internal/integrations/slack/outbound.go	244
+M7-4	internal/integrations/slack/replier.go	256
+M7-4	internal/integrations/slack/typing_indicator.go	298
+M7-4	internal/integrations/slack/history.go	737
+M7-4	internal/integrations/slack/slash_command.go	368
+M7-4	internal/integrations/slack/slash_control.go	191
+M7-4	internal/integrations/slack/install.go	255
+M7-4	internal/integrations/slack/byo_install.go	190
+M7-4	internal/integrations/slack/binding.go	165
+M7-4	internal/handler/slack.go	282
+M7-5	internal/integrations/telegram/telegram_channel.go	253
+M7-5	internal/integrations/telegram/inbound.go	306
+M7-5	internal/integrations/telegram/resolvers.go	342
+M7-5	internal/integrations/telegram/replier.go	267
+M7-5	internal/integrations/telegram/install.go	303
+M7-5	internal/integrations/telegram/binding.go	171
+M7-5	internal/integrations/telegram/config.go	155
+M7-5	internal/handler/telegram.go	265
+M7-6	internal/integrations/telegram/outbound.go	1633
+M7-6	internal/integrations/telegram/delivery.go	457
+M7-6	internal/integrations/telegram/sender.go	194
+M7-6	internal/integrations/telegram/api.go	304
+M7-6	internal/integrations/telegram/markdown.go	119
+M7-7	internal/integrations/dingtalk/inbound.go	827
+M7-7	internal/integrations/dingtalk/ws_connector.go	226
+M7-7	internal/integrations/dingtalk/ws_endpoint.go	105
+M7-7	internal/integrations/dingtalk/ws_frame.go	67
+M7-7	internal/integrations/dingtalk/inbound_card.go	108
+M7-7	internal/integrations/dingtalk/resolvers.go	533
+M7-7	internal/integrations/dingtalk/dispatch.go	202
+M7-7	internal/integrations/dingtalk/emotion.go	67
+M7-8	internal/integrations/dingtalk/outbound.go	313
+M7-8	internal/integrations/dingtalk/outbound_send.go	238
+M7-8	internal/integrations/dingtalk/outbound_quote.go	51
+M7-8	internal/integrations/dingtalk/replier.go	342
+M7-8	internal/integrations/dingtalk/media.go	385
+M7-8	internal/integrations/dingtalk/ack.go	220
+M7-8	internal/integrations/dingtalk/ack_batch.go	160
+M7-8	internal/integrations/dingtalk/reply_source.go	127
+M7-8	internal/integrations/dingtalk/markdown.go	286
+M7-8	internal/integrations/dingtalk/dingtalk_channel.go	364
+M7-9	internal/integrations/dingtalk/install.go	285
+M7-9	internal/integrations/dingtalk/byo_install.go	100
+M7-9	internal/integrations/dingtalk/token.go	201
+M7-9	internal/integrations/dingtalk/client.go	125
+M7-9	internal/integrations/dingtalk/config.go	150
+M7-9	internal/integrations/dingtalk/binding.go	178
+M7-9	internal/integrations/dingtalk/bot_identity.go	250
+M7-9	internal/handler/dingtalk.go	782
+M7-10	internal/integrations/lark/http_client.go	1370
+M7-10	internal/integrations/lark/client.go	461
+M7-10	internal/integrations/lark/types.go	129
+M7-10	internal/integrations/lark/params.go	137
+M7-10	internal/integrations/lark/ids.go	12
+M7-10	internal/integrations/lark/tx.go	15
+M7-10	internal/integrations/lark/doc.go	62
+M7-10	internal/integrations/lark/chat.go	29
+M7-11	internal/integrations/lark/ws_connector.go	582
+M7-11	internal/integrations/lark/ws_frame.go	387
+M7-11	internal/integrations/lark/ws_frame_decoder.go	350
+M7-11	internal/integrations/lark/ws_endpoint.go	202
+M7-11	internal/integrations/lark/ws_chunk_assembler.go	170
+M7-11	internal/integrations/lark/noop_connector.go	64
+M7-11	internal/integrations/lark/connector.go	38
+M7-12	internal/integrations/lark/feishu_channel.go	328
+M7-12	internal/integrations/lark/inbound_enricher.go	737
+M7-12	internal/integrations/lark/feishu_resolvers.go	338
+M7-12	internal/integrations/lark/media_ingest.go	501
+M7-12	internal/integrations/lark/content_flatten.go	172
+M7-12	internal/integrations/lark/mention.go	64
+M7-12	internal/integrations/lark/markdown_detect.go	61
+M7-12	internal/integrations/lark/feishu_types.go	115
+M7-13	internal/integrations/lark/outbound.go	745
+M7-13	internal/integrations/lark/outcome_replier.go	446
+M7-13	internal/integrations/lark/typing_indicator.go	282
+M7-13	internal/integrations/lark/channel_store.go	429
+M7-13	internal/integrations/lark/store.go	306
+M7-13	internal/integrations/lark/audit.go	45
+M7-14	internal/integrations/lark/installation.go	159
+M7-14	internal/integrations/lark/registration.go	501
+M7-14	internal/integrations/lark/registration_service.go	858
+M7-14	internal/integrations/lark/install_session_store.go	170
+M7-14	internal/integrations/lark/install_session_redis_store.go	187
+M7-14	internal/integrations/lark/binding_token.go	304
+M7-14	internal/integrations/lark/union_id_backfill.go	131
+M7-14	internal/integrations/lark/region_backfill.go	70
+M7-14	internal/handler/lark.go	438
+M7-15	internal/integrations/wecom/credentials.go	55
+M7-15	internal/integrations/wecom/credential_probe.go	205
+M7-15	internal/integrations/wecom/installation.go	545
+M7-15	internal/integrations/wecom/store.go	79
+M7-15	internal/integrations/wecom/binding.go	265
+M7-15	internal/integrations/wecom/types.go	168
+M7-15	internal/integrations/wecom/strings.go	170
+M7-15	internal/integrations/wecom/language.go	95
+M7-15	internal/integrations/wecom/metrics.go	188
+M7-15	internal/handler/wecom_web.go	401
+M7-16	internal/integrations/wecom/ws_frame.go	1187
+M7-16	internal/integrations/wecom/ws_sender.go	1128
+M7-16	internal/integrations/wecom/stream_store.go	1122
+M7-17	internal/integrations/wecom/relay_outbound.go	1578
+M7-17	internal/integrations/wecom/outbound.go	887
+M7-17	internal/integrations/wecom/outbound_outcome.go	439
+M7-17	internal/integrations/wecom/replier.go	298
+M7-18	internal/integrations/wecom/outbound_media.go	676
+M7-18	internal/integrations/wecom/media_ingest.go	480
+M7-18	internal/integrations/wecom/media_download.go	459
+M7-18	internal/integrations/wecom/media_upload.go	420
+M7-18	internal/integrations/wecom/media_guard.go	306
+M7-18	internal/integrations/wecom/media_stream.go	171
+M7-18	internal/integrations/wecom/media_crypt.go	102
+M7-19	internal/integrations/wecom/wecom_channel.go	672
+M7-19	internal/integrations/wecom/wecom_resolvers.go	340
+M7-19	internal/integrations/wecom/inbox_message.go	232
+M7-19	internal/integrations/wecom/markdown.go	456
+M7-19	internal/integrations/wecom/seal_outcome.go	85
+M7-20	internal/integrations/wecom/typing_indicator.go	978
+M7-20	internal/integrations/wecom/rate_limit.go	482
+M7-20	internal/integrations/wecom/senders_registry.go	204
+M7-20	internal/integrations/wecom/dedupe_redis.go	200
+M7-20	internal/integrations/wecom/trace.go	350

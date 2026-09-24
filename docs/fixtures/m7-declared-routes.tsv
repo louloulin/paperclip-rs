@@ -1,0 +1,73 @@
+# m7-declared-routes.tsv — M7（W7 渠道：slack / lark / dingtalk / wecom / telegram 的安装与绑定面）的
+#   **声明路由**，24 条。
+#
+# 用途：M7 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M7 各切片**必须两形态一起注册**的键（实测结论见 docs/60-M7-PLAN.md §1.4）。
+#   与 docs/fixtures/{m3-6,m4,m5,m6}-declared-routes.tsv 同性质：这是**输入**，不是本地已注册路由的快照。
+#   ⚠️ 与 M4/M5/M6 三张表**不同**：本表预测模式实测 **exit 0**（`0 defect(s) from findings`），
+#   不是 `FAIL: N`。因为 M7 的 24 键上游全是 plain 注册，**一条双形态都不欠**（见下）。
+#   这不是「无需判红」，而是「本波欠账为 0」——该结果同样要实测，不许按他波的 `FAIL: N` 反向推断。
+#   本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 owner=M7 行（method + path + router.go 行号，
+#   24/24 实测逐条相等）。上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M7"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空（下表按「workspace 级安装面 → user 级绑定兑换 → agent 级群绑定」
+#     分组，行序不同）：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M7"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m7-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   **本波 24 键上游全部是 plain 注册（0 个带尾斜杠）** ⇒ 预测模式实测 `FAIL: 0`，
+#   即 M7 **没有**必须两形态一起注册的键（与 M4 15 / M5 7 / M6 5 形成对照，见 docs/60 §1.4）。
+#   原因：上游把渠道面挂在既有的 `/api/workspaces/{id}` 子路由**内部**用**完整子路径**注册
+#   （`r.Get("/lark/installations", …)` 这种写法在 chi 里是 plain，不是 `Route(...)+Get("/")` 的 Mount）,
+#   5 个 `binding/redeem` 与 1 个 agent 群绑定同理。**该结论必须由本片自己实测**（不许抄他波数字）。
+#
+# 切片归属（每行恰好一片；本表保持 2 列，归属见 docs/60-M7-PLAN.md §4.2 逐片要点）：
+#   M7-5 slack 安装与绑定面 3 · M7-6 telegram 安装与绑定面 3 · M7-9 dingtalk 面 6（含 agent 级 1）·
+#   M7-14 lark 安装与绑定面 4 · M7-15 wecom 安装与绑定面 3 · M7-4 绑定兑换面 5。
+METHOD	PATH
+# —— workspace 级安装 / 列出 / 撤销（18）——
+# lark 4（router.go:1783-1791；`install/begin` + `install/{sessionId}/status` 是扫码设备流）
+GET	/api/workspaces/{id}/lark/installations
+DELETE	/api/workspaces/{id}/lark/installations/{installationId}
+POST	/api/workspaces/{id}/lark/install/begin
+GET	/api/workspaces/{id}/lark/install/{sessionId}/status
+# slack 3（router.go:1801-1807；BYO 装法，无 OAuth 回调路由）
+GET	/api/workspaces/{id}/slack/installations
+DELETE	/api/workspaces/{id}/slack/installations/{installationId}
+POST	/api/workspaces/{id}/slack/install/byo
+# wecom 3（router.go:1802-1809；同样是 BYO）
+GET	/api/workspaces/{id}/wecom/installations
+DELETE	/api/workspaces/{id}/wecom/installations/{installationId}
+POST	/api/workspaces/{id}/wecom/install/byo
+# dingtalk 5（router.go:1814-1818；BYO + 群路由可见/遗忘）
+GET	/api/workspaces/{id}/dingtalk/installations
+GET	/api/workspaces/{id}/dingtalk/groups
+DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}/groups/{conversationId}
+DELETE	/api/workspaces/{id}/dingtalk/installations/{installationId}
+POST	/api/workspaces/{id}/dingtalk/install/byo
+# telegram 3（router.go:1825-1830；BYO bot token）
+GET	/api/workspaces/{id}/telegram/installations
+DELETE	/api/workspaces/{id}/telegram/installations/{installationId}
+POST	/api/workspaces/{id}/telegram/install
+# —— user 级绑定令牌兑换（5，**无 workspace 前缀**）——
+# router.go:1841/1847/1850/1854/1858。会话身份 + 令牌里的外部 user id 合成
+# `*_user_binding` 行，所以整体挂在会话面而不是 workspace 子路由里（上游注释逐条写明理由）。
+POST	/api/lark/binding/redeem
+POST	/api/slack/binding/redeem
+POST	/api/dingtalk/binding/redeem
+POST	/api/wecom/binding/redeem
+POST	/api/telegram/binding/redeem
+# —— agent 级 dingtalk 群（1）——
+# router.go:2192，挂在既有 `/api/agents/{id}` 子路由内部（与 M6-4 的 `/skills*` 同一手法）。
+GET	/api/agents/{id}/dingtalk/groups
