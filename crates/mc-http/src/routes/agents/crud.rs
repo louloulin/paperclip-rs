@@ -30,11 +30,12 @@ use mc_repos::agent::{
     AgentInvocationTargetRow, AgentRow, AgentUpdatePatch, NewAgent, NullableAgentField,
     DEFAULT_MAX_CONCURRENT_TASKS, VISIBILITY_PRIVATE,
 };
+use mc_repos::skill::binding::SkillBindingRepo;
 
 use super::dto::{
     derive_legacy_visibility, normalise_composio_allowlist, normalise_conversation_starters,
-    parse_permission_input, preserve_masked_gateway_token, AgentDto, AgentTaskDto, CancelTasksDto,
-    CreateAgentRequest, ResolvedPermission, UpdateAgentRequest,
+    parse_permission_input, preserve_masked_gateway_token, AgentDto, AgentSkillSummaryDto,
+    AgentTaskDto, CancelTasksDto, CreateAgentRequest, ResolvedPermission, UpdateAgentRequest,
 };
 use super::{bad_request, parse_uuid, repo_err, AgentScope};
 use crate::error::ApiResult;
@@ -253,6 +254,26 @@ fn default_and_validate_max_concurrent_tasks(
 // GET /api/agents/{id}/
 // ---------------------------------------------------------------------------
 
+/// 上游 `attachAgentSkills`（GH #3459）：四个响应位各 reload 一次 `agent_skill` 绑定。
+///
+/// 上游这四处失败都回 500 `failed to load agent skills`（`Update` 额外先 `log.Warn`）——
+/// 这里不降级成空列表：静默回 `[]` 会让调用方以为绑定被清了。
+async fn attach_skills(
+    state: &AppState,
+    agent_id: mc_core::Id,
+    dto: AgentDto,
+) -> ApiResult<AgentDto> {
+    let rows = SkillBindingRepo::new(state.db.clone())
+        .list_agent_skill_summaries(agent_id)
+        .await
+        .map_err(|e| repo_err(e, "agent skills"))?;
+    Ok(dto.with_skills(
+        rows.iter()
+            .map(AgentSkillSummaryDto::from_binding_row)
+            .collect(),
+    ))
+}
+
 /// `GET /api/agents/:id/`（上游 `GetAgent`，私有 agent 对无权限成员 403）。
 pub(super) async fn get_agent(
     State(state): State<Arc<AppState>>,
@@ -265,7 +286,13 @@ pub(super) async fn get_agent(
     let agent = scope.load_agent(&id).await?;
     let targets = scope.targets_of(agent.id()).await?;
     scope.require_can_access_private(&agent, &targets)?;
-    Ok(Json(AgentDto::from_row(&agent, &scope, &targets)))
+    let dto = attach_skills(
+        &state,
+        agent.id(),
+        AgentDto::from_row(&agent, &scope, &targets),
+    )
+    .await?;
+    Ok(Json(dto))
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +360,13 @@ pub(super) async fn update_agent(
     }
 
     let targets = scope.targets_of(updated.id()).await?;
-    Ok(Json(AgentDto::from_row(&updated, &scope, &targets)))
+    let dto = attach_skills(
+        &state,
+        updated.id(),
+        AgentDto::from_row(&updated, &scope, &targets),
+    )
+    .await?;
+    Ok(Json(dto))
 }
 
 /// 普通字段（含 `mcp_config` 的 null 语义）。
@@ -604,7 +637,13 @@ pub(super) async fn archive_agent(
         tracing::warn!(error = %err, "cancel agent tasks on archive failed");
     }
     let targets = scope.targets_of(archived.id()).await?;
-    Ok(Json(AgentDto::from_row(&archived, &scope, &targets)))
+    let dto = attach_skills(
+        &state,
+        archived.id(),
+        AgentDto::from_row(&archived, &scope, &targets),
+    )
+    .await?;
+    Ok(Json(dto))
 }
 
 /// `POST /api/agents/:id/restore`（上游 `RestoreAgent`）。
@@ -630,7 +669,13 @@ pub(super) async fn restore_agent(
         .await
         .map_err(|e| repo_err(e, "agent"))?;
     let targets = scope.targets_of(restored.id()).await?;
-    Ok(Json(AgentDto::from_row(&restored, &scope, &targets)))
+    let dto = attach_skills(
+        &state,
+        restored.id(),
+        AgentDto::from_row(&restored, &scope, &targets),
+    )
+    .await?;
+    Ok(Json(dto))
 }
 
 /// `POST /api/agents/:id/cancel-tasks`（上游 `CancelAgentTasks`）。

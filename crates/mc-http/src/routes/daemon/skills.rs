@@ -1,45 +1,58 @@
-//! Skill bundle 口径（M3-7 / LUM-1438）。
+//! Skill bundle 口径（M3-7 / LUM-1438；**M6-4 扩到三源**）。
 //!
 //! 两个面共用一个口径：
 //!
 //! 1. `POST /api/daemon/runtimes/:runtimeId/tasks/:taskId/skill-bundles/resolve` ——
 //!    把 claim 里给出的 skill ref 解析成完整 bundle（upstream
-//!    `ResolveTaskSkillBundles` / `pkg/skillbundle`）。
+//!    `ResolveTaskSkillBundles` / `service.LoadRequestedAgentSkillBundles` / `pkg/skillbundle`）。
 //! 2. `POST /api/daemon/runtimes/:runtimeId/local-skills/import/:requestId/result` ——
 //!    本地 skill 导入结果落库（upstream `ReportLocalSkillImportResult`）。
 //!
-//! ## hash 算法逐字移植
+//! ## hash 算法 —— **单一实现点**，本模块不再自带一份
 //!
-//! upstream `pkg/skillbundle.BuildManifest` 对 `"v1"` / `source` / `id` / `name` /
-//! `description` / `content` 以及每个（按 `path` 升序）文件的 `path` / `sha256:<hex>` /
-//! `content` 各调一次 `writeHashPart`（`"%d:%s\n"`，长度是**字节**数）。这里的
-//! `write_hash_part` 与 `hex(sha256)` 的 digest 前缀都照抄，否则 daemon 侧缓存校验
-//! （`daemon validates the returned bundle before writing it to cache`）会全部失配。
+//! 上游 `pkg/skillbundle.BuildManifest` = 分节 sha256。本模块把三源都投影成
+//! [`mc_core::skill::ManifestInput`] 后调 [`mc_core::skill::build_manifest`]
+//! （唯一实现点，`docs/57` §9.1 的一次性豁免），**不再**保一份私有副本：
+//! 两份「同结果的实现」早晚会漂，而 daemon 侧缓存校验一旦失配就是
+//! 「所有 skill 都重发」或「错内容被当成完整缓存」。
 //!
-//! ## 只实现 `workspace` 源
+//! ## 三个源
 //!
-//! upstream 有 `workspace` / `builtin` / `plugin` 三个源；本仓未建 builtin / plugin
-//! skill 子系统，因此本模块只产出 `workspace` 源。缺失的 ref 一律 `404 skill bundle
-//! not found`（与上游同一行为，见 `docs/32` 偏离表的插件面）。
+//! | 源 | 台账 | 本模块的入口 |
+//! | --- | --- | --- |
+//! | `workspace` | `skill`（`plugin_installation_id IS NULL`） | [`build_agent_bundle`] |
+//! | `plugin` | 同一张表（`plugin_installation_id IS NOT NULL`） | [`build_agent_bundle`] |
+//! | `builtin` | `mc-skill` 的编译期内联资产（不在库里） | [`build_builtin_bundle`] |
+//!
+//! ⚠️ 三源的**授权谓词都是 `agent_skill`**（`workspace` / `plugin` 走
+//! `ListAgentSkillsByIDs`；`builtin` 不走库，因为 claim 已经决定了该 agent 收到哪些）。
+//! 上游 `LoadRequestedAgentSkillBundles` 的 `switch` **没有** `plugin` 分支
+//! ⇒ 上游的插件 ref 在此之前就 404，pinned-hash 的 409 不可达；
+//! M6-4 让 plugin 可解析后，那道 409 才真正可达（见 `claims.rs` 的 ref 循环）。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
-use mc_repos::daemon::SkillBundleRow;
+use mc_core::skill::{ManifestFile, ManifestInput, SkillSource};
+use mc_repos::skill::binding::AgentSkillBundleRow;
 
-/// bundle 源：workspace 内 skill —— **本切片唯一实现的源**。
-///
-/// 上游另有 `builtin`（内置 skill 台账）与 `plugin`（要额外校验 pinned hash）两个源，
-/// 本地都没有台账面：请求里出现它们时按「查不到」处理（`not found`），偏离见 `docs/32`。
+/// bundle 源常量（上游 `skillbundle.Source*`，与 [`SkillSource::as_str`] 同源）。
 pub(crate) const SOURCE_WORKSPACE: &str = "workspace";
+/// 平台内置资产（编译期 embedding，不在库里）。
+pub(crate) const SOURCE_BUILTIN: &str = "builtin";
+/// 插件安装贡献（`skill.plugin_installation_id IS NOT NULL`）。
+pub(crate) const SOURCE_PLUGIN: &str = "plugin";
 
-/// upstream `skillbundle.writeHashPart`：`fmt.Fprintf(h, "%d:%s\n", len(value), value)`。
-fn write_hash_part(hasher: &mut Sha256, value: &str) {
-    hasher.update(format!("{}:{}\n", value.len(), value).as_bytes());
+/// wire 源字符串 → [`SkillSource`]（三个常量以外的源**没有**服务端生产者）。
+#[must_use]
+pub(crate) fn parse_source(raw: &str) -> Option<SkillSource> {
+    match raw {
+        SOURCE_WORKSPACE => Some(SkillSource::Workspace),
+        SOURCE_BUILTIN => Some(SkillSource::Builtin),
+        SOURCE_PLUGIN => Some(SkillSource::Plugin),
+        _ => None,
+    }
 }
-
-/// 单个支持文件的 wire 形状（upstream `AgentSkillFileData`）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct SkillFileData {
     /// `path`。
@@ -86,56 +99,95 @@ fn is_zero(value: &i64) -> bool {
     *value == 0
 }
 
-/// `usize` 字节数 → `i64`（上游 `size_bytes` / `sizeBytes` 都是 int64）。
+/// 把一行 `AgentSkillBundleRow` 投影成完整 bundle（`workspace` 或 `plugin` 源）。
 ///
-/// 只有恶意构造的 PB 级内容才会溢出 `i64`；饱和到 `i64::MAX` 比回绕成负数安全
-/// （下游用它算配额）。
-fn as_i64(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
+/// 源由 `plugin_installation_id` 决定（上游没有源列，而是由 `service` 侧决定；
+/// 本仓把它放在行上，`claims.rs` 也用它作 map key 的一半）。
+#[must_use]
+pub(crate) fn build_agent_bundle(row: &AgentSkillBundleRow) -> SkillBundleData {
+    let source = if row.is_plugin() {
+        SkillSource::Plugin
+    } else {
+        SkillSource::Workspace
+    };
+    let files: Vec<ManifestFile<'_>> = row
+        .files
+        .iter()
+        .map(|(path, content)| ManifestFile { path, content })
+        .collect();
+    project(&Projection {
+        id: &row.skill.id.to_string(),
+        source,
+        name: &row.skill.name,
+        description: &row.skill.description,
+        content: &row.skill.content,
+        files: &files,
+    })
 }
 
-/// 把一行 `SkillBundleRow` 投影成完整 bundle（含 manifest hash）。
+/// 按 `"builtin:<name>"` 投影出内置 bundle；未知 id → `None`（调用方报 404）。
 ///
-/// 文件按 `path` 升序参与 hash，但**输出顺序也按 `path` 升序** —— upstream 对
-/// `skill.Files` 先 `sort.Slice` 再两处使用（hash + `refs`），所以两处顺序一致。
+/// **全量**查找而不是 agent 作用域内查找：daemon 只能请求 claim 交给它的 ref，
+/// 作用域在 claim 侧已经决定过（上游 `AllBuiltinSkills` 的注释）。
 #[must_use]
-pub(crate) fn build_bundle(row: &SkillBundleRow) -> SkillBundleData {
-    let mut files: Vec<(&String, &String)> = row.files.iter().map(|(p, c)| (p, c)).collect();
-    files.sort_by(|a, b| a.0.cmp(b.0));
+pub(crate) fn build_builtin_bundle(id: &str) -> Option<SkillBundleData> {
+    let skill = mc_skill::builtin::builtin_skill_by_id(id)?;
+    let files = skill.manifest_files();
+    Some(project(&Projection {
+        id: &skill.id(),
+        source: SkillSource::Builtin,
+        name: skill.name,
+        // 上游 `AgentSkillData`（内置物）没有 description 字段。
+        description: "",
+        content: skill.content,
+        files: &files,
+    }))
+}
 
-    let mut hasher = Sha256::new();
-    write_hash_part(&mut hasher, "v1");
-    write_hash_part(&mut hasher, SOURCE_WORKSPACE);
-    write_hash_part(&mut hasher, &row.skill.id.to_string());
-    write_hash_part(&mut hasher, &row.skill.name);
-    write_hash_part(&mut hasher, &row.skill.description);
-    write_hash_part(&mut hasher, &row.skill.content);
+/// 三源共用的投影入参（都是借用：调用方手里的行/常量不需要再克隆一遍）。
+struct Projection<'a> {
+    id: &'a str,
+    source: SkillSource,
+    name: &'a str,
+    description: &'a str,
+    content: &'a str,
+    files: &'a [ManifestFile<'a>],
+}
 
-    let mut size = as_i64(row.skill.content.len());
-    let mut out_files = Vec::with_capacity(files.len());
-    for (path, content) in files {
-        let digest = format!("sha256:{}", hex::encode(Sha256::digest(content.as_bytes())));
-        write_hash_part(&mut hasher, path);
-        write_hash_part(&mut hasher, &digest);
-        write_hash_part(&mut hasher, content);
-        size += as_i64(content.len());
-        out_files.push(SkillFileData {
-            path: path.clone(),
-            content: content.clone(),
-            sha256: digest,
-            size_bytes: as_i64(content.len()),
-        });
-    }
-
+/// 投影成 wire 形态的 bundle（hash / size / 每文件 sha256 都来自 manifest）。
+///
+/// 文件先按 `path` 升序排（`build_manifest` 内部也这么排），然后与
+/// `manifest.files` **按位置**对齐 —— 两边的顺序因此必然一致，不必再查一次表。
+fn project(input: &Projection<'_>) -> SkillBundleData {
+    let mut ordered: Vec<ManifestFile<'_>> = input.files.to_vec();
+    ordered.sort_by(|a, b| a.path.cmp(b.path));
+    let manifest = mc_core::skill::build_manifest(&ManifestInput {
+        id: input.id,
+        source: input.source,
+        name: input.name,
+        description: input.description,
+        content: input.content,
+        files: &ordered,
+    });
+    let files = ordered
+        .iter()
+        .zip(manifest.files.iter())
+        .map(|(file, reference)| SkillFileData {
+            path: reference.path.clone(),
+            content: (*file.content).to_string(),
+            sha256: reference.sha256.clone(),
+            size_bytes: reference.size_bytes,
+        })
+        .collect();
     SkillBundleData {
-        id: row.skill.id.to_string(),
-        source: SOURCE_WORKSPACE.to_string(),
-        name: row.skill.name.clone(),
-        description: row.skill.description.clone(),
-        hash: format!("sha256:{}", hex::encode(hasher.finalize())),
-        size_bytes: size,
-        content: row.skill.content.clone(),
-        files: out_files,
+        id: input.id.to_string(),
+        source: input.source.as_str().to_string(),
+        name: input.name.to_string(),
+        description: input.description.to_string(),
+        hash: manifest.hash,
+        size_bytes: manifest.size_bytes,
+        content: input.content.to_string(),
+        files,
     }
 }
 
@@ -174,12 +226,13 @@ pub(crate) fn validate_file_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mc_repos::skill::read::SkillRow;
+    use sha2::{Digest, Sha256};
     use uuid::Uuid;
 
-    fn row(files: Vec<(&str, &str)>) -> SkillBundleRow {
+    fn row(files: Vec<(&str, &str)>) -> AgentSkillBundleRow {
         use chrono::Utc;
-        use mc_repos::daemon::SkillRow;
-        SkillBundleRow {
+        AgentSkillBundleRow {
             skill: SkillRow {
                 id: Uuid::new_v4(),
                 workspace_id: Uuid::new_v4(),
@@ -188,6 +241,7 @@ mod tests {
                 content: "main".into(),
                 config: Value::Null,
                 created_by: None,
+                plugin_installation_id: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },
@@ -206,8 +260,8 @@ mod tests {
         let one = row(vec![("b.md", "b"), ("a.md", "a")]);
         let mut reversed = one.clone();
         reversed.files.reverse();
-        let a = build_bundle(&one);
-        let b = build_bundle(&reversed);
+        let a = build_agent_bundle(&one);
+        let b = build_agent_bundle(&reversed);
         assert_eq!(a.hash, b.hash);
         assert_eq!(a.files[0].path, "a.md");
         assert_eq!(b.files[0].path, "a.md");
@@ -220,22 +274,87 @@ mod tests {
         let mut other = one.clone();
         one.skill.content = "main".into();
         other.skill.content = "changed".into();
-        assert_ne!(build_bundle(&one).hash, build_bundle(&other).hash);
+        assert_ne!(
+            build_agent_bundle(&one).hash,
+            build_agent_bundle(&other).hash
+        );
     }
 
-    /// 手算一遍 `writeHashPart` 的字节口径（含多字节 UTF-8 是**字节**数而非字符数）。
+    /// hash 口径只有一处实现：本模块（M6-4 起）调的就是 `mc_core` 里那一个 `fn`。
+    ///
+    /// 这条测试的用意不是「结果一样」，而是**把它钉死在同一个符号上**：如果谁在
+    /// `daemon/skills.rs` 里又抄一份 `write_hash_part`，这里手算的字节口径会先红。
     #[test]
-    fn hash_part_uses_byte_length() {
+    fn hash_part_is_the_single_mc_core_implementation() {
         let mut hasher = Sha256::new();
-        write_hash_part(&mut hasher, "部署");
+        mc_core::skill::write_hash_part(&mut hasher, "部署");
         // "部署" = 6 字节 ⇒ 头部必须是 "6:" 而不是 "2:"。
         let expected = Sha256::digest("6:部署\n".as_bytes());
         assert_eq!(hasher.finalize().to_vec(), expected.to_vec());
     }
 
+    /// workspace 与 plugin 只差 `source` 一节（同一张表、同一条授权谓词）。
+    #[test]
+    fn plugin_source_is_selected_by_installation_id() {
+        let workspace = build_agent_bundle(&row(vec![]));
+        assert_eq!(workspace.source, SOURCE_WORKSPACE);
+
+        let mut installed = row(vec![]);
+        installed.skill.plugin_installation_id = Some(Uuid::new_v4());
+        let plugin = build_agent_bundle(&installed);
+        assert_eq!(plugin.source, SOURCE_PLUGIN);
+        // 源是 hash 的一节 ⇒ 同一行换个源必然换 digest。
+        assert_ne!(workspace.hash, plugin.hash);
+    }
+
+    /// 内置资产：`builtin:<name>` 可解析、未知 id 落 `None`、`file_count`/files 与 manifest 对齐。
+    #[test]
+    fn builtin_bundle_matches_the_embedded_manifest() {
+        let id = mc_skill::builtin::builtin_skill_id(mc_skill::builtin::PLATFORM_SKILL_NAME);
+        let bundle = build_builtin_bundle(&id).expect("platform skill is embedded");
+        assert_eq!(bundle.id, id);
+        assert_eq!(bundle.source, SOURCE_BUILTIN);
+        assert_eq!(bundle.name, mc_skill::builtin::PLATFORM_SKILL_NAME);
+        assert!(bundle.description.is_empty());
+        assert!(bundle.hash.starts_with("sha256:"));
+        // 与 `mc-skill` 侧自算的 manifest 逐字一致（同一实现点的第二个视角）。
+        let skill = mc_skill::builtin::builtin_skill_by_id(&id).unwrap();
+        assert_eq!(bundle.hash, skill.manifest().hash);
+        assert_eq!(bundle.size_bytes, skill.manifest().size_bytes);
+        // `SKILL.md` 是正文（`content`），**不是**支持文件。
+        assert_eq!(bundle.files.len(), skill.files.len());
+        assert!(bundle.files.iter().all(|f| f.path != "SKILL.md"));
+        assert_eq!(
+            bundle
+                .files
+                .iter()
+                .map(|f| f.path.clone())
+                .collect::<Vec<_>>(),
+            skill
+                .file_refs()
+                .iter()
+                .map(|f| f.path.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(!bundle.content.is_empty());
+
+        assert!(build_builtin_bundle("builtin:nope").is_none());
+        assert!(build_builtin_bundle("not-a-builtin").is_none());
+    }
+
+    #[test]
+    fn only_the_three_sources_are_known() {
+        assert_eq!(parse_source("workspace"), Some(SkillSource::Workspace));
+        assert_eq!(parse_source("builtin"), Some(SkillSource::Builtin));
+        assert_eq!(parse_source("plugin"), Some(SkillSource::Plugin));
+        assert_eq!(parse_source(""), None);
+        assert_eq!(parse_source("Workspace"), None);
+        assert_eq!(parse_source("local"), None);
+    }
+
     #[test]
     fn size_bytes_counts_content_and_files() {
-        let bundle = build_bundle(&row(vec![("a.md", "abc")]));
+        let bundle = build_agent_bundle(&row(vec![("a.md", "abc")]));
         assert_eq!(bundle.size_bytes, 4 + 3);
         assert_eq!(bundle.files[0].size_bytes, 3);
         assert_eq!(bundle.files[0].sha256.len(), "sha256:".len() + 64);
