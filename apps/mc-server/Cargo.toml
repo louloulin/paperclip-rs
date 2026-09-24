@@ -40,3 +40,15 @@ mc-secrets = { path = "../../crates/mc-secrets" }
 mc-feature-flags = { path = "../../crates/mc-feature-flags" }
 mc-openapi = { path = "../../crates/mc-openapi" }
 mc-http = { path = "../../crates/mc-http" }
+# M5-9（LUM-1659）的生产接线：调度器内核 + 两个 job 的端口实现就在本 crate 里，
+# 所以这三条边是「让 M5-7/M5-8 的代码真的被链进二进制」的唯一手段（此前 `mc-scheduler`
+# 没有任何反向依赖 ⇒ 内核与 job 只存在于工作区、运行期零效果）。
+mc-repos = { path = "../../crates/mc-repos" }
+mc-autopilot = { path = "../../crates/mc-autopilot" }
+mc-scheduler = { path = "../../crates/mc-scheduler" }
+# 端口实现直接打 SQL（`PgPool` / `PgConnection`）并构造 id / 时间戳：
+# `mc-scheduler` 的 trait 签名里就有 `Uuid` 与 `DateTime<Utc>`，而本 crate 原先只有
+# 纯 HTTP 依赖。三条都是 workspace 依赖，不新增任何外部 crate 版本。
+sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

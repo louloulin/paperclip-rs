@@ -12,7 +12,10 @@
 #   ③ clippy           cargo clippy --workspace --all-targets -- -D warnings
 #   ④ clippy-test-util cargo clippy -p mc-http --all-targets --features mc-http/test-util -- -D warnings
 #   ⑤ test             cargo test --workspace                      （**不带** MULTICA_TEST_DATABASE_URL）
-#   ⑥ db               mc-migrate run --dir migrations + cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored
+#   ⑥ db               mc-migrate run --dir migrations + cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server
+#                      --features mc-http/test-util -- --ignored
+#                      （`mc-scheduler` = M5 内核的租约真库用例；`mc-server` = M5-9 两个生产端口的
+#                        真库用例 —— 它们在二进制 crate 里，只有这个包会跑）
 #   ⑦ route-parity     python3 scripts/route_parity.py --quiet
 #                      + python3 scripts/slash_alias_audit.py --quiet（尾斜杠形态：⑦ 折叠 `/x` 与 `/x/`，
 #                        所以「只注册了带斜杠那一形态」它看不见；⑨ 的 fixture 里 0/58 用尾斜杠，同样看不见）
@@ -220,7 +223,7 @@ run_db_gate() {
     local start end rc_m rc_e combined note t0 t1 t2
     printf '\n=== [%s] gate db ===\n' "$(gate_label db)"
     printf '$ MULTICA_DATABASE_URL=<db-url> mc-migrate run --dir migrations\n'
-    printf '$ MULTICA_TEST_DATABASE_URL=<db-url> cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored\n'
+    printf '$ MULTICA_TEST_DATABASE_URL=<db-url> cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util -- --ignored\n'
 
     t0="$(date +%s)"
     MULTICA_DATABASE_URL="$DB_URL" cargo run -p mc-migrate -- run --dir migrations
@@ -229,7 +232,7 @@ run_db_gate() {
     printf 'GATE_DB_MIGRATE_EXIT=%s\n' "$rc_m"
 
     if [ "$rc_m" -eq 0 ]; then
-        MULTICA_TEST_DATABASE_URL="$DB_URL" cargo test -p mc-repos -p mc-http \
+        MULTICA_TEST_DATABASE_URL="$DB_URL" cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server \
             --features mc-http/test-util -- --ignored
         rc_e=$?
         t2="$(date +%s)"
