@@ -31,9 +31,18 @@
 //!
 //! 逐条记在 `docs/32-M3-DAEMON-FACE.md` 的偏离表里（D-1 dev-mode 身份、D-9 客户端
 //! 侧 DTO 重复定义、D-10 `reqwest` 依赖等），不在代码里静默省略。
+//!
+//! ## M6-9（`LUM-1674`）：daemon 侧 skill / MCP 执行面
+//!
+//! [`skill`] 与 [`mcp`] 是 M6 波次加的**执行面**（0 路由）：本地 skill 发现/导入与 bundle
+//! 缓存校验、运行时 MCP 装配、远端 MCP broker、插件 hook 的 MCP 入口。
+//! 偏离逐条记在 `docs/32` §9.9；`execenv/` 下同批新增的六个注入口也只加文件，
+//! 既有 `{guard,lock,path,temp}.rs` 一行未改。
 
 pub mod client;
 pub mod execenv;
+pub mod mcp;
+pub mod skill;
 pub mod state;
 pub mod transport;
 pub mod wire;
