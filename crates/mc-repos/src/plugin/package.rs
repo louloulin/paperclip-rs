@@ -336,6 +336,45 @@ pub async fn delete_versions_by_package_tx(tx: &mut Tx<'_>, package_id: Id) -> R
         .map(|_| ())
 }
 
+/// 事务内按 id 读一个版本（`GetWorkspacePluginPackageVersion`）；取不到 ⇒ `None`。
+///
+/// 存在的唯一理由：安装/升级在**持有 `lock_plugin_key_tx` 之后**要再确认一次版本还在
+/// （上游 `requireVersionStillPublished`）。锁外那次读（[`PackageRepo::get_version`]）只是
+/// 「先在无锁路径上拒掉明显非法的入参」，不能替代它 —— 并发的删包可能正好落在两者之间。
+pub async fn get_version_tx(
+    tx: &mut Tx<'_>,
+    workspace_id: Id,
+    version_id: Id,
+) -> Result<Option<PackageVersionRow>> {
+    sqlx::query_as::<_, PackageVersionRow>(&format!(
+        "SELECT {VERSION_COLUMNS} FROM plugin_package_version WHERE workspace_id = $1 AND id = $2"
+    ))
+    .bind(workspace_id.0)
+    .bind(version_id.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_sqlx_err)
+}
+
+/// 事务内读版本里的一个文件（`GetPluginPackageFile`）；取不到 ⇒ `None`。
+///
+/// 物化 skill 资源时必须走事务：文件与安装行要落在同一个提交里，`FILE_COLUMNS` 是私有的，
+/// 路由层拼不出等价 SELECT。
+pub async fn file_tx(
+    tx: &mut Tx<'_>,
+    version_id: Id,
+    path: &str,
+) -> Result<Option<PackageFileRow>> {
+    sqlx::query_as::<_, PackageFileRow>(&format!(
+        "SELECT {FILE_COLUMNS} FROM plugin_package_file WHERE version_id = $1 AND path = $2"
+    ))
+    .bind(version_id.0)
+    .bind(path)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_sqlx_err)
+}
+
 /// 删包身份行（`DeletePluginPackage`）。
 pub async fn delete_package_tx(tx: &mut Tx<'_>, package_id: Id) -> Result<()> {
     sqlx::query("DELETE FROM plugin_package WHERE id = $1")
@@ -505,6 +544,31 @@ mod db_tests {
         let file = repo.file(version.id(), "surface.js").await.expect("read");
         assert_eq!(file.content, raw);
         assert_eq!(file.size_bytes, 3);
+
+        // 事务内读口（安装路径在持锁后用它再确认版本/取 skill 正文）。
+        let mut tx = fx.db.pool().begin().await.expect("tx");
+        let in_tx = get_version_tx(&mut tx, fx.workspace_id, version.id())
+            .await
+            .expect("version")
+            .expect("present");
+        assert_eq!(in_tx.id(), version.id());
+        assert_eq!(
+            file_tx(&mut tx, version.id(), "surface.js")
+                .await
+                .expect("file")
+                .expect("present")
+                .content,
+            raw
+        );
+        assert!(file_tx(&mut tx, version.id(), "missing.js")
+            .await
+            .expect("file")
+            .is_none());
+        assert!(get_version_tx(&mut tx, fx.workspace_id, Id::nil())
+            .await
+            .expect("version")
+            .is_none());
+        tx.rollback().await.expect("rollback");
 
         teardown(&fx).await;
     }
