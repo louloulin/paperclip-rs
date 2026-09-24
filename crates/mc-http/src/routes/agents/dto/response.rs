@@ -17,6 +17,7 @@ use mc_repos::agent::{
     AgentTaskRow, PERMISSION_MODE_PUBLIC_TO, TARGET_WORKSPACE, VISIBILITY_PRIVATE,
     VISIBILITY_WORKSPACE,
 };
+use mc_repos::skill::binding::AgentSkillSummaryRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -65,7 +66,10 @@ pub(crate) struct InvocationTargetDto {
     pub target_id: Option<String>,
 }
 
-/// 上游 `AgentSkillSummary`——本片恒为空列表（M6 拥有 `agent_skill`）。
+/// 上游 `AgentSkillSummary`——`skills` 字段的元素（`GET /api/agents` / `{id}` / `archive` / `restore`）。
+///
+/// M6-4 起是真读 `agent_skill` 的结果（不再是恒空）：`id`/`name`/`description`/`enabled`
+/// 逐字对齐上游；`enabled` 没有 `omitempty`，`false` 也要出现。
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AgentSkillSummaryDto {
     pub id: String,
@@ -74,8 +78,20 @@ pub(crate) struct AgentSkillSummaryDto {
     pub enabled: bool,
 }
 
+impl AgentSkillSummaryDto {
+    /// `ListAgentSkillSummaries` 的行 → 嵌入式摘要（上游 `attachAgentSkills`）。
+    pub(crate) fn from_binding_row(row: &AgentSkillSummaryRow) -> Self {
+        Self {
+            id: row.id.to_string(),
+            name: row.name.clone(),
+            description: row.description.clone(),
+            enabled: row.enabled,
+        }
+    }
+}
+
 /// 上游 `DisabledRuntimeSkill`（本片只做 JSON 透传 + 形状修正）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DisabledRuntimeSkillDto {
     pub runtime_id: String,
     pub provider: String,
@@ -134,6 +150,17 @@ pub(crate) struct AgentDto {
 }
 
 impl AgentDto {
+    /// 上游 `attachAgentSkills` 的落点：把 `agent_skill` 绑定填进 `skills`。
+    ///
+    /// 上游 `agentToResponse` 总是把 `Skills` 初始化成 `[]`，四个响应位（`GetAgent` /
+    /// `UpdateAgent` / `ArchiveAgent` / `RestoreAgent`）随后各自 reload 一次（GH #3459：
+    /// 不 reload 的话每次元数据更新都回一个 `"skills": []`，调用方会以为绑定被清了）。
+    #[must_use]
+    pub(crate) fn with_skills(mut self, skills: Vec<AgentSkillSummaryDto>) -> Self {
+        self.skills = skills;
+        self
+    }
+
     /// 行 → 响应（含白名单投影 + 两处按调用者的脱敏）。
     pub(crate) fn from_row(
         row: &AgentRow,
@@ -379,4 +406,3 @@ impl ActivityBucketDto {
         }
     }
 }
-
