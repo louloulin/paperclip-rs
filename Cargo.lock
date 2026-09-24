@@ -2802,7 +2802,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "mc-auth",
+ "mc-autopilot",
  "mc-config",
  "mc-core",
  "mc-db",
@@ -2811,17 +2813,21 @@ dependencies = [
  "mc-http",
  "mc-openapi",
  "mc-realtime",
+ "mc-repos",
+ "mc-scheduler",
  "mc-secrets",
  "mc-storage",
  "mc-telemetry",
  "mc-ws",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tower 0.5.3",
  "tower-http",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

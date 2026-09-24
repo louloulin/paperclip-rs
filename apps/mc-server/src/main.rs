@@ -6,7 +6,8 @@
 //! 3. 连接数据库（mc-db）
 //! 4. 运行迁移（可选；`MULTICA_DB_RUN_MIGRATIONS` 控制）
 //! 5. 装配 axum 路由（mc-http）
-//! 6. 监听 / graceful shutdown
+//! 6. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
+//! 7. 监听 / graceful shutdown（先停调度器，再停 actor）
 
 use std::sync::Arc;
 
@@ -20,6 +21,8 @@ use mc_http::apply_default_middleware;
 use mc_http::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
+
+mod scheduler;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)] // 启动流程按 1..N 步骤线性展开（配置→迁移→路由→监听）。
@@ -147,8 +150,16 @@ async fn main() -> anyhow::Result<()> {
 
     // routes::router 以 A 的签名为基（接受 Arc<AppState>）；这里再 with_state 注入，
     // 使 Router<Arc<AppState>> → Router<()> 后套默认 middleware 链。
+    let daemon_hub = state.daemon_hub.clone();
     let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
+
+    // 7. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
+    //    所以「进程起来了但调度器没接」这种静默失效在这里被消灭。失败即启动失败（`register_all`
+    //    的错误只可能是规格错误，属于开发者错误，不该带病起服务）。
+    //    wakeup 派发的第 7 步要广播 `task.queued` / `task.available`，所以取 `AppState` 里那一个
+    //    hub —— 和 HTTP 面 / daemon 面共用同一条广播总线，不能另建。
+    let scheduler_handle = scheduler::start(&db, daemon_hub).context("start scheduler")?;
 
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,
@@ -170,6 +181,8 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("axum serve")?;
 
+    // 先停调度器：让在跑的 handler 收尾（handle 内部会等当前 tick 结束），再停 actor 池。
+    scheduler_handle.shutdown().await;
     actors.shutdown().context("shutdown actors")?;
     tracing::info!("shutdown complete");
     Ok(())
