@@ -6187,6 +6187,8 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
   **并行安全性实测**：1672 的枚举写集**明确排除** `routes/plugins/**` ⇒ 与 1671（写 `routes/plugins/{mcp,surface_launch}.rs` + `mc-repos/src/plugin/{mcp_approval,invocation_read}.rs`）**零共享文件**；
   两边都不得动 `routes/mount.rs` 与 `routes/{v1,plugin_bridge}/mod.rs`（anchor 冻结面）。
 - 在飞 **3/3** = cycle ∥ `LUM-1671` ∥ `LUM-1672`。
+  ⚠️ **`LUM-1672` 第 1 个 run（`01a0d275-567c…`）在 08:09:52Z（92s 后）以基础设施错失败**：`Upstream stream ended before terminal chunk`（不是任务错，`kind: direct`、无产物、`status: failed`）⇒
+  当拍 `rerun` = run `01a0d277-921a…`（queued）。**下一轮读 1672 的 run 列表时看最新那一条**，别把这次 infra 失败当成片的实现问题。
 - **回收**：`lum-1670-d9dfedc1155e` 的 `target/` **24G 整删**（三判据齐：PR 已合 / run 终态 / `/proc/*/cwd` 无该 workdir 的 cargo·rustc）⇒ `/` **9.0G → 33G 可用（30%）**，
   给两个新 run 让出冷编译空间（**ENOSPC 会伪装成门禁红**，所以这一步是「跑门禁前的基础设施」）。
 
