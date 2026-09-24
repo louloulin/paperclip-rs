@@ -6702,3 +6702,98 @@ upstream 456 (commit f41fae6b08fb) | local 405 registered | baseline 344
 2. **「上游只读副本」的纪律从「当轮读完」升级为「每个 run 自己克隆」**。本轮判断 M7 面**只用了随仓版本化的 `docs/fixtures/upstream-routes.tsv`**（钉住 `f41fae6b08fb`），一次都没碰 `/tmp/ups*`（`/tmp/ups_multica` 已不存在，`/tmp/ups1673` 属在飞片、**不能碰**）。⇒ 派发需要上游面的新计划片时，把「**自己 `multica repo checkout` 上游进本 run 的 workdir**」写进 issue 描述，而不是继承上一轮别人的 `/tmp` 路径。
 3. **计划片的立项时点 = 上一波还剩 1–2 片在飞**（`LUM-1652` 在 M5 剩 3 片时立项，`LUM-1764` 在 M6 剩 2 片时立项）。判据不是「上一波已完成」，而是「**下一波若现在不排，波次切换处会出现空位**」。
 4. **基线双写者是可预防的排队约束**：`LUM-1691`（+12 路由）与 `LUM-1675`（M6-INT，唯一 `--write-baseline`）若同时在飞，`route-parity-baseline.json` 这个单文件就会出现两个写者（无合并粒度）。⇒ **把「谁的 `implemented` 变化会落到同一份快照」作为排队约束**，优先于「谁更小/更快」。
+
+## §76 02:30 cycle（`LUM-1787`，18:30Z 触发）：**合并 #76（M7 计划片）⇒ base `fd6c4aa6`**；**在飞片 `LUM-1673` 的上游 `git grep` 卡死 57 分钟 ⇒ cycle 定位根因、杀子进程并补齐对象库（0.04s 出结果）**；空位 1 ⇒ 派 **`LUM-1580`（门 ⑦ 占位正则修复）**
+
+> 本节由 **02:30 cycle（`LUM-1787`）** 落盘。起手**无并发 cycle**（daemon 口径 2 = 本 run + `LUM-1673`）。本轮的实质动作有三件：① 合并上一轮派出的 M7 计划片；② 对 M7 计划片做**独立复核**（不重跑门禁，对象可判定）；③ **抢救在飞片的一小时死锁**（环境根因，非 agent 故障）。
+
+### 76.1 起手三连读数（现场实测）
+
+| 项 | 读数 |
+| --- | --- |
+| 磁盘 | `/` 49G 盘，**28G 可用（41%）**；本轮**零回收**（在飞片 `1673` workdir 仅 19M、无 `target/`） |
+| base | `git rev-parse origin/feat/multica-rs-initial` = **`58306301`**（= §75 合并树 `2394bfcc` + docs §75 直推） |
+| PR | 认证 GitHub API `GET /pulls?state=open` = **1**（**#76**，`LUM-1764` / M7 计划片，`mergeable: true` / `mergeable_state: clean`） |
+| 并发 | 在飞 = **本 cycle + `LUM-1673`（M6-8）** ⇒ daemon `running_task_count = 2`、空位 **1**（`1764` 的 run 已终态、产物已推、PR 已开） |
+| 看板 | `backlog` = 22 个 M7 切片（`LUM-1765`–`LUM-1786`）+ `LUM-1691` / `LUM-1745` / `LUM-1580`；`todo` 里除本 cycle 还有 6 条**历史 autopilot cycle issue**（`LUM-1748` / `1740` / `1737` / `1726` / `1533` / `1521`，均无进程、从未产出） |
+
+### 76.2 合并 #76 的判据链（**非 FF 形态 ⇒ 四件套**，零门禁重跑）
+
+| # | 判据 | 读数 |
+| --- | --- | --- |
+| ① | 预检逐字 == PR API | `git diff --numstat 2394bfcc b0d65b81` = 3 文件 `+793/−0`、`+73/−0`、`+175/−0` = **`+1041/−0`** == PR API `changed_files 3 / additions 1041 / deletions 0`；路径 = `docs/60-M7-PLAN.md` + `docs/fixtures/m7-declared-routes.tsv` + `docs/fixtures/m7-slice-upstream-files.tsv`（**0 个 `.rs`**） |
+| ② | base 已越过 head 起手点 ⇒ **必须真合** | `git merge-base --is-ancestor 58306301 b0d65b81` = **假**（head 起手 base 是 `2394bfcc`，之后有 `58306301` 这个 docs 提交） |
+| ③ | 无冲突可物化 | `git merge-tree --write-tree 58306301 b0d65b81` = **单哈希 `56d7075f953667f8452eefd5fb407b888b2030f6`**（无冲突输出） |
+| ④ | 落地树等式 | API 合并（`sha = b0d65b81` 钉 head）⇒ merge commit **`fd6c4aa6aae8c10d12046efc0a928b83b73ac1d1`**，父 = `58306301` + `b0d65b81`；`git rev-parse fd6c4aa6^{tree}` = **`56d7075f…`** == ③ 的预测哈希，**逐字相等** |
+| ⑤ | 内容无损 | `git diff --stat b0d65b81 fd6c4aa6` = **只有 `docs/37`（+76/−1，即 §75）** —— ③④ 已证合并树；⑤ 证「head 的 3 个文件一个字节都没变」 |
+
+- **head 上 CI 3/3 全绿**（本轮不重跑门禁的依据）：`fast — fmt / build / clippy / test / file-size`、`contract — route parity + conformance`、`db — postgres:16 + DB e2e` **三 job 全 `success`**。⇒ 那三个 job 跑的正是「head 树」，而 ③④ 证明合并树 == head 树（差集只有 docs/37 一节、且 `contract`/`db` 的判据对象是代码树）⇒ 等价成立。
+- GH 于合并后回落 `GET /pulls?state=open` = **0**。
+- **对比 §75（FF 形态）**：本轮是「**被后续 docs 提交越过**」形态，比 FF 多两步（②③），但仍只多 3 条命令 —— ⇒ **判据链长度按形态选，不必一律 `--with-db` 真合跑**。
+
+### 76.3 M7 计划片落地内容的独立复核（对象可判定，不重跑门禁）
+
+- 规模已由 §76.2 的 numstat 复核 → 3 文件 `+1041/−0`；**未动** `Cargo.lock` / 任何 `migrations/` / `route-parity-baseline.json`（`git diff --name-only 2394bfcc b0d65b81` 逐条落在 `docs/**`）。
+- **声明路由 fixture 自洽**：`python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv` = `declared 24 upstream key(s); dual-form required: 0 | single-form: 24` + `0 defect(s), 0 warning(s)`，**exit 0** ⇒ 与计划 §0 的「M7 尾斜杠双形态 **0 键**、无 allowlist 退路」**逐字相符**。
+- **对账断言独立复算**（计划 §1.1 的依据）：`docs/fixtures/upstream-routes.tsv`（钉 `f41fae6b08fb`）中含渠道字样的数据行 = slack **4** / lark **5** / dingtalk **7** / wecom **4** / telegram **4** = **24**，与合并树 ⑦ 的 `M7=24` **逐条相等**；fixture 数据行（去注释/空行）= **24**，与 `local 405` 的登记口径一致。
+- **⑨ 侧**：M7 的 12 条 fixture（8 `unmounted` + 4 `unevaluable`）**未在本轮跑**（无代码落地，读数不会变）；计划里已写明本波只承诺「8 条 `unmounted → pass`」，与既有 `unmounted 31` 口径同源。
+- 结论：**M7 计划片可独立判定为合格交付**，本轮无门禁重跑。
+
+### 76.4 事件：`LUM-1673`（M6-8）在飞**死锁 57 分钟** —— 根因（环境）+ 抢救（cycle 执行）
+
+**现象**：`/proc/2178`（该 run，17:30:06 起）持续 `S` 状态、`cwd` 正确、父进程在；但**写侧产物 = 0**（`HEAD = 81c58721` = 其起手 base、`git status --porcelain` 空、无 `target/`、远端无该分支），**session jsonl 自 17:36:07 起的 592,760 字节冻结不动**（下一轮起手时的「0 产物 ⇒ 判活」判据已不足以区分「在测绘」与「卡死」）。
+
+**诊断**：子进程 `/bin/bash -c cd /tmp/ups1673 && git grep -n … 90e0bdf -- server/`（**17:36:07 起，elapsed 57 分钟**，`CPU time` 恒为 8s、rchar 7.9KB）反复 spawn `git fetch … --filter=blob:none --stdin`：
+
+- `/tmp/ups1673` 的 `remote.origin.partialclonefilter = blob:none`，`server/` 子树在 `90e0bdf` 下有 **3,110 个文件**、**≈12,038 个缺失对象** ⇒ 每个缺失 blob 触发一次惰性 fetch；实测复现同一命令在 120s 超时仍未输出。
+- ⇒ **不是 agent 逻辑错误，是「部分克隆 + 全树 grep」的环境陷阱**；即使不干预，它也几乎不可能在时间预算内完成。
+- 交叉证据：**同一个 `git grep` 在完整克隆里 0.04s 出结果**（见下）。
+
+**抢救（两步，均在同步调用内完成）**：
+
+1. **杀卡死的子进程子树**（只动 `16757`/`16758`/`16759` 及其 fetch 子进程；**不动** `2178` 这个 pi run）⇒ 工具调用返回，agent 于 **18:38** 恢复（session jsonl 640,531 → **18:41:58 时 865,665 字节**，仍在推进）。
+2. **补齐对象库（治本）**：把共享对象库 `…/.repos/77113af3…/github.com+louloulin+multica.git/objects/pack/` 的 3 个 pack（`.pack/.idx/.rev`，共 ≈172M）复制进 `/tmp/ups1673/.git/objects/pack/`。复核：`git rev-list --objects --missing=print 90e0bdf -- server/ | grep -c '^?'` = **0**（此前 12,038）；**卡死的那条命令现在 0.04s 出结果**（`90e0bdf:server/internal/service/cron.go:26 NextOccurrenceAfterUTC` / `:43 NextOccurrencesAfterUTC` / `:71 NextOccurrencesUTC`）。
+3. 事件写入该片描述（起手补充：**上游只读副本不要自己 `--filter=blob:none` 克隆**；要读上游用 `multica repo checkout`，走共享对象库）。
+
+**口径变更有据**：§75 写的「不杀子进程、不改其描述」基于当时「alive 且在测绘」的判断；本轮拿到**三条硬证据**（子进程 elapsed 57min + CPU time 恒定 8s + session 冻结 57min）后改判。⇒ **判活判据升级为三件套：`/proc` 存活 ∨ session jsonl 在增长 ∨ 写侧产物在增加，三者取二**（仅 `/proc` 存活不再充分）。
+
+### 76.5 空位与派发：**派 `LUM-1580`（门 ⑦ 占位正则修复）**
+
+空位 = **1**。候选与取舍：
+
+| 候选 | 现状 | 本轮判断 |
+| --- | --- | --- |
+| **`LUM-1580`（门 ⑦ 占位正则修复）** | `backlog`、无 assignee、0 评论 | **派** —— ① **写集零交集**（只动 `scripts/route_parity.py` + `docs/22` + 两处指针行；在飞 `1673` 写 `crates/mc-http/src/routes/plugin_bridge/**`）；② **不写 lock/manifest、不动 `route-parity-baseline.json`**（DoD 3 逐字）；③ **时序上是关键路径**：它改的是 ⑦ 的**分类口径**，必须**早于** `LUM-1675`（M6-INT，唯一 `--write-baseline`）落地，否则 M6 终态表会按旧口径写死。 |
+| `LUM-1675`（M6-INT） | `backlog` | **不派** —— 唯一硬前置（M6 代码片全合）未满足（`1673` 在飞）。 |
+| `LUM-1691`（M2-A 尾，+12 路由） | `backlog` | **不派** —— 必然刷 ⑦ 基线，与 `1675` 构成**基线双写者**（§75.7 lesson 4），且注册段与 `1673` 互斥。 |
+| M7 各切片（`LUM-1765`–`LUM-1786`） | `backlog` | **不派** —— `docs/60` §0 逐字要求「待 M6 收口（`1673` 合 + `1675` 合）+ 并发位空出后晋升」；且 M7-0 anchor 要动 `routes/mount.rs` + 新 crate + `Cargo.lock`，与 `1673` 注册段互斥。 |
+| `LUM-1745`（M5-D8） | `backlog` | **不派** —— 描述逐字要求「M6 收口后开工」（要动 M6 热点 `state.rs`）。 |
+
+**`LUM-1580` 的 ⑦ 口径实测（cycle 用「只改正则的探针副本」实测 `fd6c4aa6`，非转抄旧值）**：
+
+| 读数 | canonical | 正则改 `\b(?:placeholder|not_implemented)\b` |
+| --- | ---: | ---: |
+| `local` / `implemented` / `known_gap` | 405 / 329 / 127 | 405 / 329 / 127 |
+| `implemented_real` | **329** | **325** |
+| `implemented_placeholder` | **0** | **4** |
+| `local_only` / `local_only_placeholder` | 9 / 1 | 9 / **2** |
+
+误计键从描述里的 **13 条减到 4 条**（其余 9 条已被后续切片换成真 handler）：`GET /api/issues/{id}/attachments`（M3+）、`GET /api/issues/{id}/pull-requests`（M8）、`GET /api/issues/{id}/timeline`（M9）、`POST /api/issues/{id}/comments/trigger-preview`（M2-A）。**这四条已写进该片描述的「起手补充」**，并明确警示其 DoD 表里的 `231→218` 是 `8521544` 时点的过期值（新一轮按 `329→325` 读）。
+
+**派发动作**：`issue update --description-file … --no-start`（追加「起手补充」）→ `issue status … todo` → **发现 `LUM-1580` 无 assignee ⇒ 不会起 run** → `issue assign --to-id 3c6087f9…` ⇒ run 起、workdir `lum-1580-04e66733a32d`。**派后并发 = 3/3**（cycle ∥ `1673` ∥ `1580`）。
+
+### 76.6 下一轮起点与预置
+
+- **起点**：base = 本节 docs 提交（父 = `fd6c4aa6`）、码树 == `fd6c4aa6` 的树、GH **0 open PR**、在飞 = `1673`（M6-8）∥ `1580`（⑦ 正则）⇒ **3/3**（本 cycle 不计入）。
+- **第一动作**：① 起手三连（`df -h /` → `git ls-remote` → 认证 `pulls?state=open`）；② **`1673` 的判活按 §76.4 的三件套**（`/proc` ∨ session 增长 ∨ 写侧产物），**只看 `/proc` 存活会误判**；③ 两片交 PR 即走判据链：预检 numstat == PR API → **`merge-base --is-ancestor base head` 判形态**（真 ⇒ FF 四步；假 ⇒ `merge-tree --write-tree` 单哈希 + 落地树等式 + head CI 3/3）。
+- **⑦ 递推**（起于 `local 405 / implemented 329 / known_gap 127 / owners.M6 1`）：`1673` 合 ⇒ `406 / owners.M6 0`（口径不变时 `329 real`）；**`1580` 合 ⇒ `implemented 330-ish 中 `real` 与 `placeholder` 重新分类（本轮实测 −4 real / +4 placeholder，M6-8 合入后按同一探针重算）**；`1675`（M6-INT，唯一 `--write-baseline`，344 → 406）⇒ 终态 `local 406 / implemented 330（real/placeholder 按新口径）/ known_gap 126 / owners.M6 0`。
+- **空位排序**（`1673` 合后）：① `LUM-1675`（M6-INT，必须等 `1580` 合完再跑，以免终态表混口径）；② 之后才轮到 `LUM-1691`（M2-A 尾，基线单写者窗口解除）；③ M7 晋升从 **M7-0 anchor 单独跑**开始（`docs/60` §7 stage 表）。
+- **观察项（第 18 轮）**：`todo` 里 6 条历史 cycle issue（`LUM-1748` / `1740` / `1737` / `1726` / `1533` / `1521`）**永久停在 `todo`、从未产出**（本轮 `/proc/*/cwd` 全扫无进程）⇒ 建议 owner ① 归档这 6 条，② 给 autopilot 加「同项目已有未终态 cycle issue 时不建新单」护栏（该建议已连续 5 轮无回应）。
+
+### 76.7 lesson（第 19 轮）
+
+1. **「部分克隆 + 全树 `git grep`」是本环境的静默死锁源**：`--filter=blob:none` 下每个缺失 blob 触发一次惰性 fetch，3,110 文件的 `server/` 子树在 57 分钟里连一次结果都没吐出。**上游只读副本一律用 `multica repo checkout`**（走 `…/.repos/<ws>/<repo>.git` 共享对象库，实测 0 缺失），**并禁止在非完整克隆上做全树 grep**。⇒ 这条已写进 `LUM-1580` 描述与本节的「环境须知」。
+2. **判活判据从「`/proc` 存活」升级为三件套**：`/proc/<pid>` 存在 ∨ session jsonl 在增长 ∨ 写侧产物在增加 —— **取二**。本轮 `/proc` 存活但后两条同时为假 57 分钟，旧判据会把它误判为「在测绘、不介入」。
+3. **抢救在飞片可以是「修环境」而不是「杀 run」**：本轮不 rerun、不丢上下文，只（a）杀掉卡死的子进程子树、（b）把共享对象库的 pack 补进它的部分克隆 ⇒ 一条命令从「57 分钟无输出」变成 **0.04s 出结果**。**成本（复制 172M + 3 条命令）远低于重派**（该片已积累 800MB+ 的读上下文）。
+4. **口径修复片是「计划外但在关键路径上」的典型**：`LUM-1580` 对业务代码零改动，但它决定 ⑦ 的 `implemented_real` 写法 ⇒ **必须排在唯一 `--write-baseline` 的片之前**。⇒ 空位排序的第四条判据：**「谁改变了波次终态表的读法」比「谁更小」优先**。
+5. **`issue status … todo` 对无 assignee 的 issue 不会起 run**：本轮 `backlog → todo` 后 daemon 仍是 2（无新 workdir）。⇒ **派发动作必须是 `update --no-start` → `assign --to-id`（起 run）**，或先 assign 再改状态；**别把「已置 `todo`」当成「已派发」**（判据 = 出现新 workdir + daemon 计数 +1）。
