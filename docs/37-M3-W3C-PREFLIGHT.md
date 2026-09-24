@@ -6075,3 +6075,52 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 两条**合并前必须裁定**的事：
 1. **门禁**：#72 只有 cycle 的静态复核（`route_parity` + `todo!()` 计数），**没有** `scripts/gates.sh --with-db` 的 10/10 读数（本波热 `target/` 在 `lum-1670-d9dfedc1155e`，3.4G，可直接复用）。
 2. **DoD 缺口**：`1670` 描述里的 U4 要求 **token 面真库测试**（rotate 明文只回一次 / revoke 幂等 204），run-6 死在这一步、**该文件不存在** ⇒ 合并前要么在 #72 上补，要么**明确登记为偏差**并补开 follow-up，别让它在「13/13 路由已实现」的叙述里静默消失。
+
+### 67.10 **PR #72 已开 + CI 双红同源**（本节是 §68.8 的顺序订正：**不是「先判合并」，是「先补 `token.rs`」**）
+
+> 说明：§68 / §68.8 由**并发运行的另一个 cycle**（`LUM-1746`）写入，跑在同一个 base 上（§67.9 之后）。本节只补它当时拿不到的证据（CI 日志），并把「下一轮先判合并」订正为带**前置条件**的动作。
+
+#### 67.10.1 本 cycle 代开了 PR #72
+
+`LUM-1670` 的 run 在 06:57:03Z 终态、**无 PR 无评论**（§68 的静默死亡取证）。其产物 `3c2406e`（13 路由）+ `b06f41d`（抢救 1747 行）**都已推送**，
+静态复核通过（`scripts/route_parity.py --json` ⇒ 该分支 `local 376 = 363 + 13`、`implemented 300 real + 0 placeholder`、`known_gap 156`、`owners.M6 30`；改动文件里 `todo!()`/`unimplemented!()` = **0**）
+⇒ 本 cycle 用 **`POST /pulls`** 代开 **PR #72**（head `b06f41de`，14 文件 +5488/−15，7 提交；PR-relative 读数与 API **逐字相等**；`merge-tree fdf6412×b06f41d` = **`14bd1f1b…`** 单哈希 = 0 冲突）。
+**代开理由**：该 run 已死、产物已全推、静态面完整，重跑一次 60 分钟的 run 只为补一个 PR 是浪费；**且代开不抢谁的活**（若别人也开，GitHub 会用「同 head 分支已有 PR」422 挡住）。
+
+#### 67.10.2 CI 双红，**同一个根因**（这是 §68.8 当时还没有的证据）
+
+`.github/workflows/ci.yml` 在该 head 上：`contract` **success**，`fast` **failure**，`db` **failure**。下载两个 job 的日志（`/actions/jobs/<id>/logs`）后：
+
+| job | 失败步 | 日志原文 |
+| --- | --- | --- |
+| `fast` | ① **`cargo fmt --all --check`** | `Error writing files: failed to resolve mod 'token': /…/crates/mc-http/tests/plugins/token.rs does not exist` |
+| `db` | ⑥ **`mc-migrate run` + `cargo test --features mc-http/test-util -- --ignored`** | `error[E0583]: file not found for module 'token'` → `crates/mc-http/tests/plugins/main.rs:23:1` `mod token;` → `error: could not compile 'mc-http' (test "plugins") due to 1 previous error` → `GATE_DB_E2E_EXIT=101` → `⑥ db 1 68s FAIL (migrate=0,e2e=101)` |
+
+⇒ **根因唯一**：`tests/plugins/main.rs` 声明了 `mod token;`，而 `token.rs` **从未落盘** —— 正对 §68 记的死点
+（run-6 死在 06:55:11Z 那次**参数缺 `path`** 的 `write` 调用，下一个单元就是 `token.rs`）。
+**两条完全独立的证据链（工具调用取证 vs CI 编译日志）指向同一个死点** ⇒ 该诊断可直接当既成事实用。
+
+#### 67.10.3 订正 §68.8 的顺序判据（给下一轮的精确前置条件）
+
+§68.8 写「下一轮**先判合并**而非 rerun LUM-1670」。按 67.10.2，直接判合并会撞在红 CI 上（`mergeable: true` 只表示**无冲突**，不表示门禁过——这正是本波反复要防的读法）。正确的顺序是：
+
+1. **前置**：补 `crates/mc-http/tests/plugins/token.rs`（rotate 的 `mpi_` 明文只回一次 + 库里只留哈希；revoke 幂等连打两次都 204）**并 `cargo fmt --all`**；
+   —— 注意：`fast` 的 ① 是从 `main.rs` 的 `mod token;` **解析模块树**时红的，所以「fmt 单独修」修不好，**必须把文件补上或把那行删掉**（删行等于砍掉 U4 的用例，不符合 DoD）。
+2. `LUM-1670` 的新 run **推同一分支**（`agent/devbox5/d9dfedc1155e`）即可 ⇒ **PR #72 自动更新、CI 自动重跑**，不需要开新 PR，也不需要重写 13 条路由（它已在分支上）。
+3. 只有 CI 3/3 绿之后，才走 §64 的合并判据链（此时「先判合并」才成立）。
+
+#### 67.10.4 并发 cycle 现象（§67.6 的风险以「新 cycle 在旧 cycle 未完时启动」的形式发生）
+
+本轮实测：**`LUM-1744`（本 run，06:30Z 起）与 `LUM-1746`（07:00Z 起）同时在飞**，两者都写 `docs/37`/`docs/57`、都碰 `LUM-1670`：
+
+```
+07:00:13  LUM-1746 run 起（workdir lum-1746-18fdf9b43df7）
+07:04:42  LUM-1746 抢救推送 b06f41d（"抢救 run-6 未提交产物"）→ 写进 LUM-1670 的描述（rev 10 → 11）
+07:06:18  LUM-1746 写 LUM-1670 起手补充（rev 11）
+07:06:5x  本 cycle 代开 PR #72
+07:1x     LUM-1746 推 §68 + §68.8 到 base（fdf6412 → 813a1ae）
+```
+
+- **没出事的原因**（可复核）：两边都只**追加** `docs/37`（LUM-1746 加 `§68`，本 cycle 加 `§67.9/§67.10`），冲突面只有「谁后推」；后推的一方 push 被拒（non-fast-forward）后 fetch 重推即可。
+- **但有真实代价**：① 同一份缺口被两个 cycle 各诊断一遍（本 cycle 的 CI 日志 vs LUM-1746 的工具调用取证）；② 同一个 `LUM-1670` 描述被两边先后重写（`rev 10 → 11`），**后写者覆盖先写者**是默认行为，只是这次两边结论一致才没丢信息；③ 两边的 next-cycle 结论**互相矛盾**（§68.8「先判合并」vs 本节「先补文件」）—— 这是并发 cycle 唯一真正危险的地方：**同一条流水线上出现两个互相矛盾的「下一轮第一动作」**。
+- **建议（给 owner，本 cycle 不改 autopilot 配置）**：autopilot 建 cycle issue 前先查「是否已有本仓未终态（`todo`/`in_progress`）的 cycle issue」，有则跳过本次建单。当前 `todo` 态的旧 cycle issue 已有 `LUM-1521`/`1533`/`1726`/`1737`/`1740` 五个，加上并发在飞的这一个，**护栏收益明确**。
