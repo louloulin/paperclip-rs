@@ -6463,3 +6463,76 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
 - **lesson 1（磁盘触发时点）**：`df` 可用 **< 8G 或跌幅 > 3G/分钟** 即动手。本轮 87% → 100% 只用 ~4 分钟；`incremental` 在单个 debug `target/` 里占 **~55%（7.4–7.9G）**。
 - **lesson 2（抢救性回收的排序）**：先按「**死物 vs 活物**」分层、再按大小排序 —— **活物的纯缓存（`incremental` 15G）比死物的实体（1.4G target）收益高一个数量级**，而两者风险同级（都只是"下次重编变慢"）。反过来（先删死物就以为够了）本轮会直接撞上 100%。
 - **lesson 3（"删不动"也是证据）**：第 2 次 `rm -rf` 返回 `Directory not empty` 并非失败，而是**该目录正被 rustc 写入**的活写侧证据；放掉第一遍腾出的空间即达目的，不要重试到破坏在飞编译。
+
+## §73 01:00 cycle（`LUM-1755`，17:00Z 触发）：**合并 #73（M6-6，4 路由）⇒ base `6d9bc858`** —— 判据链四步全绿；空位 1 ⇒ 派 `LUM-1674`（M6-9，0 路由）
+
+### 73.1 起手读数（2026-09-24 17:0x Z 实测）
+
+- **base = `f3e44d80`**（§72 报告提交）；**码树仍等于 `2e18514`**（`git diff --stat b91f786d f3e44d80` = `docs/37-M3-W3C-PREFLIGHT.md +255`，非 docs 路径 **0**）。
+- **GH 1 open PR**：**#73**（`LUM-1671` / M6-6，head `cd1a22cb`，分支 `agent/devbox5/7a9adaa10e67`，`mergeable_state clean`，11 文件 **+3108/−36**，4 commits）。
+- **在飞口径修正（本轮立）**：`LUM-1671` 的 issue 已于 **16:56:06Z 置 `in_review`**，其 run `01a0d418-f278` 于 **16:57:27Z 终态（`completed`）** ⇒ 占用位只有 cycle + `LUM-1672`；**空位 = 3 − 1 − 1 = 1**（不是「3/3 满载」）。
+- `LUM-1672` run `01a0d419-0771` = **`running`**（15:46:45Z 起），workdir `lum-1672-dd993b504e67`，**11 条未提交**（`plugin_bridge/{context,issues,storage}.rs` + `v1/{context,issues,policy,storage}.rs` + `surfaces.rs` + `mc-repos/src/plugin/storage.rs` + 未跟踪 `v1/policy/`、`tests/public_api/`），`target/` **19G**，进程级证据 = 正在 `bash scripts/gates.sh --with-db`（`cargo build --workspace --all-targets --locked`）⇒ **活着且在跑门禁，不介入**。
+- 磁盘 `/`：起手 **17G 可用（65%）**；全盘占用几乎全在 `/home/devbox/multica_workspaces`（**23G**），其中 `lum-1672-dd993b504e67` 一片独占 19G。
+
+### 73.2 合并 #73（M6-6）：判据链**四步 + 落地复核**（逐条实测）
+
+| # | 判据 | 实测 | 判定 |
+| --- | --- | --- | --- |
+| ① | **预检**：`merge-base..head` 的 `--numstat` == PR API 文件表**逐字** | `b91f786d..cd1a22cb` = 11 文件（`plugins/{install,mcp,surface_launch}.rs`、`tests/plugins/{main,runtime,runtime_support,runtime_surface,support}.rs`、`mc-repos/src/plugin/{invocation_read,mcp_approval}.rs`、`docs/32`）+3108/−36；与 `GET /pulls/73/files` 的文件名/顺序/增删**逐字一致** | ✅ |
+| ② | **基前进段的性质**：`base` 是否 head 祖先 | `merge-base --is-ancestor f3e44d80 cd1a22cb` = **假**（merge-base = `b91f786d`）；但 `b91f786d..f3e44d80` 的差异**只有** `docs/37-M3-W3C-PREFLIGHT.md +255`，**非 docs 路径 = 0** | ✅ 代码面逐字等价 |
+| ③ | **合并树预测**（§64.5） | `git merge-tree --write-tree f3e44d80 cd1a22cb` = **`1a01fadea081634ddf590d769f78d7c8a4871f0f`**（**单行、无冲突段**）；`git diff c792cc53(cd1a22cb 的树) 1a01fade` = 唯一 `docs/37` +255、非 docs **0** | ✅ |
+| ④ | **head 上 CI 三 job** | `GET /commits/cd1a22cb/check-runs` = `fast`（fmt/build/clippy/test/file-size）**success** 16:58:42Z、`contract`（route parity + conformance）**success** 16:56:44Z、`db`（postgres:16 + DB e2e）**success** 16:59:47Z ⇒ **3/3** | ✅ |
+
+**⇒ 门禁等价论证成立**（②③ 给出「合并树在代码面与 head 树逐字相同」，④ 给出「该树的三条 CI 门全绿」）⇒ 本轮**不重复跑本地 10/10**（该片交付评论已报交付树 `gates.sh --with-db` **10/10 / 147s 热跑**、⑤+⑥ = 2119 passed / 198 ignored、`tests/plugins` 30/30、`mc-repos::plugin` 16/16）。
+
+**落地（API 钉 head）**：合并前**重取** PR 读数（head 仍 `cd1a22cb`、`mergeable_state clean`）⇒ `PUT /pulls/73/merge` `{sha: cd1a22cb…, merge_method: merge}` ⇒ merge commit **`6d9bc858de4f74415a8aafd14fc1c4d939defebb`**、`merged: true`。
+**落地复核**：`tree(6d9bc858) = 1a01fade…`（== 预测逐字）、`git diff --name-only cd1a22cb 6d9bc858 | grep -v '^docs/'` = **0 行**、`git diff --shortstat cd1a22cb 6d9bc858` = `docs/37 +255` 唯一。⇒ **GH 0 open PR**（合后重取 `pulls?state=open` = 0）。
+
+### 73.3 ⑦/⑩ 当场实测（合并后 `6d9bc858`）
+
+- ⑦ `python3 scripts/route_parity.py --json` ⇒ `ok: true`、`upstream 456 / **local 386** / **implemented 310**（`implemented_real 310` / `implemented_placeholder 0`）/ **known_gap 146** / `unclaimed 0` / `regressions 0` / `local_only 9`（其中 1 条占位）`/ baseline 344`；
+  `owners` = `M9 33 / M7 24 / M8 24 / **M6 20** / M3+ 16 / M2-A 13 / M3 11 / M10 5`（**和 = 146 = `known_gap` ✓**）。
+  与 §72.6 的递推**逐值命中**（`1671` 合 ⇒ `386 / owners.M6 20`），也等于该片自报读数 ⇒ ⑦ 无隐藏漂移。
+- ⑩ `python3 scripts/file_size_check.py --quiet` exit **0**；`python3 scripts/slash_alias_audit.py --quiet` exit **0**；
+  `--declared docs/fixtures/m6-declared-routes.tsv` = **5 defect，逐条都是 `/api/skills` 双形态（GET/POST 集合 + GET/PUT/DELETE `:param`）** = §71.3/§72.4 已判定的**预期非回归**。
+- **快照未动**：`docs/fixtures/route-parity-baseline.json` md5 = `0541eaf13804bd3c4e4586345b2d0f26`（与 §70.4/§71.3/§72.4 相同）⇒ **唯一一次 `--write-baseline` 仍归 M6-INT `LUM-1675`**。
+- ⑤/⑥/⑨ **不重复跑**：本片码树来自 CI 已复核的合并树，且 `LUM-1672` 正在同机跑 `--with-db`（抢 CPU/磁盘）⇒ 读数沿用该片交付评论（⑤+⑥ 2119/198）与 §69 的 ⑨ 口径。
+
+### 73.4 空位派发：`LUM-1674`（M6-9，0 路由）—— `LUM-1673` 本轮**不可派**（与在飞 `LUM-1672` 写集互斥）
+
+- 空位 = **1**（§73.1）；候选按就绪序 = `LUM-1673`（M6-8，1 路由）→ `LUM-1674`（M6-9，0 路由）→ `LUM-1675`（M6-INT）。
+- **`LUM-1673` 被硬互斥挡住**：它写 `crates/mc-http/src/routes/plugin_bridge/hooks.rs` 与 `plugins/mod.rs` 的注册点，而 `LUM-1672` 正在写 `crates/mc-http/src/routes/plugin_bridge/{context,issues,storage}.rs` —— 同一目录、同一注册段 ⇒ **必须等 `LUM-1672` 合入后**再派（§71.6 互斥矩阵口径不变）。
+- **`LUM-1674` 直接可派**：写集 = `crates/mc-daemon/src/skill/**`、`crates/mc-daemon/src/mcp/**`、`crates/mc-daemon/src/execenv/*`（仅新增文件）+ `src/lib.rs` / `execenv/mod.rs` 的 `pub mod` 行 ⇒ 与 `LUM-1672`（`mc-http` / `mc-repos`）**写集交集 ∅**、**零 `Cargo.toml` / 零 `Cargo.lock`** 编辑 ⇒ 三条派发判据（硬前置价值 / 是否写 lock 与冻结点 / 与每个在飞片的文件交集）全过。
+- **起手前预飞复验（在新 base `6d9bc858` 上逐条实测，0 缺件）**：
+  `crates/mc-daemon/src/lib.rs:35-39` 只有 `client/execenv/state/transport/wire`（无 `skill`/`mcp`）、
+  `crates/mc-daemon/src/execenv/mod.rs:21-24` 只有 `guard/lock/path/temp`、
+  `crates/mc-daemon/Cargo.toml:43 mc-core = { path = "../mc-core" }`（**无 `mc-skill`** ⇒ 零 manifest 编辑成立）、
+  `crates/mc-core/src/skill.rs:246 pub fn write_hash_part` / `:256 pub fn build_manifest`（都 `pub`）、
+  `crates/mc-http/src/routes/daemon/skills.rs:290` 已在调 `mc_core::skill::write_hash_part`
+  ⇒ 「断言与 `mc-http` 侧是**同一个函数**」这条 DoD **可达**（硬前置 M6-1 `LUM-1666` + M6-4 `LUM-1669` 均已合入）。
+- **派发动作**：描述追加「起手交接（00:30 cycle / `LUM-1755`）」节（base `6d9bc858`、当轮 ⑦ 读数、预飞证据、与在飞片交集 ∅、**记录号 = `docs/32` §9.9**、**⑩ 新文件 ≤800 行硬上限、白名单只减不增**、门禁 = `cargo test -p mc-daemon` + `gates.sh` **8/8**（碰库则 `--with-db` 追 10/10）、真库模板 `mc_lum1674`/`multica_lum1674` **带 `CREATEDB`**、`git config --worktree` 身份、交 PR 与评论要求、磁盘纪律）⇒ `--no-start` 更新（revision **5**）⇒ `multica issue status LUM-1674 todo` ⇒ **run `01a0d460-78a1-76fd-9591-fcaf086621b5` 于 17:04:47Z 起跑**，workdir `lum-1674-fcaf086621b5`（冷建）。
+- ⇒ 派后回满 **3/3**：cycle ∥ `LUM-1672` ∥ `LUM-1674`。
+
+### 73.5 磁盘：本轮只回收了合并片的（已空的）`target/`，**没有动在飞片**
+
+- **回收 `lum-1671-7a9adaa10e67` 的剩余 `target/`（547M）**：三条判据齐 —— ① PR **已合**（`6d9bc858`）；② run `01a0d418-f278` **终态**（16:57:27Z）；③ `readlink /proc/*/cwd` 全表**零命中**该 workdir。该片 `target/` 主体（13G）已由它自己在交付前回收（`docs/32` §9.8），故本轮实际只多放出 0.5G。
+- **在飞的 `lum-1672-dd993b504e67`（19G，`incremental` 4.8G + `deps` 14G）本轮不动**：它正在跑 `gates.sh --with-db` 的 `cargo build --workspace --all-targets`，删任何一份都可能让**正在跑的**门禁读到半成品。仅在符合触发口径时才动它（见下）。
+- **「死物」本轮已无收益**：全盘 23G 里 19G 是上面的活 target，剩下 200+ 个旧 workdir **合计 < 4G**（单个 ≤188M）⇒ 按「先活物纯缓存、后死物」的排序，本轮**死物无需处理**。
+- **触发口径（沿用 §72.6 并收紧为可执行形式）**：`df` 可用 **< 8G 或单分钟跌幅 > 3G** 时，第一杠杆 = 删**在飞片各自的 `target/debug/incremental`**（实测每片 4.8–7.9G，纯缓存，删掉只让下次重编变慢）；**别人 workdir 只删 `incremental`，绝不碰 `deps/`**；`deps/` 只能在**该片 run 终态**后随整棵 `target/` 一起删。
+- **风险预告**：新片 `LUM-1674` 冷建 ≈14G，而当前可用 16G ⇒ 下一轮起手大概率会落在触发口径内（届时判据优先取「整删已终态片的 `target/`」：`LUM-1672` 一交 PR 且 run 终态，先放它那 19G）。
+
+### 73.6 就绪板与下一轮起点
+
+- **下一轮起点**：base = **`6d9bc858`** + 本 §73 的 docs 提交（码树仍 `2e18514` + M6-6）；GH **0 open PR**；在飞 **3/3** = cycle ∥ `LUM-1672`（19 路由，门禁中）∥ `LUM-1674`（0 路由，冷建）。看板 `blocked` **0**；`LUM-1671` 合后仍留 `in_review`（`done` 归人工）。
+- **下轮第一动作**：起手三连后 ① 重取 `pulls?state=open`（`1672` 的 19 路由分支随时可能开 PR）；② 对每片查 `merge-base --is-ancestor <base> <head>` + head 上 CI **3/3**；③ **合并前先确认该片 run 已终态**（§56.6，片会自己合 base / 刷基线）；④ 分片查盘（`df` + `du -sh …/target`）。
+- **判据链（`1672` 专用提醒）**：它的 merge-base 已被两次 docs 提交越过 ⇒ 预检必须走 `merge-tree --write-tree` 单哈希 + 落地树等式；**它是 19 路由片**，`tests/public_api/*` 与 `v1/policy/` 是新增面 ⇒ 若 CI `contract` job 绿且预检逐字命中，可比照 §73.2 走等价论证，否则用 `lum-1672-dd993b504e67` 的热 target 真合跑 10/10。
+- **⑦ 递推（不变式 `implemented + known_gap == 456`，从本轮实测 386/310/146 起）**：`1672` 合 ⇒ `local 401 / owners.M6 1`；随即 `1673` 可派（互斥解除）⇒ 合后 **`402 / owners.M6 0`**；`1675`（M6-INT，唯一 `--write-baseline`）⇒ **`local 406 / implemented 330 real / known_gap 126 / owners.M6 0`**。
+- **就绪序**：`LUM-1673`（等 `LUM-1672` 合，① 路由面最后一片）→ `LUM-1675`（M6-INT）；`LUM-1674` 已在飞。仍**不派**：`LUM-1745`（M5-D8，M6 收口前不开工）、`LUM-1691`（M2-A 尾，争 `Cargo.lock`/注册点）、`LUM-1580`。
+- **回收预告**：`LUM-1672` 一交 PR 且 run 终态 ⇒ **立刻**整删它那 19G `target/`（下一轮起手就要用）。
+
+### 73.7 观察项与 lesson（第 16 轮）
+
+- `todo` 态旧 cycle issue 再积一条：`LUM-1521` / `1533` / `1726` / `1737` / `1740` / `1748` / `1753` + **`1755`（本轮自身，收尾置 `in_review`）**；autopilot 的「同项目已有未终态 cycle issue 时不建新单」护栏**仍未落地**（第 16 轮）。
+- **lesson 1（「在飞」的权威口径 = run 是否终态，不是 issue 状态）**：`LUM-1671` 的 issue 16:56:06Z 就 `in_review` 了，但它的 run 16:57:27Z 才终态、PR 也还开着 ⇒ **issue 状态不能当空位判据**；本轮若照抄「in_review ⇒ 已停」，会既错判空位又可能抢合并（§56.6）。三源（issue 状态 / `runs` 末条 / `/proc/*/cwd`）里**以 run 终态为准**。
+- **lesson 2（门禁等价论证的四件套，缺一不可）**：① 预检 `merge-base..head` 逐字 == PR API；② base 前进段的**非 docs 路径为 0**；③ `merge-tree --write-tree` **单哈希**（无冲突段）；④ head 上 CI 三 job 全绿。四件齐才允许用 CI 替代本地 `--with-db` 10/10；本轮四件全中（②是唯一"便宜"的一步 —— 只要基前进段只动 `docs/`，代码面就与 head **逐字相同**）。
+- **lesson 3（互斥要按「目录 + 注册段」判，不按「crate」判）**：`LUM-1673` 与 `LUM-1672` 分属不同切片、甚至不同 stage，但都落在 `crates/mc-http/src/routes/plugin_bridge/` 同一注册段 ⇒ **同 crate 不同文件也可能互斥**；反过来 `LUM-1674`（`mc-daemon`）与 `LUM-1672`（`mc-http`/`mc-repos`）才是真正的零交集。派发前必须**逐字列出两侧的写文件**再判。
