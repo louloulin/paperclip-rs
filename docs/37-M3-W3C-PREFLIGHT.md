@@ -5612,3 +5612,70 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **下一个「派」的动作**（等空位出现）：第一顺位 **`LUM-1669`** —— 交接文已预置完，只需 `multica issue status LUM-1669 todo --no-start` + `multica issue rerun LUM-1669`，**无需再查证**；次选 `LUM-1671`（4 路由）／`LUM-1672`（19 路由，与 `LUM-1673` 互斥）；`LUM-1674` 的硬前置现为 **M6-1 + M6-4**。
 - **下一个「合」的对象**：`LUM-1668`（M6-3）与 `LUM-1670`（M6-5）**先到先得**，谁先出 PR 且 run 终态就按 §56.2 七步链合；**若 1670 又是零产物死亡**，先按 63.5 的抢救清单把那 **3 文件 +792/−7** `git add` 提交推送（**不要重写**），再考虑 `rerun`。
 - **回收**：两个热 `target/`（2.3G / 722M）只有在对应 run **终态 + 工作区干净 + 无进程占用**三件套齐了才可整体删（此刻两条都不成立）。
+
+---
+
+## §64 13:00 cycle（`LUM-1741`，05:00Z）：**合并 #70（M6-3）⇒ base `2559254`**；合并树门禁 **10/10（110s 热跑）**、⑦ `local 344→363`；**抢救 `LUM-1670` 的 792 行**（`553bf27` + 合并 base ⇒ `7da7baf`，`cargo check` 过）；起手 1/3 ⇒ **空位 2** ⇒ 派 `LUM-1669`（M6-4）∥ `rerun LUM-1670`（第 4 个 run）；回收 22G 热 `target/`
+
+### 64.1 起手状态（05:00Z 实测，逐条可复核）
+
+- **base `15fc7bf`**（码树 `fc4971c`；`git diff --stat fc4971c 15fc7bf -- crates apps Cargo.toml Cargo.lock` = **空** ⇒ 中间 3 个提交全是 docs-only）。
+- **GH 1 open PR = #70**（`LUM-1668` / M6-3）：head `ff7fa08`、base `feat/multica-rs-initial`、`mergeable_state: clean`、API 读数 **16 文件 +5323/−55**。
+- **在飞 0 片**：`multica daemon status` ⇒ `running_task_count = 1`（只有 cycle 自己），`pgrep -af 'pi |cargo|rustc'` 无命中。
+  ⇒ **空位 = 3 − 1 = 2**（口径按 §63.7 当场复核，不抄上一轮的 next-cycle 行）。
+- **`LUM-1668` 已交付**：`in_review`、run 04:42:19Z 终态、1 条交付评论（门禁日志作附件）。
+- **`LUM-1670` 第三次 run 零产物死亡**：工作区留 **3 文件 +792/−7**（`crates/mc-repos/src/plugin/{installation,package,skill}.rs`）、**0 提交 / 0 推送 / 0 注释**（§63.5 的预置抢救清单逐字命中：`installation.rs` +390/−3、`package.rs` +317/−3、`skill.rs` +85/−1）。
+- **看板**：`blocked` **0**；M6 子片 = `1665`/`1666`/`1667`/`1668` **in_review**，`1669`/`1670` `in_progress`，`1671`–`1675` `backlog`。
+
+### 64.2 合并链：#70（M6-3）⇒ base `2559254`（判据链 7 步，全部当场复算）
+
+1. **`merge-base --is-ancestor 15fc7bf ff7fa08` = NO**（base 在片开工后前进过 3 个 docs 提交）⇒ **§56.2 的「base 是祖先 ⇒ 分支 tip 树 == 合并树」这条捷径本轮不成立**，改用合并树口径（见 64.5 lesson 1）。
+2. **预测合并树**：`git merge-tree --write-tree 15fc7bf ff7fa08` ⇒ **`df5362d1a64f8c44e9ff9d7c39083df19cb8f12d`**（**0 冲突**，只打印一个 hash）。
+3. **PR 相对读数**：`git diff --numstat $(git merge-base 15fc7bf ff7fa08) ff7fa08` = `fc4971c..ff7fa08` = **16 文件 +5323/−55** ⇒ 与 API **逐字相等**。
+   （`15fc7bf..ff7fa08` 读 **18 文件 +5325/−192**，多出的 **2 文件 = `docs/37`、`docs/57`**，是 base 上 docs 提交的**逆差**，不是片越权。）
+4. **合并树落成 + 热跑门禁**：在 `LUM-1668` 的热 workdir（`target/` 22G）里 `git checkout -b _cycle_merge70` → `git merge --no-ff origin/feat/multica-rs-initial`（**0 冲突**，只动 `docs/37` +122、`docs/57` +17/−2）→ `git write-tree` = **`df5362d1`** == 预测树 ✅ ⇒ 才算「门禁跑在了真正会被合出来的那棵树上」。
+   `MULTICA_TEST_DATABASE_URL=postgres://mc_cyc1741@127.0.0.1:5432/mc_cyc1741 bash scripts/gates.sh --with-db` ⇒ **10/10 全绿，110s（热跑）**：
+   - ⑦ `upstream 456 | local 363 | baseline 344`；`implemented 287 real + 0 placeholder = 287/456`、`known_gap 169`、`unclaimed 0 / regression 0 / local_only 9`。
+     自洽核算：287+169 = 456 ✓；`local 363 = 基线 344 + 19`（M6-2 的 +17 + M6-3 的 **+2**）⇒ **M6-3 是单路由两条（`POST /api/skills/import`、`POST /api/skills/:id/refresh`），无尾斜杠形态**，与片自报一致。
+   - ⑤ `1600 passed / 0 failed`（103 target）；⑥ `416 passed / 0 failed`（30 target）；⑨ `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`（**与合并前逐字相同** ⇒ 纯增量、无回归）。
+   - **⑧ 真库 scratch 库名带 PID**（§24 的 LUM-1463 修）⇒ 与在飞片并发跑不互踩；本轮 cycle 自建角色 + 库 `mc_cyc1741` 并给 `CREATEDB`。
+5. **API 合并（钉 head）**：`PUT /repos/louloulin/paperclip-rs/pulls/70/merge` + `merge_method=merge` + `sha=ff7fa083f2f27569534613007864b079aa18aa3e` ⇒ `merged=true`、merge commit = **`25592547a26732931a3b05c3b86b911d1590618a`**。
+6. **合并后复核**：`tree(2559254)` = **`df5362d1`** == 预测树 ✅；`git diff --numstat 15fc7bf 2559254` = **16 文件 +5323/−55** == PR API ✅（比第 3 步更硬的等式：**合并前后同一读数**）；`git diff origin/pr70 origin/feat/multica-rs-initial -- crates apps Cargo.toml Cargo.lock scripts migrations .github contracts` = **空** ✅。
+7. **收尾**：`GET /pulls?state=open` ⇒ **0 open PR** ✅；`LUM-1668` workdir 里删掉临时分支 `_cycle_merge70`（原分支 `agent/devbox5/2612b5932325` 未被改动、未 push）。
+8. **顺手排掉一个假警报**：合并后 `git diff origin/pr70 origin/feat/multica-rs-initial` **不是空的**（`docs/37` +122、`docs/57` +17/−2）。这不是漏合 —— 那两处正是 base 上 docs 提交相对分支的差；**判据应落在「合并树等式」+「代码路径 diff 空」**，而不是「branch tip 与 merge commit 的 diff 为空」（后者只在 base 是 tip 祖先时成立）。
+
+### 64.3 抢救 `LUM-1670`（M6-5）的 792 行 —— 抢救 + 合并 base 一次做到底
+
+1. **死亡三判据**（§56.4 口径）：0 提交 / 0 推送 / 0 注释 + 工作区 `git status --porcelain` 只有那 3 个 ` M` 文件。
+2. **先证「可续做」再动手**：`cargo check -p mc-repos --locked` ⇒ 首次 **1.39s `Finished`**（缓存新得可疑）⇒ **`touch` 一个源文件强刷重跑** ⇒ **`Checking mc-repos` / 1.83s / 0 错** ⇒ 那 792 行不是半截砖（`grep -c 'todo!\|unimplemented!'` 三个文件都是 **0**；`pub fn` 22/16/2 个；**0 个测试**）。
+3. **保全**：`git config --worktree user.name devbox5` + `user.email devbox5@multica.local`（本 workdir 的 `.git/multica-identity.config` 是**空值**，不设就 `empty ident name`）⇒ `git add` 那 3 个文件 ⇒ 提交 **`553bf27`**（**逐字未改写**，commit message 里写明是抢救）。
+4. **把 base 合进抢救分支**：`git fetch origin feat/multica-rs-initial` → `git merge --no-ff`（**0 冲突**，只新增 M6-3 的文件）→ tip = **`7da7baf`** ⇒ `cargo check -p mc-repos --locked` **5.07s / 0 错**（M6-3 的 `mc-repos/src/skill/import.rs` 与这 3 个 plugin 文件零交集，实测验证）。
+5. **推送**：`git push origin HEAD:refs/heads/agent/devbox5/f715ccaf9ad8` ⇒ 远端 `7da7baf`（**完整 ref 推送**，不裸 push）。
+6. **顺手查掉一个真实风险**：`grep -rln plugin_secret migrations/` ⇒ `344_plugin_v2_reset.up.sql` + `347_plugin_secret_installation_key_index.up.sql` ⇒ 「部署密钥缺失 ⇒ 拒绝落库（fail closed）」**有真表可用，不需要新增迁移**（这条写进了交接文，省掉下一轮的一次查证）。
+7. **交接 + 重启**：描述 **rev 8→9**（11,808 → 14,423 字节）追加「**第五个 run：抢救已完成，从这里续做**」节 —— 显式作废 §63.5 的条件式抢救包，冻结起手分支 `agent/devbox5/f715ccaf9ad8@7da7baf`、抢救提交 `553bf27`、`cargo check` 通过这一硬事实、剩余单元序（补真库用例 → `routes/plugins/{install,packages}.rs` → 门禁）、`plugin_secret` 表已存在、以及 §63.5 那套纪律（20 分钟首单元 / **写侧占比** / compaction ≤6 / 禁止整文件通读）。⇒ `multica issue rerun` ⇒ 第 4 个 run = **`01a0d1d1`**（05:08:52Z 起）。
+
+### 64.4 派发 `LUM-1669`（M6-4，6 路由）
+
+- 描述 **rev 4→5**（10,130 → 12,243 字节）：追加「起手补充 · 本轮」节，冻结 **起手 base `2559254`**、⑦ 起手 `local 363`（DoD `+6` ⇒ 应读 **369**）、⑤/⑥/⑨ 当轮读数、`routes/agents/dto.rs` 现 **694 行** ⇒ **先拆 `dto/response.rs` 再改**（门 ⑩）、`crates/mc-skill/assets/**` 在 base 里**仍不存在** ⇒ 内置资产（11 文件 / 2,327 行）由本片创建、**`--write-baseline` 禁跑**、真库自建（**别复用 `mc_cyc1741`**）、并行片 `LUM-1670` 的写集与本片**零交集**。
+- `multica issue status <LUM-1669> todo` ⇒ run = **`01a0d1d0`**（05:08:35Z 起）。
+- **口径复核**（§63.4 已预飞过父模块声明）：`git ls-tree -r HEAD -- crates/mc-http/src/routes/plugins/` ⇒ `install.rs`/`packages.rs` 等 **6 个桩文件都在** ⇒ M6-5 的 13 路由承载点存在、**注册点（`plugins/mod.rs`）无需改动**。
+
+### 64.5 本轮 lesson
+
+1. **【§56.2 第 7 步的判据要升级成「合并树等式」】** 原判据写的是「`git diff <head> <merge_commit>` 空」，但它**只在 base 是 head 的祖先时成立**。base 只要前进过（哪怕全 docs-only，本轮 3 个提交全是 docs），这个 diff 就必然非空 —— 而它**既可能是「片越权」也可能是「base 的逆差」**，单看它无法区分：`15fc7bf..ff7fa08` 读 18 文件 +5325/−192，`fc4971c..ff7fa08` 读 16 文件 +5323/−55（= API），多出的 2 文件正是 base 上 docs 提交的逆差。**通用判据 = ①`git merge-tree --write-tree base head` 的预测树 == ②合并后 `tree(base)` + ③代码路径 diff 为空**。本轮三条全绿（`df5362d1` 三处一致）。
+2. **【可以在「别人已交付」的热 workdir 里跑合并树门禁（省掉一次冷建）】** 做法：临时分支 → 合并 base → `git write-tree` 对账 → 跑门禁 → **删分支**（原分支不动、不 push）。本轮因此用 **110s 热跑**拿到「提交前就跑过合并树」的硬事实；对照 `LUM-1668` 自己的冷跑是 296s。（前提：该片 run 已**终态**、工作区**干净**、无进程占用 —— 三条齐了才动。）
+3. **【抢救的收尾要一路做到「能编译的当前 base」】** 只做「commit + push」的话，下一轮起手还得 cherry-pick / 重验一次可编译性。本轮把 **merge base 一并做掉**（0 冲突 + `cargo check` 5.07s 过），下一轮的起手就只剩一条 `git checkout -b <branch> origin/agent/devbox5/f715ccaf9ad8`，**且「这些代码在当前 base 上编译得过」是已经验过的事实而不是假设**。
+4. **【`cargo check` 的「1.4s Finished」要当可疑信号】** 缓存的指纹可能恰好新鲜（本轮的 1.39s 就是缓存命中，不是真编译）。**touch 一个源文件强刷一次**（1.83s）才能证明「这 792 行真的编译得过」；否则交接文里那条「可续做」的证据是假的。
+5. **【空位与「谁在飞」必须当场用 daemon 读数核】**（§63.7 立规，本轮兑现）：起手 `running_task_count = 1` ⇒ 空位 2 ⇒ 派满 3/3；若抄 §63.8 的「空位 0」就白丢一轮。
+
+### 64.6 本轮产出与交接
+
+- **本轮 base 变更**：`15fc7bf` →（合并 #70，merge commit **`2559254`**）→ **本 §64 提交 `efb42e5`**。自证（**分段量，别把 merge 的量算进 cycle 自己**）：`git diff --stat 2559254 <本轮提交>` = **只 1 个 docs 文件（`docs/37`，+67）**；`git diff 2559254 <本轮提交> -- crates apps Cargo.toml Cargo.lock migrations scripts .github contracts` = **空**；而 `15fc7bf..2559254` 的 15 个代码文件 +5252 是 **M6-3 片自己的量**（另一条独立等式：`git diff --numstat 15fc7bf 2559254` = 16 文件 +5323/−55 == PR #70 的 API 读数）。
+- **本轮远端分支动作（2 条）**：`agent/devbox5/f715ccaf9ad8`（M6-5 抢救分支，`7da7baf`，**已推、未开 PR**）；两个新 run（`01a0d1d0` / `01a0d1d1`）起手时都还没推分支。`agent/devbox5/2612b5932325`（M6-3）**已随 #70 合入 base**（此后无新提交）。
+- **回收**：`LUM-1668` 的热 `target/` **22G 整删**（三件套齐：PR 已合 + run 终态 + `/proc/*/cwd` 无该 workdir 进程）⇒ `/` 从 **13G 可用（75%）** 回到 **34G 可用（28%）**。`LUM-1670` 旧 workdir 的 722M **保留**（抢救材料的现场，等第 4 个 run 终态后再处置）。
+- **在飞 3/3**：cycle ∥ `LUM-1669`（run `01a0d1d0`，起手 base `2559254`，DoD ⑦ `363→369`）∥ `LUM-1670`（run `01a0d1d1`，起手分支 `agent/devbox5/f715ccaf9ad8@7da7baf`，DoD ⑦ `363→376`）。
+- **看板**：`blocked` **0**；`1665`/`1666`/`1667`/`1668` 四片 **`in_review` 等验收**；`1671`–`1675` 仍 `backlog`。
+- **GH**：**0 open PR**。
+- **下一个「合」的对象**：`LUM-1669`（M6-4）与 `LUM-1670`（M6-5）**先到先得**；两片都还没推分支 ⇒ 本轮无可合对象。合并链按 §64.2 的**升级版**七步（**合并树等式**，不再依赖「base 是祖先」）。
+- **下一个「派」的动作**（等空位出现）：第一顺位 **`LUM-1671`（M6-6，4 路由）** —— 父声明/注册点已在 §63.4 预飞为 **0 缺件**（`routes/plugins/mod.rs` 的 `router()` **已** `.merge(mcp::router())` / `.merge(surface_launch::router())`），只需一次 `status todo`；次选 `LUM-1672`（19 路由，与 `LUM-1673` **互斥**）。
+- **其余依赖（未变）**：`LUM-1673`（M6-8）**依赖 `LUM-1659` 合入**且与 `LUM-1672` 互斥（两者都动 `plugin_bridge` 的挂载面）；`LUM-1674`（M6-9）硬前置 = **M6-1 + M6-4**（即 `LUM-1669` 合入）；`LUM-1675`（M6-10 INT）= 最后一片，**⑦ 基线的一次性刷新归它**。
