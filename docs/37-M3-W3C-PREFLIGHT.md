@@ -7136,3 +7136,8 @@ unclaimed 0   regression 0   local_only 9
 4. **空位的第三类选项 = 「下一波的计划片」**：前两轮 cycle 只在「派代码片 / 刻意不派」之间选；本轮证明还存在一类**与 `--write-baseline` 零冲突**、且能推进关键路径的片型（docs + fixture + 建 issue，零路由、零 manifest）。判据是三条的交集为空，而不是「有没有空位」。
 5. **`multica issue update --description-file` 只接受 run workdir 内的路径**（`/tmp/...` 被拒），失败时**返回非 0 且 stdout 无 JSON** ⇒ `python3 -c json.load` 链会抛 `JSONDecodeError`；**别把「解析失败」当「更新失败」，也别当「更新成功」** —— 回读 `issue get` 的 `revision` 才是判据（本轮第一次就是被路径规则挡下、第二次才落盘 rev 6）。
 6. **口径类片合入必须同轮三件事**（§78 lesson 的复现与收口）：新 base 重跑门禁 + **回填接收片描述** + 计划文档就地订正。本轮三件都做齐（4/4 门、`1675` 描述 rev 6、`docs/57` §9.7 的过期拆分已由 §9.9 覆盖）⇒ **M6-INT 的起手读数从「推导」变成「实测」**，这类「推导值」是下一轮最容易踩空的地方。
+
+**79.4b 第二次回收（同轮内，`LUM-1673` 终态后）：16.3G**
+
+- `LUM-1673` 的 run 终态于 **20:13:31Z**（`completed_at`），其分支 `4b8f5854` 已是 base（`bf8ecc48`）的**祖先**（内容全部在远端）、工作树 **0 未提交**、`/proc/*/cwd` **零命中** ⇒ 四判据齐，**整删 `lum-1673-3be5bf776e34/workdir/paperclip-rs/target`（16.3G）**；workdir 本体（源码 + `.git`，21M）保留作证据。删除时注意：`ls -l /proc/*/cwd | grep -c <workdir>` 会被**自己这条命令**（`cd` 进目标目录的 shell 与其子进程）污染 ⇒ 判第四判据要**按 PID 逐个看 `cmdline`**，别只看计数。
+- 结果：磁盘 **13G → 29G 可用（39%）**，为同轮在飞的 `LUM-1675`（起手即建 `target/`，2.5G 时可见增长）留足余量。两轮合计本轮回收 **28.1G**。
