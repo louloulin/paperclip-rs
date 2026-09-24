@@ -5679,3 +5679,82 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **下一个「合」的对象**：`LUM-1669`（M6-4）与 `LUM-1670`（M6-5）**先到先得**；两片都还没推分支 ⇒ 本轮无可合对象。合并链按 §64.2 的**升级版**七步（**合并树等式**，不再依赖「base 是祖先」）。
 - **下一个「派」的动作**（等空位出现）：第一顺位 **`LUM-1671`（M6-6，4 路由）** —— 父声明/注册点已在 §63.4 预飞为 **0 缺件**（`routes/plugins/mod.rs` 的 `router()` **已** `.merge(mcp::router())` / `.merge(surface_launch::router())`），只需一次 `status todo`；次选 `LUM-1672`（19 路由，与 `LUM-1673` **互斥**）。
 - **其余依赖（未变）**：`LUM-1673`（M6-8）**依赖 `LUM-1659` 合入**且与 `LUM-1672` 互斥（两者都动 `plugin_bridge` 的挂载面）；`LUM-1674`（M6-9）硬前置 = **M6-1 + M6-4**（即 `LUM-1669` 合入）；`LUM-1675`（M6-10 INT）= 最后一片，**⑦ 基线的一次性刷新归它**。
+
+
+## §65 13:30 cycle（`LUM-1742`，05:30Z）：base 未动（`02f888f`）、GH 0 PR、起手 **2/3** ⇒ 空位 1 ⇒ **`rerun LUM-1669`（M6-4，第 2 个 run）**；新动作 = **M6-6 派发就绪预飞（0 缺件）** + **查出 `LUM-1673`（M6-8）写集缺 2 个文件 / 边界自相矛盾 1 处** + 订正 §64.6 的过期依赖行 + 三片描述就地修订
+
+### 65.1 起手复核（逐条实测）
+
+- **base = `02f888f4e35ac10c25e971132194fbb17206ac03`**（`origin/feat/multica-rs-initial` = `LUM-1741` cycle 的 §64.6 勘误提交）。本轮 cycle **不改任何代码 / 不动 ⑦ 基线**，base 的唯一变更就是本节（docs-only）。
+- **GH：0 open PR**（API `repos/louloulin/paperclip-rs/pulls?state=open` = 0；本波此前 5 个 PR #66–#70 均已合入）⇒ **本轮无可合对象**。
+- **daemon 读数（派发前，`multica daemon status --output json`）**：`running_task_count = 3`、`active_task_count = 3`、`resource_wait_task_count = 0`、`failed_terminal_report_count = 0`、`pending_terminal_report_count = 0`。起手时在飞 = **cycle ∥ `LUM-1670`**（run 4，`01a0d1d1`，05:08:52Z 起，`running`）⇒ **空位 1**。
+- **⑦ 起手读数**（`bash scripts/gates.sh --only route-parity,file-size`，本轮 base 上实测）：`upstream 456 (commit f41fae6b08fb) | local 363 registered | baseline 344`；`implemented 287 real + 0 placeholder = 287/456`、`known_gap 169`、`unclaimed 0`、`regression 0`、`local_only 9`；⑩ `file-size` 绿 ⇒ **2/2（0s）**。
+  ⚠️ **口径自证**：本轮**没有**跑全量 `--with-db`（cycle 无代码变更，全量 10 门留给合并片/INT 片）—— 这里的 `2/2` **不等于** `10/10`，报告引用时别混。
+- **看板**：`blocked` **0**；`in_review` 4 片（`1665`/`1666`/`1667`/`1668`，均已随 #66–#70 进 base，等人工验收）；`in_progress` 2 片（`1669`/`1670`）；`backlog` 5 片（`1671`–`1675`）。
+
+### 65.2 `LUM-1669`（M6-4，6 路由）第 1 个 run 死亡 ⇒ 追加交接 + `rerun`
+
+- **死因 = 上游流中断，不是片自己的问题**：`05:16:51Z` 平台在该 issue 上落的系统消息逐字是 `Upstream stream ended before terminal chunk`；跑时长 ≈ 8 分钟（起 `05:08:35Z`）。
+- **死亡三件套（本机实测，§56.2 升级版判据）**：① **0 提交 / 0 推送 / 0 注释**；② 隔离 workdir `lum-1669-424f8fca9551` 的 `git status` 干净、`HEAD` = `2559254`（= 起手 base，**没有**任何未提交残留）；③ 无该 workdir 的存活进程 ⇒ **零抢救对象**，唯一正确的动作是 `rerun`（而不是重写交接、也不是 `status todo`）。
+- **描述 rev 8 → 9**（17,390 → 19,068 字节）：追加「起手补充 · **第 2 个 run**」节 —— 写明死因与「无抢救产物」、base 以启程那一刻的 `origin/feat/multica-rs-initial` 为准（cycle 复核 = `02f888f`，**码树仍是 `2559254`** ⇒ §64.4 里的行号/行数依然有效）、⑦ 起手 `local 363`（DoD `+6` ⇒ 应读 **369**）、基线 344 禁写、纪律五条（20 分钟首个可编译单元 / 上游只许单段读 / worktree identity / 完整 ref 推送 / 不碰 `Cargo.{toml,lock}`）。
+- **`multica issue rerun LUM-1669`** = run **`01a0d1ec-25b4-7ed6-868d-84af16a3d3e0`**（`05:38:29Z` queued；新工作区 `lum-1669-84af16a3d3e0` 已建）。**为什么是 `rerun` 而不是 `status todo`**：片本身已在 `in_progress`、指派人未变，`rerun` 的语义正是「同一指派、开一个新 run」，不会把看板状态打回。
+- 派后 **3/3 满载**（cycle ∥ `LUM-1669`（run 2）∥ `LUM-1670`（run 4）），本轮**不再派任何新片**。
+
+### 65.3 新动作 ①：`LUM-1671`（M6-6，4 路由）**派发就绪预飞 ⇒ 0 缺件**
+
+描述 rev 1 → 2（2,059 → 7,687 字节），追加「起手补充 · 派发前预飞」节，把「派发」这一步压成**一条 `status todo`**：
+
+| 文件（写集） | 现状（base `02f888f` 实测） | 预算 |
+| --- | --- | --- |
+| `crates/mc-http/src/routes/plugins/mcp.rs` | 存在，doc-only 桩 32 行 | ⑩ ≤ **380** |
+| `crates/mc-http/src/routes/plugins/surface_launch.rs` | 存在，doc-only 桩 32 行 | ⑩ ≤ **220** |
+| `crates/mc-repos/src/plugin/mcp_approval.rs` | 存在，doc-only 桩 19 行；`plugin/mod.rs:32` 已记本片 | — |
+| `crates/mc-repos/src/plugin/invocation_read.rs` | 存在，doc-only 桩 16 行；`plugin/mod.rs:33` 已记本片 | — |
+
+- **注册点 0 缺件**：`routes/plugins/mod.rs` 的 `router()` 已 `.merge(mcp::router())` / `.merge(surface_launch::router())`；两个 `mod.rs`（`routes/plugins/mod.rs`、`mc-repos/src/plugin/mod.rs`）都是 M6-0 anchor 冻结面 ⇒ 本片一行不改。
+- **四条硬语义的依赖件全在 base**（逐条给了文件:行，避免执行者自己再找一遍）：
+  1. 表 **0 新迁移**：`workspace_mcp_server`（`migrations/upstream/315`；`316` 唯一键；`318` 删 `workspace_mcp_config`）、`plugin_installation.mcp_approvals JSONB NOT NULL DEFAULT '{}'`（`369`，**键 = hook key**）、`plugin_invocation`（`362` 建表 + `399` 加 `delivery_id`/`planned_at` 并把 `trigger` 扩到含 `schedule` + `402` 只 `VALIDATE`）= **13 列**；
+  2. MCP 采纳的交叉校验**已在 `crates/mc-mcp/src/client.rs`**：`validate_pinned_tools`（:525）、`tool_set_digest`（:506）、`canonical_input_schema`（:493）⇒ 禁止另写一份 schema 比较器；
+  3. surface 的 manifest 判定：`mc_plugin_host::manifest::{Contributes.surfaces (:198), Surface (:209)}` + `validate_surfaces`；
+  4. 部署面读取口（anchor 已落，`state.rs` 不改）：`state.plugin_key`（`None` ⇒ 503 `plugin_disabled`）、`state.plugin_surface_origin`（`None` ⇒ 503 `plugin_surfaces_not_configured`；**origin 合法性 + 「必须与 app/API origin 不同」是 M6-6 自己的判定**，非法 ⇒ 500 `plugin_surfaces_misconfigured`）；
+  5. 契约类型从 `mc_core::plugin::{PluginMcpApproval (:368), PluginMcpApprovals (:385)}` 取。
+- **无双形态提醒**：带尾斜杠的 5 个双形态键**全在 M6-2（已合）**，本片 4 键**没有**双形态 ⇒ 照 `docs/fixtures/{upstream-routes,m6-declared-routes}.tsv` 逐字注册，不要加/去尾斜杠、不要动 allowlist。
+
+### 65.4 新动作 ②（本波最重要）：`LUM-1673`（M6-8，1 路由）**写集缺 2 个文件 + 边界自相矛盾 1 处**
+
+描述 rev 2 → 3（3,747 → 9,354 字节），追加「写集 / 依赖修订」节。两件事：
+
+**(a) 描述里那条「⚠️ 依赖 `LUM-1659`，未接线 ⇒ 只交桩级证据 + 登记」的前提已消失。** 实测：`5e7032a feat(m5-9): wire mc-scheduler into apps/mc-server` **是 base 的祖先**（`git merge-base --is-ancestor 5e7032a HEAD` = 真；`docs/37` §59 记的 merge `#68`）；`apps/mc-server/Cargo.toml:48` 有 `mc-scheduler` 边、`apps/mc-server/src/main.rs:25` `mod scheduler;` / `:162` `scheduler::start(&db, daemon_hub)` / `:185` `shutdown()`、`crates/mc-scheduler/src/jobs/mod.rs:96` `register_all` **已注册 2 个 job**。⇒ 该片按**真实装配**交付，「job 幂等」不许再走桩级证据路线（同时 `main.rs` 一行不动）。
+
+**(b) 「本地 scheduler job」这一条**在当前布局下**写不出来**，因为写集缺件：本波唯一注册点是 `mc_scheduler::jobs::register_all`，而它的端口包是**固定 3 参**——`struct JobPorts { autopilot_catalog, autopilot_dispatch, wakeup }` + `JobPorts::new(3 参)`（**无默认值、无 builder**）；全仓 `JobPorts` 构造点只有 2 处（`grep -rn "JobPorts" --include=*.rs`）：`apps/mc-server/src/scheduler/mod.rs:76`、`crates/mc-scheduler/tests/jobs_issue_wakeup.rs:266`。所以必然要动：
+
+| 文件 | 动作 | 缺了它的后果 |
+| --- | --- | --- |
+| `crates/mc-scheduler/src/jobs/plugin_hook.rs` | **新建**（`pub fn job(port: Arc<dyn PluginHookPort>) -> JobSpec`，形状抄 `jobs/issue_wakeup.rs:270`） | job 本体不存在 |
+| `crates/mc-scheduler/src/jobs/mod.rs` | `pub mod plugin_hook;` + `JobPorts` 加第 3 个端口 + `register_all` 加 1 行 | **job 写了但没人注册 = 死代码**，§4.1 的「+1 路由 / ⑦ +1」也无从谈起 |
+| `apps/mc-server/src/scheduler/mod.rs` | **只改 `build()`（`:76`）**：多构造一个端口实参 | 生产进程里 job **永不运行** = 本波最忌的「假绿」 |
+
+**裁定（就地写进该 issue）**：① 边界「不改 `apps/mc-server/**`（属 `LUM-1659` 写集）」**失效**（冻结理由随 `LUM-1659` 合入消失），唯一允许的改点是 `build()`，`main.rs` 与任何 `Cargo.toml` 仍不改；② 端口签名**走 builder**（`new` 3 参不动，加 `with_plugin_hook(...)`）—— 若改 `new` 的元数就必须同时改 `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:266`（M5 已交付的用例），写集再多 1 个文件，不如 builder 小；③ **不能把装配推给 M6-INT**：`LUM-1675` 写集逐字写着「**不碰任何 `.rs`**」；④ **不许用 `Option<Arc<dyn …>>` 默认 `None` 回避**（会让 job 在生产里永不注册 = 假绿）；⑤ 端口形状照 `jobs/mod.rs` 顶部的 `PortFuture<'a, T>`（`async_trait` 不在依赖表里），`mc-scheduler` 的依赖表（无 `sqlx`/`serde_json`，M5-0 冻结）不变，JSON 出口仍只有 `JsonObject`；⑥ 该片写集其余 4 条（`routes/plugin_bridge/hooks.rs`、`routes/plugins/hooks_job.rs`、`mc-repos/src/plugin/hook.rs`、`mc-repos/src/scheduler.rs`）实测存在，§63 的「写集记法消歧」结论不变。
+
+### 65.5 新动作 ③：两处**过期依赖行**的订正
+
+- **§64.6 勘误**：本文档上一节写的「`LUM-1673`（M6-8）**依赖 `LUM-1659` 合入**」**是过期信息** —— `LUM-1659` 早在 §59（merge `#68`，`5e7032a`）就已进 base。以 §65.4(a) 为准；§64.6 的其余条目（在飞/看板/回收）本轮复核仍成立。
+- **`LUM-1674`（M6-9）DoD 行**：其「⚠️ hook 的 MCP 段在 `LUM-1659` 落地前只能到桩级证据 —— 登记而不硬凑」同样**前提消失**（描述 rev 3 → 4）。该片的真实硬前置仍是 **M6-1 + M6-4（=`LUM-1669` 合入）**（§61 对 bundle hash 落点 `mc_core::skill` 的裁定继续有效）。
+
+### 65.6 本轮 lesson
+
+1. **【「描述里的依赖警告」是最容易过期的字段，比代码更早腐烂】** 本轮**两条**过期的依赖警告（`LUM-1673` 的 `LUM-1659`、`LUM-1674` 的同一句）都写在依赖已满足**之后**：交接文是「派发那一刻的实测」，而 base 会随别人的合并前进。**规则**：cycle 复核「起手读数」时，顺手把每个待派片**描述里所有条件式警告**（`若…仍未…就降级` / `至今没有…`）当断言重验一遍 —— 一条 `grep` 就能省掉一片的降级交付。
+2. **【「依赖已满足」往往意味着「写集该长了」—— 接线类依赖尤其如此】** `LUM-1659` 合入把「hook job 无处运行」变成了「hook job 有地方运行，但你有权去装它吗」：`JobPorts::new` 是固定元数、唯一的 `register_all` 在别人的 crate 里、唯一的装配点在 `apps/mc-server`（而描述把那里划给了已交付的 `LUM-1659`）。⇒ **判据**：凡写集里出现「注册 / 装配 / 挂载」这类词，必须把**注册点所在文件**与**端口/构造签名的所有调用点**（`grep` 一遍类型名）逐条列进写集，否则执行者只有两条路：写死代码，或越权改冻结面。本轮实测：`JobPorts` 全仓 2 个调用点，其中一个还是 M5 的测试文件。
+3. **【上游流中断（`Upstream stream ended before terminal chunk`）是「零产物」死法的第三种，判据不变】** 它与「静默死亡」在上游表现不同（前者有系统消息、后者平台记 `completed`），但**本机三件套完全一样**（0 提交 / 0 推送 / 0 注释 + 工作区干净 + 无残留进程）⇒ 处理动作也一样：**先验三件套，确认无产物就直接 `rerun`**，不要花时间去翻日志证明「它当时在干什么」。
+4. **【`rerun` vs `status todo` 的边界】**: 片已在 `in_progress` 且指派人未变 ⇒ 用 `rerun`（同一指派、新 run，看板不回退）；只有「`backlog` 片首次开工」才用 `status todo`。两者都会占一个空位，别把 `rerun` 当成「不占位」。
+5. **【cycle 自证的门槛要写清「跑了哪几门」】** 本轮只跑 ⑦+⑩（无代码变更），报告里必须写成 `2/2` 而不是 `10/10` —— §64 的 `10/10` 是**合并树**上的读数，两者不可互相印证。
+
+### 65.7 本轮产出与交接
+
+- **本轮 base 变更**：无代码变更；`02f888f` → 本 §65 提交（**只 1 个 docs 文件**，`git diff --stat` 自证）。⑦ 基线 **344 未动**，`--write-baseline` 本波仍**禁跑**（归 `LUM-1675`）。
+- **本期远端动作**：`LUM-1669` 新 run `01a0d1ec`（工作区 `lum-1669-84af16a3d3e0`，起手分支未推）；三个 issue 描述就地修订（`1671` rev 2、`1673` rev 3、`1674` rev 4）；**未推任何代码分支**。
+- **在飞 3/3**：cycle ∥ `LUM-1669`（run 2，起手 base `02f888f` = 码树 `2559254`，⑦ `363 → 369`）∥ `LUM-1670`（run 4，起手分支 `agent/devbox5/f715ccaf9ad8@7da7baf`，⑦ `363 → 376`）。两片写集**逐文件零交集**（M6-4 = `routes/agents*` + `mc-skill` + `mc-repos/src/skill/binding.rs`；M6-5 = `routes/plugins/{install,packages}.rs` + `mc-repos/src/plugin/{installation,package,skill}.rs`）。
+- **回收复核（本轮未动任何 workdir）**：`/` = **32G 可用（32%）**；`lum-1670-acaf0bde8b67`（2.7G，run 4 **在飞**）与 `lum-1670-f715ccaf9ad8`（805M，run 3 的抢救现场，§64 裁定「等第 4 个 run 终态后再处置」）**都保留**；`lum-1669-424f8fca9551`（第 1 个 run 的死工作区）本体极小、等其新 run 起手后与本轮一并处置。⚠️ **下一轮起手先看 `df`**：两片同时在飞、各 `target/` 可达 30G。
+- **GH 0 open PR** ⇒ **本轮无可合对象**；下一轮的合并对象 = `LUM-1669` / `LUM-1670` **先到先得**（判据链走 §64.5 的**合并树等式**：`git merge-tree --write-tree base head` 的预测树 == 合并后 `tree(base)` == 代码路径 diff 空）。
+- **下一个「派」的动作**（等空位出现）：**第一顺位 `LUM-1671`（M6-6）** —— §65.3 已把预飞做尽，一条 `multica issue status LUM-1671 todo` 即可；次选 `LUM-1672`（M6-7，19 路由，与 `LUM-1673` **互斥**：两者都动 `plugin_bridge` 挂载面）；`LUM-1673`（M6-8）现在**依赖已满足**且写集已补齐（§65.4），只要不与 `LUM-1672` 同飞即可派；`LUM-1674`（M6-9）硬前置 = **`LUM-1669` 合入**；`LUM-1675`（M6-10 INT）最后一片。
+- **观察项**：`LUM-1521` / `LUM-1533` 仍 `todo`（§61 已核实为「秒级静默死亡」而非「从未启动」），本波**不派**（不在 M6 计划内）。
