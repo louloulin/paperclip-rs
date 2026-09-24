@@ -6566,3 +6566,64 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
 - **空位再派**：本轮第二位 = **`LUM-1673`（M6-8，1 路由）** —— 它与 `LUM-1672` 的互斥已随合并解除。预飞在 `81c58721` 复验 **7/7 命中、0 缺件、0 处需改冻结面**（`plugins/mod.rs:36/:54`、`plugin_bridge/mod.rs:31`、`plugin/mod.rs:37`、`lib.rs:68`、`jobs/mod.rs:64/:76/:96/:97/:101`、构造点仍 2 处）；**⑩ headroom 写入描述**：`mc-repos/src/scheduler.rs` = **621/800 ⇒ 剩 179 行**（不在白名单），骨架文件 `hooks_job.rs 35` / `hooks.rs 44` / `plugin/hook.rs 21` 承载新逻辑。描述追加「起手交接（01:00 cycle / `LUM-1755`）」+ `--no-start`（revision **4**）⇒ `status todo` ⇒ **run `01a0d477-6b6c-73b0-88fa-3be5bf776e34` 于 17:29:51Z 起跑**。⇒ 派后 **3/3**：cycle ∥ `LUM-1674` ∥ `LUM-1673`。
 - **⑨ 口径**：本片 `mc-conformance/report.json` **逐字未变**（`pass 5 / mismatch 23 / unmounted 31 / placeholder 0 / unevaluable 306`，`fixtures 365`）；`PASS (report matches)` 逐字来自本轮门 ⑨ 日志。
 - **⑤/⑥ 读数的跨片口径（本轮立，免得下轮拿两片的数相加）**：M6-6 在**它自己的树**上报 ⑤ `1648/198`、⑥ `471/0`（`LUM-1671` 交付评论）；合并树实测 ⑤ `1673/198`、⑥ `511/0` ⇒ 差量 **+25 / +40**，其中 **+40 与 M6-7 自报的 `tests/public_api` 40 例 e2e 数目逐值相同**（⑥ 是真库门），+25 是它的纯判定单测（**未逐条点名文件 ⇒ 只作「与该片自报规模相合」的观察，不作断言**）。⇒ **跨片读数只能取「当轮合并树自己的日志」**：既不能把两片各自树上的数相加（两棵树的 `#[ignore]`/feature 组合不同），也不能相减推断增量。
+
+## §74 01:30 cycle（`LUM-1757`，17:30Z 触发）：base 未动（`b3409339`）、GH **0 PR**、**与 01:00 cycle（`LUM-1755`）并发**（daemon `running_task_count = 4`）⇒ 0 可合 / 0 可派；新动作 = **对上一 cycle 的落地做独立复核（对象库可判定，不重跑门禁）** + 在飞两片健康复核 + 看板订正 + 磁盘
+
+> 本节由 **01:30 cycle（`LUM-1757`）** 落盘。01:00 cycle（`LUM-1755`）在本节写就时**仍 `running`**（pid 61492，session 仍在增长）；若它后续再追加同号节，请顺延编号。
+
+### 74.1 起手三连读数（现场实测）
+
+| 项 | 读数 |
+| --- | --- |
+| 磁盘 | `/` 49G 盘，**32G 可用（34%）**；本轮**零回收动作**（`1671`/`1672` 的 42G 已由 §73.9 回收殆尽） |
+| base | `git rev-parse origin/feat/multica-rs-initial` = **`b3409339`**（= `a092d0df` §73.9 + 一条 §73.9 **订正** docs 提交）；`81c58721..HEAD` 改动路径 = **仅 `docs/37-M3-W3C-PREFLIGHT.md`** ⇒ **码树 == `#74` 合并树 `631547b0`** |
+| PR | 认证 GitHub API `GET /pulls?state=open` = **0** |
+| 并发 | `multica daemon status` ⇒ `running_task_count = **4**` = **两条 cycle**（`LUM-1755` 17:00Z 起 + `LUM-1757` 17:30Z 起）+ 两片（`1673`/`1674`） |
+| 在飞片远端 | `1673`/`1674` 分支**均尚未推**（`git ls-remote origin agent/devbox5/3be5bf776e34 agent/devbox5/fcaf086621b5` = 空） |
+
+### 74.2 独立复核 01:00 cycle（`LUM-1755`）的三条落地声明 —— 全部可从对象库复现，**不需重跑 554s 门禁**
+
+| # | 复核项 | 独立读数（本 cycle 现场） |
+| --- | --- | --- |
+| ① | 合并提交形态 | `6d9bc858`（#73）parents = `f3e44d80 cd1a22cb`；`81c58721`（#74）parents = `950f88bf e9b72e73` ⇒ 都是**真二父合并**（非 squash、非 reset 伪合并）；`93ccb020`（#74 head）`merge-base --is-ancestor` base **为真** |
+| ② | 落地树等式 | `git rev-parse 81c58721^{tree}` = **`631547b0`** == §73.9 记的预测树，**逐字相等**；`git diff --name-only e9b72e73 81c58721` = **0 行** |
+| ③ | 冲突裁决无内容丢失 | `docs/32-M3-DAEMON-FACE.md` 在 `950f88bf → 81c58721` 上 **`+56/−0`**（M6-6 的 §9.8 节原样保留）；节头 `### 9.7` / `### 9.8`（M6-6）/ `### 9.9`（M6-7）**三条同时在位、编号连续**（`docs/32` 行 410/481/548） |
+| ④ | 码树未随 docs 提交漂移 | `81c58721..HEAD` 只有 `docs/37` 一个路径 ⇒ 那个 **10/10（554s）** 的合并树读数**直接适配当前 base**（本 cycle 无需重跑） |
+| ⑤ | ⑦ 快照未被刷 | `md5sum docs/fixtures/route-parity-baseline.json` = **`0541eaf13804bd3c4e4586345b2d0f26`**（与 §73.9 记的一致）；`routes` 长度 = **344** ⇒ 基线仍 344，`--write-baseline` 仍归 `LUM-1675` |
+| ⑥ | 声明面与 allowlist | `docs/fixtures/m6-declared-routes.tsv` = **57 条数据行**（+1 表头）；`slash-alias-allowlist.tsv` **0 数据行**（仅注释 + 表头）⇒「M6 **没有** allowlist 退路」的口径仍成立 |
+
+⇒ 结论：`LUM-1755` 的「tree 等式 / 冲突两侧都保留 / 10/10 适配落地提交」**三条声明全部可独立复现**；本轮因此**不重跑门禁、不重写 §73、不重派**。
+
+### 74.3 在飞两片健康复核（判活用「写侧产物 + cargo 子进程」，不用 issue 状态 —— §73.7 lesson 1）
+
+- **`LUM-1673`（M6-8，1 路由）** run `01a0d477-6b6c-73b0-88fa-3be5bf776e34`，17:29:51Z 起（本轮起手时 **1 分钟**）：workdir `lum-1673-3be5bf776e34`；`HEAD = 81c58721`、`git status --porcelain = 0`、远端无分支 ⇒ **刚起跑、尚未落第一个提交**（其起手 base 落后 4 个 docs 提交，不构成问题）。issue `in_progress` ✓。
+- **`LUM-1674`（M6-9，0 路由）** run `01a0d460-78a1-76fd-9591-fcaf086621b5`，17:04:47Z 起（**已 29 分钟**）：workdir `lum-1674-fcaf086621b5`；`HEAD = 6d9bc858`、**13 个未提交改动**、`target/` **2.6G**；`/proc` 里可见它的 `cargo check` / `cargo test --no-fail-fast` / `clippy-driver` **三件套在跑** ⇒ **活跃**（非静默死亡：有写侧产物 + 有 cargo 子进程）。
+  **看板订正**：其 issue 状态是 `todo` —— 这是派发流程（`--no-start` 改描述后 `status todo` 起 run）的遗留，与「run 正在跑」自相矛盾。本轮用 `--no-start` 就地改 **`in_progress`**（**不新起 run**）。
+- 两片**写集交集 ∅**：`1673` = `mc-http/src/routes/plugins/*` + `plugin_bridge/hooks.rs` + `mc-repos/src/plugin/hook.rs` + `mc-repos/src/scheduler.rs`；`1674` = `mc-daemon/*` + `mc-core/src/skill.rs` 消费面 ⇒ 无需交互仲裁。
+
+### 74.4 空位与就绪板：本轮**不派发**（两条独立理由）
+
+1. **任务槽已超**：空位 = 3 − 1(cycle 自己) − 在飞片数。本轮 daemon 读数 **4** = **两条 cycle + 两片** ⇒ 任何派发都会把它推到 **5**。这也是「一次最多三个任务运行」本轮被突破的现场证据（原因在 autopilot 侧，见 §74.7）。
+2. **即使按切片口径**（2 片在飞 ⇒ 1 空位），唯一候选 **`LUM-1675`（M6-INT，唯一 `--write-baseline`）硬前置未满足** —— 需 `1673` + `1674` 先合入 ⇒ 无片可派。
+
+- 明确**不派**：`LUM-1691`（M2-A 尾，争 `Cargo.lock` 且与 `1673` 的 `routes/mod.rs` 注册段互斥）、`LUM-1745`（M5-D8，M6 收口前不开工）、`LUM-1580`、`LUM-1601`。
+- 看板：`1665`–`1672` **8 片 `in_review`**（合并已落、等人工验收）、`1673` `in_progress`、`1674` `in_progress`（本轮订正）、`1675` `backlog`；`blocked` **0**。
+
+### 74.5 磁盘：本轮零回收（无需动手）
+
+- `/` **32G 可用（34%）**：`du -sh` 全盘 top = `lum-1674` **2.6G**（活 target）、`lum-1755` **553M**；其余 200+ 旧 workdir **合计 < 4G**（单个 ≤188M）⇒ 按「先活物纯缓存、后死物」排序，本轮**无收益动作**。
+- 触发口径沿用 §73.5：可用 **< 8G 或跌幅 > 3G/分** ⇒ 第一杠杆 = 删**在飞片各自的** `target/debug/incremental`；**别人的 `deps/` 只在 run 终态后随整棵 `target/` 一起删**。
+
+### 74.6 下一轮起点与判据链预置
+
+- **起点**：base **`b3409339`**（+ 本 §74 的 docs 提交）、码树 == `631547b0`、GH **0 open PR**、在飞 = `1673` ∥ `1674`（两片都还没推分支）。
+- **下轮第一动作**：起手三连后 ① **重取 `pulls?state=open`**；② 每片查 `merge-base --is-ancestor <base> <head>` + head 上 CI **3/3**；③ **合并前先确认该片 run 已终态**（§56.6：片会自己合 base / 刷基线）；④ 分片查盘。
+- **两片合并预判**：都是「起手 base 已被后续 docs 提交越过」类（`1673` 起点 `81c58721`、`1674` 起点 `6d9bc858`）⇒ 预检走 **`merge-tree --write-tree` 单哈希 + 落地树等式**；`1673` 是 **1 路由**片、`1674` 是 **0 路由**片 ⇒ 若 head 上 CI 三 job 全绿 + 预检逐字命中，可比照 §73.2 走**等价论证**（判据 ② = base 前进段的非 docs 路径为 0）；否则用各自热 `target/` 真合跑 `--with-db` **10/10**。
+- **⑦ 递推**（不变式 `implemented + known_gap == 456`，从 `#74` 合并树实测 `local 405 / implemented 329 real + 0 placeholder / known_gap 127 / owners.M6 **1**` 起）：`1673` 合 ⇒ `local **406** / owners.M6 **0**`；`1674` 合 ⇒ 路由不变（0 路由片）；`1675`（M6-INT，唯一 `--write-baseline`，344 → 406）⇒ **`local 406 / implemented 330 real / known_gap 126 / owners.M6 0`**。
+- **回收预告**：任一 PR 合 + 该片 run 终态 + `/proc/*/cwd` 零命中 ⇒ **立刻**整删该片 `target/`（`1674` 现在已有 2.6G 且在长）。
+
+### 74.7 观察项与 lesson（第 17 轮）
+
+- **并发 cycle**：本轮起手 `running_task_count = 4`，`LUM-1755`（17:00Z）与 `LUM-1757`（17:30Z）**同时 alive** ⇒「一次最多三个任务运行」被 autopilot 侧突破。`todo` 态旧 cycle issue 已积 **9 条**（`1521/1533/1726/1737/1740/1748/1753/1755/1757`）。护栏（「同项目已有未终态 cycle issue 时不建新单」）**仍未落地** ⇒ 本轮采「**不重复上一 cycle 的动作**」避让：不重跑门禁、不重写报告、不抢合并、不重派。
+- **lesson 1（并发 cycle 的正确分工）**：前一条 cycle 仍在飞且已把「合并 + 派发」做完时，后一条 cycle 的**唯一增量价值 = 独立复核 + 未被覆盖的看板/口径订正**。本轮复核之所以便宜，是因为被复核的三条声明**都是对象库可判定的**（`git rev-parse <merge>^{tree}`、`git diff --numstat <parent> <merge>`、`md5sum`）—— **一条 554s 的门禁都不用重跑**。「独立性」不等于「重算」，先把声明归约成可判定的对象级断言。
+- **lesson 2（issue 状态与 run 状态不符 ⇒ 以 run 为准，并顺手订正板面）**：`LUM-1674` 的 `todo` 是派发流程遗留（`--no-start` 改描述 ⇒ `status todo` 起 run），**不是它没在跑**。板面对读者的信息价值高于「不动别人 issue」的洁癖 ⇒ 用 `--no-start` 就地改 `in_progress`（既不动它的 run，也不误触「起跑」默认行为）。
