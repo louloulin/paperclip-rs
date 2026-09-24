@@ -5225,3 +5225,98 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【锚点的聚合器只覆盖「新建模块目录」，落在既成文件里的面必须由写集点名】** 锚点为 `skills`/`plugins`/`plugin_bridge`/`v1` 建了冻结聚合器 ⇒ 这些面的切片**只要填自己的子文件**，零冲突。但 M6-4 的 6 条 agent-skill 路由落在 M3-5 的既成文件 `routes/agents.rs`（内联 `.route()`、无子 router）、M6-9 的面落在既成的 `mc-daemon/src/lib.rs` + `execenv/mod.rs` ⇒ 这两处**没有**聚合器可依赖，**必须由写集显式点名那些既有文件**，否则切片只能在「漏挂」与「越权」之间选。**规律：写集审计要分两类查 —— ① 新建文件在不在锚点骨架里；② 为让新文件被编译器/路由器看见，要改哪个**既有**文件（`mod` 声明 / `.merge` / `.route()`）。第二类是最容易漏的，因为它不在「本片要写的功能文件」列表里。**
 - **【同一波内「文件的 diff 出现负数行」有第三种正常解释】** 本轮两在飞片的 diff 都显示 `docs/37 | 129 ---`。它不是删除、不是回退，而是**它们的 base 停在两节文档之前**（§56+§57 = 129 行），且它们**不写**该文件 ⇒ 合并 base 时 base 侧胜出、无冲突。**读法约定：先量「落后了几节文档」（`git diff <base> <片 head> -- <file>` 的负数行数 ≈ 该期间 docs-only 提交的行数），再决定要不要紧张。**
 - **【描述是「文件→写者矩阵」的镜像 ⇒ 每波 anchor 合入后要全波复算，而不是只修被点到的那一片】** §57.4 修了 `LUM-1668` 一个旧文件名（发现方式是「读到那一行」），本轮把同一检查**推给全部 11 片**后，又揪出 2 处缺件 + 1 处 glob 歧义（其中 finding B 是**描述自相矛盾**：写集「仅新增文件」与边界「不改既有文件」合起来禁止了自己必需的那次编辑）。**规律：点状修复会留下同型兄弟；把检查改成「对全波每条声明逐个 `ls`」才会收敛。** 成本：4 条 `ls`/`grep`，0 秒 cargo。
+
+## §59 09:00 cycle（`LUM-1714`）：**合并 #67（M6-1 契约与凭据层）+ #68（M5-9 调度接线）⇒ base `c3aa19d`**；合并树门禁 **10/10（97s 热跑）**；两片 0 路由 ⇒ ⑦ 快照不动；空位 2 个 ⇒ 派 `LUM-1667`（M6-2，12 路由）∥ `LUM-1670`（M6-5，13 路由）；回收 18.4G 热 `target/`
+
+### 59.1 起手三连（01:00Z 实测）
+- 磁盘：`/` **1.2G 可用（98%）—— 危险水位**。本 workspace 树里两块热 `target/`：`lum-1659-bdb4ce67bd83` **17G**、`lum-1666-776562d33243` **16G**，另死工作区 `lum-1666-63133e110ef5` **1.4G**。**当轮先删 `lum-1659` 的 `target/`（17G）⇒ 18G 可用（62%）**；判据与边界见 59.8。
+- `git fetch origin feat/multica-rs-initial` = **`1ecedfb`**（= §58 自身那次 docs-only 提交）。**码树等价论证**：`git diff 9472626 1ecedfb` = `docs/37` 单文件 **+86 行**，限代码路径的 diff = **0** ⇒ §58 的 10/10 与 ⑦/⑨/⑤/⑥ 读数对当轮 base 继续逐字有效。
+- 认证 `pulls?state=open` = **2 条**：#67 / #68，均 `base=1ecedfb`、`mergeable=true / clean`。`git ls-remote` 两片远端分支**都在**：`agent/devbox5/776562d33243` @ `57a130a`、`agent/devbox5/bdb4ce67bd83` @ `5e7032a`。
+- 在飞采样：daemon `running_task_count = 1`（仅本 cycle）；`/proc/*/cwd` 扫不到任何 workdir 进程；两片 run 均终态（`.gc_meta.json` `completed_at` = `00:46:44Z` / `00:51:01Z`）+ 都已推远端 + 都已置 `in_review`。§56.4 三件套（终态 ✓ / 有产物 ✓ / 已开 PR ✓）⇒ **两片是正常交付，不是静默死亡**。**0 在飞片 ⇒ 2 个空位 + 本 cycle**。
+
+### 59.2 PR #67（M6-1）合并判据链（§56.2 七步）
+| 步 | 动作 | 实测 |
+|---|---|---|
+| 1 | 采样 | PR #67：head `57a130a`、**21 文件 +10748/−91**、base `1ecedfb`、`clean` |
+| 2 | 冻结确认 | 分支已在远端；issue `in_review`；pid 已退（`completed_at` 00:46:44Z） |
+| 3 | 预检 stat | 本地 `git diff --numstat 1ecedfb 57a130a` = **22 文件 +10748/−306**；**限代码路径 = 21 文件 +10748/−91，与 PR API 逐字相等**；差出来的 **−215** = `docs/37`（§56+§57+§58 = **63+66+86**，见 59.10 lesson 3） |
+| 4 | base 祖先 | `merge-base --is-ancestor 1ecedfb 57a130a` = **no** ⇒ 真 merge（不是 ff）；`git merge-tree --write-tree 1ecedfb 57a130a` = **`089a5011…`** |
+| 5 | 合并树门禁 | 见 §59.4（两片共用一次跑） |
+| 6 | 钉 head 合并 | `PUT /pulls/67/merge {sha:57a130a, merge_method:merge}` ⇒ **`aa3eb7499cf1d34b83827a8a2e92d61c85e5699b`**；复核 `rev-parse base^{tree}` = **`089a5011…`，与第 4 步预测树逐字相等** |
+| 7 | 收尾复核 | `git diff --stat 57a130a aa3eb749` = **仅 `docs/37` +215 行**（base 侧新增的三节，符合预期）；GH `pulls?state=open` = 1（#68 当时未合） |
+
+### 59.3 PR #68（M5-9）合并判据链（§56.2 七步）
+| 步 | 动作 | 实测 |
+|---|---|---|
+| 1 | 采样 | PR #68：head `5e7032a`、**8 文件 +1343/−5**、base `1ecedfb`、`clean` |
+| 2 | 冻结确认 | 同上（`completed_at` 00:51:01Z；issue `in_review`） |
+| 3 | 预检 stat | 本地 = **9 文件 +1343/−220**；**限代码路径 = 8 文件 +1343/−5，与 API 逐字相等**（差的 −215 是同一份 docs/37 三节） |
+| 4 | 合并树预测 | `git merge-tree --write-tree aa3eb749 5e7032a` = **`c9366b41…`**（已含 #67） |
+| 5 | 合并树门禁 | 同上 —— 被跑的就是 `c9366b41` 那棵树 |
+| 6 | 钉 head 合并 | `PUT /pulls/68/merge {sha:5e7032a}` ⇒ **`c3aa19d8f4cf1774f23f9301a054413a6da7d502`**；`rev-parse base^{tree}` = **`c9366b41…` 逐字相等** |
+| 7 | 收尾复核 | `git diff --stat c3aa19d8 c3aa19d8` = 空；**本地验证树 `cyc1714-verify` vs 远端 base = 空 diff**；GH `pulls?state=open` = **0**；API `git/ref/heads/feat/multica-rs-initial` = `c3aa19d8` |
+
+⚠️ **API 的 `mergeable` 是异步重算字段**：刚合完 #67 立刻查 #68，它读回 **`None / unknown`**（GitHub 还没算完），而同一时刻的合并请求**成功**了。判据不要停在这个字段上（见 59.10 lesson 2）。
+
+### 59.4 合并树门禁：一次跑覆盖两片（**10/10 PASS / 97s 热跑**）
+- **方法**：在 `lum-1666-776562d33243` 的 16G **热 `target/`** 上，把 base 与两片 head 依序真 merge（`--no-ff`）到本地分支 `cyc1714-verify` = **`1737a91`**；**两次 `merge-tree --write-tree` 的预测树与两次真 merge 的实际树逐字相等**（`089a5011` / `c9366b41`）⇒ 被跑的树 == GitHub 最终 base 树（59.2 / 59.3 第 6 步复核确认）。
+- **为什么一次而不是逐 PR 两次**：两片**代码路径零交集**（M6-1 = `crates/mc-{plugin-host,mcp,openapi}/*`；M5-9 = `apps/mc-server/**` + `Cargo.lock` + `scripts/gates.sh`；`comm -12` 逐条核过，唯一共同出现的是 `docs/37` —— 那是「片 base 落后」的负行数假象，不是写集）⇒ 合并树 10/10 **蕴含**两片各自 10/10，省一次冷建（§59.10 lesson 1）。
+- 命令：`MULTICA_TEST_DATABASE_URL=postgres://mc_cyc1714:***@127.0.0.1:5432/mc_cyc1714 bash scripts/gates.sh --with-db`（一次性真库 `mc_cyc1714`，角色带 `CREATEDB` ⇒ ⑧ **0 假红**）。
+- 汇总：**overall PASS — 10/10 in 97s**（① 2s / ② 2s / ③ 1s / ④ 0s / ⑤ 34s / ⑥ 22s / ⑧ 30s / ⑦ 0s / ⑨ 6s / ⑩ 0s）。
+- **热跑必须写出来（别简化读数）**：② 只重编了 `mc-server` 一个 crate（`Compiling mc-server … in 2.53s`），其余产物来自 M6-1 那轮 16G 缓存 ⇒ **97s 不是冷跑基线**。门禁的判据是「产物 freshness + 全部用例实跑」：⑤ **102 target / 1531 passed / 0 failed**、⑥ **29 target / 393 passed / 0 failed** 都是本轮真跑出来的。
+- **⑤ 归因**：基线 **1395** ⇒ **+136 例** = `mc-plugin-host` **79** + `mc-mcp` **40** + `mc-openapi::v1` **+17**（三包都是 M6-1 的）。
+- **⑥ 归因**：§56 记录的基线是 **380 passed / 22 target** ⇒ 本轮 **393 passed / 29 target**（**+13 例**）。**新增来源**：`mc-scheduler` 的内核租约 **4 例**（`tests/scheduler_lease_db.rs`）+ `mc-server` 的 **6 个 `#[ignore]` 真库用例** + 两包的 doc-tests / lib 用例；target 计数含 `Doc-tests` 行（本轮 `Running` 26 + `Doc-tests` 3 = 29），与 §56 只数 `Running` 的口径不同 ⇒ **22→29 不逐条归因**。
+- **⑥ 的命令行变了**（M5-9 落 base）：`-p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util` ⇒ **从下一轮起 ⑥ 的基线是 393 passed / 29 target，报数别再用 380/22**。
+- M5-9 的三个 `#[ignore]` 真库用例本轮实跑绿：`schedule_port_filters_and_advances` / `wakeup_port_dispatches_merges_and_consumes` / `build_registers_both_jobs_and_the_loop_claims_leases`。
+- **⑦ 与基线逐字一致**：`upstream 456 (f41fae6b08fb) | local 344 registered | baseline 344` + `implemented 273 real + 0 placeholder = 273/456 | known_gap 183 | unclaimed 0 | regression 0 | local_only 9` ⇒ **两片合起来 0 新增路由 ⇒ 不刷快照**。**⑨** = `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306` + `report matches crates/mc-conformance/report.json`（同样不刷）。
+- **冻结面合规复核**（`git diff --numstat 1ecedfb c3aa19d8`）：`docs/fixtures/route-parity-baseline.json`、`docs/fixtures/slash-alias-allowlist.tsv`、`crates/mc-http/src/routes/{mod,mount}.rs`、`crates/mc-http/src/state.rs`、`crates/mc-core/src/{skill,plugin}.rs`、根 `Cargo.toml` —— **全部 0 行改动** ✓；M6-1 对任何 `Cargo.{toml,lock}` **0 改动**（「0 新依赖」宣言成立）✓；M5-9 的 `Cargo.lock` **+6 行**与其 `apps/mc-server/Cargo.toml` 的 **6 条新边**（3 path + 3 workspace）逐条对应 ✓。
+- 两片合计（`1ecedfb..c3aa19d8`）：**29 文件 +12091/−96**。
+
+### 59.5 本轮交付（两片）
+| 片 | issue | PR | head → merge | 规模 | 内容（一句话） |
+|---|---|---|---|---|---|
+| **M6-1** | `LUM-1666` | **#67** | `57a130a` → `aa3eb749` | 21 文件 +10748/−91 | `mc-plugin-host`（manifest/capabilities/bundle/scope/credentials/token + `manifest/{cron,rules}.rs`）、`mc-mcp`（client/oauth/devorigin/types，crate 内自带 SHA-256）、`mc-openapi/src/v1.rs`（9 Operation + 4 凭据 + 2 档限流 + `ProblemDetail` + 同源 DTO）；**0 路由 / 0 迁移 / 0 依赖** |
+| **M5-9** | `LUM-1659` | **#68** | `5e7032a` → `c3aa19d8` | 8 文件 +1343/−5 | `apps/mc-server/src/scheduler/{mod,schedule_port,wakeup_port,tests}.rs` + `main.rs` 装配 + manifest 6 边 + lock + 门 ⑥ 扩两个包 |
+
+两 issue 现仍是 `in_review`（**`done` 归人心验收，本 cycle 不动**）。
+
+**跨波发现登记**（消费两片自报，交给下一波）：
+- M5-9：① `issue_wakeup` / `issue_wakeup_receipt` **无外键**（迁移 509 与上游逐字一致）⇒ 删 workspace 不带走唤醒行，残留行每 tick 拿 `WakeupError::NotFound` 并把该 wakeup **永久写 FAILED**；上游 `DeleteWorkspace` 有扫尾（`workspace_delete.sql:537/539`），本地没有。② `buildRuntimeMCPOverlay` 依赖 Composio ⇒ `runtime_mcp_overlay` / `runtime_connected_apps` 只能绑 NULL（偏差 D5）。③ **`LUM-1673`（M6-8）的前置已解除** —— 它等的就是 `LUM-1659` 合入 ⇒ **下一轮起 1673 可正常派，不必再只交桩级证据**。
+- M6-1：模块头批注的 **8 条偏差**待并入 `docs/32` §9 或 M6-INT（`LUM-1675`）；其中「`spec.go` 的 `openapi.yaml` 未落地、交叉校验改用声明路由表」需 M6-7（`LUM-1672`）决定是否登记为新资产。
+
+### 59.6 ⑦/⑨ 快照归属与写者纪律（不变）
+- 快照 `local 344 / baseline 344`、`report.json` **本轮不动**；**M6 stage-2/3/4 各片一律不得**跑 `route_parity.py --write-baseline`、不得动 `docs/fixtures/**`、不得给 `slash-alias-allowlist.tsv` 加行（现 **0 数据行**）；一次性刷新归 M6-INT（`LUM-1675`）。
+- **新口径（本轮起生效）**：门 ⑥ = `-p mc-repos -p mc-http -p mc-scheduler -p mc-server`，基线 **393 passed / 29 target**（旧 380/22 作废）；门 ⑤ 基线 **1531 / 102 target**（旧 1395）。
+
+### 59.7 并发与派发：0 在飞 ⇒ 2 空位 ⇒ **派 2 片（3/3 满载）**
+- 位图：本 cycle ∥ **`LUM-1667`（M6-2）** ∥ **`LUM-1670`（M6-5）** = **3/3**；`LUM-1668/1669/1671/1672/1673/1674/1675` + `LUM-1691` 继续 `backlog`。
+- 选中理由（两条硬约束逐条核过）：① **stage 序**：M6-2 是 stage 2 的排序第一（`LUM-1666` 合入即解锁）、M6-5 是 stage 3 里最早能起的（`docs/57` §4.1，`LUM-1666` 合入后起手）；② **写集零交集**：M6-2 写 `mc-skill/src/{frontmatter,binary,reserved}.rs` + `routes/skills/**` + `mc-repos/src/skill/{read,write}.rs`；M6-5 写 `routes/plugins/{install,packages}.rs` + `mc-repos/src/plugin/{installation,package,skill}.rs` —— **两片彼此不相交**，与刚合的 M5-9（`apps/mc-server/**`）也不相交；**两片都不写 lock/manifest**（`mc-skill` / `mc-repos` 的依赖锚点已铺好）⇒ 不争 `Cargo.lock`、不争同一 `target/` 的 cargo 锁。
+- `backlog → todo` 用默认（会起 run）；**起手补充**逐片写：base = **`c3aa19d8`**（+本 §59 docs 提交后的 head，以评论口径为准）、**0 路由片不刷快照**、**⑥ 新口径 393/29**、`--with-db` 一次性真库**带 `CREATEDB`**、写集边界照 §58.3/§58.4（M6-2 / M6-5 的描述已复核过，无需再改）。
+- **下一轮空位排序**（沿用 §58.5 并更新：`LUM-1659` 已合 ⇒ 1673 解锁、`Cargo.lock` 写权已释放）：
+
+| 空位来源 | 可派 | 依据 |
+|---|---|---|
+| `LUM-1667` 合入 | `LUM-1668`（M6-3，2 路由，stage 2 尾） | 依赖 M6-2 的 `routes/skills/` 取件面 |
+| `LUM-1667` 合入 | `LUM-1669`（M6-4，6 路由） | `routes/agents/dto.rs` 拆分要在 M6-2 的 `mc-skill` 面之上 |
+| `LUM-1670` 合入 | `LUM-1671`（M6-6，4 路由）/ `LUM-1672`（M6-7，19 路由） | stage 3/4 逐级解锁；两片写集互斥（`routes/plugins/{mcp,surface_launch}.rs` vs `routes/v1/**` + `plugin_bridge/**` + `surfaces.rs`） |
+| **`LUM-1659` 已合（前置解除）** | `LUM-1673`（M6-8，1 路由）**可正常派** | 它等的 `apps/mc-server` 边界已落 base |
+| lock 写权已释放 | `LUM-1691`（M2-A 尾）**可单独排**（仍须与写 `routes/{mod,mount}.rs` / `state.rs` 的片错峰） | 与 M6 各片撞注册面 |
+
+### 59.8 看板 / 磁盘 / 观察项
+- 看板（项目 `da4310b1`）：`in_progress` = `LUM-1714`（cycle）+ 本轮新派两片；`in_review` 待人心验收 = `LUM-1665`（M6-0）、`LUM-1652`（M6 计划）、`LUM-1370`（M2-E）、**`LUM-1666` / `LUM-1659`（本轮 PR 已合，状态仍留 `in_review`）**；`backlog` = `LUM-1668`–`LUM-1675` + `LUM-1691` + `LUM-1580`；**本项目 `blocked` 0**。
+- 磁盘：起手 **1.2G（98%）** → 删 `lum-1659-bdb4ce67bd83/target`（**17G**）→ **18G（62%）** → 门禁热跑后 **17G（64%）** → 收尾删 `lum-1666-776562d33243/target`（**17G**，其 PR #67 已合）+ 死工作区 `lum-1666-63133e110ef5/target`（**1.4G**）⇒ **35G 可用（25%）**。
+- **本轮回收判据的边界（诚实记录）**：收尾那两块三条判据齐（PR 已合 ✓ + run 终态 ✓ + `/proc/*/cwd` 无进程 ✓）。**起手那 17G 是「只齐两条」删的**（run 终态 ✓ + 源码已在远端 ✓，PR 当时**尚未**合）—— 允许的前提是**只删 `target/`、不碰源码树**：删除对象里没有任何工作产物，也没有未推送的提交（源码树删前 `git status` 干净、head `5e7032a` 与远端逐字相等）。**这是磁盘 98% 时的一次性例外，不是新判据**：任何涉及源码树的回收，三条仍缺一不可。
+- 观察项（**连续第 8 轮**）：`LUM-1521` / `LUM-1533`（本项目 `todo`、标题仅 `multica-rs`、描述是 autopilot 模板、`created 09-23 07:30/08:30`、**从未启动**、`/proc/*/cwd` 无其 workdir）。连续 8 轮只记录不擅改（改他人 issue 状态属越界）；建议 owner 裁决「取消 / 补描述后派」，或给 autopilot 加「槽位满时跳过、不建新 issue」的前置条件。
+
+### 59.9 下一轮起手（09:30 cycle）
+1. 三连：`df -h /` → `git fetch origin feat/multica-rs-initial`（本轮收尾 = 本 §59 的 docs-only 提交）→ 认证 `pulls?state=open`；再 `git ls-remote` 查两新片的 `agent/devbox5/<run-id>` 分支。
+2. **先判「片是否还在写」再进判据链**（远端 head 是否在动 + pid + 是否 `in_review`）；两新片都是真库片 ⇒ 合并树当场 `--with-db`（其 `target/` 本轮已回收 ⇒ 预期**冷跑** 450–550s），一次性真库**起手带 `CREATEDB`**。
+3. 空位按 §59.7 表递补；**`LUM-1673` 自本轮起不再有前置**。
+4. 报数用新口径：⑤ **1531 / 102**、⑥ **393 / 29**、⑦ **344 / 273 / 183**（未刷）、⑨ `unmounted 31`。
+
+### 59.10 本轮 lesson
+- **【两片写集零交集时，「合并树一次门禁」优于「逐 PR 各跑一次」】** 判据链第 5 步按 PR 各自跑是两次冷建（§56 实测 336s 起），但若两片**文件级零交集**、且 base 与两 head 的 `merge-tree` 预测树 == 真 merge 树，那么「合并树 10/10」**蕴含**两片各自 10/10 —— 一次跑同时覆盖两片，还把「GitHub 最终树 == 被验树」变成第 6 步可复核的等式。**两个前提缺一不可**：① `comm -12 <(git diff --name-only base A) <(git diff --name-only base B)` 为空；② 两次预测树与真 merge 树逐字相等（本轮 `089a5011` / `c9366b41` 都相等）。**写集相交时别用这招** —— 那时红/绿无法归因。
+- **【API 的 `mergeable` 是异步字段，`None` 不是红】** 合完 #67 立刻查 #68，`mergeable` 读回 `None`（`mergeable_state=unknown`），而合并请求同一时刻**成功**。判据要落在本地可算的两个量上：**钉 head** + **合并后 `rev-parse base^{tree}` == 预测树**；要读 API 字段就**隔几秒重查一次**，别把 `unknown` 当失败去重试或回滚。
+- **【在飞片 diff 的「负数行」第三次出现，这次把它变成验收式】** 59.2 / 59.3 第 3 步里两片相对 base 的 stat 是 `+10748/−306` 与 `+1343/−220`，而 PR API 是 `−91` 与 `−5`：差额 **215 = 63+66+86**（§56/§57/§58 三节 docs-only 行数，`git diff --numstat` 逐节核过）。**判据**：`git diff --numstat <base> <片 head> -- <代码路径>` 与 PR API **逐字相等** ⇒ 通过；差额**只许**出现在 `docs/**`，且应等于该片 base 之后 base 侧的 docs-only 行数。§58.8 给的是读法，本节给的是**验收式**。
+- **【磁盘濒危时的回收例外必须写进交接，不能悄悄变成惯例】** 起手 98% 只允许「删 `target/`、不碰源码树」这一种放宽 —— 删除对象里没有工作产物，唯一有风险的那条判据（未推送提交）自动不适用。**代价**：删掉的 17G 在门禁跑完后要重建；本轮之所以敢删，是因为那片的门禁它自己已经跑过。**反例警告**：若删的是**待验片**的 `target/`，本轮这次 `--with-db` 就从 97s 变 500s+。
+- **【热跑与冷跑的读数都要写出来，否则下一轮会把 97s 当基线】** 97s 里 ② 只编了一个 crate（`mc-server` 2.53s），但 ⑤/⑥ 的 **1531 / 393 例是本轮实跑的**。报告必须同时给「时长」与「跑了多少用例」：只给时长会让下一轮误判回归，只给用例数会掩盖缓存复用的前提。
