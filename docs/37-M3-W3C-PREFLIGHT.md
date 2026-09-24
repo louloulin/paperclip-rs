@@ -5831,3 +5831,91 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **合并判据链（`1669` / `1670` 先到先得）**：预检 `git diff --stat base..head` == PR API 逐字 → `merge-base --is-ancestor` 证合并树 → 合并树重跑 `--with-db` **10/10** → 钉 head 合并 → 复核 `tree(base) == tree(预检)` + `git diff` 空 + GH 0 open PR（同 §64.5）。**注意**：`1669` 的 PR head 是 `agent/devbox5/84af16a3d3e0` 而**不是**它本地那个 `work/m6-4`（本地分支名与推送分支名不一致，合并时别取错）。
 - **下一个「派」的动作**（等空位出现）：**第一顺位仍是 `LUM-1671`（M6-6，4 路由）** —— §65.3 已把预飞做尽，一条 `multica issue status LUM-1671 todo` 即可；次选 `LUM-1672`（M6-7，19 路由，与 `LUM-1673` **互斥**：两者都动 `plugin_bridge` 挂载面）；`LUM-1673`（M6-8）依赖已满足且写集已补齐（§65.4），只要不与 `LUM-1672` 同飞即可派；`LUM-1674`（M6-9）硬前置 = `LUM-1669` 合入（§9.6 + §65.5）；`LUM-1675`（M6-10 INT）最后一片，**验收向量已钉在 `docs/57` §9.7**。
 - **观察项**：`LUM-1521` / `LUM-1533` 仍 `todo`（§61 已核实为「秒级静默死亡」），本波**不派**（不在 M6 计划内）。
+
+---
+
+## §67 14:30 cycle（`LUM-1744`，06:30Z）：base 未动（`aa48674`）、GH 0 PR、起手 **3/3 满载 ⇒ 空位 0**（不派发）；新动作 = **跨波缺口「掉棒」审计**（查出 M5 偏差 **D8** 无 owner ⇒ 补开 `LUM-1745`）+ `LUM-1675` 描述就地订正（两处过期）
+
+### 67.1 起手状态（06:30Z 实测，逐条可复核）
+
+- **base = `aa486749`**（= §66 的 docs-only 提交）。本轮之前 base 代码路径与 §64 的合并树**逐字等价**：
+  `git diff --stat 2559254 aa48674 -- crates apps Cargo.toml Cargo.lock scripts migrations .github contracts` = **空**
+  （两个提交是 `docs/37` §66 + `docs/57` §9.7，共 +273 行，全在 `docs/`）⇒ **§64 的 ⑤/⑥/⑨ 读数继续适用于本树**
+  （⑤ `1600/0`、⑥ `416/0`、⑨ `pass 5 mismatch 23 unmounted 31 placeholder 0 unevaluable 306`）。
+  注意：本轮把它们记为「**继承自 §64 的等价树**」，**不是**本轮实跑 —— 本轮的实跑只有 ⑦（见下）。
+- **GH 0 open PR**；`multica daemon status` ⇒ `running_task_count 3` / `active_task_count 3` / `resource_wait_task_count 0`
+  ⇒ **空位 = 3 − 3 = 0**（cycle 自己占 1）⇒ **本轮不派发、无可合**（口径按 §63.7，不抄上一轮 next-cycle 行）。
+- **⑦ 当场复算**（任意 workdir，只读）：`upstream 456 | local 363 | baseline 344`；`implemented 287 real + 0 placeholder`、
+  `known_gap 169`、`unclaimed 0`、`regression 0`、`local_only 9`、**`owners.M6 43`**（M6 已进 base 的 = **14**：M6-2 12 + M6-3 2）；
+  不变式 `287 + 169 == 456` ✓。**与 §9.7 的起手向量逐项相等** ⇒ 上一轮算的预测没有漂移。
+- 看板：`blocked` **0**；M6 = `1665`–`1668` `in_review`、`1669`/`1670` `in_progress`、`1671`–`1675` `backlog`。
+
+### 67.2 在飞两片体检（进程活着、写侧对得上）
+
+| 片 | run 起手（本轮实测） | 分支 / 远端 tip | 工作区未提交 | 声明路由落位 | `target/` |
+| --- | --- | --- | --- | --- | --- |
+| `LUM-1669`（M6-4，6 路由） | 05:38:30Z（57 min） | 本地 `work/m6-4`，**推送 = `agent/devbox5/84af16a3d3e0@007265c0`** | `routes/daemon/{claims,skills}.rs`、`tests/daemon/main.rs`、新 `tests/daemon/skill_bundles.rs` | **6/6 已在提交里**（`007265c` = "agent skill 绑定面 6 路由"；`agents.rs` 的 diff 里 6 处 `.route(`，其中 5 处是多行形态） | 20G |
+| `LUM-1670`（M6-5，13 路由） | 06:04:31Z（31 min） | `agent/devbox5/d9dfedc1155e@b4141a5` | `plugins/install.rs`、`plugins/packages.rs` + 新目录 `plugins/install/`、`plugins/packages/` | **13/13 声明路由已在工作区**（口径见 67.5：10 次 `.route(` 调用覆盖 13 条声明） | 3.3G |
+
+- 两个 run 的 `pi` 进程**都活着**（`/proc/<pid>/cwd` 分别落在各自 workdir：`31938` / `54371`），本轮**无静默死亡**；
+  两片写集仍**逐文件零交集** ⇒ 不需要任何隔离动作。
+- 两片都还没开 PR ⇒ 本轮 **0 可合**（不是「有 PR 没合」，是**根本没有 PR**，别把 `0 open PR` 读成「漏合」）。
+
+### 67.3 新动作 ①：**跨波缺口「掉棒」审计** ⇒ 查出 **D8** 无 owner（补开 `LUM-1745`）
+
+此前的 cycle 审过「写集冲突」「就绪度」「⑦ 记账闭合」，但**从没审过「裁定的归属是否真的写进了接收片的描述」**。本轮补这一格，第一次就抓到一项：
+
+| 项 | 裁定出处 | 裁定归谁 | 该片实际交付 | 判定 |
+| --- | --- | --- | --- | --- |
+| **D8** webhook 投递 worker 轮询循环（1s ticker + `Notify` + 4 并发） | `docs/56` §7 / `docs/44-M5-PLAN.md:750`「裁定归 `LUM-1659`（备选 M6-9）」 | `LUM-1659`（M5-9） | PR #68 / merge `5e7032a6`（8 文件 +1343/−5）= `mc-scheduler` 两个 job 的接线，**不含**本面 | **掉棒** |
+
+**实证（5 条，逐条可复算）**：
+1. `crates/mc-autopilot/src/webhook/worker.rs:216` 文档逐字写着「**本片只提供这一步，不提供轮询循环**（`1s` ticker + `Notify` + 4 并发）—— 守护进程接线属 M5-8（偏差 D8）」（对应 `docs/54` §6.1 D8 行）。
+2. `grep -rn "process_next_delivery" crates apps` ⇒ 只命中 `mc-autopilot` 自身 + 文档 + 测试 ⇒ **生产路径 0 调用点**（入站落下的 `queued` 行除测试外无人消费）。
+3. `LUM-1659` **已合入 base**：`apps/mc-server/src/main.rs:162` 只有 `scheduler::start(...)`，无 webhook worker ⇒ 「未接线的调度器」这句话在本轮**已经过期**（它接线了，但接的不是 D8）。
+4. 该片的描述里**从未出现** D8/worker/轮询 ⇒ 裁定只活在文档里，接收片的 DoD 里没有它 ⇒ 它不会发生。
+5. 备选 `M6-9`（`LUM-1674`）也接不了：其写集是 `crates/mc-daemon/src/**`，而本片的落点在 `apps/mc-server`（投递派发属 API server 进程，不是 daemon）⇒ 备选成立的前提不成立。
+
+**处置**：补开 **`LUM-1745`**（`parent = LUM-1334`、`status = backlog`、`priority = high`），描述里写全：缺口实证 5 条、上游参照（`internal/handler/webhook_delivery_worker.go` 301 行的三个常量 + `Notify()` 非阻塞 + 每 loop 自带 ticker + `WaitWithTimeout`、4 处触发点、`cmd/server/main.go:744/890` 起停）、写集、DoD 7 条（≤2s 无人干预消费 / ticker 单独可推 / 并发 ≤4 / 停机 ≤5s / Notify 非阻塞 / `--with-db` 10/10 + **基线禁刷** / 偏离登记）、排期约束。
+排期约束写死了一条：Notify 句柄大概率要落 `crates/mc-http/src/state.rs`，**那是 M6 波的冻结/热区**（§9.5 已记 M6-0 加 `plugin_key`、M6-6/M6-7 可能再加 `plugin_surface_origin`）⇒ **本片在 M6 收口前不开工**。
+
+### 67.4 新动作 ②：`LUM-1675`（M6-INT）描述**就地订正两处过期**
+
+1. **动作 4 的缺口清单**：删「未接线的调度器（`LUM-1659`）」（已过期，见 67.3 第 3 条），换为 **webhook 投递 worker（D8，`LUM-1745`）**。
+2. **动作 2 的 ⑦ 目标**：原写 `local 381 / implemented 319 / known_gap 137` —— 那是 `docs/57` §6.1 的**过期绝对列**；
+   改为 §9.7 的验收向量 `local 406 / implemented 330 real / known_gap 126 / owners.M6 0`。
+   （同一份描述里 §9.7 那张表本来就在，**两处互相矛盾**：动作 2 读 381、末态表读 406 ⇒ 这种「订正只写进了后加的段落、没回头改旧条目」是极易复发的形态。）
+3. 其余动作 / 写集 / DoD / 硬约束（`--write-baseline` 唯一一次）**不动**；文末追加一节「描述就地订正（14:30 cycle）」把两处改动与理由钉住。
+
+### 67.5 顺带订正一处**核数口径**：`.route(` 调用数 **≠** 声明路由条数
+
+本轮体检 `LUM-1670` 时，`.route(` 出现 **10 次**（`install.rs` 7 + `packages.rs` 3），而声明是 **13 条** —— 差额不是「少写 3 条」，而是 axum 的 **方法链**把多条声明压成一次调用：
+
+```rust
+.route("/api/workspaces/:id/plugins", get(lifecycle::list_plugins).post(lifecycle::install_plugin))   // 2 条声明
+.route("/api/workspaces/:id/plugins/:installationId/token", post(rotate).delete(revoke))              // 2 条声明
+.route("/api/workspaces/:id/plugins/packages", get(list).post(publish))                                 // 2 条声明
+```
+
+⇒ 10 次调用 = **13 条声明，13/13 全在**。**规则**：核路由一律用 `scripts/route_parity.py`（它按 method-router 链展开，`local` 就是逐条 `(method, path)` 计数），**不要用 `grep -c '\.route('` 去比声明条数** —— 那会稳定少数 3 条并诱人写下「11/13，还差 2 条」这种假欠账。
+
+### 67.6 回收与磁盘
+
+- 回收 `lum-1670-f715ccaf9ad8` 的 `target/`（**787M**）：三判据齐 —— 该 run 已终态、分支 `agent/devbox5/f715ccaf9ad8@7da7baf` 上全部独有产物**已进 git 远端**（工作区 `git status --porcelain` **0 条**）、`/proc/*/cwd` 下无该 workdir 的活进程 ⇒ 只删 `target/`、保留工作区本体。
+- **磁盘是本波当下第一风险**：`/` 只剩 **12G（76% 用量）**，而起手时是 14G —— 差的这 2G 就是两片在飞的 `target/` 增长（1669 已 20G）。
+  ⇒ **1669 一合入就立刻回收它的 20G**（当轮做，别攒到下一轮），回收前不要再启动第三片（本轮 0 空位，天然满足）。
+- **观察项（第 12 轮）**：autopilot 每 30 分钟建一个 cycle issue，但并发上限 3 ⇒ `LUM-1521`/`LUM-1533`/`LUM-1726`/`LUM-1737`/`LUM-1740` 五个 cycle issue 至今 `todo`（其中 `LUM-1740` 的 `updated_at` 停在 04:39:37Z、`revision 2` = 曾有一次 run 起过又停下）。**风险不是「它们死了」，而是「它们随时可能一起活过来」**（同一轮里两个 cycle run 同时改 `docs/37`/`docs/57` 就是冲突）。本波不擅自改它们的状态（越权），继续登记给 owner：建议给 autopilot 加一条「已有未终态 cycle issue 时不新建」的护栏。
+
+### 67.7 lesson（本轮新得的）
+
+1. **【裁定写进文档 ≠ 交付发生；「归某片」必须当场写进那片描述的动作清单】** M5-INT 在 `docs/44:750` 把 D8 判给了 `LUM-1659`，但没改那片的描述 ⇒ 该片照自己的 DoD 交付、正常合入、`in_review`，**D8 静默落空**。这类缺口不会自己冒出来：它既不产生编译错误，也不进 ⑦（0 路由），也不会有人来问 —— 只能靠「拿裁定表逐条对接收片描述」这种主动审计发现。**这就是本轮的 67.3。**
+2. **【跨波缺口的审计三问】** ① 这句裁定写在哪（文档行号）？② 它出现在**接收片的描述**里吗（grep 那片描述的关键词）？③ 若没出现，它现在**有没有生产调用点**（grep 调用点，别只看实现）？—— 三问都能 5 分钟答完，而 D8 已经挂了整整一个波次（M5-5 合入 → 本轮）。
+3. **【订正过期结论时要回头扫「同一份文档里更早的旧条目」】** `LUM-1675` 的描述里，§9.7 的向量（406）与动作 2 的目标（381）**同时存在**——上一轮把订正**追加**进描述，却没回头改旧条目 ⇒ 未来的 run 读到哪条全凭运气。**订正 = 追加 + 回改旧址，缺一不可。**
+
+### 67.8 next cycle 起点
+
+- **base = 本 §67 + `docs/57` §9.8**（docs-only 直推，⑦ 基线 **344 未动**，`--write-baseline` 仍**禁跑**）。
+- 在飞 2 片（`1669` 6/6 已提交、继续写 daemon 面；`1670` 13/13 已在工作区，正在跑门禁）⇒ `LUM-1675` 的硬前置（M6-1 + M6-4）**只差 1669 合入**。
+- **下一个「派」第一顺位仍是 `LUM-1671`（M6-6，4 路由）**（§65.3 预飞已做尽，一条 `status todo` 即可）；次选 `LUM-1673`（M6-8，不与 `1672` 同飞）；`LUM-1672`（M6-7，19 路由）与 `1673` **互斥**；`LUM-1674`（M6-9）硬前置 = `1669` 合入；`LUM-1675` 最后。
+- **新登记**：`LUM-1745`（D8，`backlog`，**M6 收口前不开工**）；`LUM-1691`（M2-A 尾）仍 `backlog`。
+- **合并提醒**：`1669` 的 PR head 是 `agent/devbox5/84af16a3d3e0`，**不是**它本地那个 `work/m6-4`。

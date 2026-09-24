@@ -706,6 +706,32 @@ sed -n '34,37p' docs/fixtures/m6-declared-routes.tsv                      # 逐�
 
 ---
 
+### 9.8 跨波缺口「掉棒」审计 + M6-INT 缺口清单订正（14:30 cycle `LUM-1744`，2026-09-24 06:3xZ，base `aa48674`）
+
+**结论**：M5-INT 的缺口裁定表里有**一项掉棒** —— **D8**（webhook 投递 worker 轮询循环）**无 owner、无生产调用点**；已补开 `LUM-1745`（`backlog`）。同时订正 `LUM-1675` 动作清单里**两处过期**内容。
+
+#### 9.8.1 D8 掉棒（裁定在文档里，接收片描述里没有 ⇒ 交付静默落空）
+
+| 项 | 裁定出处 | 裁定归谁 | 该片实际交付 | 判定 |
+| --- | --- | --- | --- | --- |
+| **D8** webhook 投递 worker 轮询循环（1s ticker + `Notify` + 4 并发） | `docs/56` §7 / `docs/44-M5-PLAN.md:750`「裁定归 `LUM-1659`（备选 M6-9）」 | `LUM-1659`（M5-9） | PR #68 / merge `5e7032a6`（8 文件 +1343/−5）= `mc-scheduler` 两个 job 的接线，**不含**本面 | **掉棒** |
+
+实证（逐条可复算）：① `crates/mc-autopilot/src/webhook/worker.rs:216` 文档自陈「只提供 `process_next_delivery`，不提供轮询循环」（`docs/54` §6.1 D8）；② `grep -rn "process_next_delivery" crates apps` 无生产调用点；③ 接收片已合入 base 且 `apps/mc-server/src/main.rs:162` 只有 `scheduler::start(...)`，无 webhook worker；④ 该片描述里**从未出现** D8/worker/轮询 ⇒ 裁定的归属没进它的 DoD；⑤ 备选 `M6-9`（`LUM-1674`）写的是 `crates/mc-daemon/src/**`，而本片落点在 `apps/mc-server` ⇒ 备选前提不成立。
+
+处置：**`LUM-1745`**（`parent = LUM-1334`、`backlog`、`high`）。其描述含上游参照（`internal/handler/webhook_delivery_worker.go` 301 行：`webhookWorkerPollInterval = 1s` / `MaxAttempts = 5` / `Concurrency = 4`、`Notify()` 非阻塞、每 loop 自带 ticker、`WaitWithTimeout(5s)`；触发点 4 处；`cmd/server/main.go:744/890` 起停）、写集、DoD 7 条、**排期约束：`Notify` 句柄大概率落 `crates/mc-http/src/state.rs`（M6 冻结/热区，见 §9.5）⇒ M6 收口前不开工**。
+
+#### 9.8.2 本波对 `LUM-1675`（M6-INT）的缺口清单订正
+
+`LUM-1675` 动作 4 原写「未接线的调度器（`LUM-1659`）」—— **已过期**（该片接线早在 #68 合入）。改为登记 **D8 → `LUM-1745`**，与 R-M6-1 / R-M6-3 / R-M6-13 并列。同轮还订正了动作 2 的 ⑦ 目标（`local 381` → §9.7 的 `local 406`）。
+
+#### 9.8.3 执行规则（写给后续 cycle / 派发者）
+
+1. **裁定的归属必须当场写进接收片的描述动作清单**，否则它不会发生 —— D8 为此付出了「整整一个波次无人接 + 一次独立开片」的代价。
+2. **订正 = 追加 + 回改旧址**：`LUM-1675` 的描述里曾同时存在 §9.7 的 `local 406` 与动作 2 的 `local 381`（上轮只追加、没回改）⇒ 未来 run 读哪条全凭运气。
+3. **核路由用 `scripts/route_parity.py`，不要用 `grep -c '\.route('`**：axum 方法链会把 2 条声明压成 1 次调用（M6-5 实测 10 次调用 = 13 条声明），按调用数比会稳定少数并诱发假欠账。
+
+---
+
 ## 10. 复算命令（全部只读，可在任意 workdir 复现）
 
 ```bash
