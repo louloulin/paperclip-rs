@@ -6289,3 +6289,95 @@ base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**�
    **分支 ref 是共享的**，因此(a) 死 worktree 会把分支名"占住" ⇒ 交接文要写"在你的分支上 `merge` 那个 ref"，**不能**写"`checkout` 那个分支"；
    (b) 一个 worktree 里移动分支 ref 会让别的 worktree 显示成"大量暂存改动"（本轮 `lum-1671-d3db820d080f` 的 16 文件 / −6043 行即此假象，
    用 `git diff --stat 2f2086a` 为空即可证伪 ⇒ **不要去"抢救"这类假改动**）。
+
+---
+
+## §71 00:00 cycle（`LUM-1751`，16:00Z 触发）：**3/3 满载且两片双活**（`1671` run-3 / `1672` run-2 进程在编译）⇒ 0 可合 / 0 空位；新动作 = **`1673`/`1674` 派发预飞（写集 0 缺件）+ 三方文件级互斥矩阵 + ⑩ headroom 实测**
+
+### 71.1 起手读数（2026-09-24 16:0xZ 实测）
+
+- **base = `fa9339d8`**（§70 报告提交）；**码树仍等于 `2e18514`** —— `git diff --stat 2e18514 fa9339d8 -- crates apps Cargo.toml Cargo.lock scripts migrations .github contracts` **输出为空**；
+  base 树 sha = `aad149c5bc8a5df7dacba48f39b1f1353e0bb8dc`。
+- **GH 0 open PR**（`GET /repos/loulououlin/paperclip-rs/pulls?state=open` 实测 `open PRs: 0`）⇒ 本轮**无物可合**。
+- **在飞 3/3**：cycle ∥ `LUM-1671` run-3 `01a0d418-f278` ∥ `LUM-1672` run-2 `01a0d419-0771`（两者均 **15:46:3xZ** 起）⇒ **空位 0，本轮不派、不 rerun**。
+- daemon：pid `949`、`uptime 27m17s`（≈15:35Z 重启）、`running_task_count = 3`（= cycle + 两片）⇒ **runtime 在线**（与 §70 的 4h20m 离线窗口无关）。
+- 磁盘 `/`：起手 **25G 可用（46%）**，收尾 **23G 可用（52%）**（两片 `target/` 分别涨到 3.7G / 5.9G，见 71.8）。
+
+### 71.2 两片在飞健康取证：**都活着**（⇒ 既不抢救也不 rerun）
+
+| 片 | 分支（本地） | worktree | HEAD | 未提交改动 | `target/` | 进程级证据 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `LUM-1671` | `agent/devbox5/7a9adaa10e67` | `lum-1671-7a9adaa10e67` | `a4d2382a`（run-1 抢救 `2f2086a9` 已合回 + base） | 3 文件（`routes/plugins/{install,mcp}.rs`、`mc-repos/src/plugin/mcp_approval.rs`） | 2.5G→3.7G | 该 workdir 下有 `cargo test --no-fail-fast` / `cargo check -p mc-http --locked` / clippy 子进程 |
+| `LUM-1672` | `agent/devbox5/dd993b504e67` | `lum-1672-dd993b504e67` | `b91f786d` | 1 文件（`mc-repos/src/plugin/storage.rs`） | 4.9G→5.9G | `cargo check -p mc-http --locked`（`--warn=clippy::pedantic`）子进程 |
+
+- **〖口径·本轮立〗"在飞是否活着"要三源交叉**：① `runs` 末条 = `running`；② **进程级证据**（`ps` 里该 workdir 的 `target/` 为 `--out-dir` 的 cargo/rustc/clippy）；③ **产物侧证据**（`target/` 体积增长 + worktree 有未提交改动）。
+  单看 ① 不够（§70.2：离线窗口里死 run 也留在库里、`running_task_count` 也会给错数），单看 issue 状态更不够。
+- **〖观察〗两片当前均未推送**：`git ls-remote origin refs/heads/agent/devbox5/{7a9adaa10e67,dd993b504e67}` **两个都为空**
+  ⇒ 若再遇基础设施失败，**抢救对象是各自 worktree 里的未提交改动**，不是远端 ref（与 §70 的 `1672` "零分支零产物"形态不同，别照抄那套判据）。
+
+### 71.3 ⑦/⑩/① 当场实测（`fa9339d8`）：与 §70.4 **逐值一致** ⇒ 码树未动获第三方印证
+
+- ⑦：`python3 scripts/route_parity.py --json` ⇒ `ok: true`、`upstream 456 / local 382 / implemented 306`（**`implemented_real 306` + `implemented_placeholder 0`**）`/ known_gap 150 / unclaimed 0 / regressions 0 / local_only 9`（其中 placeholder 1）；
+  `owners` = `M9 33 / M6 24 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5`；`baseline_routes 344`。
+- `python3 scripts/slash_alias_audit.py --quiet` exit **0**；`python3 scripts/file_size_check.py --quiet` exit **0**；`cargo fmt --all --check` exit **0**。
+- 快照 `docs/fixtures/route-parity-baseline.json` **未动**：md5 `0541eaf13804bd3c4e4586345b2d0f26`，最后一次改动仍是 `d9752404`（M2-E）；
+  **唯一一次 `--write-baseline` 继续归 M6-INT `LUM-1675`**。
+- ⑤/⑥ 沿用 §69（本轮码树一字未动，且两片正在同一台机器上抢 CPU/磁盘，**不为凑读数重复跑**）。
+
+### 71.4 【新动作·预飞①】`LUM-1673`（M6-8，1 路由）逐条实测 —— **0 缺件，与描述口径全部吻合**
+
+| 断言（取自 `LUM-1673` 描述） | 实测（`fa9339d8`） | 判定 |
+| --- | --- | --- |
+| `routes/plugins/hooks_job.rs` 存在且在 `plugins/mod.rs` 已声明 + 已 merge | `plugins/mod.rs:36 pub mod hooks_job;`、`:54 .merge(hooks_job::router())`、文件 35 行 | ✓ |
+| `routes/plugin_bridge/hooks.rs` 存在且在 `plugin_bridge/mod.rs:31` 已声明 + 已 merge | `:31 pub mod hooks;`、`:46 .merge(hooks::router())`、文件 44 行 | ✓ |
+| `mc-repos/src/plugin/hook.rs` 存在且 `plugin/mod.rs` 已声明 | 文件 1,573B；`plugin/mod.rs:37 pub mod hook;` | ✓ |
+| `mc-repos/src/scheduler.rs`（**不是** `plugin/scheduler.rs`）存在且 `lib.rs:68` 已声明 | 23,809B / **621 行**；`lib.rs:68 pub mod scheduler;`；`plugin/scheduler.rs` 不存在 | ✓（"记法消歧"结论继续有效） |
+| `JobPorts` = 固定 3 参、无默认值、无 builder；构造点只有 2 处 | `jobs/mod.rs:64 pub struct JobPorts`、`:73 impl`、`:96 register_all`（`:97`/`:101` 两行 `register`）；`grep -rn JobPorts` 仅 `apps/mc-server/src/scheduler/mod.rs:76` + `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:266` | ✓ |
+| 形状先例 `:270` 的 `pub fn job` | `jobs/issue_wakeup.rs:270 pub fn job(port: Arc<dyn WakeupDispatchPort>) -> JobSpec`（`autopilot.rs:598` 另一处） | ✓ **描述里的行号是精确的** |
+| 装配点 `apps/mc-server/src/scheduler/mod.rs:76` 的 `build()` | `:44 use mc_scheduler::jobs::JobPorts;`、`:76 let ports = JobPorts::new(` | ✓ |
+
+- ⇒ 描述里"**唯一允许的 `apps/mc-server` 改点 = `scheduler/mod.rs` 的 `build()`**"与描述的 builder 裁定（`JobPorts::new` 3 参不动 + `with_plugin_hook`）**与实测形状一致**，派发时**不需要任何描述订正**。
+- **⑩ headroom（本片唯一的隐性成本）**：`crates/mc-repos/src/scheduler.rs` = **621 / 800 ⇒ 只剩 179 行**，且它**不在** `scripts/file_size_baseline.tsv`（该白名单只有 22 行、逐字命中为空）
+  ⇒ 本片往里加 hook schedule 的 SQL **最多 179 行**；超了就必须拆文件（那是另一片的事，别在本片硬塞）。
+
+### 71.5 【新动作·预飞②】`LUM-1674`（M6-9，0 路由）—— **前置已解除，且"零 Cargo 编辑"在 base 上成立**
+
+- 写集声明点实测：`crates/mc-daemon/src/lib.rs:35-39` 只声明 `client/execenv/state/transport/wire`（**无** `skill`/`mcp`）⇒ §08:30 补的两行确有必要；`crates/mc-daemon/src/{skill,mcp}` **不存在**（`ls` 实测，只有 `client.rs execenv/ lib.rs state.rs transport.rs wire.rs`）；`execenv/mod.rs:18-21` 声明 `guard/lock/path/temp`。
+- **M6-4 前置（`LUM-1669`）的落点实测**：`crates/mc-core/src/skill.rs`（520 行）里 `:246 pub fn write_hash_part(&mut Sha256, &str)`、`:256 pub fn build_manifest(&ManifestInput) -> Manifest` **都是 `pub`**
+  ⇒ §11:30 那条"到 `mc_core::skill` 直接 `use`、断言是同一个函数"的 DoD **可达**（`mc-http` 侧那份是这个 crate 的私有副本，import 不到）。
+- **零 `Cargo.toml` / 零 `Cargo.lock` 编辑**成立：`crates/mc-daemon/Cargo.toml:43 mc-core = { path = "../mc-core" }`（`mc-core/Cargo.toml:20 sha2`、`:23 hex` 已在）
+  ⇒ `LUM-1729` 裁定的"manifest 写者空位消失"继续有效。
+- ⑩：本片全部落到**新建文件**（`src/skill/**`、`src/mcp/**`、`execenv/` 6 个新文件），只给 2 个既有文件加 `pub mod` 行 ⇒ 无 headroom 风险；`mc-core/src/skill.rs` 520/800 只读不写。
+
+### 71.6 【新动作·预飞③】三方文件级互斥矩阵：`1672` ∥ `1673` ∥ `1674`（+ parked `1745`）
+
+| 片 | 文件集（枚举，非 glob） |
+| --- | --- |
+| `LUM-1672`（在飞，19 路由） | `routes/v1/{context,issues,storage}.rs`、`routes/v1/policy.rs`、`routes/plugin_bridge/{context,issues,storage}.rs`、`routes/surfaces.rs`、`mc-repos/src/plugin/storage.rs` |
+| `LUM-1673`（就绪，1 路由） | `routes/plugin_bridge/hooks.rs`、`routes/plugins/hooks_job.rs`、`mc-repos/src/plugin/hook.rs`、`mc-repos/src/scheduler.rs`、`crates/mc-scheduler/src/jobs/{plugin_hook.rs(新),mod.rs}`、`apps/mc-server/src/scheduler/mod.rs`（仅 `build()`） |
+| `LUM-1674`（就绪，0 路由） | `crates/mc-daemon/src/{skill/**,mcp/**,execenv/*(新),lib.rs,execenv/mod.rs}` |
+| `LUM-1745`（parked） | `apps/mc-server/src/{webhook_worker.rs(新),main.rs,lib.rs}`、`mc-autopilot/src/webhook/mod.rs`、可能 `mc-http/src/state.rs` + `routes/webhooks/autopilots.rs` |
+
+- **逐对交集全部 ∅**：`1672 ∩ 1673` = ∅（`hooks.rs` vs `{context,issues,storage}.rs`，同目录不同文件）；`1673 ∩ 1674` = ∅；`1671 ∩ 1673` = ∅（`plugins/{install,mcp}.rs` vs `plugins/hooks_job.rs`）。
+- **唯一"同目录相邻"对**：`apps/mc-server/src/` —— `1673` 写 `scheduler/mod.rs`、`1745` 写 `main.rs` + `lib.rs` ⇒ **逐字不同文件，不构成写者冲突**（`1673` 明确 `main.rs` 一行不改）。
+- **`mc-scheduler` / `mc-repos/src/scheduler.rs` 在本波只有 `1673` 一个写者**（`1674` 在 `mc-daemon`，`1672` 在 `mc-http` + `plugin/storage.rs`）。
+- ⇒ **出现 2 个空位时 `1673` 与 `1674` 可同时派**；只出现 1 个空位时**先 `1673`**（理由：它是 `owners.M6 → 0` 的唯一剩余项、在 M6-INT 的关键路径上；`1674` 是 0 路由片，不影响 ⑦ 向量）。
+
+### 71.7 下一轮起点、合并期期望与就绪板
+
+- base → 本轮报告提交后再前进一个 **docs 提交**（码树仍 `2e18514`）；GH **0 open PR**；在飞仍 **3/3**（cycle ∥ `1671` run-3 ∥ `1672` run-2）。
+- 下轮第一动作不变（§70.5）：每片查两件 —— ① head 分支 CI **3/3**（`fast`/`db`/`contract`）；② `git merge-base --is-ancestor <base> <head>`；为假 ⇒ 先本地合树 + 跑门禁 + 推合并提交让 CI 复核，再合。
+- **⑦ 递推（不变式 `implemented + known_gap == 456`）**：`1671` 合 ⇒ `local 386 / owners.M6 20`；`1671+1672` 合 ⇒ `local 401 / owners.M6 1`（仅剩 M6-8 那条）；`+1673` 合 ⇒ **`local 402 / owners.M6 0`**；`1675`（M6-INT，唯一 `--write-baseline` 者）⇒ `local 406 / implemented 330 real / known_gap 126 / owners.M6 0`。
+- 就绪序（与 §70.5 相同，本轮预飞已再核一遍）：`LUM-1673`（M6-8）→ `LUM-1674`（M6-9）→ `LUM-1675`（M6-INT）。
+- 仍**不派**：`LUM-1745`（M5-D8，M6 收口前不开工）、`LUM-1691`（M2-A 尾，争 `Cargo.lock`/注册点）、`LUM-1580`。
+
+### 71.8 观察项与护栏（第 14 轮）
+
+- **`todo` 态旧 cycle issue 已积 6 条**：`LUM-1521` / `1533` / `1726` / `1737` / `1740` / **`1748`**（§70.6 已建议归档 `1748`，本轮复核仍 `todo`、从未启动、读数被 §69/§70 取代）。autopilot 的"同项目已有未终态 cycle issue 时不建新单"护栏**仍未落地**。
+- **磁盘预算**：本轮起手 25G / 收尾 23G（两片 `target/` 3.7G + 5.9G 且仍在长）。合并任一后按 §56 三判据（PR 已合 + run 终态 + `/proc/*/cwd` 无该 workdir 进程）回收，**不攒到下一轮**。
+- **本仓 `feat/multica-rs-initial` 分支名被 `lum-1425-*` worktree 占住** ⇒ 新 cycle 的 worktree 只能 `git checkout -b <own> origin/feat/multica-rs-initial` 再推 `HEAD:feat/multica-rs-initial`（本轮即如此做），**不要**尝试 `git checkout feat/multica-rs-initial`（会 `fatal: already used by worktree`）。
+
+### 71.9 本轮 lesson（2 条）
+
+1. **"在飞是否活着"要三源交叉**：`runs` 末条状态 **+** 进程级证据（`ps` 里 `--out-dir` 指向该 workdir 的 cargo/rustc）**+** 产物侧证据（`target/` 增长、worktree 有未提交改动）。只看平台字段会在离线窗口里得出相反结论（§70 的教训），只看"有没有提交"又会把正在编译的片误判为死片。
+2. **派发预飞里必须量 ⑩ headroom**：`mc-repos/src/scheduler.rs` 621/800（不在白名单）⇒ 本片可加的行数**上限 179**。这类"硬上限只剩 N 行"的成本不会出现在写集/依赖/路由数任何一列里，只在 `wc -l` + `file_size_baseline.tsv` 里看得见 ⇒ 预飞要专门查一遍写集里每个**既有**文件的剩余空间。
