@@ -268,7 +268,10 @@ pub fn build_manifest(input: &ManifestInput<'_>) -> Manifest {
     let mut size = as_i64(input.content.len());
     let mut refs = Vec::with_capacity(files.len());
     for file in files {
-        let digest = format!("sha256:{}", hex::encode(Sha256::digest(file.content.as_bytes())));
+        let digest = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(file.content.as_bytes()))
+        );
         write_hash_part(&mut hasher, file.path);
         write_hash_part(&mut hasher, &digest);
         write_hash_part(&mut hasher, file.content);
@@ -394,7 +397,10 @@ mod tests {
             writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
 
-        let want_hash = format!("sha256:{}", hex::encode(Sha256::digest(expected.as_bytes())));
+        let want_hash = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(expected.as_bytes()))
+        );
         assert_eq!(manifest.hash, want_hash);
         assert!(manifest.hash.starts_with("sha256:"));
         assert_eq!(manifest.hash.len(), "sha256:".len() + 64);
@@ -478,7 +484,10 @@ mod tests {
         ] {
             writeln!(expected, "{}:{}", part.len(), part).unwrap();
         }
-        let want = format!("sha256:{}", hex::encode(Sha256::digest(expected.as_bytes())));
+        let want = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(expected.as_bytes()))
+        );
         assert_eq!(manifest.hash, want);
     }
 
@@ -495,7 +504,13 @@ mod tests {
         };
         let hashes: Vec<String> = SkillSource::ALL
             .iter()
-            .map(|source| build_manifest(&ManifestInput { source: *source, ..base }).hash)
+            .map(|source| {
+                build_manifest(&ManifestInput {
+                    source: *source,
+                    ..base
+                })
+                .hash
+            })
             .collect();
         assert_eq!(hashes.len(), 3);
         assert_ne!(hashes[0], hashes[1]);
