@@ -1,0 +1,121 @@
+# m9-declared-routes.tsv — M9（W9 商业面：cloud-billing / cloud-subscriptions / dashboard /
+#   onboarding / feedback / contact-sales / notification-preferences / stripe webhook / mika /
+#   issue timeline）的**声明路由**，34 条。
+#
+# 用途：M9 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m9-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是 M9 各切片**必须两形态一起注册**的键（实测结论见 docs/62-M9-PLAN.md §1.4）。
+#   与 docs/fixtures/{m3-6,m4,m5,m6,m7,m8}-declared-routes.tsv 同性质：这是**输入**，
+#   不是本地已注册路由的快照。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 **owner=M9 行**（method + path + router.go 行号，
+#   34/34 实测逐条相等）。上游路由表改动时两张表要一起动。
+# 行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M9"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空（下表按业务簇分组，行序不同）：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M9"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m9-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# ⚠️ **本表 34 行，不是 33 行**（与 `LUM-1814` 描述里写的「33 条」差 1，口径见
+#   docs/62-M9-PLAN.md §1.7）：`33` 是 ⑦ 的 **known_gap** 计数（M9 名下尚未实现的路由数），
+#   而本表照 M7/M8 的构造配方取的是 **owner=M9 的 fixture 行**（34 行）—— 多出来的那一条是
+#   `GET /api/issues/{id}/timeline`，它**已经在本地注册**（`crates/mc-http/src/routes/issues/mod.rs:191`
+#   的 `not_implemented` 占位，M9-0 会把它**原地搬运**到自己的路由文件），因此不计入 known_gap，
+#   但它确属 M9 的账（本波要把它换成真实现）。
+#   ⇒ M9 的账 = **34 条**（33 缺口 + 1 已注册占位）；⑦ 读数因此有两条不同的口径，别混用。
+#   （历史先例：M8 的帐 = 25 条 = 24 缺口 + 1 占位，见 docs/61 §1.7。）
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   **本波有 3 个带尾斜杠的键**（`/api/notification-preferences/` 的 GET/PATCH/PUT）⇒ 预测模式
+#   实测 `declared 34 / dual-form required: 3`（M4 15 / M5 7 / M6 5 / M7 0 / M8 0 的对照见
+#   docs/62-M9-PLAN.md §1.4）。其余 31 键是 plain 注册。
+#   本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 归属（每行恰好一片；见 docs/62-M9-PLAN.md §4.1）：
+#   M9-1 cloud-billing 8 · M9-2 cloud-subscriptions 7 · M9-3 onboarding 5 · M9-4 dashboard 6 ·
+#   M9-5 notification-preferences 3 + feedback 1 + contact-sales 1 = 5 ·
+#   M9-6 stripe webhook 1 · M9-7 mika 1 · M9-8 issue timeline 1 · M9-9 entitlement 0（无路由）。
+#   路由账 8+7+5+6+5+1+1+1+0 = 34 ✓（其中 33 条 known_gap + 1 条占位升级）
+#
+# ⚠️ **`/api/cloud-runtime/*` 的 11 条不在本表内**：`docs/15-M3-PLAN.md` §9.1（LUM-1357）已把
+#   cloud-runtime 裁决给 W9/M9，但 `docs/fixtures/upstream-routes.tsv` 这 11 行的 owner 单元格
+#   **至今仍是 `M3`**（`docs/36` §125 / `docs/37` §6976 / `docs/49` §138 都登记为「owner 计数噪声，
+#   待 M9 立项时改」）。裁定见 docs/62-M9-PLAN.md §9.2：**crate 归属 = 是（`mc-cloud` 同一份出站
+#   传输），波次账目 = 否（本片不改 owner 单元格 ⇒ ⑦ 读数逐字不变）**；迁移建议与执行点见 §9.2。
+#   实际存在的 11 行为（复算：`awk -F'\t' '!/^#/ && $3=="M3" && $2 ~ /^\/api\/cloud-runtime/' docs/fixtures/upstream-routes.tsv`）：
+#     GET    /api/cloud-runtime/                 router.go:2300
+#     GET    /api/cloud-runtime/healthz          router.go:2301
+#     GET    /api/cloud-runtime/readyz           router.go:2302
+#     GET    /api/cloud-runtime/nodes            router.go:2303
+#     POST   /api/cloud-runtime/nodes            router.go:2304
+#     DELETE /api/cloud-runtime/nodes            router.go:2305
+#     POST   /api/cloud-runtime/nodes/start      router.go:2306
+#     POST   /api/cloud-runtime/nodes/stop       router.go:2307
+#     POST   /api/cloud-runtime/nodes/reboot     router.go:2308
+#     POST   /api/cloud-runtime/nodes/status     router.go:2309
+#     POST   /api/cloud-runtime/nodes/exec       router.go:2310
+METHOD	PATH
+# —— cloud-billing 面（8）：owner-credit 出站代理，**用户级**（Auth + RequireHumanActor）——
+# 挂 `r.Route("/api/cloud-billing", …)` + `r.Use(handler.RequireHumanActor)`（router.go:1910/1911）：
+# 任务令牌（mat_）与云节点 PAT（mcn_）一律 403 —— 计费是账户级动作，见 docs/62 §1.5 与 §2.5。
+GET	/api/cloud-billing/balance
+GET	/api/cloud-billing/transactions
+GET	/api/cloud-billing/batches
+GET	/api/cloud-billing/topups
+GET	/api/cloud-billing/price-tiers
+POST	/api/cloud-billing/checkout-sessions
+GET	/api/cloud-billing/checkout-sessions/{sessionId}
+POST	/api/cloud-billing/portal-sessions
+# —— cloud-subscriptions 面（7）：workspace 级出站代理（Auth + RequireHumanActor + 角色）——
+# 读 2 条（summary / prices）是 workspace **member** 级；写 5 条是 **owner|admin** 级，
+# 且额外过 rollout flag `billing_workspace_subscriptions`（router.go:1930-1944）。
+GET	/api/cloud-subscriptions/summary
+GET	/api/cloud-subscriptions/prices
+POST	/api/cloud-subscriptions/checkout-sessions
+POST	/api/cloud-subscriptions/seats/purchase-preview
+POST	/api/cloud-subscriptions/seats/purchases
+POST	/api/cloud-subscriptions/seats/reconcile
+POST	/api/cloud-subscriptions/portal-sessions
+# —— Stripe 入站 webhook（1）：**公开**（无会话），逐字转发原始体 + Stripe-Signature ——
+# 本地只做三件事：限流 → 缺签名 401 → 原始体转发（router.go:1505，见 docs/62 §2.6）。
+POST	/api/webhooks/stripe
+# —— dashboard 面（6）：workspace member 级只读聚合（router.go:2255-2262）——
+# 6 条全部直接聚合 `task_usage_hourly` / `agent_task_queue`，**不读** legacy 的
+# `task_usage_dashboard_*` 表（实测见 docs/62 §9.6）。
+GET	/api/dashboard/usage/daily
+GET	/api/dashboard/usage/by-agent
+GET	/api/dashboard/agent-runtime
+GET	/api/dashboard/runtime/daily
+GET	/api/dashboard/failures/daily
+GET	/api/dashboard/failures/by-agent
+# —— onboarding 面（5）：**用户级**（Auth 组内，无 workspace 上下文，router.go:1617-1627）——
+# 后 2 条上游注释逐字标 DEPRECATED（桌面 < v3 的 shim，router.go:1620-1626）。
+PATCH	/api/me/onboarding
+POST	/api/me/onboarding/complete
+POST	/api/me/onboarding/cloud-waitlist
+POST	/api/me/onboarding/runtime-bootstrap
+POST	/api/me/onboarding/no-runtime-bootstrap
+# —— 反馈 / 销售联系（2）：feedback 用户级、contact-sales **公开** + 独立限流 ——
+# contact-sales 挂 `r.With(contactSalesRL).Post(...)`（router.go:1479，5 次/小时，默认值）；
+# feedback 的 10 次/小时在 handler 内（`internal/handler/feedback.go:26/102`）。
+POST	/api/feedback
+POST	/api/contact-sales
+# —— 通知偏好（3）：同一路径的 GET/PATCH/PUT，**双形态键** ——
+# 上游 `r.Route("/api/notification-preferences", …)` + `r.Get("/")`（router.go:2400-2403）
+# ⇒ chi 同时服务 `…/notification-preferences` 与 `…/notification-preferences/`；
+# fixture 记的是**带尾斜杠那一形态**（`upstream-routes.tsv` 的既有记法）⇒ 本地 axum 必须两形态都注册。
+GET	/api/notification-preferences/
+PATCH	/api/notification-preferences/
+PUT	/api/notification-preferences/
+# —— 内置 agent 供给（1）：挂在 `/api/agents` 子路由下，workspace member 级（router.go:2184）——
+# 上游注释逐字：Mika 的 `kind` / `system_key` 是**服务端常量**，客户端不能铸造（见 docs/62 §9.1）。
+POST	/api/agents/mika
+# —— issue timeline（1）：`/api/issues/{id}` 子路由，workspace member 级（router.go:1981）——
+# 本地**已有** `not_implemented` 占位（`crates/mc-http/src/routes/issues/mod.rs:191`）⇒ 本波升级为真实现。
+GET	/api/issues/{id}/timeline
