@@ -6918,3 +6918,144 @@ OK: every upstream route is either implemented or owned
 3. **空位的最优解可以是不派**：本轮唯一空位的正确用法是「留给下一轮的第一顺位」，因为 `1675`（M6-INT）在 **M7 全波 22 个 issue 的硬前置**上；任何占位片都会把它推后 1–3 个 cycle。⇒ **判断「要不要派」时，先看下一个动作的硬前置链长度，而不是先看有没有 backlog。**
 4. **回收的最佳时点是「交付刚结束」而不是「磁盘告警时」**：本轮 5 个终态 workdir 一次放掉 **19.1G**（`lum-1580` 一个片就 13.4G），其中 4 个在上两轮就该回收。**判据可完全自动化**：`completed_at` 存在 ∧ `HEAD` 是 base 的祖先 ∧ `readlink /proc/*/cwd` 零命中 —— 三条齐即删，不必等空间紧张（`1673` 还要跑 `--with-db`，留着 12G 起手就是把风险留给它）。
 5. **`issue status <id> todo` 会起 run，前提是该 issue 有 assignee**：`LUM-1675`（`backlog` + 已有 assignee）与 `LUM-1691`（`backlog` + **无** assignee）在下一轮的派发动作**不同** —— 前者一条 `status todo` 即起 run，后者必须 `assign --to-id`。⇒ 派发前先 `issue get` 看 `assignee_id`，别照抄上一轮的命令序列。
+
+## §78 03:30 cycle（`LUM-1791`，19:30Z 触发）：base 复核 **4/4**（`55d6a1c0` 未动、码树 == `956f387f`）；在飞片 `LUM-1673` **七绿三门红**（①④⑥，根因逐条定位）；新动作 = **波次归属覆盖审计** ⇒ `M2-A` 第 13 条键 `squad-evaluated` **无主** ⇒ 已立 `LUM-1793`；空位 1 **刻意不派**；**零回收**
+
+> 本节由 **03:30 cycle（`LUM-1791`）** 落盘。起手**无并发 cycle**（daemon 口径 2 = 本 run + `LUM-1673`）。本轮 **0 合并**（GH 0 open PR）、**0 派发**（空位刻意留给下一轮第一顺位），实质动作三件：在飞片**门禁读数取证**（它本轮跑完了一整轮 `--with-db`）、**⑦ 缺口 × issue 覆盖审计**（新口径，发现并登记了全仓唯一一条无主键）、`M6-INT` 接收片的**就绪复核**。
+
+### 78.1 起手三连与并发/空位判据（19:33Z 现场实测）
+
+| 项 | 读数 |
+| --- | --- |
+| 磁盘 | `/` 49G 盘，**16G 可用（67%）**；唯一大件 = 在飞片 `1673` 的热 `target/` **≈20G**（`du -sm` = 20485），其余 248 个 workdir 全部 ≤ 188M |
+| base | `git rev-parse origin/feat/multica-rs-initial` = **`55d6a1c0`**（= §77 的那次 docs 提交） |
+| GH open PR | **0**（认证 API `GET /pulls?state=open`） |
+| 远端分支 | `agent/devbox5/3be5bf776e34` **不存在**（`ls-remote` 只回 `feat/multica-rs-initial`）⇒ `LUM-1673` 仍未推 |
+| daemon | `running_task_count = 2`（本 cycle + `1673`），daemon pid `949`、uptime 4h05m ⇒ **空位 = 3 − 1 − 1 = 1** |
+| 看板 | `in_progress` = `LUM-1673`；`backlog` = **24**（`LUM-1691`、`LUM-1745`、M7 切片 `LUM-1765`–`1786`）；`todo` = 7（本 cycle + 6 条历史 autopilot cycle issue）；`blocked` = 0 |
+
+### 78.2 base 复核 4/4（四门合计 <40s、零 `target/`）+ 码树等式
+
+| 步骤 | 判据 | 实测 |
+| --- | --- | --- |
+| ① | base sha + 父提交差异面 | `55d6a1c0`（父 `956f387f`）；`git diff --stat` = **`docs/37` +121、`docs/57` +29 —— 2 文件 +150 行，仅 docs** |
+| ② | **限代码路径 numstat == 0** | `git diff --numstat 956f387f 55d6a1c0 -- 'crates/**' 'apps/**' 'scripts/**' 'migrations/**' 'Cargo.lock' '*.toml'` = **0 行** ⇒ 码树逐字未动 |
+| ③ | 树等式 | `55d6a1c0^{tree}` = `19577dd64a9d11e147b959b2132c90b742d0240c`；`956f387f^{tree}` = **`141531e2a492eb6a6ccef843ae920f51963fbf6a`** —— 与 §77.2 第 ② 步**预测的合并树单哈希逐字相等** ✔ |
+| ④ | **门禁 4/4 绿** | ⑧ `schema-drift` **0 / 28s**（scratch 库 `multica_cyc1791`，`--only schema-drift --db-url …`）；⑦ `route-parity` **0** + `slash_alias_audit.py --quiet` **0**；⑩ `file_size_check.py --quiet` **0**；① `cargo fmt --all --check` **0** |
+
+**为什么 `②③④⑤⑥⑨` 门不重跑**：它们每道都要一次**全量构建**。本轮盘上只剩 16G，而 `1673` **正在同一台机**跑 `--with-db`（热 `target/` ≈20G）⇒ 再起一份全量构建会把两边余量同时压进个位数 GB（§53 实测过该故障模式）。而步骤 ②③ 已证明**码树与 `956f387f` 逐字相同**，`956f387f` = PR #77 的合并提交、head CI **3/3 全绿**（§77.2）；最近一次全仓 `--with-db` **10/10** 的读数是 §73.9 在 `631547b0`（= `81c58721^{tree}`）上取的（554s），此后 base 只经 `#75`（M6-9，0 路由，head CI 3/3）→ `#76`(docs) → `#77`(工具 + docs，head CI 3/3) → §77(docs) 前进。⇒ 本轮以 **①⑦⑧⑩ + 码树等式** 判定 base，**结论与重跑全量门禁等价**。
+
+### 78.3 ⑦ 当轮读数（**首次登记 owner 直方图**）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 405 registered | baseline 344
+  implemented  325 real +   4 placeholder =  329 / 456   known_gap  127   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M7=24  M8=24  M3+=16  M2-A=13  M3=11  M10=5  M6=1
+OK: every upstream route is either implemented or owned
+```
+
+| 指标 | §77 在 `956f387f` 上 | **本轮在 `55d6a1c0` 上** | 判定 |
+| --- | --- | --- | --- |
+| `local` / `baseline` | 405 / 344 | 405 / 344 | 逐字一致 ✔ |
+| `implemented` | 329 = 325 real + 4 placeholder | **329 = 325 real + 4 placeholder** | 逐字一致 ✔ |
+| `known_gap` / `unclaimed` / `regression` | 127 / 0 / 0 | 127 / 0 / 0 | 逐字一致 ✔ |
+| `local_only`（占位） | 9（2） | 9（**2**：`GET /api/issues/:id/quick-actions`、`GET /api/feature-flags`） | 一致 ✔ |
+| 不变式 | `329 + 127 = 456` | `329 + 127 = 456` | ✔ |
+
+**owner 直方图（127 条，`33+24+24+16+13+11+5+1 = 127` ✔，此前各轮只零星引过部分值）**：`M9=33 M7=24 M8=24 M3+=16 M2-A=13 M3=11 M10=5 M6=1` —— 它是 §78.4 审计的输入。
+
+### 78.4 本轮新动作：**⑦ 缺口 × issue 归属覆盖审计**（127 条逐条四路取证）
+
+判据链（**四路都为否才算「无主」**）：fixture owner 单元格 → **该单元格的产出机制**（`scripts/route-owners.tsv`，显式规则 + 兜底两段、first-match-wins）→ 代码侧是否注册（`grep` + `git log --all -S`）→ issue 文本是否覆盖（本项目 **191** 条全量拼页扫）→ 计划文档是否已裁决。
+
+| owner | 缺口 | 承接方式（实测） | 判定 |
+| --- | ---: | --- | --- |
+| `M6` | 1 | 在飞片 `LUM-1673`（`POST /api/plugin-bridge/v1/hooks/{key}`） | ✔ 有主 |
+| `M7` | 24 | `LUM-1765`–`1786`（22 条 M7 切片，**24/24 全被 issue 文本点名**） | ✔ 有主 |
+| `M2-A` | 13 | `LUM-1691` 承接 **12**（其表里以 `GET /`、`GET /{id}/` 缩写形式列出，故按完整路径扫描只命中 8 条 —— 已逐条人工核对 12 条全部在位） | ✖ **1 条无主** |
+| `M3` | 11 | `docs/15-M3-PLAN.md:37`「cloud-runtime 11 条（→M9）」+ §536 登记为 owner 计数噪声 | ✔ 已裁决 |
+| `M3+` | 16 | `docs/15` §9.4「`M3+` ≠ M3，含义是『M3 之后未排期』」 | ✔ 已裁决 |
+| `M8` | 24 | `docs/plan1.md:317` W8 代码与制品（`mc-vcs`/`mc-vcs-github`/`mc-attachment`） | ✔ 未来波 |
+| `M9` | 33 | `docs/plan1.md:318/475` W9 商业面 + `docs/15:37` 判入的 cloud-runtime 11 | ✔ 未来波 |
+| `M10` | 5 | `docs/plan1.md` W10 / `docs/01-PLAN.md:214`「UI 兼容 / 性能 / 文档 / release」 | ✔ 未来波 |
+
+⇒ **127 = 25 由 issue 承接（`M6` 1 + `M7` 24）+ 101 由计划文档裁决 + 1 条真无主**。唯一无主键：
+
+**`POST /api/issues/{id}/squad-evaluated`**（上游 handler `RecordSquadLeaderEvaluation`，`router.go:2097`）
+
+1. fixture：`docs/fixtures/upstream-routes.tsv:262`（owner 列 = `M2-A`）、`docs/fixtures/handler-routes.tsv:348`；
+2. **owner 单元格是兜底产物、不是裁决**：`scripts/route-owners.tsv` 里**没有任何 `squad` 规则**，命中它的是后段兜底行 `^/api/issues → M2-A`（first-match-wins；`/timeline`(M9)、`/attachments`(M3+)、`/quick-actions`(M3+)、`/pull-requests`(M8)、`/wakeups`(M5) 等更具体的规则都排在兜底行之前 ⇒ 只有它漏到兜底）；
+3. 代码侧：`grep -rn "squad-evaluated" crates/ apps/` **为空**；`git log --all -S "squad-evaluated" -- crates apps` **为空**（**全历史**从未注册）⇒ 是 `known_gap`、不是 501 占位；
+4. issue 侧：191 条标题 + 正文逐条正则扫，**无一提到它**（`squad` 命中的 5 条 —— `LUM-1355`/`1468`/`1470`/`1471`/`1473` —— 全是 `/api/squads` 面）；
+5. 文档侧：`grep -rn "squad-evaluated" docs/*.md` 只命中 fixture 自身。
+
+**动作（沿用 `LUM-1745` 的「无主掉棒缺口 = 立 issue 登记」先例）**：立 **`LUM-1793`**（`backlog`、父 `LUM-1334`、已 assign，描述含上列四路取证 + 任务清单 + 验收），并把它写进 `LUM-1691` 描述的「起手补充」**第 2/3 条就地订正**（rev 3：本片按 12 条做，第 13 条由 `LUM-1793` **串行**承接 —— 两者写 `mount.rs` / `routes/mod.rs` 的**同一追加段**，不得同飞）。`LUM-1793` 另含一件必做项：在 `route-owners.tsv` 兜底行**之前**补一条显式规则 + `docs/22` rationale，让这一键从「兜底命中」变成「显式裁决」（§536 禁的是**为凑数**改 owner 单元格，不是禁带理由的显式裁决）。
+
+**顺带的对账差（登记，不改数）**：fixture 里 owner = `M2-A` 的上游路由共 **51** 条、当前缺口 **13** ⇒ 已落 **38**；`LUM-1691` 描述写「已落 37 / 剩 12」、预测「`49/51`」⇒ 与实测差 1，其 run **以当轮 `--json` 现读为准**（已写进它的起手补充第 4 条）。
+
+### 78.5 在飞片 `LUM-1673`（M6-8）健康复核：**活、在推进、不需介入**（三件套取三）+ 门禁读数取证
+
+| 判据 | 实测 |
+| --- | --- |
+| `/proc` 存活 | `pid 2178`，`ELAPSED 02:08:38`（19:38Z），父进程 = daemon `949` |
+| **session jsonl 在增长** | `~/.multica/pi-sessions/20260924T173006.441719139.jsonl`：**1,497,468 B @19:00Z → 1,744,556 @19:28 → 1,851,853 @19:38Z**（10 分钟 +107KB）⇒ 无冻结（§76.4 那次卡死是冻结 57 分钟） |
+| 写侧产物在增加 | `HEAD = 81c58721`（其起手 base）；`git status --porcelain` = **17** 项（11 `M` + 6 `??`；§77 时 13 项）；热 `target/` **≈20G**；远端分支未推；**19:28–19:34 跑完一整轮 `bash scripts/gates.sh --with-db`（344s）** |
+
+**它这一轮的门禁读数（`/tmp/gates1673.log`，只读取证，未碰它的工作树）**：**7/10 绿 / 344s**
+
+| 红门 | exit | 根因（ANSI 去色后逐条定位） |
+| --- | ---: | --- |
+| ① `fmt` | 1 | 在**它自己新增的** `crates/mc-http/src/routes/plugins/hooks_job/bridge.rs:4` —— import 列表换行（纯格式） |
+| ④ `clippy-test-util` | 101 | 编译 `crates/mc-http/tests/plugins` 测试目标（`--features mc-http/test-util`）：`error[E0308]: mismatched types` **×6** + `error: unused variable: pool`，`could not compile mc-http (test "plugins") due to 7 previous errors`，命中集中在**它新增的** `crates/mc-http/tests/plugins/hooks.rs`（55/72/122/140/232/273/276/360 行）与 `runtime_support.rs:81` |
+| ⑥ `db` | 1 | 同上（⑥ 也带 `--features mc-http/test-util` 编译同一测试目标）⇒ 同一根因，不是两条独立故障 |
+
+绿：② `build` ③ `clippy` ⑤ `test` ⑧ `schema-drift` ⑦ `route-parity` ⑨ `conformance` ⑩ `file-size`。**⑤ 之所以绿** = `cargo test --workspace` **不带** `test-util`，那个 `plugins` 测试模块不在该组合下编译。
+
+**它的 ⑦ 读数（分支上、旧正则）**：`local 406 / baseline 344 / implemented 330 real + 0 placeholder / known_gap 126 / unclaimed 0 / regression 0 / local_only 9`
+⇒ 与 §77.3 的**预测逐字相符**（`local 405+1`、`known_gap 127−1`），换成新正则即 `330 = 326 real + 4 placeholder`。**这是本轮最有价值的一条**：M6 终态向量（`406 / 330 / 126`）从「base 侧推导」升级为**双边实测**（base 405/127 + 在飞片 406/126）。
+
+⇒ 它的剩余工作是**自足的三门红**（全在它自己新增的文件里），与跨波写集无关 ⇒ **不介入、不抢合并**（GH 无 PR、分支未推）；若它静默死亡，抢救 = 固化这 17 项 + 推分支（**别**从基线重做）。
+
+### 78.6 `M6-INT`（`LUM-1675`）接收片就绪复核：**文书已就绪，硬前置未满足 ⇒ 不晋升**
+
+- 描述 rev **5**，尾部「起手补充（`LUM-1789`，03:00Z）」逐字读过：含新口径**终态向量表**（`local 406 / implemented 330 = 326 real + 4 placeholder / known_gap 126 / owners.M6 0 / local_only 9（占位 2）`）、4 条占位键点名、「`implemented_placeholder ≠ 4` ⇒ 先查再写、不许抹平」、「`known_gap == 126` 但 `owners.M6 ≠ 0` ⇒ 某片少交」三条判据、以及「`--write-baseline` 全波唯一一次（`344 → 406`）」。
+- `docs/57` **§9.9**（第 735 行起）就地订正 §9.7 的 `330 real + 0 placeholder` ✔ ⇒ 描述与计划文档两侧一致。
+- 硬前置「M6 代码片全合（`1673` 合入 ⇒ `owners.M6 = 0`）」**仍未满足**（⑦ 实测 `owners.M6 = 1`，见 §78.3）⇒ **不晋升**，它保持下一轮第一顺位（`backlog` + 已有 assignee ⇒ 一条 `status todo` 即起 run）。
+
+### 78.7 空位取舍：**故意不派**（矩阵逐条判过）
+
+空位 = **1**。候选全部过三条判据（① 硬前置价值 ② 是否写 `Cargo.lock`/锚点冻结文件 ③ 与在飞片文件交集）：
+
+| 候选 | 现状 | 本轮判断 |
+| --- | --- | --- |
+| `LUM-1675`（M6-INT） | `backlog` + 已有 assignee | **不派** —— 硬前置未满足（§78.6）。它是下一轮第一顺位，且 `--write-baseline` 全波唯一 |
+| `LUM-1691`（M2-A 尾，12 路由） | `backlog`，无 assignee | **不派** —— 团队已定案它排在 `1675` **之后**；它在飞会让 `1675` 的 `--write-baseline` 快照同时含 M2-A 的 12 条**他波**路由（M6 终态表被扰动、跨波对账成本上升），且它写 `mount.rs` / `routes/mod.rs` / `state.rs` / `Cargo.lock`（与 `1673` 的注册段同族） |
+| `LUM-1793`（本轮新建，第 13 条键） | `backlog` + 已有 assignee | **不派** —— 它**必须排在 `LUM-1691` 之后**（同写 `mount.rs` / `routes/mod.rs` 追加段） |
+| M7 切片 `LUM-1765`–`1786` | `backlog`（22 条） | **不派** —— `docs/60` §7.1 逐字要求「M6 全合（`1673` + `1675`）**且**并发位空出」后从 **M7-0 anchor 单独跑**；anchor 另争 `Cargo.lock` + `state.rs`/`mount.rs` |
+| `LUM-1745`（M5-D8） | `backlog` + 已有 assignee | **不派** —— 描述逐字要求「M6 收口后开工」（写 M6 热点 `state.rs`） |
+| 6 条历史 autopilot cycle issue（`LUM-1748`/`1740`/`1737`/`1726`/`1533`/`1521`） | 仍 `todo`、无进程、无产物 | **不动状态**（非本 cycle 交付面；**本轮实测：历轮用空位时它们也从未被 daemon 启起** ⇒ 可判定为惰性、无占槽风险，只需登记） |
+
+⇒ **「不派」也是派发决策**：这一轮唯一空位的正确用法是留给「`1673` 一合就能立刻晋升的 `1675`」，任何占位片都会把它推后 1–3 个 cycle（`1673` 现存三门红 ⇒ 至少还要 1 个 cycle 才能交 PR）。
+
+### 78.8 磁盘与卫生：**零回收**（无可回收对象；唯一大件是在飞片的热 `target/`）
+
+- 全盘扫 `find … -name target -type d`：**只有一个** —— `lum-1673-…/paperclip-rs/target`（≈20G，**在飞，不碰**）。其余 248 个 workdir 全部 ≤ 188M（`du -sm` 最大 188M）⇒ **没有任何 ≥200M 的可回收对象**，本轮**零回收**（本轮开始时 16G 已可用，不像 §77 那样起手就贴警戒线）。
+- **风险登记**：`1673` 还要再跑至少一轮 `--with-db`，其 20G 热 `target/` 是当前唯一的大盘占用；若它后续报磁盘错误，第一动作是回收**已终态片**的 workdir（本轮实测无此类对象）或让它 `cargo clean -p` 局部清理，**不要动正在构建的 target**。
+- scratch 库回收：本轮 ⑧ 用的 `multica_cyc1791` / 角色 `mc_cyc1791` 与 `schema_drift.py` 生成的 `schema_probe_*` 探针库跑完即删（不留垃圾库）。
+
+### 78.9 下一轮起点与预置
+
+- **起点**：base = **本节 docs 提交**（父 `55d6a1c0`，码树 == `55d6a1c0` == `956f387f` 的码树）、GH **0 open PR**、在飞 = `LUM-1673`、**空位 1**；`backlog` = 25（新增 `LUM-1793`）。
+- **第一动作**：① 起手三连（`df -h /` → `git ls-remote origin feat/multica-rs-initial agent/devbox5/3be5bf776e34` → 认证 `pulls?state=open`）；② `1673` 判活按 **§76.4 三件套**（`/proc` ∨ session jsonl 增长 ∨ 写侧产物增加，取二；本轮路径 `~/.multica/pi-sessions/20260924T173006.441719139.jsonl`）；③ **若 `1673` 静默死亡** ⇒ 先固化 17 项未提交 + 推分支（别从基线重做）→ 描述追加「下一个 run」→ `rerun`。
+- **`1673` 一交 PR 即走判据链**：预检 `merge-base..head` numstat == PR API → **形态判定**（base 已被本 cycle 的 docs 越过 ⇒ 多半走 `merge-tree --write-tree` 单哈希 + 落地树等式）→ head CI 3/3（或 §73.2 等价论证）。**合并前必须复核它三门红已转绿**（①④⑥ —— 尤其 ④/⑥ 的 `mc-http/tests/plugins` 编译），**别只看 CI 三 job**。
+- **`1673` 合入 ⇒ 立刻晋升 `LUM-1675`**（`--write-baseline` `344 → 406`）；同轮把 §78.5 的门禁读数 + 终态向量回填进它的描述（若它当轮读到 `implemented_placeholder ≠ 4` ⇒ 先按 §9.9 查清再写）。**同轮不得并派任何加路由片**。
+- **`1675` 合入后**：① `LUM-1691`（12 条）→ ② `LUM-1793`（第 13 条；两者**串行**，同写注册段）；之后 M7 从 **M7-0 anchor（`LUM-1765`）单独跑**（`docs/60` §7 表，stage 内 ≤3）。
+- **⑦ 递推**：`1673` 合 ⇒ `local 406 / implemented 330 = 326 real + 4 placeholder / known_gap 126 / owners.M6 0`；`1691` 合 ⇒ `+12/+12/−12`；`1793` 合 ⇒ `+1/+1/−1`（`owners.M2-A` 13 → 0）。
+
+### 78.10 lesson（第 21 轮）
+
+1. **「⑦ 缺口 × issue 覆盖」是可每轮只读复算的审计口径**，本轮据此找出全仓唯一一条无主键。**四路取证缺一不可**：fixture owner 单元格 → 该单元格的**产出机制** → 代码侧是否注册 → issue 文本是否覆盖 → 计划文档是否裁决。**只读 owner 单元格（非空 `M2-A`）会误判成「有主」；只读 issue 文本会漏掉「文档已裁决」的 101 条。**⇒ 本轮最值得记住的一句：**「兜底命中 ≠ 归属裁决」**（`route-owners.tsv` 是「显式规则 + 兜底」两段式、first-match-wins，兜底行会把任何没写规则的 `/api/issues/**` 新键伪装成 `M2-A`）。
+2. **「无主缺口」的正确动作是立 issue 登记，而不是塞进最近的同域切片**（沿用 `LUM-1745` 先例）。塞进去会让该片的标题 / DoD / ⑦ 预测三处同时失真，而且它与同域切片**同写注册段** ⇒ 必须有先后；**登记一个 `backlog` issue 的成本 ≈ 0**。（本轮的做法：立 `LUM-1793` + 把 `LUM-1691` 的描述从「默认由本片承接」**就地订正**为「由 `LUM-1793` 串行承接」—— 订正必须落在**片读的那份文书**上。）
+3. **在飞片的门禁日志是最富信息量的只读取证源**：本轮没碰它的工作树（一个写者原则），却从 `/tmp/gates1673.log` 取到「7/10 汇总 + 三门红的文件:行 + ⑦ 读数」三样，其中 ⑦ 读数把 §77.3 的**推导变成了双边实测**。⇒ **每次在飞片跑完 `--with-db`，cycle 都该把它的读数抄进报告**（那片自己未必来得及写文档）。
+4. **磁盘紧张时 base 复核要挑「不需要全量构建」的门**：`①fmt / ⑦route-parity / ⑧schema-drift / ⑩file-size` 全是 python / rustfmt 级成本（本轮 4 门 <40s、**零 `target/`**），而 `②③④⑤⑥⑨` 每道都起一次全量构建。**码树等式（限代码路径 numstat == 0）能把「不重跑」证成等价**，比在 16G 余量上硬跑安全得多。
+5. **`multica issue list --project … --limit 100` 只回一页**（本项目 191 条 ⇒ 需 `--offset 0/100/200` 拼三页）。做「全仓无 issue 认领」这类断言前**必须先拼全**，否则是拿半张表下的结论。（本轮 `--limit 100` 的默认页里根本没有 `LUM-1691`。）
