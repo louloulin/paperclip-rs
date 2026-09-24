@@ -5533,3 +5533,74 @@ chat 直聊裁定 ⇒ `LUM-1628` §4 的「manifest 边需 owner 裁决」**关�
 - **【cycle 标签从 §60 起漂了一小时，按 Z 时间对齐才不会错序】** `LUM-1711` 及更早 = UTC+8（`00:30Z → 08:30 cycle`），但 `LUM-1724`（`01:30Z`）标成「10:30 cycle」、`LUM-1729`（`02:30Z`）标成「11:30 cycle」⇒ 本轮（`03:30Z` = 北京 11:30）按 UTC+8 只能沿用「11:30」这个**已被 §61 用过**的标签。**报数/引用一律以 `created_at` 的 Z 时间为准**，标签只当别名。
 - **【热 `target/` 的复用前提是「路径不变」】** 本轮没在新 workdir 里另建验证树，而是在**片自己的 workdir 内** `git checkout -B cyc1738-verify` 后原地 merge ⇒ 指纹不变 ⇒ 门禁 236s（冷跑同规模 550s+）。**代价是必须等该片 run 终态且工作区干净**（否则会覆盖别人未提交的工作树）。
 - **【回收时机 = 交付即回收，不攒到下一轮】** 起手 15G 可用显然是上个 cycle 回收过的结果；本片 PR 一合就删它的 20G `target/`，两个新起 run 的 `-with-db` 建目录才有余量（§56 已记过「不回收 ⇒ 中途只剩 4.6G」）。
+
+## §63 12:00 cycle（`LUM-1739`，04:00Z）：**base 未动（`4507511`）、GH 0 PR、3/3 满载 ⇒ 0 可合 / 0 空位**；新动作 = **M6 待派片「父模块声明」全量预飞（0 缺件）** + **把「派发前准备」与「派发」解耦**（`LUM-1669` 交接文预置 + 内置资产双根树 sha 清单 + `LUM-1670` 抢救包预置）+ 就地订正 `LUM-1673` 写集记法歧义；勘误 §62 收尾的「1 个空位」
+
+### 63.1 起手三连（04:0xZ 实测）
+- 磁盘：`/` **32G 可用（15G 已用 / 33%）**。在飞的 `LUM-1668` `target/` = **2.3G**（03:39 起）、`LUM-1670` = **722M** ⇒ 两个都在长，本轮**无可回收**（唯一两个热 `target/` 都属于**活着的** run，§59.8/§56.4 三件套的第 3 条「无进程占用」不成立）。
+- `git fetch origin feat/multica-rs-initial` = **`4507511`**（= §62 自身那次 docs-only 提交，**未再前进**）；认证 `pulls?state=open` = **0 条**。
+- 在飞采样：daemon `running_task_count = 3`；`pgrep -f <workdir>` ⇒ pid **57266**（`lum-1668-2612b5932325`，03:39:28 起）、pid **57252**（`lum-1670-f715ccaf9ad8`，03:39:26 起）⇒ **2 片在飞 + 本 cycle = 3/3 满载**。
+
+### 63.2 空位口径勘误：§62 收尾写的「1 个空位」是账目错误 ⇒ 本轮 **0 空位**
+- 实测语义：**`running_task_count` 把 cycle 自己算在内**（此刻 =3，恰好 = cycle + 1668 + 1670）⇒ 「最多 3 个任务」= **可派切片位 = 2 − 在飞片数**。
+- 交叉核对（四轮一致）：§57 / §58 / §60 / §61 在「2 片在飞 + cycle」时都记 **`3/3 满载 ⇒ 0 空位`**；只有 §62 的收尾行写成「在飞 2 片 ⇒ **1 个空位**」，与它自己正文的「派发（2 空位用满 ⇒ daemon `running = 3/3`）」自相矛盾。
+- ⇒ **口径以本节为准**：`空位 = 3 − 1(cycle) − 在飞片数`。§62 那行按「2 个新片刚派出去」重读才成立（当时在飞 = 0 片）。**本轮不派发**（若按错口径派第 3 片，就是第 4 个并发任务，越限）。
+
+### 63.3 在飞两片实时体检 + **写集越权审计**（新手法：直接读 pi session jsonl 判活）
+| 片 | pid / session | 工具调用构成（04:04Z） | 工作区未提交 | `target/` | 越权 |
+|---|---|---|---|---|---|
+| `LUM-1668`（M6-3） | 57266 活 · `20260924T033928…jsonl` 2.25MB **在长** | 213 次：`bash` 157 / `read` 30 / `edit` 15 / `write` 11 ⇒ **写侧 12%**、`compaction` 6 | `skills/import.rs`+566、`skills/refresh.rs`+268、`skill/import.rs`+480、`archive.rs`+585、`source.rs`+381 = **5 文件 +2280/−54** + 新目录 `routes/skills/import/`（5 文件） | 2.3G | **0** |
+| `LUM-1670`（M6-5） | 57252 活 · `20260924T033926…jsonl` 2.25MB 在长 | 219 次：`bash` 209 / `read` 7 / `write` 3 ⇒ **写侧 1.4%**、`compaction` 5 | `plugin/installation.rs`+390、`plugin/package.rs`+317、`plugin/skill.rs`+85 = **3 文件 +792/−7** | 722M | **0** |
+- 审计判据：逐文件比 `docs/57` §3.2 矩阵 + 各片的写集修订节。**两片都逐字落在声明写集内**；`routes/{mod,mount}.rs`、`state.rs`、各 `mod.rs`、`Cargo.{toml,lock}` 均 **0 改动**。
+- **顺手排掉一个假警报**：`LUM-1668` 新建了**目录** `routes/skills/import/`（内含 `fetch.rs`/`github.rs`/`github/tree.rs` + 2 个 `tests.rs`），而不是写单文件 `import.rs`。这不越权 —— `routes/skills/import.rs` 已是该模块的**模块根**（`skills/mod.rs:42` 的 `pub mod import;` 早由 anchor 写好），子模块声明由 `import.rs` 自己持有 ⇒ **不需要碰 anchor 冻结的 `skills/mod.rs`**。
+- 两片**都还没推远端分支**（`git ls-remote --heads origin 'refs/heads/agent/*'` 无二者的 run id）⇒ 本轮无可合对象。
+
+### 63.4 新动作 A：M6 **待派片**的「父模块声明」全量预飞 ⇒ **0 处缺件**
+> 动机：这类缺口已咬过两次（§58 的 `routes/agents.rs`、§58 的 `mc-daemon/src/{lib,execenv/mod}.rs`），形态都是「切片新建了文件，但**让新文件可见需要改一个既有的（且被 anchor 冻结的）父文件**」。趁这几片还在 `backlog`，把每一格的父声明**逐条实测**掉。
+
+| 待派片 | 要新建的文件 | 父声明 | 实测 |
+| --- | --- | --- | :-: |
+| `LUM-1669`（M6-4） | `routes/agents/skills.rs`、`routes/agents/dto/response.rs`、`assets/**` | `routes/agents.rs`（自身写集，第二轮已补）、`routes/agents/dto.rs`、`mc-skill/src/lib.rs:50`、`mc-repos/src/skill/mod.rs:31` | ✓ 全在 |
+| `LUM-1671`（M6-6） | `routes/plugins/{mcp,surface_launch}.rs`、`mc-repos/src/plugin/{mcp_approval,invocation_read}.rs` | `routes/plugins/mod.rs:38,40`（且其 `router()` **已** `.merge(mcp::router())` / `.merge(surface_launch::router())`）、`mc-repos/src/plugin/mod.rs:40,39` | ✓ 全在，注册点**无需改动** |
+| `LUM-1672`（M6-7） | `routes/v1/{context,issues,storage}.rs`、`routes/plugin_bridge/{context,issues,storage}.rs`、`routes/surfaces.rs`、`mc-repos/src/plugin/storage.rs` | `routes/mod.rs:75-79` **已** `pub mod surfaces;` / `pub mod v1;`、`routes/v1/mod.rs:31-34`、`plugin_bridge/mod.rs:30-33`、`mc-repos/src/plugin/mod.rs:43` | ✓ 全在 |
+| `LUM-1673`（M6-8） | `routes/plugin_bridge/hooks.rs`、`routes/plugins/hooks_job.rs`、`mc-repos/src/plugin/hook.rs`、`mc-repos/src/scheduler.rs` | `plugin_bridge/mod.rs:31`、`plugins/mod.rs:36`（+ `router()` 已 merge）、`mc-repos/src/plugin/mod.rs:37`、**`mc-repos/src/lib.rs:68` `pub mod scheduler;`** | ✓ 全在（见 63.6 的记法订正） |
+| `LUM-1674`（M6-9） | `mc-daemon/src/{skill,mcp}/**`、`execenv/*` | `mc-daemon/src/lib.rs`、`execenv/mod.rs`（**两者都已在 §58 被写进它的写集**） | ✓ 已覆盖 |
+
+⇒ **结论：M6 剩下的 5 片，没有任何一片需要「越权改冻结面」或「漏声明」二选一**；`docs/32` §9 的文件→写者表本轮**无需新增行**（§58/§61 已把两处补完）。
+
+### 63.5 新动作 B：把「派发前准备」与「派发」解耦（0 空位 cycle 的正事）
+**本轮 0 空位 ⇒ 不派发**，于是把**下一个被 promote 的片**要用的东西**提前做完**（全部 `--no-start`，**不启动任何 run**）：
+
+1. **`LUM-1669`（M6-4）交接文预置**（描述 rev 3→4：5,265 → 10,130 字节，状态仍 `backlog`，0 评论、0 run）：
+   - 冻结起手读数：base `4507511`（码树 `fc4971c`，`git diff --stat fc4971c 4507511` = 只 1 个 docs 文件 ⇒ 代码 diff **0**）；⑦ `upstream 456 / local 361 / baseline 344`、`implemented 285 / known_gap 171 / regression 0 / local_only 9`；**本片预期 +6 ⇒ `local 367`、`implemented 291`、`known_gap 165`**（291+165=456 ✓）；⑤ **1556/176**、⑥ **405**；**`--write-baseline` 禁跑**（快照归 M6-INT）。
+   - **内置资产的真身**（DoD 的「逐文件 sha 对比」直接用）：上游 `/tmp/ups_multica` 的资产是**两棵 `go:embed` 根树**（`internal/service/builtin_skills.go:10,16`）——`builtin_skills/` **10 文件 / 2,295 行** + `builtin_skills_legacy/` **1 文件 / 32 行** = **11 文件 / 2,327 行**（描述里的「11 文件 / 2,327 行」**逐字正确**；只看第一棵树会少 1 文件 / 32 行）：
+```
+# builtin_skills/  (10 files / 2295 lines)
+218fbcac5a115621ee56ee3d9f02c46e82dc4a1a76a5598055db869ab1570c36  builtin_skills/multica-onboarding/SKILL.md
+8bfcca9c43e8eacc79275de0ae6ded526f076624b6cf7a248615b92ccc8cae04  builtin_skills/multica-platform/SKILL.md
+2c63899b71d302196af0e1ca448eb41e87072a4c06c30e076c9333effa876e98  builtin_skills/multica-platform/references/agents.md
+75bfb9d20e9af556d01290247df4f482be0bb0566e3fdb7f7fafe7f8e18c29b7  builtin_skills/multica-platform/references/autopilots.md
+a6d28d5471967c2c3f89c39684660626d3130e814166967fbcffd93603198d3f  builtin_skills/multica-platform/references/issues.md
+c7f96872a1e547e4f8714ec400bb33cc651d64d5ee3c74c971ada99ce99cb625  builtin_skills/multica-platform/references/mentions.md
+cc05408ae333b166778ccc2b5e559bdf312daf32aaab61923778c924896df37e  builtin_skills/multica-platform/references/projects.md
+1601d99753404494d1f246d69d70af0048d2b32cc9dc4da6f10fc314c5d4b71a  builtin_skills/multica-platform/references/runtimes.md
+f88046e97980a42b632cbf5434c05a1c5518b05aaf4616815d481de6166f12f7  builtin_skills/multica-platform/references/skill-import.md
+a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills/multica-platform/references/squads.md
+# builtin_skills_legacy/  (1 files / 32 lines)
+26fe14d88e0562bd789d1e417c34ad6067d0b8d2fc1b9f1a62fddfe2c2f0789a  builtin_skills_legacy/multica-working-on-issues/SKILL.md
+```
+   - 写集「父模块声明」实测表（见 63.4）+ 6 步单元推进序 + 20 分钟首单元纪律 + git identity / 完整 ref 推送 / 不改 `Cargo.{toml,lock}`。
+2. **`LUM-1670`（M6-5）抢救包预置**（描述 rev 7→8：9,842 → 11,809 字节，状态仍 `in_progress`，**没有启动新 run**）：把 63.3 的实时体检、**写侧占比 1.4% / compaction 5 次 / 无 `cargo` 子进程** 三条判据、以及**已经躺在工作区的 3 文件 +792/−7 抢救清单**写进它的「第四个 run」节，并注明「第三个 run 正常交付则忽略本节」。**本轮不杀进程**（§62 已定：平台把死 run 也记 `completed`，杀它只会丢掉那 792 行）。
+
+### 63.6 就地订正：`LUM-1673`（M6-8）写集记法歧义（描述 rev 1→2，状态仍 `backlog`）
+- 原文写集：`routes/plugin_bridge/`（**hook 段**）、`mc-repos/src/{plugin/hook.rs,scheduler.rs}` —— **两处都是记法，不是逐字路径**。
+- 危害（可复算）：花括号那处**能被读成 `mc-repos/src/plugin/scheduler.rs`**，而 `ls crates/mc-repos/src/plugin/` 无此文件、`plugin/mod.rs`（anchor 冻结面）也无该声明 ⇒ 照那个读法干活，会掉进「写了文件但编译看不见」⇒ 只能在**漏声明**与**越权改冻结面**之间二选一。
+- 实测裁定（base `4507511`）：`mc-repos/src/plugin/hook.rs` ✓（`plugin/mod.rs:37` 已声明）、**`mc-repos/src/scheduler.rs` ✓ 存在**（23,809 字节，M5 已落；`mc-repos/src/lib.rs:68` 已 `pub mod scheduler;`）、`routes/plugin_bridge/hooks.rs` ✓（`mod.rs:31`）、`routes/plugins/hooks_job.rs` ✓（`plugins/mod.rs:36` + `router()` 已 merge）。
+- 已把写集**逐字改写为 4 条完整路径**，并把上面的实测与危害写进该 issue 的描述（`--no-start`，未起 run）。
+- **这是「写集记法」这一类缺陷第三次咬人**（§58 的 `routes/{mod,mount}.rs` 通配、§58 的 `routes/plugin_bridge/*` 通配、本轮的花括号）⇒ **写入 `docs/57` §3.2 的纪律**：写集一律**逐字路径**，禁止 glob / 花括号 / 「某某段」这类记法。
+
+### 63.7 本轮 lesson
+- **【判活/判死的新判据：写侧占比 + 构建子进程，而不是存活时长】** 平台对静默死亡的 run 也记 `completed`，所以唯一的实时信号在 **pi session jsonl**（`~/.multica/pi-sessions/`，本轮**实测可用且按 run 在长**）：数出工具调用构成即可。健康样本 `LUM-1668` = 写侧 **12%**（`bash157/read30/edit15/write11`）；高危样本 `LUM-1670` = 写侧 **1.4%**（`bash209/read7/write3`）+ `compaction` 5 次 + **无 `cargo`/`rustc` 子进程**（那 20 分钟不是「在编译」而是纯 `sed`/`grep`）。⇒ **判别式：写侧 < 5% 且无构建子进程 = 抢救包必须提前备好**。配套动作是**预置抢救包**（描述里写清「已落在工作区的 N 文件 +M/−D」），而不是杀进程。
+- **【cycle 的账目要能自证，别继承上一轮的口径】** §62 收尾的「1 个空位」与本轮实测（`running_task_count=3` = cycle + 2 片）冲突；四轮历史（§57/58/60/61）都支持「cycle 占位」⇒ 本轮**先证口径再决策**，避免了第 4 个并发任务。**空位必须当场用 daemon 读数复核，不能从上一轮的 next-cycle 行里抄。**
+- **【0 空位 ≠ 没正事：把「派发前准备」与「派发」解耦】** 预置交接文（`--no-start` 改描述）**不启动 run、不占空位、不改状态**，但把下一轮 promote 的成本压到 **1 次调用**（`todo` + `rerun`）。本轮把 1669 的全部预飞（读数/资产 sha 表/父声明表/单元序）与 1670 的抢救包都做完 ⇒ 下一轮的热路径上没有「查证」这一步。
+- **【和描述给的数字不一致时，先找第二处来源，再谈「订正」】** 我按 `builtin_skills/` 数出 **10 文件 / 2,295 行**，与描述的「11 文件 / 2,327 行」不符；继续查才发现上游有**两棵 embed 根树**，相加**恰好 11 / 2,327** ⇒ 描述是对的，**是我的口径少了一棵树**。若按第一反应去「订正」描述，就会把一条正确的 DoD 改成错的。
