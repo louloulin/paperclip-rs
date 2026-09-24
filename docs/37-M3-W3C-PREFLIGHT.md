@@ -6124,3 +6124,85 @@ a53c9d12d7c5a1dbd56a06f1abf7dec24479181bc63d80c725ec7b6d6f57ed37  builtin_skills
 - **没出事的原因**（可复核）：两边都只**追加** `docs/37`（LUM-1746 加 `§68`，本 cycle 加 `§67.9/§67.10`），冲突面只有「谁后推」；后推的一方 push 被拒（non-fast-forward）后 fetch 重推即可。
 - **但有真实代价**：① 同一份缺口被两个 cycle 各诊断一遍（本 cycle 的 CI 日志 vs LUM-1746 的工具调用取证）；② 同一个 `LUM-1670` 描述被两边先后重写（`rev 10 → 11`），**后写者覆盖先写者**是默认行为，只是这次两边结论一致才没丢信息；③ 两边的 next-cycle 结论**互相矛盾**（§68.8「先判合并」vs 本节「先补文件」）—— 这是并发 cycle 唯一真正危险的地方：**同一条流水线上出现两个互相矛盾的「下一轮第一动作」**。
 - **建议（给 owner，本 cycle 不改 autopilot 配置）**：autopilot 建 cycle issue 前先查「是否已有本仓未终态（`todo`/`in_progress`）的 cycle issue」，有则跳过本次建单。当前 `todo` 态的旧 cycle issue 已有 `LUM-1521`/`1533`/`1726`/`1737`/`1740` 五个，加上并发在飞的这一个，**护栏收益明确**。
+
+## §69 08:45 cycle（`LUM-1747`，08:0xZ）：**合并 #72（M6-5，13 路由）⇒ base `2e18514`**；合并树门禁 **10/10（246s 热跑）**、⑦ `local 382 / implemented 306 real + 0 placeholder / owners.M6 24`；抢救 `LUM-1671` 683 行（`2f2086a`）+ `rerun`；空位出现 ⇒ 派 `LUM-1672`（M6-7，19 路由）
+
+### 69.1 起手状态（08:0xZ 实测）
+
+- GH **1 open PR**（`#72`，head `b06f41d`，base `feat/multica-rs-initial`）；CI run `35967841375` = `fast` 红 / `db` 红 / `contract` 绿。
+- 两处死 run：`LUM-1670`（M6-5，run-6 死于 06:57:03Z，第 7 个 run 的交接与 `b06f41d` 抢救已在 §68 完成）、`LUM-1671`（M6-6，run-1 死于 07:21:20Z，**0 提交 / 0 推送 / 0 注释**，工作区留 683 行未提交）。
+- 起手在飞 **2/3**（1670 与 1671 的 run 都已死但 issue 仍 `in_progress`）⇒ 真正在跑的只有本 cycle ⇒ 本轮唯一动作选「修 #72 的三红」，不派新片。
+
+### 69.2 修 #72 的三红（三个不同根因，**都不是实现错**）
+
+1. **`fast` ③④ + `db` ⑥ 同源**：`crates/mc-http/tests/plugins/main.rs:23` 声明了 `mod token;` 但 `token.rs` 不存在 ⇒ `E0583` ⇒ `mc-http` 的 `plugins` 测试目标编译失败（`could not compile mc-http (test "plugins")` ⇒ `e2e=101`）。
+   补 `crates/mc-http/tests/plugins/token.rs`（6 个真库用例）：明文只露面一次 + 读面无明文、轮换替换哈希、吊销幂等、未知安装 404、无部署密钥时仍签发但不给 `signing_secret`。
+2. **`fast` ① fmt**：run-6 从没跑过 `cargo fmt`（5 个测试文件重排：`guard.rs` +12 / `lifecycle.rs` +16 / `packages.rs` +27 / `support.rs` +73 / `zipfixture.rs` +5）。
+3. **`fast` ③④ clippy `-D warnings` 共 9 处**：`use super::*` 通配 import ×2（改成显式 `use super::{…}`，仓库里没有非测试 glob 先例）、`map_or`→`is_none_or`、多余的 `.map(|()| ())`、`doc_markdown` ×5、
+   `usize as i64`→`i64::try_from(...)`、`manifest(…, &Value)` 传址。⚠️ `cargo clippy --fix` **会把中文注释里的反引号插错位置**（本轮两次都是手工改回）。
+
+**另有一批 CI 还没跑到的红（本地真库暴露）**：`--ignored` 真库套件 **5 处失败**，逐条以上游 Go 为准裁定 —— **4 处是测试写错，1 处是夹具插不进库**：
+
+| 失败 | 裁定 |
+| --- | --- |
+| `stored_secret` 查不到行 | 夹具写错列名：`plugin_secret` 的键列是 `key`，不是 `name`（PG 42703） |
+| `seed_published_version` 插不进 | 夹具违反 `plugin_package_version_digest_check`：digest 必须 **64 字符** |
+| skill 回退描述 | **实现对**：上游 `plugin_skill.go:65` = `"Provided by the " + name + " Plugin."` ⇒ 夹具名 "Itest Plugin" 就该产出 `…Plugin Plugin.` |
+| `granted_scopes` 报错文案 | **实现对**：上游 `plugin.go:490-504` 先比长度（`requireExactScopes`）再点名多余 scope ⇒ 「多给」的用例必须**等长** |
+| 超限包 429 → 413 | **实现对**：413 `payload_too_large`（与 `routes/tasks/builder.rs` 逐字一致） |
+
+⇒ `plugins` 套件 **20/20**（本地库 `mc_cyc1747`，566 迁移）。修正提交 `be86e99`。
+
+### 69.3 判据链（本轮最重要的方法论修正）
+
+**`mergeable: true` 只说明无冲突，与「合并树绿」是两件事。** 本轮实测：base `a4d62d8` **不是** head 的祖先 —— `git merge-base HEAD base` = `c47c016`，
+base 侧多出 8 个提交（`#71` 的 M6-4 合并 + 4 个 docs 提交）。**若照 `mergeable` 直接合，推上 base 的会是一棵从没跑过门禁的树。**
+
+新判据链（可复用）：
+
+1. `git merge-base --is-ancestor <base> <head>` —— 为真 ⇒ 合并树 == head 树，head 的门禁读数直接可用；**为假** ⇒ 进第 2 步。
+2. 本地 `git merge origin/feat/multica-rs-initial`（本轮**零冲突**）⇒ 合并树 `82a9621`。
+3. 在**合并树**上跑 `bash scripts/gates.sh --with-db` = **10/10 / 246s**（①1s ②80s ③33s ④27s ⑤34s ⑥178s ⑦0s ⑧25s ⑨52s ⑩1s）。
+   ⚠️ `--only` 与 `--with-db` **互斥**：`--only` 里带 `db`/`schema-drift` 会直接报错退出（不是忽略 `--only`）。
+4. 把合并提交推到 head 分支 ⇒ CI 在 `82a9621` 上 **3/3 绿**（`fast` / `db` / `contract`）。
+5. `PUT /repos/…/pulls/72/merge` 带 `sha=82a9621…` ⇒ 合并提交 **`2e18514`**（parents `a4d62d8` + `82a9621`）。
+6. **合并后复核**：`git rev-parse origin/feat/multica-rs-initial^{tree}` == `82a9621^{tree}` = `a7390944c7ba6e7f8c0a7170e1dc6c629ed26ba0` **逐字节相同**
+   ⇒ 第 3 步的 10/10 就是落在 base 上的那棵树的读数（不是「另行推理」）。
+
+### 69.4 合并后读数（`2e18514`）
+
+- ⑦ `python3 scripts/route_parity.py --json`：`upstream 456 / local 382 / implemented 306 real + 0 placeholder / known_gap 150 / unclaimed 0 / regressions 0 / local_only 9`；
+  `owners` = `M9 33 / M6 24 / M7 24 / M8 24 / M3+ 16 / M2-A 13 / M3 11 / M10 5`。§67.10 的预测量（`local 382 / owners.M6 24`）**逐值命中**。
+- `ok: true / regressions: 0`；⑦ 快照文件**未动**（唯一一次 `--write-baseline` 仍归 M6-INT `LUM-1675`）。
+- GH **0 open PR**。
+
+### 69.5 派发与在飞
+
+- `LUM-1670`（M6-5）→ **`in_review`**（已合入；13/13 路由、0 占位、⑩ 行预算内）。
+- `LUM-1671`（M6-6）：抢救 run-1 的 **683 行**（`invocation_read.rs` +267/−17、`mcp_approval.rs` +432/−17；`plugin/mod.rs:39-40` 已声明、零 `todo!()`），
+  顺带清 **7 处** `clippy -D warnings`（`doc_markdown` ×6、`assert!` 等值比较 ×1）+ rustfmt，提交 **`2f2086a`** 推 `agent/devbox5/d3db820d080f`；
+  `cargo check -p mc-repos --locked` 与 `cargo clippy -p mc-repos --all-targets --locked` 均绿 ⇒ 描述追加「第二个 run 交接」⇒ `rerun` = run `01a0d275-3f12…`。
+  （⚠️ 该片描述里 13:30 cycle 写的预飞读数 base `02f888f` / `local 363` 已过期，交接文里就地点明「以本节为准」。）
+- 空位出现 ⇒ 派 **`LUM-1672`（M6-7，19 路由，最大单片）**：描述追加「起手补充」（base `2e18514`、⑦ 读数、期望 `local 401 / owners.M6 24→5`、真库与门禁命令、两条纪律）。
+  **并行安全性实测**：1672 的枚举写集**明确排除** `routes/plugins/**` ⇒ 与 1671（写 `routes/plugins/{mcp,surface_launch}.rs` + `mc-repos/src/plugin/{mcp_approval,invocation_read}.rs`）**零共享文件**；
+  两边都不得动 `routes/mount.rs` 与 `routes/{v1,plugin_bridge}/mod.rs`（anchor 冻结面）。
+- 在飞 **3/3** = cycle ∥ `LUM-1671` ∥ `LUM-1672`。
+- **回收**：`lum-1670-d9dfedc1155e` 的 `target/` **24G 整删**（三判据齐：PR 已合 / run 终态 / `/proc/*/cwd` 无该 workdir 的 cargo·rustc）⇒ `/` **9.0G → 33G 可用（30%）**，
+  给两个新 run 让出冷编译空间（**ENOSPC 会伪装成门禁红**，所以这一步是「跑门禁前的基础设施」）。
+
+### 69.6 本轮 lesson
+
+1. **`mergeable: true` ≠ 合并树绿**（见 §69.3）：补一条 `git merge-base --is-ancestor <base> <head>`；为假就必须先在本地合出合并树再跑门禁，并把合并提交推到 head 分支让 CI 复核。
+2. **「测试从没接过真库」是稳定缺陷源**：M6-5 的 6 个测试文件在 CI 上第一次跑就红 5 处 —— **4 处是测试按记忆写期望（实现照上游是对的）**，1 处是夹具违反 CHECK 约束。
+   **纪律：新增/改动的测试文件必须本地真库跑过再推**（成本 ~110s，远低于一轮 CI + 抢救）。
+3. **夹具常识（登记以免再撞）**：`plugin_secret` 的键列叫 `key`；`plugin_package_version.digest` 必须 64 字符（`digest_check`）；`plugin_package_version_digest_check` 是**长度**约束，不是格式约束但短串一样插不进。
+4. **静默死亡的第三签名再次命中**：`LUM-1671` run-1 的最后一条工具调用是**缺 `path` 的 `write`** ⇒ 「工具报 `Validation failed` 就当拍补参重发」是硬纪律（本轮抢救因此保住 683 行）。
+5. **autopilot 并发 cycle 护栏仍未落地**：`todo` 态旧 cycle issue 已积 **5 个**（`LUM-1521`/`1533`/`1726`/`1737`/`1740`）。
+   建议（给 owner，本 cycle 不改配置）：autopilot 建 cycle issue 前先查「本仓是否已有未终态（`todo`/`in_progress`）的 cycle issue」，有则跳过本次建单。
+
+### 69.7 下一轮起点
+
+- base **`2e18514`**（= M6-5 合并树，tree `a7390944…`）；GH **0 open PR**；在飞 **3/3**（cycle ∥ 1671 ∥ 1672）。
+- 下一轮第一动作：查 1671 / 1672 的终态 —— **对每一片都要查两件**：① 它的 head 分支 CI **3/3**（`fast`/`db`/`contract`）；② `merge-base --is-ancestor <base> <head>`（为假 ⇒ 先本地合树 + 跑门禁 + 推合并提交，再合）。
+- ⑦ 期望：1671 合入后 `local 386 / owners.M6 20`；1672 合入后再 `+19`。**快照刷新仍只归 `LUM-1675`**（M6-INT）。
+- 仍**不派** `LUM-1673`（M6-8）：它依赖 `LUM-1659`（M5-9）合入；`LUM-1745`（M5 偏差 D8）的排期约束不变（M6 收口前不开工）。
