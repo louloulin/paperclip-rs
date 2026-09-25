@@ -8143,3 +8143,74 @@ gaps by owner: M9=33  M7=24  M3+=16  M2-A=13  M3=11  M8=6  M10=5      （和 = 1
 - **槽位一空即派**：`LUM-1769` 终 ⇒ 判据链（其 `--with-db` 若红先看 `df`）；`LUM-1691` 终 ⇒ 判据链 + ⑦ 逐项核对上表预期；**`LUM-1691` 合入之后**才轮到 `LUM-1793`（+1 路由，同写 `mount.rs`/`routes/mod.rs` 的同一追加段 ⇒ **不得同飞**）；`LUM-1745`（M5-D8，0 路由，争 `state.rs`）随时可插。
 - **看板（项目内，当轮实测）**：`in_progress 3` / `backlog 34` / `todo 10` / `in_review 184` / `blocked 0`。`todo` 的 10 条 = 9 条历史 cycle 登记 + 本 issue 派发前的自身；**只登记不动状态**。
 - **无人承接的跨波欠账（不改状态，仅登记）**：① M6 波的 5 条尾斜杠形态欠账（§92.5）；② `LUM-1745`（M5-D8：webhook 投递 worker 无生产调用点）；③ autopilot 的「已有未终态 cycle issue 时不建新单」护栏仍未落地（第 31 轮观察）。
+
+---
+
+## §94 14:00 cycle（`LUM-1857`，05:00Z 触发）：**合并 #90（M7-4）⇒ base `f1cd4bbc`**；判据链**零门禁重跑**（head CI 3/3 + 三处同哈希）；起手磁盘 8.6G ⇒ 回收 16.3G；空位 1 ⇒ 派 **M7-5（`LUM-1770`）**，派发预飞又逮到一条「第二类漏项」（`telegram/mod.rs`）
+
+### §94.1 起手三连（当轮实测，禁抄上一轮行）
+
+| 项 | 值 |
+| --- | --- |
+| `df -h /` | **8.6G 可用（82%）** ← 🔴 第一风险 |
+| `git ls-remote origin feat/multica-rs-initial` | `43361e92`（自 §93 未前进） |
+| 认证 GH `pulls?state=open` | **1**：#90（M7-4 `LUM-1769`，head `c63c51bd`，`mergeable true` / `clean`） |
+| daemon `running_task_count` | **2**（含 cycle 自身） |
+| 逐 PID `/proc/*/cwd` 拆解 | cycle（`lum-1857-…`）+ `LUM-1691`（`lum-1691-…`）+ **非本项目** pid 140（`node`，cwd `/home/devbox`，zcode 线）⇒ 本项目在飞 **1** ⇒ **空位 = 3 − 1(cycle) − 1 = 1** |
+
+### §94.2 判据链：PR #90 —— 三条「零门禁重跑」判据全中（§93.6 固化形态首次独立复用）
+
+1. **片终态**：`LUM-1769` = `in_review`，`/proc/*/cwd` 逐 PID **零命中**，`git status --porcelain` **0 行**、`@{u}..HEAD` **0 提交**。
+2. **预检**：`git diff --numstat 43361e92 refs/remotes/pr/90` = **28 文件 `+10307/−230`**，与 PR API（`additions 10307` / `deletions 230` / `changed_files 28` / `commits 1`）**逐字相等**。
+3. **形态**：`merge-base base head` = `43361e92` = **base 自身** ⇒ base 是 head 祖先（单提交 PR）⇒ 不存在「base 前进段」需要取证；**合并树 == head 树**。
+4. **三处同哈希**：`git merge-tree --write-tree 43361e92 c63c51bd` = **`a20308bf8e705bdf10e3a66c722181e0d5d5a4ae`** = `c63c51bd^{tree}`（`git diff` 合并树 vs head 树 = **0 行**）。
+5. **head CI 3/3 绿**（`check-runs`）：`fast`（fmt/build/clippy/test/file-size）`success` 05:00:24Z、`db`（postgres:16 + DB e2e）`success` 05:00:18Z、`contract`（route parity + conformance）`success` 04:57:57Z。
+6. ⇒ ⑤+⑥ 成立 ⇒ **零门禁重跑**（沿用 head 树已被 CI 验证的读数；本片无 docs-only 差集，合并树与 head 树逐字同）。
+7. **API 钉 sha**：`PUT /pulls/90/merge` `{sha: c63c51bd…, merge_method: merge}` → **`f1cd4bbc`**（`merged: true`）。
+8. **落地等式**：`f1cd4bbc^{tree}` = **`a20308bf…`** = 预测树；`git diff f1cd4bbc^{tree} c63c51bd^{tree}` = **0 行**。
+
+**⑦/⑩ 在合并树上当场重跑**（`--only route-parity,file-size`，2/2 PASS，1s）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 428 registered | baseline 406
+implemented  348 real +   4 placeholder =  352 / 456   known_gap  104   unclaimed 0   regression 0   local_only 9
+gaps by owner: M9=33  M7=20  M3+=16  M2-A=13  M3=11  M8=6  M10=5      （和 = 104 ✓）
+```
+
+与 `LUM-1769` 自己 PR 描述里的自报读数（`428 / 352 / 104`）**逐字一致**；缺 4 条渠道路由的 `EXTRA_ALIAS`/形态缺陷 0（`slash_alias_audit` 未报缺陷）。
+
+### §94.3 回收：`lum-1769` 的 16.3G（四判据 + 一条新踩到的自污染坑）
+
+四判据：① PR **已合**（`f1cd4bbc` 的父之一就是 `c63c51bd`）∧ ② run 终态（无 `/proc` PID、0 未提交、0 未推）∧ ③ `/proc/*/cwd` 逐 PID 零命中 ∧ ④ `git status --porcelain` 0 行 ⇒ 整删 `lum-1769-3269a2c6ff4a/workdir/paperclip-rs/target/`。
+
+**`df --output=avail` 7.8G → 24G**（回收量只认 `df` 前后差 ≈ **+16.2G**；`du -sm target` = 16296M 仅用于定位）。
+
+⚠️ **坑（与 §79.4b 同一根因的新形态）**：第一遍 `/proc/*/cwd` 扫描**命中了一个 PID** 指向 `lum-1769` —— 那是我自己这条 `cd …/lum-1769/…` 的命令 shell。**判「死物」必须在扫描前排除自身**：按 PID 逐个 `readlink /proc/$p/cwd` 之外，还要回看 `cmdline`（或整段扫描放进 `cd` 到别处之后执行）。
+
+### §94.4 在飞复核（`LUM-1691` / M2-A 尾，12 路由）
+
+- **判活三件套取二**：pid 35090（`node`）存活 + 子进程链实锤在编译（`cargo` → `cargo-clippy` → `rustc` → `clippy-driver` 十余个）。
+- **改动面**（`git status --porcelain` 逐字）：改 `crates/mc-http/src/routes/{mod,mount}.rs` + `crates/mc-repos/src/lib.rs`；新增 `routes/{issue_views,pins,issue_view_preferences}.rs` + `mc-repos/src/{issue_view,pin,stats}.rs` + 4 个 `tests/*.rs`。**HEAD 仍 = 起手点 `d1bd3db0`、0 提交、分支未推**。
+- 与本轮派发片写集**逐文件交集 ∅** ⇒ 结论：**进行中，不干预**。
+
+### §94.5 派发：`LUM-1770`（M7-5 telegram 入站 + 安装与绑定面，4 路由）
+
+- **第一顺位复核**：`docs/60` §7 表 stage 3 = `LUM-1769`（已合）/ `LUM-1770` / `LUM-1771`；硬前置 M7-1/2/3 均已合入 base ⇒ 就绪。`LUM-1793`（+1 路由，同写 `mount.rs`/`routes/mod.rs` 追加段）**必须等 `LUM-1691` 合后**；`LUM-1745`（M5-D8，争 `state.rs`）此时无空位。
+- **第二类漏项（连续第三轮出现，本轮形态 = 「新建子文件全在主模块后、主模块本身不在写集里」）**：base 实测 `crates/mc-channel/src/telegram/mod.rs` **零 `mod` 声明**（`grep -n 'mod '` 空）、`register()` 是空实现 ⇒ 描述写集里的 6 个新子文件（`inbound/resolvers/replier/install/binding/config`）**不写进去根本不参与编译**，且本片必须填 `register()`。已在描述里把它补进写集，并点名「`crates/mc-http/src/routes/channels/mod.rs` 已 `.merge(telegram::router())` ⇒ **不得编辑**（M7-0 anchor 冻结）、`channels/telegram.rs` 是本片唯一的 HTTP 侧写点」。
+- **描述更新**：rev **1 → 2**（追加「起手补充」节：当轮 base `f1cd4bbc`、写集补一条、当轮 ⑦ 读数与缺口板、本片 delta 预测、`--write-baseline` 禁跑）。
+- **派发动作**：`update --description-file` → `assign --to-id 3c6087f9-… --no-start` → `status todo`（无 assignee 的 `backlog` 片必须两步）⇒ 派后 daemon **3/3**（cycle + `LUM-1691` + `LUM-1770`）。
+- **本片合入后预期**（供下一轮逐项核对）：`local 428→432`、`implemented 352→356（352 real + 4 ph）`、`known_gap 104→100`、`owners.M7 20→16`、`baseline 406 不动`；⑨ 提示 `workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty` 应从 `unmounted` 转 `pass`。
+
+### §94.6 lesson（本轮新增）
+
+1. **「零门禁重跑」在「单提交 PR + base 是 head 祖先」形态下退化成一行判定**：`merge-base base head == base` ⇒ 合并树恒等于 head 树（本轮的 `a20308bf…` 三处同哈希就是它）。此时判据链只剩「预检 numstat == PR API」+「head CI 3/3」，整套成本 = 一次 `git fetch` + 两个 API 调用。**建议把它写成判据链的第 0 步分类器**：先判形态，再选链路。
+2. **`--fields` 会把「筛选依据」字段一并裁掉**：`issue list --status backlog --fields identifier,project_id,assignee_id` 返回的 JSON **没有 `status` 键** ⇒ 想按状态分桶统计必须显式把 `status` 写进 `--fields`。看板报数一律标口径（本轮起改报**项目内**计数：`in_progress 2 / backlog 33 / todo 11 / in_review 54 / blocked 0`），与历史条目里的**全工作区**计数不可比。
+
+### §94.7 收尾态与下一轮起点
+
+- **base = `f1cd4bbc`**（本轮 §94 docs-only 推入后前进）；本轮合并 1 个 PR（#90）；GH **0 open PR**；三个基线文件未动。
+- **在飞 2 片**：`LUM-1691`（M2-A 尾，12 路由，进行中、0 提交、未推）∥ `LUM-1770`（M7-5，4 路由，本轮新派）—— 两片写集逐文件 **∅**；daemon **3/3**（含 cycle）⇒ **空位 0**。
+- **下一轮第一动作**：`df -h /` → `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → **逐 PID `/proc/*/cwd`**（排除自身 `cd`）判空位 → 逐片「run 终态 ∧ `/proc` 零命中 ∧ 0 未提交」后才进判据链；**先判形态**（base 是否为 head 祖先）再选链路（§94.6 lesson 1）。
+- **槽位一空即派**：`LUM-1691` 终 ⇒ 判据链 + 逐项核对 §93.5 的预期（`local 436 / implemented 356+4 ph=360 / known_gap 96 / owners.M2-A 1`）；**它合入之后**才轮到 `LUM-1793`（+1 路由，同写 `mount.rs`/`routes/mod.rs` 的同一追加段 ⇒ **不得同飞**）；`LUM-1770` 终 ⇒ 判据链 + 核对 §94.5 预期，其后 `LUM-1771`（M7-6，0 路由）；`LUM-1745`（M5-D8，0 路由，争 `state.rs`）随时可插。
+- **看板（项目内，当轮实测）**：`in_progress 2 / backlog 33 / todo 11 / in_review 54 / blocked 0`。`todo` 的 11 条 = 10 条历史 cycle 登记（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835`）+ 本 issue 自身；**只登记不动状态**。
+- **无人承接的跨波欠账（不改状态，仅登记）**：① M6 波的 5 条尾斜杠形态欠账（§92.5）；② `LUM-1745`（M5-D8：webhook 投递 worker 无生产调用点）；③ autopilot 的「已有未终态 cycle issue 时不建新单」护栏仍未落地（第 32 轮观察）。
