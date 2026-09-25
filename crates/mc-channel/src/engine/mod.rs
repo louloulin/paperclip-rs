@@ -1,27 +1,30 @@
-//! `engine`：把 `Channel` 接到 Multica 的 DB / chat / issue / task 面上的**核心**。
+//! `engine`：把 [`crate::channel::Channel`] 接到 Multica 的 DB / chat / issue / task 面上的
+//! **核心**（上游 `server/internal/integrations/channel/engine/`，5,315 行里的运行时那一半）。
 //!
-//! **状态：M7-0 anchor 只落文件与边界**（`LUM-1765` / `docs/60-M7-PLAN.md` §5）——
-//! 本文件只有模块声明与装配类型；`router.rs` / `resolvers.rs` 是**签名 + `todo!()` 位**，
-//! `supervisor.rs` 定的是**端口**（trait），实现归 M7-1 / M7-2。
+//! - **写者**：M7-0 anchor 建文件与边界；**M7-1 落 `mod.rs` / `router.rs` / `supervisor.rs` /
+//!   `resolvers.rs`**（`docs/60` §3.3 的写集表）。
+//! - **M7-2 落**：`session.rs` / `batcher.rs` / `lease.rs` / `commands.rs`（**它自己**在本文件
+//!   追加四行 `pub mod …;`，见下面「两个 stage-2 写者」）。
 //!
 //! # 为什么 engine 独立成模块而不是塞进 adapter
 //!
-//! 上游 `channel/engine/` 有 4,582 行（`channel/` 总共 5,315 行），且是**跨渠道共享**的：
-//! 路由、会话、去重、命令、媒体解析、租约、退避重连。五个 adapter 各 1.8k–3.4k 行，
-//! 但它们**都不重实现**这些语义 —— 边界就是本模块：engine 只认
-//! [`crate::channel::Channel`] 与 `mc_core::channel::message::*`。
+//! 上游 `channel/engine/` 有 4,582 行，且是**跨渠道共享**的：路由、会话、去重、命令、媒体解析、
+//! 租约、退避重连。五个 adapter 各 1.8k–3.4k 行，但**都不重实现**这些语义 —— 边界就是本模块：
+//! engine 只认 `Channel` 与 `mc_core::channel::message::*`。
+//!
+//! # 边界契约（`docs/60` §2.6 第 1 条，逐条可测）
+//!
+//! `src/engine/**` **不得** `use` 任何 `slack` / `lark` / `dingtalk` / `wecom` /
+//! `telegram` 具体类型；反向同理，adapter **不得**直接写 DB（手上只有 `Arc<dyn …>` 端口）。
 //!
 //! # 两个 stage-2 写者（交接纪律，见 `docs/32` §10）
 //!
 //! | 文件 | 写者 | 内容 |
 //! | --- | :-: | --- |
-//! | `mod.rs` | **M7-1**（anchor 只落本文件的骨架） | `Engine` / [`ChannelDeps`] / 模块声明 |
-//! | `router.rs` | M7-1 | 入站分类：dedup → 身份 → 命令 → 建 issue/task → 触发 run |
-//! | `supervisor.rs` | M7-1 | 退避重连 + 租约 + `InstallationStore` / `LeaseStore` **端口** |
-//! | `resolvers.rs` | M7-1 | 把平台路由键解析成 installation / `chat_session`（唯一实现点） |
-//! | `session.rs` / `batcher.rs` / `lease.rs` / `commands.rs` | **M7-2** | 会话状态机 / 批量 / 租约实现 / 命令表 |
+//! | `mod.rs` / `router.rs` / `supervisor.rs` / `resolvers.rs` | **M7-1** | 端口 + 流水线 + 监管 |
+//! | `session.rs` / `batcher.rs` / `lease.rs` / `commands.rs` | **M7-2** | 会话状态机 / 去抖 / 租约实现 / 命令表 |
 //!
-//! ⚠️ M7-2 落自己的四个文件时，**由它在本文件追加四行 `pub mod …;`**（anchor 的写集不含那四个
+//! ⚠️ M7-2 落自己的四个文件时**由它**在本文件追加四行 `pub mod …;`（anchor 的写集不含那四个
 //! 文件，所以这里**不**预声明它们；M7-1 与 M7-2 同 stage ⇒ 先起跑的那片追加、另一片 rebase）。
 //!
 //! # 长连接宿主**不在这里**
@@ -39,17 +42,31 @@ use std::sync::Arc;
 use crate::message::SharedInboundHandler;
 use crate::registry::Registry;
 
-pub use resolvers::ResolverSet;
-pub use router::Router;
-pub use supervisor::{InstallationStore, LeaseStore, Supervisor, SupervisorHandle};
+pub use resolvers::OutboundReplier;
+pub use resolvers::{
+    AppendParams, AppendResult, Auditor, BindMediaParams, BindMediaResult, ChannelIssue,
+    ChannelIssueCommand, ChannelIssueOutcome, ChannelIssueParams, ChatRunParams, CommandClassifier,
+    CommandIntent, Deduper, DropReason, EngineError, EngineResult, EnsureSessionParams,
+    IdentityResolver, InstallationResolver, IssueCreator, MediaIntentLedger, MediaResolver,
+    NoCommands, Outcome, PendingContext, PipelineError, RecordPendingMediaObjectParams,
+    ResolvedIdentity, ResolvedInstallation, ResolverSet, RouteResult, RunTriggerer, SessionBinder,
+    SessionReader, StartSessionParams, StartSessionResult, TypingNotifier, WorkspaceIdentity,
+};
+pub use router::{Router, RouterConfig, DEFAULT_MEDIA_TIMEOUT, NO_RESOLVER_SET};
+pub use supervisor::{
+    AcquireLeaseParams, Backoff, Config, Installation, InstallationStore, LeaseStore, NowFn,
+    ReleaseLeaseParams, Supervisor, SupervisorHandle, DEFAULT_LEASE_TTL, DEFAULT_POLL_INTERVAL,
+    DEFAULT_SHUTDOWN_TIMEOUT,
+};
 
-/// engine 装配时需要的**全部**外部依赖（端口 + 共享 handler）。
+/// engine 装配时需要的**全部**外部依赖（端口 + 共享入站入口）。
 ///
-/// 只放 `Arc<dyn …>`：adapter 的 `register(registry, deps)` 拿到的就是它，
-/// 于是"adapter 不得直接写 DB"成为**类型层面**的事实（它手上只有 trait 对象）。
+/// 只放 `Arc<…>`：adapter 的 `register(registry, deps)` 拿到的就是它，于是"adapter **不得**
+/// 直接写 DB"成为**类型层面**的事实（它手上只有 trait 对象），且"入站汇进同一个 handler"
+/// 是一次 `Arc::clone`（`deps.handler()`）。
 pub struct ChannelDeps {
-    /// engine 的共享入站入口（adapter 在接收循环里调它）。
-    pub handler: SharedInboundHandler,
+    /// engine 的共享入站入口：**唯一**的 `InboundHandler`（`Router` 实现它）。
+    pub router: Arc<Router>,
     /// 安装行读取（`channel_installation`）。
     pub installations: Arc<dyn InstallationStore>,
     /// 长连接租约（无 Redis ⇒ 进程内实现，见 `docs/60` §2.5）。
@@ -57,26 +74,46 @@ pub struct ChannelDeps {
 }
 
 impl std::fmt::Debug for ChannelDeps {
-    /// trait 对象不可打印 ⇒ 只列出三个端口的**存在性**。
+    /// trait 对象不可打印 ⇒ 只列出端口的**存在性**。
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ChannelDeps")
-            .field("handler", &"<dyn InboundHandler>")
+            .field("router", &self.router)
             .field("installations", &"<dyn InstallationStore>")
             .field("leases", &"<dyn LeaseStore>")
             .finish()
     }
 }
 
-/// 渠道引擎：路由 + 监管 + 解析的**装配体**（上游 `engine.Engine`）。
+impl ChannelDeps {
+    /// 装配（端口 + 共享入口）。
+    pub fn new(
+        router: Arc<Router>,
+        installations: Arc<dyn InstallationStore>,
+        leases: Arc<dyn LeaseStore>,
+    ) -> Self {
+        Self {
+            router,
+            installations,
+            leases,
+        }
+    }
+
+    /// 注入给每个 adapter 的共享入站句柄（同一个 handler，5 个 adapter 各一次 `Arc::clone`）。
+    pub fn handler(&self) -> SharedInboundHandler {
+        self.router.clone()
+    }
+}
+
+/// 渠道引擎：路由 + 监管 + 解析的**装配体**（上游 `engine.Engine` 的等价物）。
 ///
-/// ⚠️ anchor 期只构造到这一步：字段是"装配好的依赖 + 注册表"。M7-1 会把
-/// `router` / `supervisor` 的真实内部状态（会话、批量、媒体账本）挂到这个结构上；
-/// M7-2 再加会话与租约的实现。
+/// ⚠️ 装配**不**启动任何连接：[`Supervisor::spawn`] 是宿主
+/// （`apps/mc-server/src/channels.rs`）的事。
 pub struct Engine {
     registry: Arc<Registry>,
     deps: Arc<ChannelDeps>,
-    router: Router,
+    router: Arc<Router>,
+    supervisor: Arc<Supervisor>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -85,20 +122,38 @@ impl std::fmt::Debug for Engine {
             .debug_struct("Engine")
             .field("registry", &self.registry)
             .field("deps", &self.deps)
+            .field("supervisor", &self.supervisor)
             .finish_non_exhaustive()
     }
 }
 
 impl Engine {
-    /// 装配（不启动任何连接）。
+    /// 装配（不启动任何连接；`Supervisor::new` 会校验时间不变式）。
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// anchor 期本函数**未实现**（`todo!()`）：路由与会话的装配归 M7-1
-    /// （`docs/60` §4.1 的 M7-1 行）。**调用它一定 panic** —— 这是刻意的：
-    /// 让它静默返回一个空壳会让"engine 还没接上"变成运行期才发现的事。
-    pub fn new(_registry: Arc<Registry>, _deps: Arc<ChannelDeps>) -> Self {
-        todo!("M7-1：装配 router / 会话 / 批量（docs/60 §4.1 的 M7-1 行）")
+    /// 配置时间关系非法（`poll <= renew < ttl` 不成立）时返回链路错误。
+    pub fn new(
+        registry: Arc<Registry>,
+        deps: Arc<ChannelDeps>,
+    ) -> crate::channel::ChannelResult<Self> {
+        let supervisor = Arc::new(
+            Supervisor::new(
+                Arc::clone(&deps.installations),
+                Arc::clone(&deps.leases),
+                Arc::clone(&registry),
+                deps.handler(),
+                Config::default(),
+            )
+            .map_err(EngineError::into_channel_error)?,
+        );
+        let router = Arc::clone(&deps.router);
+        Ok(Self {
+            registry,
+            deps,
+            router,
+            supervisor,
+        })
     }
 
     /// 注册表（宿主在装配后仍要读它决定起哪些连接）。
@@ -111,8 +166,187 @@ impl Engine {
         &self.deps
     }
 
-    /// 入站路由（M7-1 的 `Router::route` 薄封装）。
-    pub fn router(&self) -> &Router {
+    /// 入站路由（`Router::route` 的薄封装；adapter 调 `deps.handler()` 也一样）。
+    pub fn router(&self) -> &Arc<Router> {
         &self.router
+    }
+
+    /// 长连接监管器（宿主拿它 `spawn` / 停机）。
+    pub fn supervisor(&self) -> &Arc<Supervisor> {
+        &self.supervisor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **边界契约的源码扫描**（`docs/60` §2.6 第 1 条）：engine 的四个文件**不得**出现任何
+    /// `slack` / `lark` / `dingtalk` / `wecom` / `telegram` 具体类型引用。
+    ///
+    /// 这是唯一能真正钉住"engine 不知道平台"的形态：`use` 一个平台类型会让这条断言红。
+    #[test]
+    fn engine_never_names_a_platform_module() {
+        let engine_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine");
+        let mut files = 0;
+        for entry in std::fs::read_dir(&engine_dir).expect("engine dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            files += 1;
+            let raw = std::fs::read_to_string(&path).expect("read engine file");
+            // 只看非测试代码：本测试自己的 needle 列表就在 `#[cfg(test)]` 模块里。
+            let source = raw.split("\n#[cfg(test)]").next().unwrap_or_default();
+            for needle in ["slack::", "lark::", "dingtalk::", "wecom::", "telegram::"] {
+                assert!(
+                    !source.contains(needle),
+                    "engine 引用平台类型：{} 里出现 {needle}",
+                    path.display()
+                );
+            }
+        }
+        assert_eq!(files, 4, "engine 目录应当正好四个 M7-1 的文件");
+    }
+
+    /// `ChannelDeps::handler()` 与 `deps.router` 是同一个 handler（一次 `Arc::clone`）。
+    #[test]
+    fn deps_handler_is_the_router() {
+        let router = Arc::new(Router::new(
+            Arc::new(NoCommands),
+            Arc::new(StubTrigger),
+            Arc::new(StubReader),
+            Arc::new(StubIssues),
+            RouterConfig::default(),
+        ));
+        let deps = ChannelDeps::new(
+            Arc::clone(&router),
+            Arc::new(StubInstalls),
+            Arc::new(StubLeases),
+        );
+        let handler = deps.handler();
+        assert!(Arc::ptr_eq(
+            &handler,
+            &(Arc::clone(&router) as SharedInboundHandler)
+        ));
+        assert!(deps.router.kinds().is_empty());
+        assert!(format!("{deps:?}").contains("<dyn InstallationStore>"));
+    }
+
+    /// `Engine::new` 能装配（不再有 `todo!()`），且暴露的三件套非空。
+    #[test]
+    fn engine_assembles_without_starting_connections() {
+        let router = Arc::new(Router::new(
+            Arc::new(NoCommands),
+            Arc::new(StubTrigger),
+            Arc::new(StubReader),
+            Arc::new(StubIssues),
+            RouterConfig::default(),
+        ));
+        let deps = ChannelDeps::new(
+            Arc::clone(&router),
+            Arc::new(StubInstalls),
+            Arc::new(StubLeases),
+        );
+        let engine = Engine::new(Arc::new(Registry::new()), Arc::new(deps)).expect("engine");
+        assert!(engine.registry().is_empty());
+        assert!(engine.supervisor().supervised().is_empty());
+        assert!(Arc::ptr_eq(engine.router(), &router));
+        assert!(!format!("{engine:?}").is_empty());
+    }
+
+    // ---- 端口替身（只为本文件的装配断言服务） ----
+
+    use crate::engine::resolvers::{
+        ChannelIssueOutcome, ChatRunParams, EnsureSessionParams, ResolvedIdentity,
+        ResolvedInstallation, StartSessionParams,
+    };
+    use async_trait::async_trait;
+    use mc_core::channel::message::InboundMessage;
+    use mc_core::id::Id;
+
+    struct StubTrigger;
+
+    #[async_trait]
+    impl RunTriggerer for StubTrigger {
+        async fn schedule_chat_run(&self, _params: ChatRunParams) -> EngineResult<()> {
+            Ok(())
+        }
+        async fn drain(&self) -> EngineResult<()> {
+            Ok(())
+        }
+    }
+
+    struct StubReader;
+
+    #[async_trait]
+    impl SessionReader for StubReader {
+        async fn workspace_identity(&self, _workspace_id: Id) -> EngineResult<WorkspaceIdentity> {
+            Ok(WorkspaceIdentity::default())
+        }
+    }
+
+    struct StubIssues;
+
+    #[async_trait]
+    impl IssueCreator for StubIssues {
+        async fn create_issue(
+            &self,
+            _params: ChannelIssueParams,
+        ) -> EngineResult<ChannelIssueOutcome> {
+            Ok(ChannelIssueOutcome {
+                issue: ChannelIssue {
+                    id: Id::new(),
+                    number: 1,
+                    title: "t".into(),
+                },
+                duplicate: false,
+                assigned_task_id: None,
+            })
+        }
+    }
+
+    struct StubInstalls;
+
+    #[async_trait]
+    impl InstallationStore for StubInstalls {
+        async fn list_active(&self) -> EngineResult<Vec<Installation>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct StubLeases;
+
+    #[async_trait]
+    impl LeaseStore for StubLeases {
+        async fn list_held(&self, _ids: &[Id]) -> EngineResult<std::collections::HashSet<Id>> {
+            Ok(std::collections::HashSet::new())
+        }
+        async fn try_acquire(&self, _params: AcquireLeaseParams) -> EngineResult<()> {
+            Ok(())
+        }
+        async fn renew(&self, _params: AcquireLeaseParams) -> EngineResult<()> {
+            Ok(())
+        }
+        async fn release(&self, _params: ReleaseLeaseParams) -> EngineResult<()> {
+            Ok(())
+        }
+    }
+
+    /// 端口替身的签名完整性（本文件只编译它们，语义由各片自己的用例钉）。
+    #[test]
+    fn stub_ports_implement_the_contracts() {
+        fn assert_ports<T: Send + Sync>() {}
+        assert_ports::<StubTrigger>();
+        assert_ports::<StubReader>();
+        assert_ports::<StubIssues>();
+        assert_ports::<StubInstalls>();
+        assert_ports::<StubLeases>();
+        let _ = core::mem::size_of::<EnsureSessionParams>();
+        let _ = core::mem::size_of::<StartSessionParams>();
+        let _ = core::mem::size_of::<ResolvedInstallation>();
+        let _ = core::mem::size_of::<ResolvedIdentity>();
+        let _ = core::mem::size_of::<InboundMessage>();
+        assert_eq!(DropReason::Duplicate.as_str(), "duplicate");
     }
 }
