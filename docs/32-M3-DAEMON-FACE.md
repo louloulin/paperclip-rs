@@ -2506,3 +2506,155 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1802:…@127.0.0.1:54
 4. **未来任何改 `routes/github/webhook.rs` 的切片**：本片只**调用**它的
    `set_pr_refresh_port`（进程级注入槽，按请求读 ⇒ `main.rs` 先建 router、后起宿主也生效）。
    若要把端口正式挂到 `AppState`（M8-4 的 D2 建议），那是**一次 anchor 级改动**，请与 D5/D6 一起做。
+
+---
+
+## 22. M7-8（`LUM-1773`）：dingtalk 出站 / 媒体 / 回复 / 回执（0 路由）
+
+> **号段说明**：计划期与派发补充都写「取实测最大 +1」；**起手**实测最大 = `## 20.`（M8-4）⇒
+> 原取 `## 21.`，但 `## 21.` 被同轮在飞的 M8-5（`LUM-1802`，PR #97）先落 ⇒ 本片**让号**为
+> **`## 22.`**（D 编号与内容不动，与 M8-4 让号同一手法）。
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片实测树上核对。
+
+- **起手 base**：`a20f69a271ca73b12c8b3e6a19e427f46ce39e32`（= 派发描述 rev 3 钉的值；
+  `git fetch` 后实测一致）。
+- **提交 / 推送时 origin tip = `3797b940`**（`a20f69a2` → M8-5 PR #97 合并 `b76b9b32` →
+  §103/§104/§105 cycle docs）。与 `a20f69a2` 的逐文件差集里**代码面零交集**
+  （M8-5 只动 `crates/mc-vcs-github/**` + `apps/mc-server/src/{integrations.rs,integrations/tests.rs}`），
+  但 **`docs/32` 有 +159 行交集**（§21 号段）⇒ 本片**已 rebase** 到 `3797b940`（一次干净 rebase，
+  无冲突），PR 以 `3797b940` 为 base。**门禁在 rebase 后的树上重跑**（读数见 §22.3）。
+
+### 22.1 落点（逐字路径）
+
+| 落点 | 写者 | 上游 |
+| --- | :-: | --- |
+| `dingtalk/mod.rs` | M7-0 建 / M7-7 填 / **M7-8 追加** | 本片只加 5 行 `pub mod`、出站端口接线、`Channel::send` 的发送体；**未动** `register` / `register_with` / `register_resolvers` |
+| `dingtalk/outbound.rs` + `outbound/{target,openapi,credentials,quote,source}.rs` | M7-8 | `outbound.go`（313）+ `outbound_send.go`（238）+ `outbound_quote.go`（51）+ `reply_source.go`（127）+ `client.go`/`token.go` 的出站两条 |
+| `dingtalk/outbound/tests.rs` + `outbound/tests/http.rs` | M7-8 | 本片自己的用例（纯函数 / 端口替身 ∥ 真 HTTP 端到端） |
+| `dingtalk/markdown.rs` + `markdown/tests.rs` | M7-8 | `markdown.go`（286）+ `outbound_send.go` 的 `escapeMarkdown*` / `prependMarkdownQuote` |
+| `dingtalk/media.rs` + `media/{guard,tests}.rs` | M7-8 | `media.go`（385） |
+| `dingtalk/ack.rs` + `ack/{batch,tests}.rs` | M7-8 | `ack.go`（220）+ `ack_batch.go`（160） |
+| `dingtalk/replier.rs` + `replier/tests.rs` | M7-8 | `replier.go`（342） |
+
+### 22.2 偏离（D1…D12，逐条可核对）
+
+- **D1 写集勘误（两类，逐条）**：
+
+  1. **`dingtalk/mod.rs`**：不追加 5 行 `pub mod` 那五个新文件根本不参与编译（派发补充已点名，
+     这是**第二类漏项第 5 次**）；本片对它只做三件事 —— 追加 `pub mod ack/dispatch…` 里自己那 5 行、
+     把 `resolve_app_secret` 收成 `pub(crate)`（出站复用**同一条**凭据判据，见 D4）、
+     给 `DingTalkChannel` 挂出站端口并实现 `Channel::send`。三个注册入口**一字未动**。
+  2. **新增路径**：`outbound/{target,openapi,credentials,quote,source}.rs`、
+     `outbound/tests/http.rs`、`media/guard.rs`、`ack/batch.rs`，以及 7 份 `*/tests.rs`。
+     **全部**是门 ⑩ 的 800 行硬限逼出来的切分，边界取**上游文件边界**
+     （`outbound_send.go` 的目标+分片 / `client.go`+`token.go` 的两条调用 / `config.go` 的
+     `decodeCredentials` / `outbound_quote.go` / `reply_source.go` / `media.go` 的出口守卫 /
+     `ack_batch.go`）。首版成形时越限的文件：`outbound.rs` 1377、`outbound/tests.rs` 1094、
+     `media.rs` 885、`mod.rs` 844、`ack.rs` 804 ⇒ 拆完最大 788（`mod.rs`），全部 ≤800；
+     **未动** `scripts/file_size_baseline.tsv`（仍 22 行）。
+- **D2 出站端口由**工厂**注入，构造器不隐式造 HTTP 客户端**：`DingTalkChannel::new` 不注入
+  ⇒ `Channel::send` **失败关闭**（M7-7 的用例 `send_is_fail_closed_and_capabilities_match_upstream`
+  仍绿）；工厂（`factory_with_slots`）注入 [`outbound::OpenApiTransport`] 的生产实现
+  （`HttpOpenApi`）与 `robot_code` ⇒ 宿主径上真的发得出去。两条路各有用例
+  （`the_factory_wires_outbound_so_channel_send_posts_a_group_frame` / 上引）。
+- **D3 令牌缓存与 `postJSON` 落在 `outbound/openapi.rs`（不是 M7-9 的 `client.rs`）**：
+  M7-8 是出站的唯一写者，而 M7-9 才落完整的 `Client`（安装 / 吊销面也要它）⇒ 本片抽成端口
+  [`OpenApiTransport`] + 生产实现 `HttpOpenApi`，**每条发送语义（校验 / 分片 /
+  401 ⇒ 作废令牌 + 重试一次）在 `Sender` 里**，与实现解耦。M7-9 换实现即可，语义一行不动。
+- **D4 凭据解码复用 M7-7 的判据**：`app_secret_encrypted` 的三条分支（密文优先 / 明文 / 都缺）
+  只在 `mod.rs` 的 `resolve_app_secret` 有一份（上游 `config.go` 的 `decodeCredentials` 也只有一份）
+  ⇒ 本片把它 `pub(crate)` 并在 `outbound/credentials.rs` 里薄包一层。`Decrypter` 的**收敛**
+  （三份同形：slack / telegram / dingtalk）仍归 M7-9 的 `config.rs` —— **不静默略过**。
+- **D5 出口守卫的两处形态差异（`media/guard.rs`）**：
+  1. **没有 `http.DetectContentType`**：只认入站白名单那五种的**魔数**（更严，不会更松）；
+  2. **`reqwest` 的 `dns_resolver` 只对域名生效**（host 已是 IP 字面量时它根本不解析）⇒
+     字面量地址那一步由 `guard_download_url` 自立判据，域名那一步才交给
+     `PublicOnlyResolver`（解析出来的**任一**答案非公网即整体拒）。两处合起来与上游
+     `publicDownloadDialer` 的保证同义（DNS 重绑定改不了连接去向）。另：上游要在重定向回调里
+     删 `Referer`（`net/http` 会把带票据的查询串带进下一跳），而 **`reqwest` 从不自动加它**
+     ⇒ 这条保证由构造给出，没有可删的东西（同样登记，不假装做过）。
+- **D6 端到端回路的**入站**那一半复用 M7-7 的替身**：`tokio-tungstenite` 在本仓**没有**
+  `handshake` feature（M7-0 把依赖面一次定死）⇒ 起不了真实 WS 服务端。本片因此：
+  **入站** = M7-7 的四份上游 golden + 脚本化内存 socket（`stream/tests.rs` / `inbound/tests.rs`），
+  **出站** = **真** `reqwest` → **真** loopback HTTP 服务端（`outbound/tests/http.rs`），
+  断言替身**实际收到**的原始帧。也就是说"端到端"是**金色入站 ⇒ 真出站帧**，而不是
+  "真 WS 服务端 ⇒ 真出站" —— 这条差异写在用例文件的模块文档里，不在 PR 描述里美化。
+- **D7 出站**不**做媒体上传（方向是单向的）**：`DingTalk` 的出站机器人消息只有
+  `sampleMarkdown` 一种 `msgKey`（上游 `outbound_send.go` 一个字面量），**没有**图片 / 文件
+  发送端点 ⇒ "媒体单向一并覆盖"指的是 **平台 → 本仓对象存储** 这一个方向（上游 `media.go`
+  同样只有这一向）。三类出站形态的**真实**构成是：**文本**、**引用**（群发的 Markdown 引用块）、
+  **私聊**（`oToMessages/batchSend`，**不**带引用）；"互动卡片"是**入站**形态
+  （`quoted_interactive_card` golden），它进的是出站引用块 —— 用例逐条钉住这四种组合。
+- **D8 顺序取回代替并发取回（`media.rs`）**：上游 `errgroup.SetLimit(2)`；本仓的每次取回自己就是
+  一个线程 + current-thread 运行时（同步端口，见 D9）⇒ 再做池化只会成倍复制运行时，而内存上界
+  反而更宽。改成**顺序**取回：语义不变（每张图互不牵连），上界从"最多 2 × 10 MiB"**收紧**到
+  "最多 1 × 10 MiB"。`MEDIA_FETCH_CONCURRENCY` 保留，文档说明它不再当并发度用。
+- **D9 同步端口 + 独立线程运行时**：engine 的 `MediaResolver` 是**同步**签名（M7-1 定死的契约），
+  而 `reqwest` 没开 `blocking` feature ⇒ `ThreadedFetcher` / `block_on_engine` 在独立线程上跑
+  current-thread 运行时（与 `slack::media::ThreadedFetcher` 同款）。真实代价：每个媒体对象
+  多一线程。
+- **D10 端口化三处**（adapter 不直接写 DB，`docs/60` §2.6 第 1 条）：`MediaStorage`（对象存储，
+  与 `slack::media::MediaStorage` 同形**但不复用** —— §2.2 明确要 adapter 之间零互相依赖）、
+  `ReactionInputQueries`（读 `chat_message`）、`ReactionSender`（贴 / 撤表情）。
+  收敛进 engine 归 **M7-21**。
+- **D11 没有进程内事件总线 ⇒ 三个入口是显式调用**（同 M7-6 对 telegram `outbound.go` 的先例）：
+  `OutboundDelivery`（`EventChatDone` 那条路）、`AckNotifier::on_reply_delivered`、
+  `AckNotifier::agent_archived_now`。"谁在什么时候调它们"是宿主的装配面。
+- **D12 reply_source 的**写入点**仍缺（交接项，逐条登记）**：上游在 resolver 的 append 成功之后
+  调 `rememberReplySource`（`resolvers.go:391/486`）。本片给出 `ReplySourceCache` 与
+  `AckNotifier::remember_source`，但 `resolvers.rs`（M7-7 的只读面）**不**写它 ⇒
+  **接线点**（宿主 / M7-9 的 binder 路径）必须在 M7-9 / M7-21 补上，否则 Done 永远贴不出来
+  （其余回执不受影响）。**同样缺**：`with_replier` / `with_media` / `with_typing` 三个装配调用。
+
+### 22.3 门禁与读数（**rebase 后的树上实测**）
+
+```
+⑦  upstream 456 | local 453 | baseline 406
+    implemented 367 real + 3 placeholder = 370 / 456 | known_gap 86 | unclaimed 0 | regression 0 | local_only 9
+    gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5      ← 与起手**逐字相同**（0 路由 ⇒ 不变量）
+形态门  declared 24 / dual-form 0 / 0 defect（exit 0）；local 实况 0 defect（exit 0）
+⑩     新文件最大 788（mod.rs）；scripts/file_size_baseline.tsv **未动**
+⑨     report matches crates/mc-conformance/report.json（0 改动 ⇒ 5s 热跑）
+门禁   `bash scripts/gates.sh --with-db` = **10/10 绿（145s，热）**；`cargo test -p mc-channel --lib` = 551 passed
+       （其中 `dingtalk::` 175 = M7-7 的 95 + 本片 80：markdown 13 / outbound 23 / media 16 / ack 15 / replier 13）
+```
+
+> **门 ⑥ 的**测试库复用**假红（已知，本轮第三次实测）**：同一库上连跑两次 `--with-db` ⇒ ⑥ 报
+> `e2e=101`（telegram 面的 `409 telegram_bot_owned_by_another_workspace`：上一轮遗留行）。
+> **DROP DATABASE 重建后同一条命令全绿**（⑨ 单跑 ⑥ 105s / 全量 145s）。判据：⑥ 红了先看是不是
+> **同库第二跑**，不要先去怀疑代码。
+>
+> **⚠️ 交给下一轮的观察项（本片**无法**归因，逐字记下）**：本片在 rebase 后的树上跑过 **5 次**
+> `--with-db`（每次**都**先 `DROP DATABASE` + `CREATE DATABASE`），其中 **2 次** ⑥ 报 `e2e=101`
+> （每次都**未落盘**完整输出 ⇒ **失败用例名未知**，只有 `GATE_DB_E2E_EXIT=101`；两次都在 148s/185s，
+> 失败后**同库**单跑 ⑥ 立刻绿），**3 次全绿**（54s / 163s / 249s 全量 10/10）。
+> 单独跑 ⑥ 的等价命令（`cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server
+> --features mc-http/test-util -- --ignored`）**4 次全绿**。判据：**本片 0 路由、0 DB 改动、0
+> `#[ignore]` 用例**（新增的 80 条用例全在 `mc-channel` 的纯内存路径上）⇒ 与这 2 次红**无因果**；
+> 下一次请**带 `> log` 落盘**再跑 `--with-db`，把失败的用例名钉住（大概率是 M8-5 合并进来的
+> `apps/mc-server` DB 面与 `mc-http` 渠道面共享 `channel_installation` 行的顺序竞争）。
+
+### 22.4 本片的 lesson（写给后续的渠道片）
+
+- **【lesson·拆分是**机械**的，但"先写再拆"会**丢东西**】** 为了过门 ⑩ 我用脚本按行号搬块，
+  一次搬迁把"两段之间的整块（`sendTarget` + 分片 + 引用占位）"连同 `#[cfg(test)] mod tests;`
+  的声明一起搬丢/漏搬（前者要凭上下文重写，后者让 15 条用例**静默不编译** —— `test result: 551`
+  掉到 536 才被发现）。**判据**：① 按**符号边界**搬，不按行号；② 每搬一次先 `cargo test`
+  数**用例条数**（总数是最便宜的回归探针），再 `git diff --stat` 上看文件行数；③ 文件末尾的
+  `#[cfg(test)] mod tests;` 属于"必须留在父文件"的那一类。
+- **【lesson·"上游这一行依赖的是**库**还是**平台**"这条判据在出站面同样成立】** 上游 `net/http`
+  的三件事（`CheckRedirect` 里的 `Referer` 删除、`DialContext` 里的地址校验、`DetectContentType`）
+  在 `reqwest` 里**两件没有对应物、一件更严**：`Referer` 根本不会加（保证更强，但要**写明**
+  它是由构造给出的）、`dns_resolver` 不管 IP 字面量（必须自立判据）、魔数嗅探按白名单收窄。
+  照抄"上游这里删了 Referer"会写出一次**空操作**并留下假的安心感。
+- **【lesson·同步端口上的"每个对象一个线程 + 运行时"是**真实**代价】** `MediaResolver` 的同步
+  签名把 `errgroup` 的并发语义换成了顺序取回：内存上界更紧是对的，但要**登记**（D8），
+  否则下一位会以为"上游并发 2、本仓并发 2"。
+- **【lesson·"绿了"要连**跑法**一起记】** ⑤ 与 ⑥ 连跑的 `--with-db` 与"只跑 ⑥"是**两种**跑法：
+  本片 2/5 与 4/4 的差异就出在这里 ⇒ 报"门禁 10/10"时必须同时给出**跑法 + 测试库状态**
+  （是否重建），否则下一位复现不出来。
+- **【lesson·`mod.rs` 是热点：先追加、再改，且**只**碰自己的行】** 本片对 `mod.rs` 的三处改动
+  （5 行 `pub mod`、`resolve_app_secret` 的可见性、`Channel::send` 的发送体）都在**已有函数体之外**
+  或"明确归本片"的那个函数里；三个注册入口与 `register*` 一行未动 ⇒ 与 M7-9（同文件追加 `pub mod`）
+  的合并面只剩"两段 `pub mod` 相邻"这一点，rebase 即可。
