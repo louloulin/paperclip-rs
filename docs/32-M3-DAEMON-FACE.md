@@ -1040,3 +1040,120 @@ bash scripts/gates.sh --with-db      # 10/10
 4. **凭据只经 `secretbox` 或 `state::integrations`**：任何 handler / DTO 不得有明文 secret 的
    `Debug` / `Display` / 日志插值；其余面（`mc-mcp` / `mc-daemon/src/mcp/**` /
    `mc-repos/src/plugin/**`）是**只读**的，不得重复实现（`docs/61` §2.3）。
+
+---
+
+## 12. M8-1（`LUM-1798`）：GitHub App 安装/回调/仓库浏览面（5 路由）的落点、偏离与门禁读数
+
+`docs/61-M8-PLAN.md` §4.1 的 **stage 2 第一片**（`5` 路由 / 上游 `github.go` L1–L963 +
+`ghsnapshot/client.go`）。本节是它在 `docs/32` 的**自己那一段**（`docs/61` §3.3 / §6.5 第 7 条；
+号段起手复核照 §11 开头那段 —— 计划书写的「§9.12」是计划期占位号，M8 面实际落在 `## 11.` 之后
+⇒ 本节取 `## 12.`）。
+
+### 12.1 落点（写集逐字）
+
+| 文件 | 角色 | 内容 |
+| --- | --- | --- |
+| `crates/mc-vcs-github/src/rest.rs` | **实现**（M8-1） | `GithubClient`：App JWT 换 installation token（**期望 201**）、`GET /app/installations/{id}`（**永不失败**，失败回落 `unknown`/`User` 占位）、`GET /installation/repositories`（分页算术 = 上游 `page*per_page < total_count`）、`DELETE /installation/token`（**尽力而为**，5s 超时）、通用 `graph_ql`；`retry_after_secs`（`Retry-After` → `X-RateLimit-Reset` → 60s，钳 `[1s,5m]`）；响应体上限 `4 MiB`（上游 `githubAPIResponseLimit`） |
+| `crates/mc-vcs-github/src/token_cache.rs` | **实现**（M8-1） | `InstallationTokenCache` + `get_or_fetch` 的**单飞**（每 installation 一把 `tokio::sync::Mutex` + 二次检查），续期余量 5 分钟；见 D2 |
+| `crates/mc-vcs-github/src/dto.rs` | **实现**（M8-1） | `GithubPageParam::parse`（上游 `parseGitHubPageParam` 的逐字边界）、`Github{Installation,Installations,Connect,Repository,Repositories}Response`；见 D3 / D4 |
+| `crates/mc-vcs-github/src/ghsnapshot/client.rs` | **实现**（M8-1） | `Client`：`sign_app_jwt`（RS256，`iat-60s` / `exp+9min`）、`installation_token`（**缓存 + 单飞**）、`graph_ql`、`revoke_token`；`api_base` 接缝保留；见 D1 |
+| `crates/mc-repos/src/github/installation.rs` | **实现**（M8-1） | `github_installation` 的 upsert / 列 / 取 / 删 + `github_pending_installation` 的取 / 删 / upsert；见 D9 |
+| `crates/mc-repos/src/github/pull_request.rs` | **实现**（M8-1，M8-4 只读） | `github_pull_request` 全列投影 + `find` / `upsert`（`mergeable_state` **三态**）+ `issue_pull_request` 的 `link`（`close_intent` 两种保持语义）/ `unlink` / `list_issue_ids_for_pull_request` / `list_by_issue`（按 `snapshot_head_sha` 聚合 check）；见 D11 |
+| `crates/mc-http/src/routes/github/install.rs` | **实现**（M8-1） | `connect` / `installations` / `repositories` / `delete` 四条 handler + `GithubScope`（member 门）+ `error_with_code` + `github_api_base` 接缝 + 百分号编码；见 D6 / D7 |
+| `crates/mc-http/src/routes/github/setup.rs` | **实现**（M8-1） | 公开回调（**6 个失败分支** → 302 + `&github_error=<kind>`）、state 的签/验（**手写 HMAC-SHA256**，见 D8）、`github_settings_url`、`frontend_origin_from_env`；同时是 `install.rs` 的 state 依赖（`sign_state_for_return` / `is_allowed_return_to` / `RETURN_TO_GITHUB`） |
+| `crates/mc-http/src/routes/github/dto.rs` | **再导出面**（M8-1） | 只把 `mc_vcs_github::dto` 的类型转出给 HTTP 层 |
+| `crates/mc-http/tests/github/{main,support,install,setup}.rs` | **新增测试**（M8-1） | 真库 + 离线替身的端到端（16 例） |
+| `crates/mc-vcs-github/tests/rest_stub.rs` | **新增测试**（M8-1） | 零依赖的 HTTP/1.1 替身 + 真实 wire 断言（10 例，含并发单飞） |
+
+**只读**（未改一个字节）：`crates/mc-secrets/src/secretbox.rs`、`state.rs` / `state/integrations.rs`、
+`routes/{mod,mount}.rs`、`routes/github/mod.rs`、`crates/mc-mcp/**`、`crates/mc-daemon/src/mcp/**`、
+`crates/mc-repos/src/plugin/**`、`Cargo.toml` 根、`Cargo.lock`、`docs/fixtures/**`、`apps/**`。
+
+### 12.2 偏离登记（M8-1-D1 … M8-1-D12）
+
+| ID | 事项 | anchor 期 / 计划书 | 本片 | 理由 |
+| --- | --- | --- | --- | --- |
+| **M8-1-D1** | `ghsnapshot/client.rs` 的 `fetch_pr_snapshot` 桩 | 签名 + `todo!()` | **删除**，换成通用 `Client::graph_ql(installation_id, query, variables, now_unix)` | GraphQL 的**查询文本**在上游住在 `snapshot.go`（= 本仓 M8-5 的 `ghsnapshot/snapshot.rs`）。把它抄进 `client.rs` 等于两个写者各持一份查询；上游分层就是 `snapshot.go` 调 `client.graphQL(...)`。`snapshot.rs` 的 `parse_pr_snapshot(&Value)` 桩签名**未动** ⇒ M8-5 只需自己驱动分页 |
+| **M8-1-D2** | `token_cache::get_or_fetch` 的签名 | `(cache, id, now) -> Result<InstallationToken>`（**无 fetch 回调**） | `(cache, id, now, fetch: FnOnce() -> Future<...>)` | anchor 的签名拿不到「怎么换 token」⇒ 无法实现单飞。单飞用「每 installation 一把 `tokio::sync::Mutex` + 等锁后二次检查」，**不新增依赖**（上游用 `golang.org/x/sync/singleflight`）；`fetch` 是 `FnOnce` ⇒ 只在真的要发请求时调用一次 |
+| **M8-1-D3** | 三个响应 DTO 的字段名 | anchor 暂定形状（`install_url: Option<String>`、无 `workspace_id` / 有 `connected_by_id` / `installation_id: i64`、repository 的 `name`+`owner`） | 逐条对齐**上游字面量**：`url: String`（未配置 = 空串）、加 `workspace_id`、`installation_id: Option<i64>`（**非 admin 整个字段缺席**，不是 `null`）、去掉上游没有的 `connected_by_id`、repository 八字段（`id/full_name/html_url/clone_url/description/private/archived/default_branch`）+ `GithubRepositoriesResponse` 信封 | `docs/61` §1.2 要求这两条响应映射与上游逐字段对应；`installation_id` 是 Connect/Disconnect 的**管理手柄**，上游对非 admin 整段省略 |
+| **M8-1-D4** | `GithubPageParam::parse` 的**失败语义** | anchor 契约写「非法 / 缺失 / 越界都归一到安全值」，签名不可失败 | 改 `Result<Self, GithubPageParamError>`：缺省取默认（`page=1` / `per_page=100`），非法 / 越界 ⇒ **400**（`invalid page` / `invalid per_page`） | 上游 `parseGitHubPageParam` 对这两种情形一律 `writeError(400, "invalid "+name)`。静默归一会把客户端的**分页 bug** 变成沉默的错页（等价性优先于「宽容」） |
+| **M8-1-D5** | `ExchangedInstallationToken` 的 `Debug` | **派生**（会打印 token） | 手写脱敏（只留 `<redacted>` + `expires_at`） | anchor 期误派生与 `docs/61` §2.4 第 1 条直接冲突；本片补 `exchanged_token_debug_never_echoes_the_token` 用例 |
+| **M8-1-D6** | setup 回调的「未配置 / state 非法」状态码 | `docs/61` §2.5 写「400/401」 | **302 + `&github_error=<kind>`**（`missing_params` / `invalid_state` / `bad_installation_id` / `bad_workspace` / `persist_failed`），成功 `&github_connected=1` | 上游 `GitHubSetupCallback` 在**任何**失败分支都 `http.Redirect(..., StatusFound)`（回错误码页面会把用户卡在 GitHub 那侧）。⚠️ 用 `(StatusCode::FOUND, Location)` 手写而不是 `axum::response::Redirect::to`（后者是 **303**）。`repositories` 的未配置语义同时钉为 **403** `github_repository_browsing_not_configured`（上游 `writeFeatureDisabled` 故意不是 503） |
+| **M8-1-D7** | `githubAPIBase` 的等价物位置 | 计划书说「`GithubKeys` 里没有，按 §4.2 注入」 | 落 `mc_http::routes::github::install::{github_api_base,set_github_api_base,reset_github_api_base}`（进程级 `Mutex<Option<String>>`，缺省 `https://api.github.com`） | `state::integrations::GithubKeys` 是 anchor 冻结的四字段（**没有** api_base），而离线替身必须有唯一接缝。用 `Mutex` 而非 `OnceLock`：同一测试二进制里既跑「缺省 base」又跑「注入 base」的用例。测试侧用 `STUB_LOCK` 串行（与 `tests/skills/import.rs` 的 `MOCK_LOCK` 同款） |
+| **M8-1-D8** | state 的 HMAC-SHA256 | 直接用 `hmac` crate | `setup.rs` 里用 `sha2` 按 **RFC 2104 手写**（ipad/opad），常量时间比较也手写 | `mc-http` **没有** `hmac` 依赖，而 manifest 在 M8-0 之后冻结（`docs/61` §3.1：M8 各代码片不得改 manifest / lock）。正确性用 **RFC 4231 的官方向量**（Test Case 1/2/6）钉住 |
+| **M8-1-D9** | `github_pending_installation` 的时间列 | anchor 的子文件文档写 `created_at` | **`received_at`**（迁移 `120` 逐字），`account_type` 是 `NOT NULL DEFAULT 'User'` + CHECK | 第一版照 anchor 的措辞写成 `created_at`，实测 `get_pending` 直接报 `column "created_at" does not exist` ⇒ **全部** setup 回调变 `persist_failed`（e2e 立刻抓到）。`upsert_pending` 把 `None` 折成 `'User'`：显式绑 `NULL` 会**违反** NOT NULL（默认值只在列缺席时生效） |
+| **M8-1-D10** | 删除路径是否撤销 GitHub 侧凭据 | `docs/61` §2.5 的 delete 行未说 | **不调 GitHub**（只删本仓的行）⇒「撤销 installation token 失败不回滚删除」在本片**恒真** | 上游 `DeleteGitHubInstallation` 只跑一条 `DELETE ... WHERE id=$1 AND workspace_id=$2`。`revoke_installation_token` 只出现在 browse 路径的 `defer` 位置（best-effort，失败不影响响应） |
+| **M8-1-D11** | `mc-repos/src/github/pull_request.rs` 的范围 | 计划书把该文件记在 M8-1 写集，M8-4 只读 | 本片**一次给全** M8-4 需要的读取面（全列投影 + `find`/`upsert`/`link`/`unlink`/`list_issue_ids`/`list_by_issue`） | 该文件的写者只有 M8-1（单写者纪律）⇒ 若只留桩，M8-4 的两条路由**无处安放**查询。仍属 M8-4 的：`check_suite.rs` / `pending.rs`（两张 check 表的写面）与 `routes/github/issue_pr.rs` / `webhook.rs` 的 handler |
+| **M8-1-D12** | `crates/mc-repos/src/github/mod.rs` 的模块头 | 仍写着「四个子模块都是 doc-only 桩」 | **不改**（文案债） | 该文件是 anchor 冻结的；改它等于本片动了冻结面。登记在此，归 M8-7（INT）在收口轮一并订正 |
+
+### 12.3 专属 `DoD` 的证据（`docs/61` §6.5 的 M8-1 行逐条）
+
+| `DoD` 条目 | 证据（用例 / 命令） |
+| --- | --- |
+| 5 条路由的**「未配置 + 未授权」矩阵逐端点** | `crates/mc-http/tests/github/install.rs`：`connect_is_admin_only_and_unconfigured_is_200_not_503`（admin 200 / member+guest 403 / outsider 404 / 非法 ws 400 / 非法 return_to 400 / **未配置 200 + `configured:false`**）、`installations_are_member_visible_with_role_gated_management_handle`（三档角色 + `installation_id` 按角色缺席）、`repositories_require_admin_and_a_configured_app`（**403 + 稳定 code**）、`delete_installation_is_admin_only_and_idempotent`；公开回调的六分支见 `setup.rs` 的 `setup_callback_redirects_every_failure_with_an_error_flag` |
+| App JWT：**签发-验证往返 / `exp` 边界 / 时钟偏移** | `mc-vcs-github/src/app.rs` 的三条（anchor 落）+ `tests/rest_stub.rs::client_signs_app_jwt_and_uses_bearer_for_graphql`（替身收到的那枚 Bearer 被**当场用公钥验签**，并断言 `iss`） |
+| installation token 缓存 + **单飞**（并发 8 ⇒ 只换 1 次） | `token_cache.rs::eight_concurrent_callers_mint_exactly_one_token`（计数器 + 30ms 真 `await` 打开并发窗口）与 `tests/rest_stub.rs::eight_concurrent_requests_mint_exactly_one_installation_token`（**替身台账**只记到 1 次 `POST .../access_tokens`）；暖缓存路径见 `warm_cache_skips_the_second_token_exchange` |
+| 仓库**分页边界**（上游 `parseGitHubPageParam`） | `dto.rs::page_param_defaults_and_boundaries`（缺省 / 空 / trim / 四个上下界 / `1.5` / `1e3` / 两错先报 page）+ `install.rs::repositories_reject_invalid_page_params_with_400`（六个非法 query 逐条 400，且发生在**任何出站调用之前**）+ `tests/rest_stub.rs::repository_pagination_follows_upstream_arithmetic` |
+| **离线替身端到端**（路由 → App JWT → token 交换 → 分页列表 → 真库） | `install.rs::offline_stub_end_to_end_connect_callback_browse_delete`（connect 取 state → 公开回调落库 → 列表 → 100 条分页 + `next_page=2` → 末页 `next_page=null` → 删除 204）；替身只替**平台 wire**（axum 起的 `/app/installations/{id}`、`/access_tokens`、`/installation/repositories`、`/installation/token`），中间零 mock |
+| 凭据：手写脱敏 + 「错误路径不回显」+ redaction | `rest.rs::exchanged_token_debug_never_echoes_the_token`、`ghsnapshot/client.rs::malformed_private_key_never_leaks_key_material`、`tests/rest_stub.rs::exchange_rejects_401_and_non_201_without_echoing_the_body`（**响应体逐字不出现在错误里**）、`installations` 用例断言 member 响应里 `installation_id` **缺席**。`mc_telemetry::redact` 的覆盖裁定沿用 §11.2 第 4 条（现有 `SENSITIVE_KEYS` 已覆盖 `key`/`token`/`secret` 子串） |
+| 广播面 | `delete_publishes_a_broadcast_event`（`github_installation:deleted` + payload `{id}`）；setup 成功路径发 `github_installation:created`，载荷是**最弱角色视图**（不带 `installation_id`，上游注释逐字） |
+
+### 12.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-1*.log`）
+
+**两轮跑完（同一棵树：第二轮只重跑被磁盘打断的三道门；此后只追加本节文档）**：
+
+```
+第一轮：①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑦route-parity 0 · ⑩file-size 0
+        （⑥/⑧/⑨ 因 **磁盘满** 红：`No space left on device`，见下）
+第二轮（`--only db,schema-drift,conformance`）：⑥db 0（migrate=0, e2e=0）· ⑧schema-drift 0 · ⑨conformance 0
+                                                              ⇒ 合计 **10/10 PASS**
+```
+
+- **【lesson·门 ⑥/⑨ 的「红」可能是磁盘满，不是代码错】** 第一轮 ⑥ 的 e2e 与 ⑨ 都报
+  `No space left on device`（⑨ 连 `target/debug/.fingerprint` 都建不出来），⑧ 的 scratch 建库也失败
+  （`could not create directory "base/…"`）。判据：`df -h /` 100%、`du -sh target` **18G**。
+  唯一回收动作 = `rm -rf target/debug/incremental`（**8.5G**，本 run 自己的 target）⇒ 腾出 8.1G 后
+  三门一次全绿。同 run 的 `up-m8` 只读副本 98M、**未**动；同项目另一在飞片（`lum-1767`，16G）**未**动
+  （它当时有活进程：`/proc/5111/cwd` 命中其 workdir）。
+- ⑦（**本片会动读数**；`baseline 406 不动`）：`upstream 456 (commit f41fae6b08fb) | local 411 registered`、
+  `implemented 331 real + 4 placeholder = 335 / 456`、`known_gap 121`、`unclaimed 0`、`regression 0`、
+  `local_only 9`、`gaps by owner: M9=33 M7=24 **M8=19** M3+=16 M2-A=13 M3=11 M10=5`
+  —— 与 issue 描述「起手补充（二）」的**片后预期**（`local 411 / implemented 335 (331+4) / known_gap 121`）
+  逐字相同；`owners.M8 24 → 19`（−5 = 本片 5 条路由）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py --quiet` = **exit 0**（本片 5 条均为上游 plain 注册，
+  `dual-form required: 0`；没有 allowlist 退路 ⇒ 三类缺陷都是硬失败）。
+- ⑩：**0 违规**；`scripts/file_size_baseline.tsv` **未动**。本片最大新文件
+  `crates/mc-http/tests/github/install.rs` 687 行、`crates/mc-vcs-github/tests/rest_stub.rs` 666 行
+  （均在 800 硬限内；`cargo fmt --all` **之后**量的数）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片 0 fixture 改动 ⇒ 未漂移；M8 面那条
+  composio fixture 仍归 M8-6）。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表改动 ⇒ 与基线同形）。
+- ⑥：`mc-migrate` 566 个迁移（第二轮 `applied 0` = 已迁移）+ `--ignored` 全绿；其中本片新增
+  真库用例 **21** 例（`mc-repos::github` 5 + `mc-http --test github` 16）。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿；本片在其中新增 **37** 例**零 DB** 用例
+  （`mc-vcs-github` 单元 24 中的 16 例新用例 + `tests/rest_stub.rs` 集成 10 + `mc-http` 模块内纯函数 10 +
+  `mc-repos::github` 的 1 例纯函数投影）⇒ 连同真库 21 例，本片共 **58** 例新测试（逐文件计数：
+  `rest.rs` 4 / `dto.rs` 4 / `token_cache.rs` +4 / `ghsnapshot/client.rs` +4 / `rest_stub.rs` 10 /
+  `routes/github/install.rs` 2 / `routes/github/setup.rs` 8 / `repos/github/installation.rs` 4 /
+  `repos/github/pull_request.rs` 2 / `tests/github/install.rs` 10 / `tests/github/setup.rs` 6）。
+
+### 12.5 交接（给 M8-2 / M8-4 / M8-5 / M8-6 / M8-7）
+
+1. **M8-4 读这三处**：`mc_vcs_github::dto::{GithubInstallationResponse,GithubInstallationRow→}`
+   （`dto.rs` 的 installation 侧已对齐上游；**PR 侧仍是 anchor 暂定形状**，扩展（snapshot / checks /
+   additions 三组字段）由 M8-4 决定，但**必须**改 `mc-vcs-github/src/dto.rs` 而不是 `mc-http` 的再导出面）、
+   `mc_vcs_github::rest`（`explode`-free：`GithubClient` 的 `exchange_installation_token` +
+   `revoke_installation_token` 可直接复用）、`mc_repos::github::pull_request`（读取面与 upsert 已就位，
+   见 D11）。**webhook 的验签**用 `mc_http::routes::github::setup::{hmac_sha256, constant_time_eq}`
+   （同一份手写实现，别再写第二份）。
+2. **M8-5 读 `ghsnapshot/client.rs`**：`Client::{sign_app_jwt, installation_token, graph_ql}` 已实现；
+   `installation_token` **自带缓存 + 单飞**（`with_token_cache` 可注入余量），`graph_ql` 返回信封里的
+   `data`，`RateLimited` 由 `GithubError` 统一表达 ⇒ `snapshot.rs` 只需驱动 `$cursor` 分页与归一化
+   （`parse_pr_snapshot(&Value)` 桩签名未动）。
+3. **M8-2 / M8-6**：本片**没有**碰 `routes/{vcs,mcp,composio}/**`、`mc-vcs/**`、`mc-composio/**`、
+   `state.rs`、`requests/mod.rs`、`mount.rs`、manifest —— 三片的写集与 M8-1 **零交集**（`docs/61` §3.3）。
+   唯一共享点：`install.rs` 的 `error_with_code` / `percent_encode_*` 是 `pub(crate)`，若你的面也要
+   「403 + 稳定 code」的响应体，**直接用**（不要再复制一份 envelope）。
+4. **M8-7（INT）**：本片把 ⑦ 推成 `local 411 / implemented 335 / known_gap 121 / owners.M8 19`；
+   `--write-baseline` **仍未到**（归 M8-7）。D12 的文案债与 §11.6 的 R-M8-9（enqueue 尾账）一并收口。
