@@ -9636,3 +9636,77 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5        <-- M8 键消失
 - `LUM-1745`（M5-D8，rev 4，零共享文件）仍随时可插；`LUM-1745`/`LUM-1775` 的「起手补充」都已就绪。
 - **门 ⑥ 纪律（连续第 4 轮）**：每次新建当轮库 + 撞上上面两条已知噪声就换库重跑；`LUM-1980` 是它们的 backlog 承接单。
 - 看板（项目 `da4310b1…`）：`in_review 208 / backlog 25 / todo 12 / in_progress 2 / blocked 0`（共 246→247）。观察项第 47 轮：积压 `todo` cycle 10 条只登记不动状态；autopilot 建单护栏仍未落地；起手**无并发 cycle（连续第 8 轮）**。
+
+## §110 21:00 cycle（`LUM-1981`，13:00Z 触发）：**0 open PR + 空位 0 ⇒ 只读监控轮（第十五次）**；⑦/⑩ 在落地 base `b2fc4acc` 上**当场重跑**（与 §109 九个数逐字相同）；零空位不放空 ⇒ 两片候选各得一条当轮实测；回收 ≈2.7G
+
+### §110.1 起手三连
+
+- `df -h /` 连采两次：**16G 可用（67%）→ 3 秒后仍 16G**（起手稳定；本次**未**复现 §106/§107 的满盘振荡）。
+- `git ls-remote … feat/multica-rs-initial` = **`b2fc4acc5356c3b65d019896f8049b49b6e895fd`**（= §109 的 docs 直推 `b2fc4acc`，自 §109 收尾后**未再前进**）。
+- 认证 GH `pulls?state=open` = **0**。两片在飞分支的远端 ref：`agent/devbox5/b2868aaec231`（`LUM-1774`）与 `agent/devbox5/add3eb26aeb0*`（`LUM-1804`）**均不存在** ⇒ 两片都还没推过。
+- daemon `running_task_count = 3`；逐 PID `/proc/*/cwd` 拆到本项目：cycle(**37007**) + **`LUM-1774`(1140)** + **`LUM-1804`(20899)** ⇒ **在飞 2 片 / 空位 0**。`LUM-1945`（upup，project `0be0eb69…`）本轮无进程 ⇒ 不计槽。**起手无并发 cycle（连续第 9 轮）**。
+
+### §110.2 在飞复核（判活三件套取二）
+
+| 片 | pid / etime | 写侧证据 | 分支/提交 | target |
+| --- | --- | --- | --- | --- |
+| `LUM-1774`（M7-9，7 路由） | **1140** / `1:12:55` | 最近 5 分钟仍在写 `routes/channels/dingtalk/tests.rs`、`routes/channels/dingtalk.rs`、`tests/channels/dingtalk.rs`；`porcelain` 17 项（**全在 `dingtalk/**` 三处**）；`Cargo.lock`/`Cargo.toml` = **0 项** | HEAD = `2d3a5d33`（= 起手点）、**0 提交**、分支未推 | **14.1G**（`incremental` 仅 4K ⇒ 它跑的是 `CARGO_INCREMENTAL=0` 形态） |
+| `LUM-1804`（M8-7 INT，0 路由） | **20899** / `0:08:37`（起手时） | 正在跑 `bash scripts/gates.sh --with-db`（子进程链 `timeout 6600 → gates.sh → cargo build --workspace --all-targets --locked`）；`porcelain` **空** ⇒ 改动尚未落盘 | 本地分支 `agent/devbox5/add3eb26aeb0-1790340938`、HEAD = `f0326bce`（= 派发时 base）、落后 origin 1 提交、**未推** | 4.7G → **8.7G**（增长中） |
+
+两片**均判活**（进程在 ∧ 写侧在动）；**均未推分支 ⇒ 本轮无判据链可走**。
+
+### §110.3 空位 = 3 − 1(cycle) − 2(在飞) = **0** ⇒ 零派发
+
+递补队列（都已在描述层就绪，等槽位）：`LUM-1775`（M7-10 lark，rev 2，**硬前置 = `LUM-1774` 合入**）→ `LUM-1745`（M5-D8，rev 4，**零共享文件 ⇒ 不必等任何波次**）。
+
+### §110.4 ⑦ / ⑩（**落地 base `b2fc4acc` 当场重跑**，纯 Python、0s）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 458 | baseline 406
+implemented 372 real + 3 placeholder = 375 / 456 | known_gap 81 | unclaimed 0 | regression 0 | local_only 9
+gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5
+```
+
+⑦ `route_parity.py --quiet` **exit 0** / `slash_alias_audit.py --quiet` **exit 0** / ⑩ `file_size_check.py --quiet` **exit 0**。九个数与 §109 **逐字相同**，且本轮**不是继承**而是**当场实测**（上一轮留在 base 的读数）。**免跑的依据**：base 前进段 `f0326bce..b2fc4acc` 的**非 docs 路径 = 0 行**（`git diff --name-only | grep -v '^docs/'` 为空）⇒ 码树逐字等价 ⇒ **⑤/⑥/⑧ 免跑**；**⑨ 免跑**（需 ~14G 冷建，`report.json` 未变）。`baseline` 仍 **406**（唯一刷新权归 `LUM-1804` / `LUM-1786`，两者不得同轮）。
+
+### §110.5 零空位不放空 ⇒ 下一片派发预飞（两片，各一条当轮实测结论）
+
+**(a) `LUM-1775`（M7-10 lark，写集已补 `lark/mod.rs`）——复核逐字命中，`## 25.` 仍然有效**
+
+- 四个新文件在 base **全 MISSING** ✓；`crates/mc-channel/src/lark/mod.rs` = **38 行 / `pub mod` = 0** ✓（与 rev 2 的「起手补充」逐字一致）；只读件 `crates/mc-secrets/src/secretbox.rs` = 427 行 ✓。
+- **号段三段并集**（§108 lesson 第 3 次实战）：base 末号 = `## 23.`（M8-6 已合）、在飞 `LUM-1774` 占 `## 24.`、**parked `LUM-1775` 占 `## 25.`**、在飞 `LUM-1804` 取 `## 26.` ⇒ **`## 25.` 仍未被任何在飞/parked 片占用 ⇒ rev 2 的定号免改**（这是三轮以来第一次「预飞不需要改号」）。
+- **唯一未满足 = 硬前置**（M7 stage 4 全合 ⇒ 等 `LUM-1774` 合入）⇒ 与 §109.8 的排序一致。
+
+**(b) `LUM-1745`（M5-D8，rev 4）——「零共享文件」当轮逐字成立**
+
+| 写集路径 | 当轮实测 @ `b2fc4acc` |
+| --- | --- |
+| `apps/mc-server/src/webhook_worker.rs` | **MISSING** ✓（新文件） |
+| `apps/mc-server/src/main.rs` | 257 行 ✓ |
+| `apps/mc-server/src/lib.rs` | **MISSING** ✓（与 rev 4 勘误逐字一致：本 repo 无 lib target） |
+| `crates/mc-autopilot/src/webhook/mod.rs` | 474 行 ✓ |
+| `crates/mc-http/src/routes/webhooks/autopilots.rs` | 203 行 ✓ |
+| ~~`crates/mc-http/src/state.rs`~~ | 665 行 —— **不在写集**（rev 4 已整条删掉）✓ |
+
+与在飞两片**逐文件交集 ∅**（1774 = `dingtalk/**`；1804 = ①基线三件套 + `docs/32`/`docs/61`）⇒ **槽位一空即可插**。
+
+### §110.6 回收
+
+- **15 个终态工作区整删**：5 个已合代码片（`lum-1772`/`1773`/`1801`/`1802`/`1803`，合计 507M）+ 10 个终态 cycle 工作区（`lum-1894/1924/1930/1935/1940/1946/1960/1965/1970/1975`，合计 ≈258M）。
+- **`lum-1945-26685be90d0c`（upup 线，project `0be0eb69…`）终态工作区 1.9G 整删**：判据四条全中且**完全可逆** —— `porcelain` **空**、HEAD `8a56f55d` **已推** `origin/agent/devbox5/26685be90d0c`、`/proc` 逐 PID 零命中、重跑可从 `.repos/github.com+louloulin+upup.git`（158M 裸库）秒级重克隆。
+- **合计手删 ≈2.7G**。**但收尾 `df` 只有 ≈12G（起手 16G）**：两片同时在编译，`LUM-1804` 的 target 5.4G → 8.7G，**实测峰值 ~390M/min** ⇒ 手删的 2.7G 被约 4G 的冷建吃掉。
+- **未动（附理由）**：`.repos/77113af3-…` **1.7G**（12 个**跨项目**裸库镜像：`pi_agent_rust` 277M / `multica` 168M / `hpx` 166M / `WeKnora` 163M …，删了要让别的项目重克隆，收益/代价不对称）、`~/.cache/ms-playwright` 658M、`~/.rustup` 663M、`~/.cargo` 1.7G。
+
+### §110.7 lesson
+
+1. **双片活跃编译期，「回收量」不能用 `df` 起手-收尾差度量**：本轮一次 `rm` 实测在**同一分钟内**放掉 765M，而 `df` 净变化只有 **−312M**（1.0G 的同期构建把删除淹没）⇒ 判据必须拆成两项：**「删前/删后两次 `df` 差」+「同期 target 增量」**，否则会误判成「回收失败」而重复删。
+2. **可回收物的排序键不是体积，是「判据数量 × 可逆性」**：`lum-1945` 1.9G 判据四条全中且删掉可秒级复原（裸库还在 `.repos`）⇒ 该删；`.repos` 1.7G 体积相近却**不可逆地影响别的项目** ⇒ 不删、只登记。
+3. **看板 `in_progress` 第 2 次失效**（§106 是第 1 次）：`LUM-1804` **正在飞并跑着 `--with-db`**，其状态却是 **`todo`**，而当轮唯一 `in_progress` 是 `LUM-1774` ⇒ **判「在飞」只能靠 daemon + `/proc/*/cwd`，状态列会漏片**。（另记：`LUM-1774` 自己的描述 rev 已到 **9**，它在飞期间还在改自己的描述 —— 回读描述判进度会把「修订数」误当「进度」。）
+
+### §110.8 next cycle 起点
+
+- base **`b2fc4acc`**（+ 本 cycle 的 docs 直推 ⇒ 起手一律 `git rev-parse` 实测）；GH **0 open PR**；在飞 **3/3** = cycle ∥ `LUM-1774`（M7-9，起手 `2d3a5d33`，17 项未提交，14.1G target，**勿清**）∥ `LUM-1804`（M8-7 INT，正在 `--with-db`）。
+- **槽位一空即派**：`1774` 终 ⇒ 判据链 + 核对 ⑦ 预期（`owners.M7 16 → 9`、`local 458 → 465`，**按注册点计**，§95 lesson）⇒ 合后递补 **`LUM-1775`**（M7-10 lark，rev 2 **定号 `## 25.` 本轮复核仍有效**，写集缺件 = 0）；`1804` 终 ⇒ 它是 M8 **唯一一次** `--write-baseline`（片前 = 当轮 `baseline` 实测 **406**、片后 = 当轮 `local` 实测），与 `LUM-1786`（M7-21 INT）**不得同轮**。
+- 随时可插：`LUM-1745`（M5-D8 rev 4，**零共享文件**，§110.5(b) 已复核）。**派发前仍需补描述**：`LUM-1786`（M7-21 INT，rev 2）正文的 `baseline 344 → 430` 与「`owners.M7 0` 前置」都已过期。
+- **门 ⑥ 纪律（连续第 5 轮）**：每轮**新建当轮库**（`CREATEDB` 必须带）；撞上 `LUM-1980` 登记的两条已知噪声（`telegram_round_trip.rs:599` 等待条件过弱 / `composio support.rs:577` 复用库取错 key）就**换库重跑**，别追成本片回归。
+- 看板（项目 `da4310b1…`）：`in_review 211 / backlog 25 / todo 12 / in_progress 1 / blocked 0`（共 249）。观察项第 48 轮：积压 `todo` cycle 10 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835`）只登记不动状态；autopilot 建单护栏仍未落地；起手**无并发 cycle（连续第 9 轮）**。
