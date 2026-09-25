@@ -4414,3 +4414,205 @@ lib 用例 902 条全绿。
 * **与 wecom 片不同飞**：`LUM-1783` / `LUM-1784` / `LUM-1785` 都会写在同一个 `wecom/mod.rs` 追加段上
   ⇒ 后合者 rebase + 重跑门禁。
 * **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
+
+---
+
+## 35. M7-18（`LUM-1783`）：wecom 媒体面（**0 路由**）
+
+`docs/60-M7-PLAN.md` §4.1 的 **stage 7 第三片**（上游
+`wecom/{outbound_media,media_ingest,media_download,media_upload,media_guard,media_stream,media_crypt}.go`
+= **2,614 + 171 = 2,785** 行）。它是 wecom 子波在 `wecom/mod.rs` 追加段上的**最后一个写者**：
+之后的 `LUM-1784`（M7-19 入站）/ `LUM-1785`（M7-20 打字/限流）都要等它终态。
+
+### 35.1 写集（逐字；**17 个新文件**，`wecom/mod.rs` **+7 行**，`docs/32` **+本段**）
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/wecom/media_crypt.rs` + `media_crypt/tests.rs` | 547 / 421 | `media_crypt.go`（102）：AES-256-CBC + PKCS#7(32) + 密钥解码（见 D2） |
+| `.../wecom/media_guard.rs` + `media_guard/tests.rs` | 644 / 616 | `media_guard.go`（306）：地址闸、两张前缀表、白名单（R-M7-9 的 SSRF 面） |
+| `.../wecom/media_download.rs` + `media_download/tests.rs` | 383 / 302 | `media_download.go`（459）的**取回**一半：两条路径 + 上限 + 头 |
+| `.../wecom/media_download/filename.rs` + `filename/tests.rs` | 375 / 195 | `media_download.go` 的**文件名**一半（`mime.ParseMediaType` 的手写替代，见 D8） |
+| `.../wecom/media_stream.rs` + `media_stream/tests.rs` | 234 / 316 | `media_stream.go`（171）：流式解密到 unlink 的临时文件（**写集漏项**，见 D1） |
+| `.../wecom/media_upload.rs` + `media_upload/tests.rs` | 552 / 493 | `media_upload.go`（420）：三步上传 + 发送 + 种类帽 |
+| `.../wecom/media_ingest.rs` + `media_ingest/tests/{mod,support}.rs` | 671 / 520 / 79 | `media_ingest.go`（480）：`MediaResolver` + 端口 + 通知 + 日志 |
+| `.../wecom/media_ingest/describe.rs` | 255 | 上游的**命名与描述**面（§6.3 拆出的子模块，见 D1） |
+| `.../wecom/outbound_media.rs` + `outbound_media/tests.rs` | 784 / 440 | `outbound_media.go`（676）：出站附件投递（M7-17 的**交接 H3**） |
+| `crates/mc-channel/src/wecom/mod.rs` | **+7 / −0** | 追加 7 行 `pub mod`（6 行是 issue 列的 + `media_stream`；`register()` **未动**） |
+
+**新增用例 84 条**（`media_crypt` 21 / `media_guard` 21 / `media_download` 12 / `media_stream` 10 /
+`media_upload` 7 / `media_ingest` 8 / `outbound_media` 9 —— 逐文件见各自的 `tests.rs`）；
+`mc-channel` 整 crate 的 lib 用例 **1202 passed / 0 failed**（本片起手 1118 ⇒ **+84**）。
+最长新文件 **784 行**（`outbound_media.rs`），全部 ≤ 门 ⑩ 的 800。
+
+### 35.2 偏离（D1…D13；每条要么有落点，要么有用例）
+
+* **D1（写集勘误，同一类第 14 次）**：issue rev 5 的写集只列 **6** 个新文件，而派生表
+  `docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-18 行有**第 7 个** ——
+  `media_stream.go`（上游 171 行）⇒ 本片一并落地（流式解密那条路本来就要求它）。
+  另按 §6.3 的门 ⑩ 拆分：`media_download.rs` / `media_stream.rs` / `media_ingest.rs` 各带子目录
+  （`filename.rs` / `describe.rs` + 各自的 `tests.rs`），拆点取上游那几段的**面**边界。
+  `wecom/mod.rs` 追加 7 行（`register()` 与 M7-17 刚加的行**未动**；`rustfmt` 的
+  `reorder_modules` 把它们与那 4 行并成一个按字母序的连续段 —— M7-17 四行的**相对顺序未变**）。
+* **D2（🔴 自带 AES-256，零新依赖）**：`crates/mc-channel/Cargo.toml` 的依赖面在 M7-0 冻结
+  （逐字「此后 M7 各切片**不得**再新增三方依赖」）。本片要的两个 crate 都在那条线之外 ——
+  `aes` 0.8.4 **在** `Cargo.lock` 里（`aes-gcm` 的传递依赖）但与本 crate **没有直连边**，
+  `cbc` **根本不在** lock 里。⇒ 按本仓既有判例（`docs/32` 的 **M8-2-D7**「手写公历算法」、
+  **M7-15-D5**「没有 `rand` ⇒ 两个 v4 UUID」、§? 「没有 `regex` ⇒ 手写扫描器」），
+  `media_crypt.rs` 自带 AES-256（密钥扩展 + 正/逆轮函数）+ CBC。**正确性不靠嘴说**：
+  S 盒由 GF(2⁸) 逆元 + 仿射在 `const fn` 里**算出来**（没有抄错一格的余地），
+  FIPS-197 附录 C.3 与 NIST SP 800-38A §F.2.5 的向量逐字比字节。
+  **收缩**：表驱动 ⇒ 非常量时间（密钥是一次性的、被解密的字节来自平台、唯一攻击者可控输入是
+  受地址闸把守的 URL）；加密方向**只为用例**存在（上游没有加密方向），生产路径不调用它。
+* **D3（闸的接缝：`DialContext` → `reqwest` 的 `dns_resolver`）**：上游在拨号器上拦
+  （"闸在**连接**上，不在 URL 上"）。本仓没有 `DialContext`，落在三处：`dns_resolver`
+  （解析阶段过滤：混着公私答案的主机只拨通过的那些，与上游"每个地址先查、只拨通过的字面量"
+  同语义）、`no_proxy()`（代理会重新解析 ⇒ 绕过这条保证）、重定向回调（scheme + 跳数）。
+  `reqwest` 对 **IP 字面量** host 根本不调解析器 ⇒ 那一步由 `check_media_url` 自己兜
+  （与 `dingtalk::media` 的 D5 同一条判例）。
+  **实测到的第二层**：`file:///…` 这类 `http::Uri` 表示不了的重定向连 `tower-http` 的
+  `resolve_uri` 都过不去 ⇒ **响应原样交回**（302，不跟随），而 `gopher://` 那类能被表示的会
+  走到我们自己的回调并被拒（`Err`）。两条路都不跟随，只是层次不同，有用例同时钉住。
+* **D4（`MULTICA_WECOM_MEDIA_ALLOW_CIDRS` 的读法）**：上游 `SetMediaAllowedPrefixes(cidrs []string)`
+  的唯一调用点在仓库外 ⇒ **env 的切分形态在代码里观察不到**。本仓定：逗号分隔、两头空白吃掉、
+  空条目跳过（不是错误）、解析不了的一律**报告并跳过**（不静默加宽/收窄）。env 本身**不在
+  `mc-channel` 读** —— 唯一读取口是 `mc_http::state::ChannelKeys`（`docs/60` §2.3 判据 4）。
+* **D5（比上游**更严**的一格：`::/96`）**：IPv4-compatible 的已废弃段上游那两张表都没覆盖、
+  `netip` 的判据也不报它，而它正是"穿 IPv6 外衣的 IPv4"那道闸要防的拼法之一
+  （`dingtalk::media::guard` 的 `NON_PUBLIC_PREFIXES` 同样有它）。没有任何 COS 对象住在那儿。
+* **D6（`media_stream` 的三处形态差异）**：① `io.Reader` → 异步分块来源（本仓的下载体是
+  `reqwest` 的，而 `mc-channel` 的 `reqwest` **没开 `stream` feature** ⇒ 用
+  `Response::chunk()` 拉；接缝是 `MediaChunkSource`）；② `os.CreateTemp` → 自己造（`tempfile`
+  不在依赖边里）：`uuid` + pid + 进程内计数器，语义逐条对齐（建、`0600`、**立刻 unlink**，
+  用例断言 `nlink == 0` 且 `mode & 0o777 == 0o600`）；③ `defer out.Close()` 不需要（`Err` 里
+  没有句柄）。**`TempFile` 是"退回缓冲路径"的判据**（上游按错误**字符串**判，本仓按**类型**）。
+* **D7（凭据面比上游更紧）**：上游的 `stripURL` 是**事后**把 `*url.Error` 剥成它的 `Err`；
+  本仓在**类型层面**就进不来 —— `reqwest::Error` 的 `Display` 同样带着那条预签名 URL，所以
+  `MediaDownloadError` 的变体**没有一个**带载荷。HTTP 状态那条**刻意不带响应体片段**
+  （上游带 512 字节用于诊断：COS 的 XML 错误体会回显它收到的 URL）。`MediaBody` 的 `Debug`
+  手写（`reqwest::Response` 的 `Debug` 会打出请求 URL）。4 条用例钉住 4 条错误路径。
+* **D8（`mime` / `http.DetectContentType` 的手写替代）**：`mime` crate 不在依赖边里 ⇒
+  `Content-Disposition` 参数解析、`filename*` 的 RFC 5987 解码、表单编码的**往返判据**、
+  `TypeByExtension` / `ExtensionsByType` 的两张表、按魔数的类型嗅探全部手写。**收缩**：
+  ① **不支持 RFC 2231 的参数续行**（`filename*0*=`…）⇒ 那种名字只走朴素形态；
+  ② `charset` 不是 `utf-8` / `us-ascii` 时**跳过那一个参数**而不是让整条头失败（比 Go 宽一格，
+  而名字随后要过 `clean_media_filename`）；③ 两张表比 Go 的 mime 库小 ⇒ 表外一律空串（不猜）。
+  **顺序即安全**：扩展形态无条件优先（与出现顺序无关）→ 表单解码 → 取基名 → 剥控制字符，
+  四条都有用例（`..%2F..%2Fetc%2Fpasswd` 必须在解码**之后**才被压成一个段）。
+* **D9（`media_upload` 的两处形态差异）**：① `errgroup.SetLimit(n)` → `buffer_unordered(n)`
+  （并发阶梯逐字照抄 SDK：`≤4 ⇒ n` / `≤10 ⇒ 3` / 否则 `2`；差别只在收尾时机 —— 上游**主动取消**
+  已在飞的块，本仓让它们跑完才丢弃，而一次失败上传之后那些结果没人读）；② `sendMsgFrame`
+  （配额 + 一次重试）是 **M7-20** 的 `rate_limit.rs` ⇒ 本片按 M7-16 对 `send_text` 的同一判例
+  （§33 的 D4）**直接走 `request`**，而**每聊一把锁**照旧由本文件持有（上游明确把它放在这里、
+  不放在配额那一层）。重发纪律逐字：**只有"判决没回来"值得再问一次**，一次拒绝当场结束。
+* **D10（同步端口 → 一次桥）**：本仓的 `MediaResolver::resolve_media` 是**同步**签名（M7-1 的契约）
+  而下载与意图账本都是 `async` ⇒ 独立线程 + current-thread 运行时跑**整条消息**的摄入
+  （与 `dingtalk::media::block_on_engine` 同款，`thread::scope` 让那段 future 可以借用解析器）。
+  对象存储与通知是**同步**端口（与 `dingtalk::media::MediaStorage` 同款）。
+* **D11（逐文件记账落在本片）**：`Outbound` 的记账方法是 `pub` 的，但它们要一个 `&Outbound`，
+  而这段工作在**脱离任务**里跑 ⇒ `outbound_media.rs` 的 `AttachmentAccounting` 用**同一份**
+  `Metrics` 与**同样的字面量**重述那几条（label 与日志消息逐字取自 `outcome.rs`）。
+  收敛路径见交接 H4。
+* **D12（端口形状勘误，同一类第 15 次）**：`crates/mc-channel/src/wecom/outbound/attachments.rs`
+  （**M7-17 的文件**）的 `AttachmentDelivery` 有两处让交接 H3 **不可实现**：
+  ① 同步方法 ⇒ 准入名额在它返回的瞬间就还回去了，`MAX_ADMITTED_ATTACHMENT_DELIVERIES` 不再约束
+  它本来要约束的那次查表；② 它**丢掉**了上游 `sendAttachments(ctx, messageID, workspaceID, …)`
+  的两个 id ⇒ 端口实现拿不到"为哪条消息投递"。两处都改（`async` + 多两个 `&str`），
+  `relay/relayed.rs` 那条调用**不用改**（它本来就是按 id 调的），M7-17 的替身
+  （`outbound/tests.rs` 的 `FakeAttachments`）跟着新形状走并多记两个 id。
+* **D13（两处接缝暂住本片，M7-19/M7-20 收敛）**：① 平台信封的解码
+  （`decode_wecom_inbound`，上游 `wecom_resolvers.go` 的 `wecomMsgFromRaw`，那个文件属 **M7-19**）——
+  按 `ws_frame.go` 的 JSON tag 字面量解，**形态不对就失败关闭**（Go 的 `json.Unmarshal` 在那一格报错）；
+  ② `trace_media_headers` 的最小版（上游在 `trace.go`，属 **M7-20**，带开关与截断）。
+
+### 35.3 门禁证据（当轮实测，base `bb4e726a` + 本片）
+
+* **`bash scripts/gates.sh --with-db` = 10/10 PASS，654s**（① 2s ② 157s ③ 45s ④ 36s ⑤ 65s
+  ⑥ 250s / `migrate=0,e2e=0` ⑧ 28s ⑦ 0s ⑨ 71s ⑩ 0s）。
+  追加 ⑥/⑧ 的理由：本片虽然**零 DB 直写**（两个存储端口与通知端口都只有替身），
+  `AttachmentQueries` 的形状是照着真表定的，而 ⑥ 覆盖了那些表在迁移后的形态、⑧ 覆盖 schema 未漂。
+  **当轮新建库** `multica_lum1783` / 角色 `mc_lum1783`（带 `CREATEDB`）。
+  最前一次 run 的 ②/③ 红是**环境**的（工作树正在被我重构）+ ③/④/⑤/⑥/⑧ 红是 **`/` 写到 98%**
+  导致的 `ENOSPC`（诊断依据逐条见 35.6）。
+* **⑦ 读数（片后，逐字，`bash scripts/gates.sh --only route-parity,file-size`）**：
+  `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
+  `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33 M3+=16 M3=11 M10=5 **M7=5**`（和 = 70 ✓）。
+  **九个（含 `owners`）与片前逐字相同** —— 0 路由片该有的形态证据。**`--write-baseline` 未跑**。
+* **形态门**：`route_parity.py` 的 defect 输出为空；`slash_alias_audit.py` 报
+  `0 defect(s) / 0 warning(s)`，`469` 个上游键字面量与片前一致 ⇒ 本片**未注册任何路由**。
+* **⑨**：`report matches crates/mc-conformance/report.json`（快照**未动**）；
+  blob 实测 `fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980` = 交接值逐字 ⇒ 读数继承
+  `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / unevaluable 306`。
+  **wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**，也**不把它当战绩**（阴性对照组）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **未改**。
+  本片 17 个新文件最长 **784 行**（`outbound_media.rs`），全部 ≤ 800。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`），`--all-targets` 与 test-util 两种形态都过。
+  本片踩到并修掉的具体 lint：`needless_raw_string_hashes`、`similar_names`、
+  `needless_pass_by_value`（`drop_transport_error` 改收引用）、`manual_range_contains`、
+  `cast_possible_truncation`（`pad as u8` → `u8::try_from`）、`large_stack_arrays`
+  （64 KiB 栈数组 → `Vec`）、`needless_borrow`、`items_after_statements`（用例里的辅助函数移到模块级）、
+  `format_push_string`（两处脚本替身改用 `write_fmt`）、`redundant_redefinition`、
+  `assigning_clones`、`unused_async`（`tell_the_sender` 没有 await ⇒ 去掉 `async`）、
+  `too_many_lines`（`send_attachments` 106 行 ⇒ `allow` + 理由）、`unused_self`（`log_failure`
+  改成自由函数）。
+  另有一条**编译器**级别的事：`buffer_unordered` 收 `chunks.iter().copied()` 的闭包会撞
+  `implementation of FnOnce is not general enough`（借用生命周期的 HRTB 推断）⇒ 先 `collect`
+  成一个 `Vec` 再进 `stream::iter`。
+* **⑤**：`mc-channel` lib 用例 **1202 passed / 0 failed**；其中本片新增 **84** 条。
+* **合并期复核**：见 **35.7**。
+
+### 35.4 交接（H1…H4；都写在代码的模块文档里，这里只列指针）
+
+* **H1（M7-19 `LUM-1784`）**：`decode_wecom_inbound`（D13）与 `wecomMsgFromRaw` **收敛成一份**；
+  `media_ingest` 的 `WecomInbound` / `InboundMedia` 与 M7-19 落地的 `InboundMessage` 取同一个形态。
+* **H2（M7-20 `LUM-1785`）**：① `MediaNotifier` 的实现（`senders_registry.go` 属 M7-20）——
+  它把"附件没送到"那句话交给那条活 socket；② `trace_media_headers` 收敛到带开关的实现；
+  ③ `MediaSenderLookup::live_sender` 与 `sendersRegistry.get` 是**同一次装配**；
+  ④ `sendMsgFrame` 落地之后，`media_upload` 那条直接 `request` 的路要换成它（D9）。
+* **H3（M7-21 `LUM-1786` INT）**：`⑦` 基线 / `⑨` 报告 / `⑩` 基线三件套的刷新**全归 INT**；
+  本片是 wecom 子波**最后一个**写 `wecom/mod.rs` 的片。
+* **H4（收敛可选项）**：`AttachmentAccounting`（D11）要搬回 `Outbound` 的话，前置是把 `Outbound`
+  放进 `Arc` 并让投递从 `Weak` 取 —— 那是一次结构调整，不在本片写集内。
+
+### 35.5 风险（R1…R3）
+
+* **R1（AES 是手写的）**：见 D2。缓解是 NIST 已知答案向量 + S 盒由定义算出；**未缓解**的是
+  常量时间性质（表驱动），而那条的暴露面已在 D2 里逐条说明。
+* **R2（地址闸有两层，只测到一层半）**：`dns_resolver` 那一条用**假解析器**测（重绑定、混合答案、
+  全内网都覆盖），真 socket 那一条用本机回环服务端测（`localhost` 走解析器、`file://` 的重定向
+  原样交回）。**没有**在真网络上打过一个非公网地址的用例 —— 那需要一台真的内网目标。
+* **R3（流式那条路的端到端只有一条用例）**：`decrypt_to_file` 的跨块/尾部/临时文件属性各有用例，
+  但"`open_media` → 流式解密 → `upload_stream`"整条链只在 `media_ingest` 的**缓冲**路径上有端到端
+  用例（流式那条需要一个实现了 `MediaStreamStorage` 的替身，而本片的两个存储端口都只有缓冲替身）。
+  ⇒ M7-19 接线时若发现流式那条可疑，先补一个"临时文件建不出来 ⇒ 退回缓冲"的端到端用例。
+
+### 35.6 本轮两个**环境**级红旗（不是代码红，逐条留证）
+
+1. **`/` 写到 98%**：第一次 `--with-db` run 里 ③/④/⑤/⑥/⑧ 红，而 ⑤ 的失败是
+   `media_stream` 的一条用例（`decrypt_to_file` 报 `TempFile`）—— 那台机器当时只剩 **1015 MB**。
+   回收 **12G**（本 workdir 的 `target/debug/incremental`，一个纯缓存目录）之后同一批门禁
+   10/10 绿。⇒ **在 98% 满的盘上，`ENOSPC` 会伪装成"代码红"**（症状恰好落在第一个需要新文件的用例上）。
+2. **门禁与改文件不能同飞**：最先那次 8/8 里的 ②/③ 红，是因为我在它跑 ②/③ 的同时改了工作树
+   （把 `media_ingest.rs` 拆出 `describe.rs`）。**门禁的判据是"冻结的树"** —— 它跑的时候
+   任何一次 `cargo fmt` / 文件移动都会让那一格作废。⇒ 起手前先确认树是停的（本片已按此重跑全量）。
+3. **同项目另一片（`LUM-1779` M7-14）正在飞、占 16G**：`/proc` 逐 PID 扫到它的 `pi` 与
+   `rustc` 都活着 ⇒ **不碰**它的 `target/`（四判据里第一条就是"run 终态"）。
+
+### 35.7 合并期复核（当轮实做）
+
+* **base**：本片起手 `git fetch` 后实测 `feat/multica-rs-initial` = **`bb4e726aa9b8b3d7f8b27c83b6a9483a480577a8`**
+  （issue rev 5 的交接值 `bb4e726a` 逐字命中；正文里计划期的 `2394bfcc` / `8104740d` / `6af3fb3d` /
+  `33d476e5` 一律作废）。
+* **硬前置的可观测判据当场成立**：`ws_sender.rs` + `credentials.rs` 在 base 上 `git cat-file -e` **两个
+  EXISTS** ⇒ 正文「硬前置 M7-15」与 rev 2 记的条件式 M7-16 两条都满足；`LUM-1782`（M7-17）**已终态**
+  （它的 4 个文件与本片 7 个文件的 `pub mod` 追加段已在 base 上，见 `git log --oneline -1` 的
+  `bb4e726a`）。
+* **本片是 `wecom/mod.rs` 在 M7-18 时段的唯一写者**：base 实测 `mod.rs` = **62 行 / 14 个 `pub mod`**
+  （与 rev 5 的预测逐字命中）；本片**追加** 7 行 + 一段注释 ⇒ **69 行 / 21 个 `pub mod`**，
+  `register()` 仍是 M7-0 的空实现（**未被顺手填充**）。
+* **同轮在飞**：`LUM-1779`（M7-14 lark 出站/回复/会话桥）与本片同轮。逐字路径交集 = **∅**
+  （本片只写 `crates/mc-channel/src/wecom/media*` + `outbound_media*` + `wecom/mod.rs` 的追加段 +
+  `outbound/attachments.rs` 的端口形状勘误 + `docs/32`；lark 片只写 `crates/mc-channel/src/lark/**`
+  与 `crates/mc-http/src/routes/channels/lark.rs`）⇒ **可同飞**。
+* **与 wecom 片不同飞**：`LUM-1784` / `LUM-1785` 会写同一个 `wecom/mod.rs` 追加段 ⇒ 必须等本片终态。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。
