@@ -3697,3 +3697,139 @@ upstream 456 (commit f41fae6b08fb) | local 465 registered | baseline 458
   `Debug`、错误文案、日志字段三处都不出现（三条用例）。⚠️ 但**上游把同一条地址存在的形态**
   保留在 `WsEndpoint` 上（拨号必须用它）⇒ 后续片（M7-12）若把它塞进任何结构化日志或
   持久化字段，本片的保证就失效 —— 这条写在这里供 review 用。
+
+## 31. M7-15（`LUM-1780`）：wecom 契约 / 凭据 / 安装与绑定面（**4 路由**）
+
+> **号段说明**：base `83761edb` 实测 `docs/32` 末号 = **`## 27.`**（M5-D8）；28/29/30 已按**派发顺序**
+> 占给同轮/后续派发的 `LUM-1776`（M7-11 lark）/`LUM-1777`（M7-12）/`LUM-1779`（M7-14）
+> （派发补充 rev 3 的当轮裁定）⇒ 本节取 **`## 31.`**。`docs/32` 是本片与那些片**唯一共写**的文件
+> （各自往末尾追加自己的节；冲突时按 §91/§102/§107/§108 的先例「先到者保号 + 后到者让号」）。
+>
+> **合并期复核（当轮实做）**：本片分支合并 `origin/feat/multica-rs-initial`（`8104740d`）时，
+> `docs/32` 的冲突恰好是**同一段尾行**（本节 vs **`## 28.`** = M7-11）⇒ 按上面那条先例
+> **两节都留、28 在前 31 在后**（§28 自己的号段说明就写了「本节在前、它在后」）。
+> 29 / 30 仍留给 `LUM-1777`（M7-12）/ `LUM-1779`（M7-14）⇒ 本片**没有**让号，也**没有**改号。
+
+### 31.0 这一片补的是哪条掉棒，以及上游单元的**口径更正**
+
+上游 `internal/integrations/wecom/{credentials,credential_probe,installation,store,binding,types,
+strings,language,metrics}.go` + `internal/handler/wecom_web.go` 的**安装 / 凭据 / 绑定管理面**：
+`M7-1/2` 已把渠道契约、engine 与泛化仓储铺好（只读依赖），M7-15 是**wecom 那棵树的第一片**，
+交付「这对 `(bot_id, secret)` 该不该落库」的全部判决与 4 条管理路由。
+
+**口径更正（本片实测）**：`docs/fixtures/m7-slice-upstream-files.tsv` 把 `wecom/metrics.go` 记作
+**188** 行，而 `f41fae6b08fb` 的只读副本是 **181** 行（逐文件复算：`awk 'END{print NR}'`）⇒
+本片 10 个上游文件实测合计 **2164** 行，不是 `docs/60` §4.1 那行的 **2171**。差 **7** 行全部来自
+`metrics.go`，**不影响任何结论**（§4.1 的"每片 ≤ 3500"仍成立），但报数一律用 2164。
+
+### 31.1 写集（逐字；16 文件 +6423/−30）
+
+| 文件 | 改动 | 上游对应 |
+| --- | --- | --- |
+| `crates/mc-channel/src/wecom/types.rs` | **新增 548** | `types.go`（168）：`Installation` / `installConfig` 四键编解码 / `ConfigError` |
+| `crates/mc-channel/src/wecom/credentials.rs` | **新增 610** | `credentials.go`（55）+ `credential_probe.go`（205） |
+| `crates/mc-channel/src/wecom/store.rs` | **新增 426** | `store.go`（79）+ `installation.go`/`binding.go` 的端口面（见 **D6**） |
+| `crates/mc-channel/src/wecom/installation.rs` | **新增 488** | `installation.go`（545）：`InstallationService::{list,get_in_workspace,revoke,upsert}` |
+| `crates/mc-channel/src/wecom/installation/tests.rs` | **新增 418** | 端口替身用例（门 ⑤） |
+| `crates/mc-channel/src/wecom/binding.rs` | **新增 379** | `binding.go`（265）：`Mint`（含 60s 节流）/ `RedeemAndBind` |
+| `crates/mc-channel/src/wecom/binding/tests.rs` | **新增 431** | 内存绑定口用例（含上游三段事务的回滚语义） |
+| `crates/mc-channel/src/wecom/strings.rs` | **新增 287** | `strings.go`（170）+ `language.go`（95，见 **D2**） |
+| `crates/mc-channel/src/wecom/metrics.rs` | **新增 257** | `metrics.go`（181）：16 个计数器的契约 + no-op 兜底 |
+| `crates/mc-channel/src/wecom/mod.rs` | +12/−0 | **描述写集漏项**：追加 7 行 `pub mod`（见 **D1**） |
+| `crates/mc-http/src/routes/channels/wecom.rs` | 456/−30 | 上游 `handler/wecom_web.go`（401）：4 条路由 + 鉴权层 + 错误矩阵 |
+| `crates/mc-http/src/routes/channels/wecom/dto.rs` | **新增 243** | wire 形状与错误信封（见 **D8**） |
+| `crates/mc-http/src/routes/channels/wecom/store.rs` | **新增 593** | 两个端口的 PG 实现（见 **D6**） |
+| `crates/mc-http/src/routes/channels/wecom/tests.rs` | **新增 467** | 不依赖库的用例（门 ⑤） |
+| `crates/mc-http/src/routes/channels/wecom/tests/db.rs` | **新增 609** | 真库用例（门 ⑥） |
+| `crates/mc-http/src/routes/channels/wecom/tests/support.rs` | **新增 199** | 真库装置（连接 / `AppState` 字面量 / 种子） |
+| `docs/32-M3-DAEMON-FACE.md` | **+本节** | 偏离登记与读数 |
+
+**与描述里那份写集的差异（三条，都不是选择）**：
+
+1. ➕ **`crates/mc-channel/src/wecom/mod.rs`**：描述正文没列它，rev 2 的补充已把它补进写集（37 → 49 行，
+   只追加 7 行 `pub mod` + 5 行注释）。**阴性对照仍在**：`crates/mc-channel/src/lib.rs:76` 已有
+   `pub mod wecom;`、`crates/mc-http/src/routes/channels/mod.rs` 已有 `pub mod wecom;` ⇒ 这两个文件
+   本片**一个字节没动**。
+2. ➕ **6 个描述没写的本地文件**（`wecom/{dto,store,tests}.rs` + `tests/{db,support}.rs` +
+   `wecom/{binding,installation}/tests.rs`）：门 ⑩ 的 800 行硬上限逼出来的切分，见 **D8**。
+3. ✅ **两个只读依赖当轮实测在**：`crates/mc-secrets/src/secretbox.rs`、
+   `crates/mc-repos/src/channel/**`（10 文件）—— 本片只读它们。
+
+### 31.2 偏离登记（M7-15-D1 … M7-15-D9）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **D1** | **写集漏项**：`crates/mc-channel/src/wecom/mod.rs` 不在描述的正文写集里，但必须改（追加 7 行 `pub mod`） | `mod.rs` | 本波第 11 次同类（rev 2 的补充自己就点了这条）。`lib.rs` / `channels/mod.rs` 都不动 |
+| **D2** | 上游 `language.go`（95）并入 `strings.rs`；它的**按目的地查语言**那一半（`localeFor` / `localeForSender` / `localeForUser` + `languageLookup`）**未落** | `strings.rs` | 那一半要 ①`chatTypeSingleInt`（那个常量在 `ws_frame.go` = **M7-16** 的写集）②`channel_user_binding` / `user` 两条读（M7-19/20 的解析器面）。本片**不自造第二份**"这是不是 1:1"的真值 ⇒ 交付全部纯函数（`resolve_locale` / `deployment_locale` / `copy_for` / `locale_for_destination`），接缝 = 一个档案语言字符串 |
+| **D3** | 上游 `credential_probe.go` 并入 `credentials.rs`；`box` / `probe` / `tx` 的 **nil 检查整条消失** | `credentials.rs` / `installation.rs` | 本仓是值类型（`SecretBox`、`Arc<dyn CredentialProbe>`）⇒ 上游三个 `Err…Required` 哨兵没有对应物，"没有探针"这种接线 bug 在**类型层面**不成立。探针的 wire 一半抽成 `ProbeTransport` 端口 ⇒ 见 **D9** |
+| **D4** | **口径更正**：部署密钥缺失 ⇒ 4 条路由里 3 条回 **403**，不是 503 | `wecom.rs` | `docs/60` §8 的 R-M7-3 写「wecom 端点 503」，`router.go:917` 的注释也写「return 503」——**两处都不是代码**。逐字实现是 `writeFeatureDisabled`（`handler.go:578` ⇒ `http.StatusForbidden`）；"503" 属于**够不着 `WeCom`** 的那一格（凭据没能验证）。用例 `the_unconfigured_semantics_are_per_endpoint` 钉住 403 + `wecom_not_configured` |
+| **D5** | 绑定令牌的随机源 = **两个 v4 UUID**（32 字节 base64url 无填充） | `binding.rs` | 本 crate 的依赖集里**没有** `rand`（`docs/60` §3.1 冻结：M7 各片不得新增三方依赖）。熵 244 bit、线长与上游相同，只是这 32 字节不是均匀分布 —— 与 M7-9 逐字同一处手法 |
+| **D6** | 上游"一个事务跑四步"落成**端口方法** `InstallationStore::persist`，PG 实现在 route 层 | `wecom/store.rs` / `routes/channels/wecom/store.rs` | 层次铁律（`docs/60` §2.6 第 1 条）：`mc-channel` 不写 SQL。串行化在实现里，**判决**留在 adapter 可测。**比描述预期多做的一步**：回收死主与换机器人时的**依赖行清理真的落了**（11 张泛化 `channel_*` 表，两张 CTE 共用 `clear_dependents_sql`）⇒「换机器人后旧 userid 的绑定会活到用户重绑」这条缺口只剩**上游自己承认的那个窗口**（旧 socket 拆除前的一条入站） |
+| **D7** | `slot_owner` 是**事务外**预读；权威判定在 `persist` 内重查 | `installation.rs::upsert` | 上游在 `LockChannelInstallationAppIDSlot` **之后**读。本仓把它当**预检**：它的价值是"注定被拒的请求不碰 `WeCom`"（探针的订阅会踢掉在线的合法持有者），而那一步必须在锁外。读到旧值只会多跑一次 `persist`（届时按真实槽主判决），**不会写错** |
+| **D8** | **4 个描述没写的本地文件**（`{dto,store,tests}.rs` + `tests/{db,support}.rs`）+ 2 个用例文件（`wecom/{binding,installation}/tests.rs`） | 两个 `wecom/` 目录 | 门 ⑩ 的 800 行硬上限（`install.rs` 一度 881、http `tests.rs` 一度 1130、`binding.rs` 一度 **805** —— 最后一条是 rustfmt 之后被门 ⑩ 抓到的）。切点照既有先例：`routes/channels/{slack,telegram,dingtalk}/{dto,store,scope,tests}.rs`。**并发安全性**：`crates/mc-http/src/routes/channels/wecom/**` 与 `crates/mc-channel/src/wecom/**` 都是**本片独占**（M7-16…M7-20 的写集在后者，但都是**别的文件**；HTTP 侧没有第二片）⇒ 没有第二个写者，`channels/mod.rs` 一个字节没动 |
+| **D9** | 探针的 **wire 一半**未接线：生产装配用 fail-closed 的 `PendingWsTransport` | `routes/channels/wecom.rs` | 拨号 + 一帧 `aibot_subscribe` 是 `ws_frame.go`（**M7-16** 的写集，本片写集不含）的产物。在那之前 BYO 安装得到 **503 `wecom_credentials_unverifiable`** 且**一行都不写**（证明控制权是安全不变式：没有探针就不能落凭据）。M7-16 落传输、M7-21 复核该端点转绿。真库用例 `byo_answers_503_while_the_probe_transport_is_not_wired` 同时钉住"503 + 零行" |
+
+### 31.3 `DoD` 逐条证据
+
+| `DoD` | 证据 |
+| --- | --- |
+| **1 门禁 10/10** | `bash scripts/gates.sh --with-db` = **10/10 PASS，478s**（`migrate=0,e2e=0`）。⚠️ 环境注记：本机 `/` 49G 被多个 workdir 的 `target/` 吃到 100% ⇒ 前两轮 ⑥ 是 **ENOSPC/`ld` Bus error 的假红**（不是代码红）；清 `target/` 后用 `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0` 跑出真绿。数据库 = 当轮新建 `mc_lum1780`（角色 `mc_lum1780`，带 `CREATEDB`，门 ⑧ 要它） |
+| **2 ⑦ 读数** | 见 31.4：`implemented 379 → 383`（+4 路由）、`known_gap 74 → 70`、`owners.M7 9 → 5`、`unclaimed 0` / `regression 0` / `local_only 9` / `baseline 458` **都不动**；不变式 `implemented(386) + known_gap(70) == 456` ✓。`--list-gaps` 里 M7 剩的 **5 条全是 lark**（M7-14 的写集）⇒ wecom 面**零缺口** |
+| **3 形态门** | `slash_alias_audit.py --declared …` = `24 declared / dual-form 0 / 0 defect(s)`（exit 0）；`slash_alias_audit.py`（本地实况 469 键）= **0 defect** ⇒ 无 `MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` |
+| **4 门 ⑩** | `file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **不动**。16 个文件里最大 = `tests/db.rs` **609** 行（三次切分都因为这条硬限：installation.rs 881、http tests.rs 1130、binding.rs 805 各拆掉一次） |
+| **5 每条路由 ≥1 用例** | 4 条路由各有"未配置语义"+"未授权 401"两条（`the_unconfigured_semantics_are_per_endpoint` / `every_route_requires_a_session_once_configured`），加真库端到端：`list_and_revoke_work_end_to_end`（list + revoke + 跨工作区 404 + 非管理员 403）、`byo_answers_503_while_the_probe_transport_is_not_wired`（BYO 的 503/400/403 三态）、`redeem_binds_the_session_user` + `the_shared_token_table_is_scoped_to_wecom`（redeem 的 200/410/403/400）。**不用** `health::placeholder`。计数：`cargo test -p mc-channel wecom::` = **31 passed**；`cargo test -p mc-http --lib wecom` = **10 passed + 7 `#[ignore]`**（后者在门 ⑥ 下 **7/7 pass**） |
+| **6 凭据纪律** | ① `PlaintextSecret` / `Installation` / `InstallConfig` / `InstallationParams` / `BindingToken` **全部手写 `Debug`**（`<redacted>`），`RegisterWecomByoRequest` 刻意**不派生** `Debug`；② **本片无一处** `tracing::*` 插值凭据（只有 `errcode` 与稳定码）；③ 反例用例：`the_pasted_secret_is_stored_only_as_ciphertext`（**明文进 `config` 即失败**）+ 真库版 `persist_stores_ciphertext_only_and_the_read_ports_agree`（`config::text` 逐字搜明文）+ `debug_and_error_texts_never_echo_the_secret` + `plaintext_secret_never_prints_itself`；④ 探针白名单只认 `40001` / `40013`，**45009 不得被判成凭据错**（`only_the_two_documented_codes_blame_the_credentials`） |
+| **7 偏离登记** | 本节 31.2（D1…D9），含 D4 那条对 `docs/60` §8 / `router.go` 注释的**口径更正** |
+
+**本片专属验收（描述里那三条）**：
+
+1. **BYO 凭据落库 = `secretbox` 密文，明文不得入库**：adapter 侧
+   `the_pasted_secret_is_stored_only_as_ciphertext`（反例：落库的 `config` 里逐字搜明文）+ 真库侧
+   `persist_stores_ciphertext_only_and_the_read_ports_agree`（`SELECT config::text` 搜明文 + 同一把盒
+   解得回明文 —— 往返闭合）。落库形态逐字对齐上游 `installConfig` 四键（`app_id == bot_id`）。
+2. **5 个部署密钥缺失时的降级**：`the_unconfigured_semantics_are_per_endpoint`（4 条路由各自的未配置
+   语义：list 200 空 + 两个 `false`，其余 403 `wecom_not_configured`）+
+   `only_the_wecom_deployment_key_enables_the_routes`（**只有** `MULTICA_WECOM_SECRET_KEY` 能打开它们：
+   另外四把渠道密钥配了不算数）。"该渠道不装配"的落点在 `apps/mc-server/src/channels.rs`（anchor 写集，
+   本片不动），判据就是 `ChannelKeys::is_configured(ChannelKind::WeCom)`。
+3. **凭据探针（轮换后能连 / 不能连的判别）**：`rotation_is_decided_by_the_ack_code_not_by_local_state`
+   —— 同一个 bot 换密钥：新密钥 ⇒ `Ok`，被轮换掉的那把 ⇒ `Rejected{40001}`，限频 ⇒
+   `Unverifiable{45009}`（**不**落到"你的凭据不对"）。判别的唯一依据是 `WeCom` 自己的 errcode，
+   不是本地缓存。另一条 `transport_failures_are_unverifiable_never_rejected` 钉住"够不着 ⇒ 503 语义"。
+
+### 31.4 ⑦ / ⑨ / ⑩ 读数（片前 / 片后逐字）
+
+```
+# 片前（base 83761edb，本 run 实测）         # 片后（同一棵树 + 本片）
+local 465 | baseline 458                    local 469 | baseline 458（**不动**）
+implemented 379 real + 3 ph = 382 / 456     implemented 383 real + 3 ph = 386 / 456
+known_gap 74 | owners.M7 9                  known_gap 70 | owners.M7 5
+unclaimed 0 | regression 0 | local_only 9   unclaimed 0 | regression 0 | local_only 9
+```
+
+* **⑦ 的四个变化都在预期内**：+4（4 条路由）、`known_gap −4`、`owners.M7 −4`；其余五项逐字不变。
+  M7 剩的 5 条全是 lark（见 31.3 第 2 条）。
+* **⑨（契约等价）逐字不变**：`cargo run -q -p mc-conformance -- --no-db --check
+  crates/mc-conformance/report.json` ⇒ `report matches`（exit 0）。当轮把 365 条 fixture 全量扫过：
+  **路径含 `wecom` 的 0 条** ⇒ 挂 4 条路由**不该**动快照一格 —— 这是「挂新路由 ⇒ 必须刷快照」是
+  **假命题**的第二组对照（第一组 = M7-9 dingtalk 7 路由，`docs/37` §112.4）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` 未改。
+* **本片不刷任何快照**：⑦ 基线（`docs/fixtures/route-parity-baseline.json`）与 ⑨ 报告都归 **M7-21**。
+
+### 31.5 合并期复核（当轮实做：合并 `origin/feat/multica-rs-initial` = `8104740d`）
+
+* **文件交集**：新 base 只多了 `crates/mc-channel/src/lark/**`（M7-11 = PR #104）与 `docs/32` §28 /
+  `docs/37` §116 ⇒ 与本片写集**逐字交集 = ∅**（唯一的同名文件是 `docs/32`，按 31.4 前的号段说明
+  两节都留）。
+* **合并树上重跑 ⑦ / ⑨ / ⑩**：`local 469 | implemented 383 real + 3 ph = 386 | known_gap 70 |
+  owners.M7 5 | unclaimed 0 | regression 0 | local_only 9 | baseline 458` —— 与 **31.4 的片后读数逐字相同**
+  （M7-11 是 0 路由片，不该动任何一个数）；⑨ `report matches`；⑩ exit 0；形态门 0 defect。
+* **合并树 `bash scripts/gates.sh --with-db` = 10/10 PASS，266s**（`migrate=0,e2e=0`）。
+  ⚠️ **同树红绿交替的一次实测**（对本波"门 ⑥ 的红判据"有用）：本片合并树的第一轮跑出 **9/10**，
+  红的只有 ⑥，且红点是 `mc-scheduler/tests/jobs_issue_wakeup.rs:312`
+  （`real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops`：断言 `Success` 拿到 `Running`）——
+  与本片**零交集**（本片 diff 只在 `crates/mc-channel/src/wecom/**` 与
+  `crates/mc-http/src/routes/channels/wecom*`）。该用例**单跑 3/3 绿**（0.34s / 0.14s / 0.19s），
+  同树第二轮全量 **10/10 绿** ⇒ 判为**既有 flake**，不是本片引入的红（第 6 条同族证据，
+  与 `docs/37` §116 的「同一代码树绿红交替」判据同一形态）。
+* **本片不刷任何快照**：⑦ 基线（`route-parity-baseline.json`）、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
