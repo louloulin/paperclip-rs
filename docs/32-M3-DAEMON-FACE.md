@@ -2347,3 +2347,162 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:54
    `webhook.rs` + `webhook/{installations,mirror,ci}.rs`（`channels/slack.rs` 的同款手法）。
    新增事件族请**新开子模块**，不要把 `webhook.rs` 顶回 800 行以上（它现在 232 行，入口与
    装配是它唯一的职责）。
+
+---
+
+## 21. M8-5（`LUM-1802`）：ghsnapshot 快照管道（0 路由）
+
+> **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
+> `## 11.` 是 M8-0）。**起手**实测最大 = `## 20.`（M8-4）⇒ 本片取 **`## 21.`**
+> （`LUM-1773`/M7-8 同轮在飞；若它先落 `21.` 则由后合者让号平移，D 编号与内容不动 ——
+> 与 M8-4 让号同一手法）。
+>
+> 本片**0 路由**（它服务的读面是 M8-4 的 `GET /api/issues/{id}/pull-requests`）⇒ ⑦ 读数
+> 交付前后**逐字不变**。
+
+### 21.1 落点（写集逐字 + 按门 ⑩ 拆出的子文件）
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `crates/mc-vcs-github/src/ghsnapshot/snapshot.rs` | 477 | 原地上填：`PR_SNAPSHOT_QUERY`（上游 `snapshot.go:27` 逐字）+ `PrSnapshot` / `SnapshotCheck` + `decided()`（三态）+ `parse_pr_snapshot{,_page}` + `fetch_pr_snapshot`（游标分页 + 三道守卫）+ `normalize_node` / `normalize_run_status` / `normalize_status_state` |
+| `crates/mc-vcs-github/src/ghsnapshot/snapshot/tests.rs` | 282 | **新文件**（`mod tests;`）：纯函数用例 9 条（含 `Decided` 六例、`null` rollup、映射表逐条、`normalizeNode` 两形态） |
+| `crates/mc-vcs-github/src/ghsnapshot/refresh.rs` | 762 | 原地上填：`Address` / `Job` / `State` / `Inner` / `Manager`（worker 池 + 单地址串行 + 三道退避 + TTL sweep + 停机）+ 时钟/抖动/定时器/抓取器缝 |
+| `crates/mc-vcs-github/src/ghsnapshot/refresh/ports.rs` | 300 | **新文件**（`mod ports;` + `pub use`）：`SnapshotStore` / `StoreError` / `ResolvedTarget` / `PrRowRef` / `Timer` / `TokioTimer` / `SnapshotFetcher` / `HttpSnapshotFetcher` / `Tuning` / `ManagerOptions`（**契约面**，见 21.1 的拆分理由） |
+| `crates/mc-vcs-github/src/ghsnapshot/refresh/tests.rs` | 608 | **新文件**（`mod tests;`）：管道用例 15 条（去重/单地址串行/并发上限/三级退避/退避序列/sweep/停机/端口） |
+| `crates/mc-vcs-github/src/ghsnapshot/refresh/tests/wire.rs` | 360 | **新文件**（`mod wire;`）：**离线 GraphQL 替身**上的 7 条（分页到完 / 三道守卫 / null rollup / `Retry-After` / 出站逐字段 / 端到端） |
+| `crates/mc-vcs-github/src/ghsnapshot/refresh/test_support.rs` | 762 | **新文件**（`mod test_support;`）：**手写 HTTP/1.1 替身**（`TcpListener`）+ `FixedStore` + `RecordingTimer` + 三种抓取器替身 + 假时钟 |
+| `crates/mc-vcs-github/src/port.rs` | 207（+42） | `impl PrRefreshPort for Manager`（anchor 指定的落点）+ 三条语义注记 |
+| `apps/mc-server/src/integrations.rs` | 463 | 原地上填：装配（`start` / `start_with`）+ `McSnapshotStore`（**直连 SQL 四段**，逐字对照 `pkg/db/queries/github_snapshot.sql`）+ 停机（收 worker + 关池） |
+| `apps/mc-server/src/integrations/tests.rs` | 490 | **新文件**（`mod tests;`）：装配判据 4 条（零数据库）+ **真库 7 条**（守卫/批替换/null rollup/扇出/解析/sweep 筛法/sweep 游标） |
+
+**零编辑（anchor 冻结，逐条实测未动）**：`crates/mc-vcs-github/Cargo.toml`、`apps/mc-server/Cargo.toml`、
+`apps/mc-server/src/main.rs`、`Cargo.lock`、`crates/mc-http/src/state*.rs`、`routes/{mod,mount}.rs`、
+`ghsnapshot/{mod.rs,client.rs}`、`mc-repos/src/github/**`、`docs/61-M8-PLAN.md`、`docs/fixtures/**`、
+`scripts/file_size_baseline.tsv`、`docs/fixtures/route-parity-baseline.json`。
+**只读面零触碰**：`mc-http` 的 webhook/issue_pr（本片只**调用**它的 `set_pr_refresh_port` 端口注入槽）。
+
+#### 21.1.1 为什么新增 6 个文件（门 ⑩ 的 800 行线逼出的三处切分）
+
+**判据**：门 ⑩ 是硬线（800 行/文件），而本片的上游体量是 **852 行 Go**（`snapshot.go` 290 +
+`refresh.go` 562），加上本仓密度更高的文档与用例，单文件必然越线。三处按**职责**切，全部沿用
+M8-4 的既有手法（§20.1 的 `webhook.rs` → `webhook/*.rs`）：
+
+1. `snapshot.rs` 一度 **717 行**（用例与实现同文件）⇒ 用例移到 `snapshot/tests.rs`（9 条纯函数），
+   实现留在 `snapshot.rs`；跑真 wire 的那几条**不放这里**（替身只写一份，见第 3 条）。
+2. `refresh.rs` 一度 **1040 行** ⇒ 按「**契约面 vs 实现面**」切：`refresh/ports.rs` 放端口
+   （trait）+ 形状类型 + 调参 + 注入缝，`refresh.rs` 放 worker 池 / 限流 / 退避 / 停机。
+   对外路径**逐字不变**（`refresh.rs` 里 `pub use ports::{…}` 把 12 个名字重导一遍）。
+3. `refresh/tests.rs` 一度 **888 行** ⇒ 真 wire 的 7 条移到 `refresh/tests/wire.rs`
+   （替身道具住在 `test_support.rs`，两处共用一份）。
+
+**新增文件全部由**自己父模块的 `mod` 声明**引入**（`refresh.rs` 声明 `mod ports;` /
+`mod test_support;` / `mod tests;`，`tests.rs` 声明 `mod wire;`）—— **没有**碰任何 anchor 冻结的
+`mod.rs`（`ghsnapshot/mod.rs` 的 `pub mod refresh;` 与 `pub use refresh::Manager;` 一字未动）。
+
+#### 21.1.2 一处**签名修订**（D1 的落点）
+
+anchor 的 `ghsnapshot/mod.rs` 逐字 `pub use snapshot::parse_pr_snapshot;` —— 这个名字**保留**，
+但它的签名从 `(&Value) -> Result<PullRequestSnapshot, GithubError>` 改成
+`(&Value) -> Result<PrSnapshot, GithubError>`（理由见 D1）。`Parser` 名字没变 ⇒ 冻结文件不需要动。
+
+### 21.2 偏离登记（M8-5-D1 … M8-5-D9）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **D1** | `parse_pr_snapshot` 的**返回类型**从领域类型 `mc_core::github::PullRequestSnapshot` 改成上游同形的 `PrSnapshot` | `snapshot.rs` | anchor 那个签名**无法实现**：领域类型要求 `workspace_id` / `repo_owner` / `repo_name` / `pr_number` / `fetched_at`，这五项**都不在 GraphQL 载荷里**；而迁移 `222` 要写的 `api_mergeable` / `api_merge_state_status` / `checks_rollup_state` 它也不携带。锚点期该函数**零调用方**（`grep -rn parse_pr_snapshot` 实测只有桩与 `pub use` 两处）⇒ 无消费者受影响。**名字与 `pub use` 逐字不变** |
+| **D2** | 上游 `Enqueue(installationID, owner, repo, number)` 的定位键是**地址**；本仓端口（anchor 冻结形状）的定位键是 `(workspace_id, owner, repo, number)` ⇒ `installation_id` 只能在 **worker 里**从 PR 行解析（一次索引查询） | `refresh.rs` / `port.rs` | 端口不含 installation id，而 `enqueue` 不得阻塞 ACK 路径（上游「入队与执行分离」）。**执行侧的单地址串行与上游逐字相同**（`active` / `in_flight` / `trailing` 三个集合都按地址键控，`attempts` / `rate_until` 同理）。代价：同一地址的**重复请求**会各做一次解析查询（去重只保证「解析 + 抓取」一次）。M8-4 的 D4 已把「每个绑定各入队一次」登记为同一处口径 |
+| **D3** | 页面访问的 **view TTL 判定**（上游由 handler 传入 `fetchedAt` / `hasFetched`）挪到解析阶段做 | `refresh.rs::resolve_job` | 端口形状不带这两个字段（M8-4 的 `issue_pr.rs` 只传 `PrRefreshRequest`），而 passage「TTL 内不抓」的语义必须保留 ⇒ 解析时顺带读一次 `snapshot_fetched_at`（同一个解析查询的第三列）。副产物：`maybe_enqueue_on_view` 的返回值语义收窄为「**受理入队**」（上游是「现在真去抓」），已在 `port.rs` 的 impl 上逐字注明 |
+| **D4** | `Manager::start` 改**同步**（anchor 桩写的是 `async fn start`）；`Manager::new` 多一个 `store` 实参 | `refresh.rs` | `start` 只 spawn worker + sweeper，**没有可 `await` 的东西**；而 anchor **冻结**的 `apps/mc-server/src/integrations.rs::start(keys)` 是同步函数（`main.rs` 的注释逐字「接线后这里换成真调用，**签名不变**」）⇒ 异步的 `start` 在同步装配点里只能再 spawn 一层，把启动错误变成不可见的日志。`store` 实参是宿主注入点（见 D7） |
+| **D5** | 宿主**自建一个懒拨号的连接池**（`Config::from_env().database.url` + `Db::connect_lazy`，上限 8、`min_connections = 0`，停机时 `close()`） | `apps/mc-server/src/integrations.rs` | 冻结的 `integrations::start(keys)` 拿不到 `main.rs` 的 `Db`，而 `main.rs` 是本片的**只读**文件。三条出路里选了「自建小池」而不是「不装配存储（登记成缺口）」：后者会让「配了密钥但快照永远不落库」变成静默失效。生产路径上配置已被 `main` 解析成功过 ⇒ 这里必然拿得到同一个 URL。**代价**：多一个（空闲时零 TCP 的）池。**建议 M8-7**：在 `main.rs` 里把 `&db` 传进来（一行），删掉本池与该常量 |
+| **D6** | `pull_request:updated` 广播**不接线**（`ManagerOptions::on_applied` 缝留出，默认 `None`） | `refresh.rs` / `integrations.rs` | 上游 `Manager.onApplied` 让「快照真的写进去了」广播一条事件；宿主同样拿不到 `realtime` 句柄（与 D5 同一处约束）。**可见后果**：页面访问触发的刷新写进库了，但客户端不会收到推送（下次打开卡片才看到新值）。这是**登记过的缺口**，不是遗漏；接线点是一行（`with_options` 的 `on_applied`） |
+| **D7** | 存储端口的**生产实现落在 `apps/mc-server`**（直连 SQL），不在 `mc-repos` | `apps/mc-server/src/integrations.rs` | `mc-vcs-github` 的依赖边被 anchor 冻结（`Cargo.toml` 逐字「此后 M8-1/4/5 的写者不得再新增三方依赖」）⇒ 它没有 `sqlx` / `mc-db`；而 `mc-repos/src/github/{pull_request,check_suite}.rs` 属 M8-1/M8-4、`mc-repos/src/github/mod.rs` 是 anchor 冻结 ⇒ 四段 SQL 只能落宿主。**这正是 M5-9 的既有手法**（`scheduler/*_port.rs` 三个生产端口同样是「在本 crate 里直打 SQL」，理由逐字相同）。**建议 M8-7**：若要归位，统一挪进 `mc-repos` 并同步改 §3.3 的写集表 |
+| **D8** | `aggregateChecksConclusion` **不在本片重复实现** | —（已在 `routes/github/issue_pr.rs`） | `docs/61` §6.5 的 M8-5 行点名「`normalizeRunStatus` / `normalizeStatusState` / `aggregateChecksConclusion` 的映射表逐条对照上游」：前两条是本片的（`snapshot.rs`，各有用例），第三条是 `handler/github.go:299` 的**计数 → 粗粒度结论**映射，M8-1/M8-4 已经落成 `routes/github/issue_pr.rs` 的 `rollup_to_conclusion` / `aggregate_checks_conclusion`（同一文件还有卡片的三态派生）⇒ 按 §2.3 的「不得重复实现」纪律**不搬第二份**。本片只把**逐 check 行**写进库（`github_pull_request_check_run`），聚合留给读面 |
+| **D9** | 新增 6 个文件（3 个测试文件 + `ports.rs` + `tests/wire.rs` + `snapshot/tests.rs`） | 见 21.1 | 门 ⑩ 的硬线逼出的切分（21.1.1 的三条判据）；全部由自家父模块声明，不碰任何冻结 `mod.rs`。与 M8-4 的 `webhook/{installations,mirror,ci}.rs` 同款 |
+
+### 21.3 专属 `DoD` 逐条证据（`docs/61` §6.5 的 M8-5 行）
+
+| `DoD` 条目 | 证据 |
+| --- | --- |
+| **离线 GraphQL 替身**（`docs/61` §4.2 的名点：本地服务端答 `statusCheckRollup`） | `refresh/test_support.rs` 的 `HttpDouble` 是一台**真的 HTTP/1.1 服务端**（手写在 `TcpListener` 上：本 crate 加不了测试用 web 框架，依赖边冻结）；`github_double` 只替**平台 wire** 的两个端点（`/app/installations/{id}/access_tokens` 回 201 真形状 token、`/graphql` 由用例决定），其余 404。断言链 = 真 `reqwest` → 真 App JWT 签名 → 真 token 交换 → **真分页循环** → 归一化。7 条 wire 用例见 `refresh/tests/wire.rs` |
+| **替身纪律之二：出站请求逐字段** | `offline_double_asserts_outbound_headers_and_query_body`：`POST /app/installations/7/access_tokens` 路径逐字 + `Authorization: Bearer <app jwt>` + 体 `{"permissions":{"metadata":"read"}}`；`POST /graphql` 的 `accept` / `x-github-api-version` / `content-type` / `Authorization: Bearer ghs_installation_token`（**必须用换来的 token**）+ 查询文本含 `statusCheckRollup` 与 `contexts(first:100,after:$cursor)` + 四个变量 + **首页游标必须是 `null`**（上游逐字） |
+| **`PRSnapshot::Decided` 的三态**（在跑 / 已决 / 无检查） | `snapshot/tests.rs::decided_mapping_table_matches_upstream` 六例逐条（上游 `TestSnapshotDecided` 逐字：clean passed / conflicting / mergeable unknown / rollup pending / running context / **no checks but mergeable = 已决**）+ `null_rollup_means_no_checks_and_never_passed`（验收判据 5：`null` **绝不**当作通过） |
+| **`normalizeRunStatus` / `normalizeStatusState` 映射表逐条** | `normalize_run_status_table`（`COMPLETED` / `IN_PROGRESS` / 四种「还在跑」兜底）、`normalize_status_state_table`（五值，含 `EXPECTED` 与未知同判）、`normalize_node_flattens_both_union_members`（两形态 + 未知 `__typename` 与非对象节点被跳过 + `conclusion: null` ⇒ `None`）。（第三条 `aggregateChecksConclusion` 见 D8） |
+| **分页到完（验收判据 2）+ 三道守卫** | wire：`graphql_double_paginates_contexts_to_completion`（跨两页 4 条 context，含 `StatusContext` 折成同一形状）；`graphql_double_rejects_head_change_during_pagination`（第 2 次就发现不一致、不做第三次）；`graphql_double_rejects_pagination_beyond_the_page_limit`（病态游标被 `MAX_SNAPSHOT_CONTEXT_PAGES` 截断，调用次数逐字相等）；纯函数侧还有 `rollup_only_reads_the_first_commit_node`（上游 `Nodes[0]`）与 `malformed_payloads_are_rejected_without_echoing_body`（**不回显**载荷） |
+| **限流三级：`RateLimitError` ⇒ `rate_limit_pause` / `defer_active` / `schedule_retry`** | ① `rate_limited_fetch_records_installation_pause_without_direct_retry`（只记 installation 级截止、**零**定时器 ⇒ 不建无界重试环，交回 TTL sweep）；② `rate_limited_installation_does_not_occupy_workers`（concurrency=2 的池被暂停租户的两件占满时，另一租户照样被抓；两件都交给定时器，延迟逐字 `3600s`）；③ `extend_rate_limit_never_shortens_and_is_installation_scoped`（只延不缩 + 按 installation 隔离 + 过期自动清账）；④ wire 侧 `graphql_double_surfaces_secondary_rate_limit_with_retry_after`（`403` + `retry-after: 90` ⇒ `RateLimited{90}`） |
+| **退避时间序列可测（注入 `Now`，不许 sleep 真实时间）** | `RecordingTimer` 捕获延迟序列并手动触发；`chase_backoff_sequence_is_bounded` 断言 `30s → 60s → 120s → 300s → 300s`（用尽后停末项）且到 `max_chase_attempts = 5` **不再排**；假时钟 `FakeClock` 推进 120s 验证限流截止自动清账。全用例零真实等待 |
+| **worker 池并发上限** | `worker_pool_caps_concurrency`（concurrency=2、5 个地址、抓取器观测同时在飞数）：`max_live <= 2` 且 `>= 2`（两个 worker 真的并行） |
+| **单地址串行（同一 `(installation, owner, repo, number)` 不得并发刷新）** | `same_address_is_fetched_serially_with_one_trailing_replay`（闸门抓取器制造确定性时序）：在飞期间入队 ⇒ 只留 **trailing** 边、`max_live == 1`、回放**恰好一次**（`calls == 2`）；`enqueue_address_coalesces_and_marks_active` 与 `enqueue_coalesces_identical_requests` 钉住入队去重 |
+| **TTL sweep（单地址串行 + 游标）** | 零数据库侧 `sweep_once_enqueues_stale_addresses_and_advances_the_cursor`（陈旧阈值 = `now - sweep_ttl`、首批零值游标、一轮有界 200、游标前进到上一批末地址）+ `sweep_failure_is_survivable`；**真库侧** `sweep_excludes_fresh_decided_and_closed_rows`（六行夹具逐条：新鲜 / 已决 / rollup 在跑 / 另一 installation 未抓过 / 已合并 / 有未完成 check_run）与 `sweep_cursor_rotates_and_is_bounded`（`max_rows=1` 截断 + 游标之后的行排前、其余回绕） |
+| **停机链（N 秒内 worker 退出）** | `shutdown_stops_workers_within_the_grace_window`：`concurrency=2` 起 worker 后 `shutdown()` 在 500ms 宽限期内返回（实测毫秒级）、worker 句柄已全部收口、之后不再抓取、`active` 记账清零、第二次 `shutdown` 立刻返回（幂等）；`enqueue_after_shutdown_is_a_no_op` 钉住「停机后入队是 no-op」。`main.rs` 的顺序（先渠道 → **再 PR 刷新** → 再调度器 → 最后 actor）一行未动（anchor 已排好） |
+| **真库写面（本片的新代码是 `github_pull_request_check_run` 的唯一写者）** | 7 条真库用例（`apps/mc-server/src/integrations/tests.rs`，`#[ignore]`、门 ⑥ 会跑）：head-SHA 守卫的**写成功**与**作废**两半、批次替换（2 行 → 1 行）、`null` rollup ⇒ `checks_rollup_state` 为 `NULL` 且零行、跨 workspace 扇出、`resolve_installation`（含 `None` ⇒ 不是错误）、sweep 两态 |
+| **未配置 / 诚实退化（上游验收判据 4）** | `disabled_manager_is_inert`（缺 App 私钥 ⇒ `enabled()==false`、`start` 不起 worker、`enqueue*` 是 no-op、不 panic）+ `apps/mc-server` 的三条装配判据（无凭据不装配 / 有凭据无库 URL 明说未接线 / 有凭据+URL 真接线且停机干净） |
+| **凭据纪律** | 本片**不新增**任何凭据类型（App 私钥/token 在 M8-1 的 `app.rs` / `token_cache.rs`）。两处自查：`db_error` **只**转发 `sqlx` 的原因（不回显 URL 与参数）、`integrations.rs` 的错误日志**不**插值 URL；`Manager` 的 `Debug` 只 expose 「配没配 + 并发数 + started」；抓取失败日志只打 `owner/repo/number/error`（`GithubError` 本就只带原因名与状态码） |
+| ⑦：**0 路由 ⇒ 交付前后逐字不变** | 见 21.4（与「起手补充（rev 3）」的钉死值逐字相等） |
+| ⑩：新文件 ≤ 800 行 | 见 21.4 与 21.1.1（三处切分就是为了它）；`scripts/file_size_baseline.tsv` **未动** |
+
+### 21.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-5*.log`）
+
+```
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1802:…@127.0.0.1:5432/multica_lum1802'
+  ①fmt 0(2s) · ②build 0(3s) · ③clippy 0(1s) · ④clippy-test-util 0(1s) · ⑤test 0(41s)
+  ⑥db 0(57s；migrate=0, e2e=0) · ⑧schema-drift 0(29s) · ⑦route-parity 0 · ⑨conformance 0(6s) · ⑩file-size 0
+  ⇒ overall: PASS — 10/10 gate(s) green in 140s
+```
+
+⚠️ **首跑是 9/10**（`gates-m8-5.log`，450s）：③ 红在两条真库用例的 `too_many_lines`
+（102 / 112 行，`apps/mc-server/src/integrations/tests.rs`）—— 按「夹具 + 两条用例」拆开
+（判据见 §21.4 的 lesson）后**整套重跑 = 上表的 10/10 / 140s**。⑥ 的明细：
+`mc-server` 的 `--ignored` 目标 `10 passed; 6 filtered out`（本片 **7** 例 + M5-9 的 **3** 例，
+逐条 ok 见日志）。
+
+- ⑦（**本片不动读数**；`baseline 406` **不动**）：`upstream 456 (commit f41fae6b08fb) |
+  local 453 registered`、`implemented 367 real + 3 placeholder = 370 / 456`、`known_gap 86`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`gaps by owner: M9=33 M3+=16 M7=16 M3=11
+  M10=5 **M8=5**`（和 = 86 ✓）—— 与「起手补充（rev 3）」的钉死值**逐字相等**（0 路由）。
+  `--write-baseline` **未跑**（唯一一次刷新归 M8-7 `LUM-1804`）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py` = `0 defect(s)`、exit 0（本片 0 新注册键）。
+- ⑩：**0 违规**，`scripts/file_size_baseline.tsv` **未动**。本片最大文件在 `cargo fmt --all`
+  **之后**量：`refresh.rs` 762、`test_support.rs` 762、`tests.rs` 608、`integrations/tests.rs` 490、
+  `snapshot.rs` 477、`integrations.rs` 463、`tests/wire.rs` 360、`ports.rs` 300、`snapshot/tests.rs` 282。
+  ⚠️ 门 ⑩ 走 `git ls-files` ⇒ 新文件**先 `git add`**（§20.4 的同一条实测坑）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片 **0 fixture 改动** ⇒ 未漂移）。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表结构改动 ⇒ 与基线同形）。
+- ⑥：`mc-migrate` 566 个迁移 + `--ignored` 全绿，含本片 **7** 例真库用例
+  （`mc-server`：守卫写/作废、批次替换、null rollup、扇出、解析、sweep 筛法/游标 —— 逐条 ok）。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿。本片新增 **31** 条零 DB 单测
+  （`mc-vcs-github`：`snapshot` 9 + `refresh` 15 + `refresh::wire` 7）+ `mc-server` 的 **4** 条装配判据
+  ⇒ 连同真库 **7** 例，本片共 **42** 例新测试（`mc-vcs-github` 的 lib 用例从 63 → **94 passed**
+  / 0 failed，日志第 3315 行；`mc-server` 的零 DB 目标从 12 → **16**，其中本片 4 条）。
+- **[lesson·门 ⑩ 的 800 行线对「上游 852 行 + 本仓文档密度」是**必然**触发，不是意外]** 本片三处
+  越线（1040 / 888 / 717）在**写之前**就由体量判死 ⇒ 正确做法是**先按职责规划文件切分**，而不是
+  写完再拆。切分轴取「契约面（trait + 形状 + 调参）vs 实现面（worker/限流/退避/停机）」与
+  「纯函数用例 vs 真 wire 用例」——两者都让**读的人先看到契约**。
+- **[lesson·`cargo clippy -p <crate>` 与门 ③ 的 `--workspace` 不等价]** 本片首跑 9/10，红在 ③ 的
+  **`too_many_lines`**（两条真库用例 102/112 行）—— 而单 crate 的 `cargo clippy -p mc-server` 当时
+  报绿（增量指纹把它跳过了）。**判据**：交付前**必须**跑 `--workspace`（或直接 `gates.sh`），
+  单 crate 的绿不能当选票。
+- **[lesson·`#[async_trait]` 的宏再导出]** 端口定义方（`mc-vcs-github`）有 `async-trait` 依赖边，
+  而宿主（`apps/mc-server`）的 manifest 冻结 ⇒ 由定义方 `pub use async_trait::async_trait;`
+  带出宏，实现方 `use mc_vcs_github::ghsnapshot::refresh::async_trait;` 即可（不必为测试加依赖边）。
+  注意：同一模块里**不要**再写一行私有的 `use async_trait::async_trait;`（两者会撞名）。
+- **[lesson·`Db::connect_lazy` 是同步的，可以放进同步装配点]** D5 的自建池之所以能成立，全靠
+  `mc_db::Db::connect_lazy(url, max, min) -> Result<Db>` **不拨号**：装配点（同步）只构造池，
+  真正的连接发生在 worker 的第一次查询。（`Db::connect` 是 async ⇒ 那条路会反过来逼 `main.rs` 改签名。）
+
+### 21.5 交接（给 M8-6 / M8-7 / 未来碰这条路的切片）
+
+1. **M8-7（INT）** 请收口四件事：① **D5** —— 决定是否把 `&db` 从 `main.rs` 传进来（一行），
+   删掉本宿主的自建池；② **D6** —— 决定是否在 `main.rs` 里把 `realtime` 句柄交给
+   `ManagerOptions::on_applied`（一行，之后页面访问触发的刷新才有推送）；③ **D7** —— 决定四条
+   SQL 是否归位到 `mc-repos`（要同时改 §3.3 的写集表）；④ 缺口清单：`github_pending_check_suite`
+   仍无归属（M8-4 的 D7）、`mc-repos/src/github/{check_suite,pending}.rs` 与 `ghsnapshot/refresh.rs`
+   里仍有「M8-5 待落地」类的**文案债**（anchor 冻结文件，本片不得改）。
+2. **M8-6（composio）**：与本片**零文件交集**（本片写 `ghsnapshot/**` + `port.rs` 的 impl +
+   `apps/mc-server/src/integrations.rs`）。若 M8-6 也要在 `apps/mc-server` 起后台宿主，请**新开文件**
+   （`src/composio.rs`），别往 `integrations.rs` 上加 —— 那里已经是「GitHub 快照宿主」的单一职责。
+3. **未来任何碰 `ghsnapshot/**` 的切片**：`refresh.rs` 是 762 行、`test_support.rs` 也是 762 行
+   （都离 800 很近）⇒ 新增用例请按现有轴分流（纯函数 → `snapshot/tests.rs`；管道 → `refresh/tests.rs`；
+   真 wire → `refresh/tests/wire.rs`），**不要**把任一个顶回越线。
+4. **未来任何改 `routes/github/webhook.rs` 的切片**：本片只**调用**它的
+   `set_pr_refresh_port`（进程级注入槽，按请求读 ⇒ `main.rs` 先建 router、后起宿主也生效）。
+   若要把端口正式挂到 `AppState`（M8-4 的 D2 建议），那是**一次 anchor 级改动**，请与 D5/D6 一起做。

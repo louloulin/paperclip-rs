@@ -58,6 +58,34 @@ pub trait PrRefreshPort: Send + Sync {
 /// 供装配点使用的共享端口别名。
 pub type SharedPrRefresh = Arc<dyn PrRefreshPort>;
 
+/// M8-5（`LUM-1802`）：[`crate::ghsnapshot::refresh::Manager`] 的端口实现 —— **anchor 指定
+/// 的落点**（`docs/32` §21.1）。
+///
+/// # 三条语义（与上游 `Manager.Enqueue` / `MaybeEnqueueOnView` 的对应）
+///
+/// 1. **不阻塞 ACK 路径**：两个方法都只做「纯内存记账 + `try_send`」，真 GraphQL 调用在 worker 里；
+///    队列满 ⇒ 丢弃（留给 TTL sweep / 下一次事件兜底），**绝不在请求路径上摸数据库**。
+/// 2. **去重键 = 端口请求键**：上游的定位键是 `(installation, owner, repo, number)`，而本仓
+///    端口形状（anchor 冻结）带的是 `(workspace_id, owner, repo, number)` ⇒ 入队去重按后者、
+///    **执行侧的 `installation` 地址串行**按前者（worker 里解析一次，见
+///    `ghsnapshot::refresh` 的偏离 D2）。M8-4 的 `webhook/mirror.rs` 已把「每个绑定各入队一次」
+///    登记为 D4（同一条语义）。
+/// 3. **`maybe_enqueue_on_view` 的返回值 = 「受理入队」**，不是「一定会抓」：view TTL
+///    （上游由 handler 传入 `fetchedAt`/`hasFetched`）在解析阶段判（偏离 D3）。
+impl PrRefreshPort for crate::ghsnapshot::refresh::Manager {
+    fn enabled(&self) -> bool {
+        crate::ghsnapshot::refresh::Manager::enabled(self)
+    }
+
+    fn enqueue(&self, request: PrRefreshRequest) {
+        let _ = crate::ghsnapshot::refresh::Manager::enqueue_request(self, &request);
+    }
+
+    fn maybe_enqueue_on_view(&self, request: PrRefreshRequest) -> bool {
+        crate::ghsnapshot::refresh::Manager::maybe_enqueue_request_on_view(self, &request)
+    }
+}
+
 /// 「未配置」的空实现：`enabled() == false`、入队是 no-op、页面访问返回 `false`。
 ///
 /// 用途有两个（`docs/61` §6.5 的 M8-0 专属 `DoD` 点名要它）：① 部署没有 App 私钥时的
