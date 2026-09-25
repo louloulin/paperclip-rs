@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use super::*;
-use crate::telegram::api::{ApiResult, SendMessage, WebhookInfo};
+use crate::telegram::api::{ApiResult, EditMessageText, SendMessage, WebhookInfo};
 use crate::telegram::config::{decode_credentials, Decrypter};
 use crate::telegram::inbound::{Message, Update, User};
 
@@ -93,6 +93,17 @@ impl TelegramApi for FakeApi {
     async fn send_message(&self, _bot_token: &str, _params: &SendMessage) -> ApiResult<Message> {
         Err(ApiError::Malformed {
             method: "sendMessage",
+        })
+    }
+
+    /// M7-6 补的端口方法：安装校验路径**不调用**它（本替身也就不用记它）。
+    async fn edit_message_text(
+        &self,
+        _bot_token: &str,
+        _params: &EditMessageText,
+    ) -> ApiResult<()> {
+        Err(ApiError::Malformed {
+            method: "editMessageText",
         })
     }
 

@@ -16,7 +16,7 @@ use crate::engine::{
     AppendParams, AppendResult, BindMediaParams, BindMediaResult, EnsureSessionParams, Router,
     RouterConfig, StartSessionParams, StartSessionResult,
 };
-use crate::telegram::api::{ApiError, ApiResult, SendMessage};
+use crate::telegram::api::{ApiError, ApiResult, EditMessageText, SendMessage};
 use crate::telegram::inbound::{inbound_from_update, Chat, Message, RawEvent, Update, User};
 
 // ---------------------------------------------------------------------------
@@ -297,6 +297,17 @@ impl TelegramApi for StubApi {
             method: "sendMessage",
         })
     }
+    /// M7-6 补的端口方法：打字指示器路径不编辑消息。
+    async fn edit_message_text(
+        &self,
+        _bot_token: &str,
+        _params: &EditMessageText,
+    ) -> ApiResult<()> {
+        Err(ApiError::Malformed {
+            method: "editMessageText",
+        })
+    }
+
     async fn send_chat_action(
         &self,
         _bot_token: &str,

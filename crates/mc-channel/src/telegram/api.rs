@@ -8,10 +8,11 @@
 //!   ⇒ 依赖方向只能是"M7-5 落传输、M7-6 在同一文件里补出站流式那一半"（与 M7-3 先落
 //!   `slack/socket.rs`、M7-4 再接线 `send` 是同一条先例）。anchor 的 `mc-channel/Cargo.toml`
 //!   注释里也已经把出站 HTTP 的点名写成 "telegram `api.rs`"。
-//! - **交给 M7-6 的缺口（逐条）**：`editMessageText`（流式编辑）、`sendMessage` 的
-//!   `parse_mode=HTML` 形态与分片、429 的"一次重试"包装（上游 `sendMessageWithRetryAfter`）、
-//!   以及 `sender.rs` 的 UTF-16 分片。本文件**已经把** [`TelegramApi::retry_after`] 与
-//!   `parse_mode` 字段摆好，M7-6 加方法即可。
+//! - **交给 M7-6 的缺口（逐条，**已由 `LUM-1771` 补齐**）**：`editMessageText`（流式编辑）、
+//!   `sendMessage` 的 `parse_mode=HTML` 形态与分片、429 的"一次重试"包装
+//!   （[`send_message_with_retry_after`]，上游 `sendMessageWithRetryAfter`）、以及 `sender.rs`
+//!   的 UTF-16 分片。本文件**已经把** [`TelegramApi::retry_after`] 与 `parse_mode` 字段摆好，
+//!   M7-6 只**加方法**，没有改任何既有方法的 wire 形态。
 //!
 //! # 端口为什么是**一个**五方法 trait
 //!
@@ -243,6 +244,40 @@ impl SendMessage {
     }
 }
 
+/// `editMessageText` 的入参（上游 `editMessageTextParams`）。
+///
+/// 这是**流式输出**的原语：Telegram 没有 stream-update 协议，"流式"= 先发一条占位消息，
+/// 再按节流节奏反复替换它的正文。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditMessageText {
+    pub chat_id: i64,
+    /// 要替换的那条消息的 platform message id。
+    pub message_id: i64,
+    pub text: String,
+    /// `"HTML"` / `"MarkdownV2"`；空 = 纯文本。
+    pub parse_mode: String,
+}
+
+impl EditMessageText {
+    /// 纯文本替换。
+    #[must_use]
+    pub fn text(chat_id: i64, message_id: i64, text: impl Into<String>) -> Self {
+        Self {
+            chat_id,
+            message_id,
+            text: text.into(),
+            parse_mode: String::new(),
+        }
+    }
+
+    /// 走 HTML parse mode（出站流式那条路径用的形态）。
+    #[must_use]
+    pub fn html(mut self) -> Self {
+        self.parse_mode = "HTML".to_string();
+        self
+    }
+}
+
 /// Telegram Bot API 的**端口**（上游 `botAPI` 的五个方法）。
 ///
 /// 每个方法的第一个形参都是**本安装的 bot token**（不是结构体字段）：入站回路、安装服务与
@@ -270,6 +305,13 @@ pub trait TelegramApi: Send + Sync {
         chat_id: i64,
         message_thread_id: i64,
     ) -> ApiResult<()>;
+
+    /// `editMessageText`：替换**已发出**消息的正文（M7-6 补的流式原语）。
+    ///
+    /// 返回 `()`：Bot API 对它的应答是 `{"ok":true,"result":true}`（`result` **不是**消息
+    /// 对象），所以调用方只关心成功/失败。"message is not modified" / "message to edit not
+    /// found" 这类 400 由调用方按自己的语义吸收（见 `sender.rs` / `outbound.rs`）。
+    async fn edit_message_text(&self, bot_token: &str, params: &EditMessageText) -> ApiResult<()>;
 }
 
 // =====================================================================
@@ -397,6 +439,8 @@ const METHOD_GET_UPDATES: &str = "getUpdates";
 const METHOD_SEND_MESSAGE: &str = "sendMessage";
 /// `sendChatAction` 的 wire 方法名。
 const METHOD_SEND_CHAT_ACTION: &str = "sendChatAction";
+/// `editMessageText` 的 wire 方法名（M7-6）。
+const METHOD_EDIT_MESSAGE_TEXT: &str = "editMessageText";
 
 #[async_trait]
 impl TelegramApi for JsonBotApi {
@@ -463,6 +507,52 @@ impl TelegramApi for JsonBotApi {
         self.call_raw(false, METHOD_SEND_CHAT_ACTION, bot_token, Some(body))
             .await
             .map(|_| ())
+    }
+
+    async fn edit_message_text(&self, bot_token: &str, params: &EditMessageText) -> ApiResult<()> {
+        let mut body = serde_json::json!({
+            "chat_id": params.chat_id,
+            "message_id": params.message_id,
+            "text": params.text,
+        });
+        if !params.parse_mode.is_empty() {
+            body["parse_mode"] = Value::String(params.parse_mode.clone());
+        }
+        // 短超时客户端：编辑是**交互式**调用（节流节奏由调用方控制），用不上长轮询的那个超时。
+        self.call_raw(false, METHOD_EDIT_MESSAGE_TEXT, bot_token, Some(body))
+            .await
+            .map(|_| ())
+    }
+}
+
+// =====================================================================
+// 429 的"一次重试"包装（上游 `sendMessageWithRetryAfter`）
+// =====================================================================
+
+/// 发一条消息，并按 Telegram **强制的** `retry_after` **重试一次**。
+///
+/// 三个刻意的边界（上游注释逐字）：
+///
+/// 1. **只重试 429**：传输层错误与其它 API 错误**不**重试 —— 丢掉的响应可能意味着 Telegram
+///    已经收下了这条消息，重发就是重复投递（`docs/60` §2.3 的同一纪律）；
+/// 2. **只重试一次**：Telegram 的 `retry_after` 是它的协议下界（通常 1 秒），睡完再试一次；
+/// 3. 睡的是 `retry_after`（缺省 1 秒），不是固定退避 —— 见 [`ApiError::retry_after`]。
+///
+/// 这里的睡眠是这个出站路径上**唯一**的真实等待（时延只有协议的退避与人为的节流）。
+pub async fn send_message_with_retry_after(
+    api: &dyn TelegramApi,
+    bot_token: &str,
+    params: &SendMessage,
+) -> ApiResult<Message> {
+    match api.send_message(bot_token, params).await {
+        Ok(message) => Ok(message),
+        Err(error) => match error.retry_after() {
+            Some(wait) => {
+                tokio::time::sleep(wait).await;
+                api.send_message(bot_token, params).await
+            }
+            None => Err(error),
+        },
     }
 }
 

@@ -131,6 +131,45 @@ pub struct ChannelDeliveryRepo {
     db: Db,
 }
 
+/// 自动重试链的根与本次尝试的深度（上游 `GetChannelReplyTurnRow`）。
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+pub struct ReplyTurnRow {
+    pub turn_id: Option<Uuid>,
+    pub attempt_depth: i32,
+}
+
+/// 取一个 turn 的投递租约（上游 `AcquireChannelReplyDeliveryParams`）。
+///
+/// 与 [`NewReplyDelivery`] 的三处区别就是上面那三条语义：深度由调用方给、带 `phase`、
+/// 租约以**秒**为单位（库侧的 `make_interval` 与上游逐字一致）。
+#[derive(Debug, Clone)]
+pub struct NewReplyDeliveryAttempt {
+    pub turn_id: Id,
+    pub task_id: Id,
+    pub attempt_depth: i32,
+    pub binding_id: Id,
+    pub installation_id: Id,
+    pub kind: ChannelKind,
+    pub chat_id: String,
+    /// `streaming` / `terminal`。
+    pub phase: String,
+    pub owner_token: Id,
+    pub lease_seconds: f64,
+}
+
+/// 收口一个没有答案的 turn（上游 `CloseChannelReplyDeliveryTurnParams`）。
+#[derive(Debug, Clone)]
+pub struct CloseReplyDeliveryTurn {
+    pub turn_id: Id,
+    pub task_id: Id,
+    pub attempt_depth: i32,
+    pub binding_id: Id,
+    pub installation_id: Id,
+    pub kind: ChannelKind,
+    pub chat_id: String,
+    pub settled_reason: String,
+}
+
 impl ChannelDeliveryRepo {
     /// 构造。
     pub fn new(db: Db) -> Self {
@@ -300,6 +339,279 @@ impl ChannelDeliveryRepo {
             .await
             .map_err(map_sqlx_err)
     }
+
+    // =================================================================
+    // 投递状态机（**M7-6 / `LUM-1771` 追加**，写集勘误见 `docs/32` §18 D1）
+    // =================================================================
+    //
+    // 下面六个方法是上游 `server/pkg/db/queries/channel.sql` 里那六条
+    // （`GetChannelReplyTurn` / `AcquireChannelReplyDelivery` / `Release…` / `Renew…` /
+    // `Mark…SendUnknown` / `CloseChannelReplyDeliveryTurn`）的**逐字移植**。
+    // 它们与上面 M7-1 的四条**并存**（不改 M7-1 的语义 —— 它的 `claim_reply_delivery`
+    // 有自己的调用者与用例），区别在三处，都是上游的语义，不是修修补补：
+    //
+    // 1. **深度由调用方给**（`attempt_depth`），且只允许**前进**
+    //    （`EXCLUDED.attempt_depth >= 当前值`）⇒ 被重试链甩下的旧尝试抢不回 turn；
+    // 2. **`phase` 守卫**：`streaming` 不许从 `terminal` 手里夺回 turn（最终答案已经接管）；
+    // 3. **不重置 `send_state`**：过期租约的接管者拿到的不是白纸 —— 在飞的发送仍然是
+    //    "在飞"（响应丢了 = 可能已经投递成功，重发就是重复）。
+
+    /// 任务的自动重试链的**根**（用户轮次）与本次尝试的深度（上游 `GetChannelReplyTurn`）。
+    ///
+    /// `turn_id` 为 `None` = 这个任务没有 `agent_task_queue` 行（上游注释：这是**事实**，
+    /// 不是失败 —— 调用方按"它就是自己的 turn、深度 0"处理）。
+    pub async fn get_reply_turn(&self, task_id: Id) -> Result<Option<ReplyTurnRow>> {
+        let sql = "WITH RECURSIVE chain(task_id, parent_task_id, depth) AS ( \
+                     SELECT attempt.id, attempt.retry_of_task_id, 0 \
+                     FROM agent_task_queue attempt WHERE attempt.id = $1 \
+                     UNION ALL \
+                     SELECT parent.id, parent.retry_of_task_id, chain.depth + 1 \
+                     FROM agent_task_queue parent JOIN chain ON parent.id = chain.parent_task_id \
+                   ) \
+                   SELECT \
+                     (SELECT root.task_id FROM chain root WHERE root.parent_task_id IS NULL LIMIT 1) \
+                       AS turn_id, \
+                     (SELECT COALESCE(MAX(step.depth), 0) FROM chain step)::int AS attempt_depth";
+        sqlx::query_as::<_, ReplyTurnRow>(sql)
+            .bind(task_id.0)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(map_sqlx_err)
+    }
+
+    /// 取一个 turn 的投递租约（上游 `AcquireChannelReplyDelivery`）。
+    ///
+    /// 返回 `None` = **三种情况之一**，调用方必须区分（用 [`Self::get_reply_delivery`]）：
+    /// 已收口 / 活着的持有者占着 / 流式路径向已被最终答案接管的 turn 要回复。
+    /// 三种都是"这次调用**不许**碰平台"。
+    pub async fn acquire_reply_delivery(
+        &self,
+        new: &NewReplyDeliveryAttempt,
+    ) -> Result<Option<ChannelReplyDeliveryRow>> {
+        let sql = format!(
+            "INSERT INTO channel_reply_delivery \
+             (turn_id, task_id, attempt_depth, binding_id, installation_id, channel_type, chat_id, \
+              phase, send_state, owner_token, owner_expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'none', $9, \
+                     now() + make_interval(secs => $10)) \
+             ON CONFLICT (turn_id) DO UPDATE \
+             SET task_id = EXCLUDED.task_id, \
+                 attempt_depth = EXCLUDED.attempt_depth, \
+                 phase = CASE WHEN EXCLUDED.phase = 'terminal' THEN 'terminal' \
+                              ELSE channel_reply_delivery.phase END, \
+                 owner_token = EXCLUDED.owner_token, \
+                 owner_expires_at = EXCLUDED.owner_expires_at, \
+                 updated_at = now() \
+             WHERE channel_reply_delivery.phase <> 'settled' \
+               AND (channel_reply_delivery.owner_token IS NULL \
+                    OR channel_reply_delivery.owner_expires_at <= now()) \
+               AND NOT (EXCLUDED.phase = 'streaming' \
+                        AND channel_reply_delivery.phase = 'terminal') \
+               AND EXCLUDED.attempt_depth >= channel_reply_delivery.attempt_depth \
+             RETURNING {REPLY_COLUMNS}"
+        );
+        sqlx::query_as::<_, ChannelReplyDeliveryRow>(&sql)
+            .bind(new.turn_id.0)
+            .bind(new.task_id.0)
+            .bind(new.attempt_depth)
+            .bind(new.binding_id.0)
+            .bind(new.installation_id.0)
+            .bind(new.kind.storage_str())
+            .bind(&new.chat_id)
+            .bind(&new.phase)
+            .bind(new.owner_token.0)
+            .bind(new.lease_seconds)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(map_sqlx_err)
+    }
+
+    /// 交还租约，让下一条路径不必等租约到期（上游 `ReleaseChannelReplyDelivery`）。
+    ///
+    /// 尽力而为：没交还的租约会自己过期。返回是否真的释放了（`false` = 令牌已经不再持有）。
+    pub async fn release_reply_delivery(&self, turn_id: Id, owner_token: Id) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery \
+             SET owner_token = NULL, owner_expires_at = NULL, updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 续租（上游 `RenewChannelReplyDelivery`）：证明 turn 仍是自己的，并把租约推出去。
+    ///
+    /// `false` = 另一个进程接管了 ⇒ 调用方必须**停手**（别再碰平台）。
+    pub async fn renew_reply_delivery(
+        &self,
+        turn_id: Id,
+        owner_token: Id,
+        lease_seconds: f64,
+    ) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery \
+             SET owner_expires_at = now() + make_interval(secs => $3), updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2 AND phase <> 'settled'",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .bind(lease_seconds)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 把一条发送**在发出之前**公开出去（上游 `MarkChannelReplyDeliverySending`）。
+    ///
+    /// 别的进程于是读到"有一条发送正在飞"而不是"什么都没发过"。已经 `in_flight` /
+    /// `unknown` 的行不再改写 —— 那条在飞的发送的结局还没人知道。
+    pub async fn mark_reply_delivery_sending(&self, turn_id: Id, owner_token: Id) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery SET send_state = 'in_flight', updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2 AND send_state NOT IN ('in_flight', 'unknown')",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 占位消息落地（上游 `RecordChannelReplyDeliveryPlaceholder`）。
+    ///
+    /// 它给了 turn 一条**可编辑**的消息，但**没有**投递最终答案的任何一片 ⇒
+    /// `chunks_sent` 原地不动（上游注释逐字：占位不是进度）。
+    pub async fn record_reply_delivery_placeholder(
+        &self,
+        turn_id: Id,
+        owner_token: Id,
+        message_id: &str,
+    ) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery \
+             SET send_state = 'known', message_id = $3, updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2 AND send_state = 'in_flight'",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .bind(message_id)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 最终答案的**一片**落地（上游 `RecordChannelReplyDeliveryChunk`）。
+    ///
+    /// `message_id` **只在还没有可编辑消息时**才采纳，之后的片绝不改指向（否则"编辑哪一条"
+    /// 会在中途漂移）；`chunks_sent` 只增不减（`GREATEST`）。
+    pub async fn record_reply_delivery_chunk(
+        &self,
+        turn_id: Id,
+        owner_token: Id,
+        message_id: &str,
+        chunks_sent: i32,
+    ) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery \
+             SET send_state = 'known', \
+                 message_id = CASE WHEN message_id = '' THEN $3 ELSE message_id END, \
+                 chunks_sent = GREATEST(chunks_sent, $4), \
+                 updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .bind(message_id)
+        .bind(chunks_sent)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 平台**回答并拒绝**了 ⇒ 聊天里什么都没有，这一轮可以再试
+    /// （上游 `ResetChannelReplyDeliverySend`）。
+    ///
+    /// 已经有可编辑消息（`message_id` 非空）时回到 `known` 而不是 `none`：
+    /// 占位消息还在那里，不能假装它不存在。
+    pub async fn reset_reply_delivery_send(&self, turn_id: Id, owner_token: Id) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery \
+             SET send_state = CASE WHEN message_id = '' THEN 'none' ELSE 'known' END, \
+                 updated_at = now() \
+             WHERE turn_id = $1 AND owner_token = $2 AND send_state = 'in_flight'",
+        )
+        .bind(turn_id.0)
+        .bind(owner_token.0)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 把在飞的发送记成**结果未知**（上游 `MarkChannelReplyDeliverySendUnknown`）。
+    ///
+    /// **故意不围栏在 owner 上**：这条写必须能在持有者自己的请求挂死、租约已过期之后落地 ——
+    /// 否则后继者会读成"什么都没发过"，于是重发（那正是重复投递的成因）。
+    pub async fn mark_reply_delivery_send_unknown(&self, turn_id: Id) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE channel_reply_delivery SET send_state = 'unknown', updated_at = now() \
+             WHERE turn_id = $1 AND send_state = 'in_flight'",
+        )
+        .bind(turn_id.0)
+        .execute(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.rows_affected() == 1)
+    }
+
+    /// 收口一个**没有答案**的 turn —— 被取消、或完成但内容为空
+    /// （上游 `CloseChannelReplyDeliveryTurn`）。
+    ///
+    /// 没有这一条 insert，取消之后才到的第一帧文本会"找不到行 ⇒ 开一个占位消息 ⇒ 永远没人
+    /// 收尾"。深度守卫与 [`Self::acquire_reply_delivery`] 同一条（被甩下的旧尝试不能收口
+    /// 正在投递的那个 turn）。
+    pub async fn close_reply_delivery_turn(
+        &self,
+        new: &CloseReplyDeliveryTurn,
+    ) -> Result<Option<ChannelReplyDeliveryRow>> {
+        let sql = format!(
+            "INSERT INTO channel_reply_delivery \
+             (turn_id, task_id, attempt_depth, binding_id, installation_id, channel_type, chat_id, \
+              phase, send_state, settled_reason) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'settled', 'none', $8) \
+             ON CONFLICT (turn_id) DO UPDATE \
+             SET phase = 'settled', \
+                 settled_reason = EXCLUDED.settled_reason, \
+                 owner_token = NULL, \
+                 owner_expires_at = NULL, \
+                 updated_at = now() \
+             WHERE channel_reply_delivery.phase <> 'settled' \
+               AND (channel_reply_delivery.owner_token IS NULL \
+                    OR channel_reply_delivery.owner_expires_at <= now()) \
+               AND EXCLUDED.attempt_depth >= channel_reply_delivery.attempt_depth \
+             RETURNING {REPLY_COLUMNS}"
+        );
+        sqlx::query_as::<_, ChannelReplyDeliveryRow>(&sql)
+            .bind(new.turn_id.0)
+            .bind(new.task_id.0)
+            .bind(new.attempt_depth)
+            .bind(new.binding_id.0)
+            .bind(new.installation_id.0)
+            .bind(new.kind.storage_str())
+            .bind(&new.chat_id)
+            .bind(&new.settled_reason)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(map_sqlx_err)
+    }
 }
 
 impl RepoWithDb for ChannelDeliveryRepo {
@@ -309,219 +621,4 @@ impl RepoWithDb for ChannelDeliveryRepo {
 }
 
 #[cfg(test)]
-mod db_tests {
-    //! 投递面的 PG 集成测试（`#[ignore]`，靠 `MULTICA_TEST_DATABASE_URL` 触发）。
-
-    use super::*;
-
-    async fn setup() -> Option<(Db, ChannelDeliveryRepo)> {
-        let url = std::env::var("MULTICA_TEST_DATABASE_URL").ok()?;
-        let db = Db::connect(&url, 4, 1)
-            .await
-            .unwrap_or_else(|e| panic!("MULTICA_TEST_DATABASE_URL is set but connect failed: {e}"));
-        Some((db.clone(), ChannelDeliveryRepo::new(db)))
-    }
-
-    macro_rules! fixture {
-        () => {
-            match setup().await {
-                Some(v) => v,
-                None => {
-                    eprintln!("skipping: set MULTICA_TEST_DATABASE_URL to run");
-                    return;
-                }
-            }
-        };
-    }
-
-    fn delivery(turn_id: Id, owner: Id, expiry: DateTime<Utc>) -> NewReplyDelivery {
-        NewReplyDelivery {
-            turn_id,
-            task_id: Id::new(),
-            binding_id: Id::new(),
-            installation_id: Id::new(),
-            kind: ChannelKind::Telegram,
-            chat_id: "chat-1".into(),
-            owner_token: owner,
-            owner_expires_at: expiry,
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-    async fn a_live_owner_cannot_be_stolen_but_an_expired_one_can() {
-        let (db, repo) = fixture!();
-        let turn = Id::new();
-        let owner = Id::new();
-        let live = repo
-            .claim_reply_delivery(delivery(
-                turn,
-                owner,
-                Utc::now() + chrono::Duration::minutes(5),
-            ))
-            .await
-            .expect("claim")
-            .expect("第一次拿到");
-        assert_eq!(live.phase, "streaming");
-        assert_eq!(live.send_state, "none");
-        assert_eq!(live.attempt_depth, 0);
-        assert_eq!(live.kind(), Some(ChannelKind::Telegram));
-
-        // 活跃持有者不被抢。
-        let stolen = repo
-            .claim_reply_delivery(delivery(
-                turn,
-                Id::new(),
-                Utc::now() + chrono::Duration::minutes(5),
-            ))
-            .await
-            .expect("claim");
-        assert!(stolen.is_none(), "活跃租约不能被抢");
-
-        // 租约过期（持有者死在投递中途）⇒ 可被接管，且 `attempt_depth` 只前进。
-        sqlx::query(
-            "UPDATE channel_reply_delivery \
-             SET owner_expires_at = now() - interval '1 second' WHERE turn_id = $1",
-        )
-        .bind(turn.0)
-        .execute(db.pool())
-        .await
-        .expect("expire lease");
-        let expired_owner = Id::new();
-        let taken = repo
-            .claim_reply_delivery(delivery(
-                turn,
-                expired_owner,
-                Utc::now() + chrono::Duration::minutes(5),
-            ))
-            .await
-            .expect("claim")
-            .expect("过期可接管");
-        assert_eq!(taken.attempt_depth, 1);
-        assert_eq!(taken.owner_token, Some(expired_owner.0));
-    }
-
-    #[tokio::test]
-    #[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-    async fn progress_writes_are_token_fenced_and_unknown_never_beats_known() {
-        let (_db, repo) = fixture!();
-        let turn = Id::new();
-        let owner = Id::new();
-        repo.claim_reply_delivery(delivery(
-            turn,
-            owner,
-            Utc::now() + chrono::Duration::minutes(5),
-        ))
-        .await
-        .expect("claim");
-
-        // 别人的令牌写不动。
-        assert!(repo
-            .update_reply_progress(turn, Id::new(), Id::new(), "known", "m1", 1)
-            .await
-            .expect("wrong token")
-            .is_none());
-
-        let known = repo
-            .update_reply_progress(turn, Id::new(), owner, "known", "m1", 2)
-            .await
-            .expect("progress")
-            .expect("row");
-        assert_eq!(known.send_state, "known");
-        assert_eq!(known.message_id, "m1");
-        assert_eq!(known.chunks_sent, 2);
-
-        // `known` 之后不能被 `unknown` 覆盖（已知 message id 是更强信息）。
-        assert!(repo
-            .update_reply_progress(turn, Id::new(), owner, "unknown", "", 0)
-            .await
-            .expect("unknown")
-            .is_none());
-    }
-
-    #[tokio::test]
-    #[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-    async fn terminal_and_settled_freeze_the_turn() {
-        let (_db, repo) = fixture!();
-        let turn = Id::new();
-        let owner = Id::new();
-        repo.claim_reply_delivery(delivery(
-            turn,
-            owner,
-            Utc::now() + chrono::Duration::minutes(5),
-        ))
-        .await
-        .expect("claim");
-
-        let terminal = repo
-            .mark_delivery_terminal(turn, owner)
-            .await
-            .expect("terminal")
-            .expect("row");
-        assert_eq!(terminal.phase, "terminal");
-        // 已经 terminal ⇒ 不再是 streaming，重复切是 no-op。
-        assert!(repo
-            .mark_delivery_terminal(turn, owner)
-            .await
-            .expect("again")
-            .is_none());
-
-        let settled = repo
-            .settle_reply_delivery(turn, "delivered")
-            .await
-            .expect("settle")
-            .expect("row");
-        assert!(settled.is_settled());
-        assert_eq!(settled.settled_reason, "delivered");
-        assert!(settled.owner_token.is_none());
-        assert!(!settled.is_send_unknown());
-        // 收口之后谁都不能再接管。
-        assert!(repo
-            .claim_reply_delivery(delivery(
-                turn,
-                Id::new(),
-                Utc::now() + chrono::Duration::minutes(5)
-            ))
-            .await
-            .expect("claim")
-            .is_none());
-        assert!(repo
-            .settle_reply_delivery(turn, "again")
-            .await
-            .expect("settle")
-            .is_none());
-    }
-
-    #[tokio::test]
-    #[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-    async fn task_delivery_keeps_the_first_route() {
-        let (_db, repo) = fixture!();
-        let task = Id::new();
-        let new = NewTaskDelivery {
-            task_id: task,
-            binding_id: Id::new(),
-            installation_id: Id::new(),
-            kind: ChannelKind::WeCom,
-            channel_chat_id: "chat-1".into(),
-            chat_type: "group".into(),
-            channel_message_id: Some("m1".into()),
-            channel_thread_id: None,
-            route_revision: 1,
-            config: serde_json::json!({ "bot_id": "b1" }),
-        };
-        let first = repo.upsert_task_delivery(new.clone()).await.expect("first");
-        assert_eq!(first.channel_type, "wecom");
-        let again = repo
-            .upsert_task_delivery(NewTaskDelivery {
-                route_revision: 9,
-                channel_chat_id: "chat-2".into(),
-                ..new
-            })
-            .await
-            .expect("again");
-        assert_eq!(again.task_id, first.task_id);
-        assert_eq!(again.channel_chat_id, "chat-1", "首行不被后续上报改写");
-        assert_eq!(again.route_revision, 1);
-        assert!(repo.get_task_delivery(task).await.expect("get").is_some());
-    }
-}
+mod tests;
