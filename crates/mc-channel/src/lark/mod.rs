@@ -1,9 +1,8 @@
 //! Feishu / Lark adapter（上游 `internal/integrations/lark`（72 文件 / 37 非测试 / 10,957 上游行））。
 //!
-//! **状态：子模块已落地到 M7-13；`register()` 仍是 anchor 的空实现**
-//! （`LUM-1765` / `docs/60-M7-PLAN.md` §5）—— 本文件的职责仍是"这个平台在这里注册工厂"
-//! 的位置声明 + 子模块声明；实现归 M7-10 … M7-14（`docs/60` §3.3 的写集表：本目录下的
-//! 每个子文件都有**一个**写者）。落地进度：M7-10 落 `client`/`http_client`/`params`/`types`
+//! **状态：子模块已落地到 M7-14；`register()` 已接线**（`LUM-1765` / `docs/60-M7-PLAN.md` §5）。
+//! 本文件的职责是"这个平台在这里注册工厂"的位置声明 + 子模块声明；M7-10 … M7-13 落了
+//! 客户端 / WS / 入站 / 出站四棵子树，M7-14 落**安装与绑定面 + 5 条路由**并填上 `register()`。落地进度：M7-10 落 `client`/`http_client`/`params`/`types`
 //! （lark HTTP 客户端与类型），M7-11 落 `ws_connector`/`ws_endpoint`/`ws_frame`/
 //! `ws_frame_decoder`（自建 WS 长连接），M7-12 落入站回路，M7-13 落**出站 / 回复 / 会话桥**
 //! （`store`/`channel_store`/`audit`/`typing`/`replier`/`outbound`）；其余（安装与绑定面 + 5 条
@@ -33,6 +32,7 @@
 
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;
+use mc_core::channel::ChannelKind;
 
 // M7-10（`LUM-1775`）落地的四个子模块：**只追加这四行**（见本文件「不做什么」）。
 pub mod client;
@@ -70,13 +70,41 @@ pub mod replier;
 pub mod store;
 pub mod typing;
 
-/// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
+// M7-14（`LUM-1779`）落地的四个子模块（安装与绑定面 + 两条启动期回填）：
+// `installation` = `lark_installation` 的读 / 写 / 撤销 / upsert 与 `InstallError`；
+// `registration` = RFC 8628 设备流（`begin` → 轮询 → 终态）+ 会话状态表；
+// `binding` = 单次绑定令牌的铸与兑换；`backfill` = 两条一次性的升级修复。
+pub mod backfill;
+pub mod binding;
+pub mod installation;
+pub mod registration;
+
+/// 把本平台的工厂注册进 `registry`（**失败关闭**的解密器与未接线的连接器，见下）。
 ///
 /// 签名里的两个实参就是 adapter 能拿到的全部外部世界：一个共享注册表 + 一个 port 袋。
+/// 没有部署密钥时宿主会走这一支（`docs/60` §2.4 / §2.6 第 3 条：该渠道**整体不装配**），
+/// 于是注册进去的工厂只会在 `build` 时**响亮地**拒绝（[`feishu_channel::factory`] 的
+/// `InvalidConfig`），而不是交出一个假装连上的半成品 —— 与 slack / telegram / dingtalk 的
+/// `register` 同一手法。接线好的那一支走 [`register_with`]。
 #[cfg(test)]
 mod tests;
 
-pub fn register(_registry: &Registry, _deps: &ChannelDeps) {
-    // M7 的 M7-10 … M7-14 在这里 `registry.register(ChannelKind::Lark, factory)`
-    // （注册键是枚举变体 `Lark`；**存库**口径才是 `feishu`，见 `ChannelKind::storage_str`）。
+pub fn register(registry: &Registry, _deps: &ChannelDeps) {
+    tracing::warn!(
+        "lark: registering the factory without a wired connector; installations will be refused \
+         at build time (call `mc_channel::lark::register_with` with the deployment connector to \
+         wire it)"
+    );
+    let deps = feishu_channel::FeishuChannelDeps {
+        connector: None,
+        api_client: std::sync::Arc::new(client::StubApiClient::new()),
+        decrypter: feishu_channel::Decrypter::fail_closed(),
+        enricher: None,
+    };
+    registry.register(ChannelKind::Lark, feishu_channel::factory(deps));
+}
+
+/// 接线好的注册入口（宿主把部署连接器与解密器交进来）。
+pub fn register_with(registry: &Registry, deps: feishu_channel::FeishuChannelDeps) {
+    registry.register(ChannelKind::Lark, feishu_channel::factory(deps));
 }
