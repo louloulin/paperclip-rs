@@ -568,11 +568,16 @@ async fn drive_inbound(
     .await;
     assert!(dedup, "入站帧必须落一条去重行");
 
+    // ⚠️ 等待条件必须带上**本用例要断言的那个字段**：绑定行的插入先把消息 id 留空，
+    // `last_message_id` 是**之后**由 `update_session_reply_target`（append 路径）/
+    // route-start 的收尾 UPDATE 写进去的 ⇒ 只等「行存在」会在全量 ⑥ 的负载下读到 NULL
+    // （失败现场那行 `last_message_id` / `history_start_message_id` 均为 NULL，`docs/32` §36.2）。
     let bound = wait_for(
         || async {
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM channel_chat_session_binding \
-                 WHERE installation_id = $1 AND channel_chat_id = $2",
+                 WHERE installation_id = $1 AND channel_chat_id = $2 \
+                   AND last_message_id IS NOT NULL",
             )
             .bind(installation_id)
             .bind(CHAT_ID.to_string())
@@ -584,7 +589,10 @@ async fn drive_inbound(
         Duration::from_secs(20),
     )
     .await;
-    assert!(bound, "已绑定的发件人必须开出会话绑定行");
+    assert!(
+        bound,
+        "已绑定的发件人必须开出会话绑定行（且出站游标已就绪）"
+    );
 
     // 会话绑定行的 `last_message_id` 就是出站要引用的那条（真 DB 里读回来）。
     let binding: (Uuid, Option<String>) = sqlx::query_as(

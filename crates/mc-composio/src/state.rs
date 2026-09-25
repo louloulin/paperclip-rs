@@ -384,9 +384,17 @@ mod tests {
     fn tampered_signature_is_rejected_bit_for_bit() {
         let token = signer().sign(&claims()).expect("sign");
         let (payload, signature) = token.split_once('.').expect("两段");
-        let mut flipped = signature.to_string();
-        let last = flipped.pop().expect("non-empty");
-        flipped.push(if last == 'A' { 'B' } else { 'A' });
+        // ⚠️ 翻**首个**字符，**不要**翻末位：32 字节 HMAC 的 base64url_nopad 恰好 43 字符，
+        // 末字符只承载 4 个有效 bit —— 当它原本是 `A`（索引 0）时改写会令尾比特非规范，
+        // Rust `base64` 的**严格**引擎先报 `InvalidLastSymbol` ⇒ `verify` 落 `Malformed`
+        // （约 1/16 概率），而本用例断言的是 `Tampered`（见 `docs/32` §36.5）。
+        // 改首字符不受这条影响：第 1 个字符承载满 6 bit，任何替换都是规范编码，
+        // 解码必然成功 ⇒ 一定走到常量时间比较那一句。
+        let flipped = format!(
+            "{}{}",
+            if signature.starts_with('A') { 'B' } else { 'A' },
+            &signature[1..]
+        );
         assert_eq!(
             signer().verify(&format!("{payload}.{flipped}"), NOW),
             Err(StateError::Tampered)

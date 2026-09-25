@@ -158,6 +158,12 @@ async fn install(app: &Router, seed: &Seed) -> Uuid {
 }
 
 /// 清场（本面的三张渠道表 + workspace + 四个用户）。
+///
+/// ⚠️ **必须在 `STUB_LOCK` 之内调用**（写法：先 `teardown(...)`，再 `drop(stub_guard)`）。
+/// 本文件所有安装用例共用同一个 [`BOT_TOKEN`]，而安装键是**令牌前缀**（`config->>'app_id'`）
+/// ⇒ 只要 `first` 那行还在，下一个拿到锁的用例的 `install()` 就撞 **409
+/// `telegram_bot_owned_by_another_workspace`**（CI 上命中过三例，`docs/32` §36.4）。
+/// `STUB_LOCK` 串行化的是**替身基址**；把清场也放进锁内，库里那行才同样被串行化。
 async fn teardown(pool: &PgPool, seed: &Seed) {
     cleanup(pool, seed).await;
 }
@@ -343,8 +349,9 @@ async fn install_list_revoke_and_reinstall() {
     );
 
     mc_channel::telegram::api::reset_api_base();
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）。
     teardown(&pool, &workspace).await;
+    drop(stub_guard);
 }
 
 /// 撤销面：非 admin 403、越权 id 404（另一个 workspace 猜 id 也读不到）。
@@ -391,9 +398,10 @@ async fn revoke_is_admin_only_and_workspace_scoped() {
     assert_eq!(status, 404, "{body}");
 
     mc_channel::telegram::api::reset_api_base();
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）。
     teardown(&pool, &workspace).await;
     teardown(&pool, &other).await;
+    drop(stub_guard);
 }
 
 /// 安装面的**输入**矩阵：非 admin 403、缺 `agent_id` 400、错的 `agent_id` 404、形状不对 400。
@@ -458,8 +466,9 @@ async fn the_install_input_matrix_matches_the_upstream_switch() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["error"]["code"], "telegram_invalid_bot_token");
 
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）。
     teardown(&pool, &workspace).await;
+    drop(stub_guard);
 }
 
 /// Telegram 侧的三种失败：权威拒绝 400 / 够不着 **503** / 挂着 webhook 400，
@@ -534,8 +543,9 @@ async fn the_install_error_matrix_classifies_telegram_failures() {
     .await;
     assert_eq!(body["installations"].as_array().map(Vec::len), Some(0));
 
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）。
     teardown(&pool, &workspace).await;
+    drop(stub_guard);
 }
 
 /// 跨 workspace 抢同一个 bot ⇒ 409（`telegram_bot_owned_by_another_workspace`）。
@@ -568,9 +578,11 @@ async fn a_bot_owned_by_another_workspace_is_a_conflict() {
     );
 
     mc_channel::telegram::api::reset_api_base();
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）—— 尤其是本用例：它故意把 `BOT_TOKEN`
+    // 装到了另一个 workspace 上，锁一放开而 `first` 的行还在，下一个用例必撞 409。
     teardown(&pool, &first).await;
     teardown(&pool, &second).await;
+    drop(stub_guard);
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +702,7 @@ async fn binding_redeem_is_idempotent_and_classifies_three_failures() {
             .expect("consumed");
     assert!(consumed.0.is_none(), "别的 adapter 的令牌不该被消费");
 
-    drop(stub_guard);
+    // ⚠️ 清场在锁内（见 `teardown` 的 doc）。
     teardown(&pool, &workspace).await;
+    drop(stub_guard);
 }
