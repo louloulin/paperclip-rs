@@ -7618,3 +7618,90 @@ cycle issue。** 同类积压 `todo` 升至 **10 条**（`LUM-1834`＝本 run �
 - 下一轮起点：**base `4d8a3f32`**；GH **0 open PR**；在飞 **2 片**（`LUM-1767` ∥ `LUM-1798`，同 stage、交集 ∅）。
   槽位一空：`LUM-1767` 终 ⇒ **M7-3（`LUM-1768`）**；`LUM-1798` 终 ⇒ **M8-2（`LUM-1799`）/ M8-3（`LUM-1800`）**（均 stage 2、与 M7 侧交集 ∅）。
   `LUM-1691`/`LUM-1793`（+12/+1 路由）与 `LUM-1745`（M5-D8）仍等：前者争注册段 + `Cargo.lock`，后者争 `state.rs`。
+
+## §87 10:30 cycle（`LUM-1843`，01:30Z 触发）：**0 open PR + 空位 0 ⇒ 只读监控轮（第四次）+ 外科回收 8.6G**；**新登记：`LUM-1835`（08:30 cycle）死于 `ENOSPC`（首次拿到磁盘根因证据）**；派发预飞逮到 M7-3 的一条「第二类漏项」
+
+### 87.1 起手三连
+
+| 项 | 值 |
+| --- | --- |
+| `df -h /`（**第一个读**） | **11G 可用（78% used）** —— 比 §86 收尾的 33G 少了 **22G**（见 87.5 lesson 1） |
+| `origin/feat/multica-rs-initial` | **`eeac897d`**（= §86 自己的 docs 提交；码树仍 `4d8a3f32`） |
+| 认证 GH `pulls?state=open` | **0** —— 连续第二轮「0 PR」 |
+| daemon `running_task_count` | **3** ⇒ 拆开 = 本 cycle 自身 + `LUM-1767` + `LUM-1798` |
+| 本项目空位 | **0**（3 − 1 − 2）⇒ **本轮零派发** |
+| `/proc/*/cwd` 逐 PID 扫描 | 两片 workdir 均**命中且活跃**（1767 pid 5111 / 1798 pid 5136，另有各自 cargo 子进程） |
+
+**§86 落地复核**：`4d8a3f32..eeac897d` **只动 `docs/37` 一个文件**（`+101/−0`）⇒ 代码路径 diff **0 行**，码树仍 == `4d8a3f32`（`git diff --numstat 4d8a3f32 eeac897d -- . ':(exclude)docs'` 空）。
+
+### 87.2 在飞两片健康复核（判活三件套取二 ⇒ 皆活、皆在写、皆未推分支）
+
+| | `LUM-1767`（M7-2，0 路由） | `LUM-1798`（M8-1，5 路由） |
+| --- | --- | --- |
+| workdir / 分支 | `lum-1767-b50b39f5eb9b` / `agent/devbox5/b50b39f5eb9b` | `lum-1798-f48e2564b455` / `agent/devbox5/f48e2564b455` |
+| HEAD | `4d8a3f32`（0 提交） | `4d8a3f32`（0 提交） |
+| 未提交 | **4 改 `+2873/−28`** + 7 未跟踪（`engine/{batcher,commands,lease,session}.rs` + 两处 `…/tests.rs` + `mc-repos/src/channel/session/`） | **9 改 `+3253/−114`** + 未跟踪 `tests/github/**` + `mc-vcs-github/tests/` |
+| 产物体量 | 新文件 **5,296 行** | 源码 **2,582 行** + 5 个测试文件 |
+| 最新写侧时间 | 01:31:23Z（`engine/session/tests.rs`） | **01:34:06Z**（`routes/github/setup.rs`，即**在我回收动作之后仍继续写**） |
+| 远端分支 / PR | **未推** / **无** | **未推** / **无** |
+
+**§86 lesson 2 的订正已被执行**：`LUM-1767` 的分支上 `crates/mc-channel/src/engine/mod.rs:43-46` 实测已追加 4 行
+`pub mod {batcher,commands,lease,session};` ⇒ 与 §86 记的「引擎两写者纪律」逐字一致。
+
+### 87.3 回收 8.6G（两笔，判据不同）
+
+| 笔 | 对象 | 体量 | 判据 |
+| --- | --- | :-: | --- |
+| ① 死物整删 | `lum-1837-…`（上一 cycle）的 `target/` | **2.5G** | run 终态 ∧ HEAD `eeac897d` **是 base 祖先** ∧ `/proc/*/cwd` 逐 PID 零命中 ∧ `git status --porcelain` 空 |
+| ② 活物外科 | 在飞两片的**陈旧** `target/debug/incremental` 分桶 | **6.1G**（1767: 1,620M / 1798: 4,505M） | 每个 session 目录内**无任何 10 分钟内被写过的条目**；删前逐 fd 扫 `/proc/*/fd`（全仓只 2 个 fd 命中，且都落在**活跃** `-working` 桶）⇒ 陈旧桶零占用 |
+
+`deps` **未动**；删后两片继续编译（1798 于 01:34:06Z 之后仍在写 `setup.rs`，1767 12 个 cargo 子进程健在）。
+`df` **11G → 15G 可用（78% → 70% used）**。
+
+### 87.4 派发预飞（三片写集复核 ⇒ 已就地写进各 issue 的「起手补充」，rev 1 → 2）
+
+| 候选片 | 写集复核结论 |
+| --- | --- |
+| **`LUM-1768`**（M7-3，0 路由） | 🔴 **逮到一条「第二类漏项」**：base 的 `crates/mc-channel/src/slack/` **只有 `mod.rs` 一个文件**，而该文件 **`pub mod` 声明数 = 0**（只有模块文档 + 空 `register()` 壳），`lib.rs` 已 `pub mod slack;` ⇒ 本片 5 个新文件**若不写进 `slack/mod.rs` 就根本不参与编译**（Rust 无自动模块发现）⇒ 本片 DoD 一条都不可达。**写集追加 `crates/mc-channel/src/slack/mod.rs`**（本片是它的第一个写者，M7-4 后到 rebase）。依据 = `docs/60` §5 的 anchor 行逐字「每渠道一个 `pub fn register(...)` **空实现**；**5 个片的写集从这里展开**」，而 `docs/60` §3.3 的写集表**没有**给该文件指定写者。 |
+| **`LUM-1799`**（M8-2，5 路由） | **0 缺件**：`routes/vcs/mod.rs` 已 `pub mod {connections,dto,webhook};`（3 行）、`mc-repos/src/vcs/mod.rs` 已 `pub mod {commit_status,connection,pull_request};`，6 个目标文件在 base 树上**都已存在**（anchor 桩）⇒ 纯「原地填充」 |
+| **`LUM-1800`**（M8-3，8 路由） | **0 缺件**：`mc-core/src/mcp.rs` 已 `pub mod overlay;`（1 行）、`mc-repos/src/mcp/mod.rs` 已 `pub mod {agent_binding,workspace_server};`、`routes/mcp/mod.rs` 已 `pub mod {agent,workspace};`、`mc-core/src/lib.rs` 已 `pub mod mcp;` ⇒ 新文件 `mc-core/src/mcp/overlay.rs` 可编译到 |
+
+三片的**过期绝对读数**一并订正为**当轮实测 + delta 平移**口径：
+`local 406 / baseline 406 / implemented 330 = 326 real + 4 ph / known_gap 126 / unclaimed 0 / regression 0 / local_only 9`、
+`gaps by owner M9=33 M7=24 M8=24 M3+=16 M2-A=13 M3=11 M10=5`（和 = 126 ✓）；
+`--write-baseline` 禁跑（归 `LUM-1786` / `LUM-1804`）；硬前置每轮重验。**状态保持 `backlog` 未动**。
+
+### 87.5 本轮 lesson
+
+1. **起手三连的 `df` 必须在任何其它读之前跑，且不许抄上一轮的 next-cycle 行**：§86 收尾记「33G 可用」，
+   本 run 01:30Z 起手实测 **11G** —— 差值 22G **全部是两片同一分钟的冷建**（`LUM-1767` 07:07Z 起、
+   `LUM-1798` 07:07Z 起，各自 `target/` 现在 8.5G / 15.7G）。**口径**：本仓的并发预算是
+   **每片冷建 7–16G**，3 个任务同跑（2 片 + cycle）在 49G 的 overlay 上**必然**触顶。
+2. **首次拿到 cycle 被磁盘打死的直接证据（`LUM-1835`）**：08:30 cycle issue 在 `2026-09-25T00:30:00Z`
+   写下唯一一条注释 ——
+   `resolve stable task env root: execenv: create task root record: mkdir /home/devbox/multica_workspaces/.task_roots/.pending-849638484: no space left on device`
+   ⇒ **不是 502、不是静默死亡，是 `ENOSPC`**（此前 `1805`/`1810`/`1826` 三条都是 `502 status code (no body)`，本轮的
+   磁盘根因与它们**不同**）。这条证据把 §72/§73 起就一直挂着、owner 未回的
+   「`incremental = false`（或给 `TMPDIR`/`CARGO_TARGET_DIR` 单独的卷）」请求**从"节约"升级为"可用性"**：
+   **cycle 已经被磁盘打死过一次**，而每次冷建 7–16G 的预算不变 ⇒ 不加护栏就会继续复发。
+3. **活物与死物的回收判据不同，且「陈旧」要按目录内最新条目的 mtime 判**：死物照四判据整删 `target/`；
+   活物只能外科切 `incremental`，且判「陈旧」时**不能只看 session 目录自身的 mtime** —— cargo 会把
+   正在编译的桶写成 `<hash>/s-….lock` + `s-…-working/`，父目录与 `-working/` 的 mtime 可能不同步。
+   本轮口径 = `find <session> -newermt '-10 minutes' -print -quit` 为空才算陈旧，删前再逐 fd 扫 `/proc/*/fd`。
+4. **「第二类漏项」的命中率在两个 anchor 之间不对称**：`M8-0` 把 5 个 mod 注册面**全预声明**（`vcs` / `mcp` /
+   `mc-core::mcp` 三处 0 缺件），`M7-0` 的 `slack/mod.rs` 却只落空壳（缺 5 行 `pub mod`）—— 同一个
+   「anchor 负责预声明」纪律，两个 anchor 的完成度不同 ⇒ **只能逐文件实测**
+   （`git show <base>:<file> | grep -c '^pub mod'`），不能按「anchor 都做了」外推。
+
+### 87.6 观察项（第 25 轮）
+
+- 连续第四轮**干净起手**（无并发 cycle 在场；`LUM-1833`/`1834`/`1837` 均已 `in_review` 终态）。
+- autopilot 建单护栏**仍未落地**；积压 `todo` cycle issue 现 **10 条**
+  （`1521/1533/1726/1737/1740/1748/1805/1810/1826` + **本轮新登记的 `LUM-1835`**；另加本 run 自身 `LUM-1843`），
+  只登记不动状态；`blocked` = **0**。
+- 下一轮起点：**base `eeac897d`**；GH **0 open PR**；在飞 **2 片**（`LUM-1767` ∥ `LUM-1798`，同 stage、写集交集 ∅）。
+  槽位一空：`LUM-1767` 终 ⇒ **M7-3（`LUM-1768`，写集已含 `slack/mod.rs` 追加项）**；
+  `LUM-1798` 终 ⇒ **M8-2（`LUM-1799`）/ M8-3（`LUM-1800`）**。
+  `LUM-1691`/`LUM-1793`（+12/+1 路由）与 `LUM-1745`（M5-D8）仍等：前者争注册段 + `Cargo.lock`，后者争 `state.rs`。
+- **🔴 磁盘为本轮第一风险**：若下一轮起手 `df` 再低于 12G，先按 87.3 ② 的口径对在飞片做外科回收，
+  **再**考虑派发任何新片（新片的冷建要 7–16G）。
