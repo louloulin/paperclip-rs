@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 6,
+    "pass": 7,
     "mismatch": 23,
-    "unmounted": 30,
+    "unmounted": 29,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -18,8 +18,8 @@
       },
       "anonymous": {
         "mismatch": 23,
-        "pass": 6,
-        "unmounted": 30
+        "pass": 7,
+        "unmounted": 29
       },
       "member": {
         "unevaluable": 293
@@ -33,25 +33,25 @@
         "unmounted": 27
       },
       "router": {
-        "pass": 5,
+        "pass": 6,
         "unevaluable": 26,
-        "unmounted": 3
+        "unmounted": 2
       }
     },
     "tiers": {
       "stateless": {
         "mismatch": 23,
-        "pass": 6,
+        "pass": 7,
         "unevaluable": 306,
-        "unmounted": 30
+        "unmounted": 29
       }
     }
   },
-  "contract_equivalence_rate": 0.01643835616438356,
-  "mounted_equivalence_rate": 0.20689655172413793,
+  "contract_equivalence_rate": 0.019178082191780823,
+  "mounted_equivalence_rate": 0.23333333333333334,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 6
+    "pass": 7
   },
   "fixtures": [
     {
@@ -2591,12 +2591,12 @@
       "via": "router",
       "status_expected": 401,
       "source": "server/cmd/server/composio_callback_public_test.go:25",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 401,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 401; query: connected_account_id=ca_x&state=bogus&status=success"
+      "detail": "status matched; query: connected_account_id=ca_x&state=bogus&status=success"
     },
     {
       "id": "invitations/TestGetMyInvitationRejectsMalformedID@server/internal/handler/handler_test.go:1737#1",
