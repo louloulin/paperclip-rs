@@ -75,9 +75,14 @@
 //! reconnect from running concurrently*。
 //!
 pub mod ack;
+pub mod binding;
+pub mod client;
+pub mod config;
 pub mod dispatch;
 pub mod emotion;
+pub mod group_identity;
 pub mod inbound;
+pub mod install;
 pub mod jobs;
 pub mod markdown;
 pub mod media;
