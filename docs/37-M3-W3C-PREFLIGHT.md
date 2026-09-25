@@ -10776,3 +10776,82 @@ upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458
 1. **「门输入逐 blob 恒等」第 6 次生效** —— 只读轮成本被压到 **1.2s**，且直接给出继承的确切数值。判据链完整形式：`git diff --name-only <上轮验收树> <base>` **只有 docs** + 三个门输入逐一恒等 ⇒ ⑨ 直接继承。
 2. 🔴 **只读轮的增量可以升级为「从在飞片的工作树实测」** —— 本轮的 base 只前进了一个 docs 文件，⑦/⑨ 九个数**逐字未变**（rev bump 的旧理由「读数过期」本轮不成立），**但 rev bump 仍然必要**：两片的行数预算**都偏小**（`LUM-1779` 少 11 行 / 15%、`LUM-1783` 少 6 行 / 11%），而**在飞片的工作树里就躺着真实值**（`LUM-1778` 的 `mod.rs` 已写成 82 行）。⇒ **预算的正确来源顺序：① 在飞片的工作树实测 > ② base 实测 + `pub mod` 条数推算 > ③ 计划期预测**。**这是「按 `pub mod` 条数推算必偏小」的第 6 / 7 次验证**（`lark` +16 vs 6 个 `pub mod`、`wecom` +10 vs 4 个）。
 3. 🔴 **并发执行会读出一棵撕裂的树 —— 必须串行化「切换工作树」与「读工作树」**。本轮 `git checkout -B` 与另一条读命令并发跑，产生两个互斥的假象：`git rev-parse HEAD:<path>` 对**确实存在**的路径报错、`ls docs/` 里**明明列出**的文件在下一步 `tail` 时「不存在」。⇒ **判据：凡是结论依赖工作树内容的读，必须等 `checkout` 返回后再发**。若已经并发，**复采一次**即可区分「撕裂」与「真缺失」（本轮复采后三个 tree/blob 全部正常）。这与 §117 的「在飞工作树采样会撞中间态 ⇒ 违规读数必须复采」同源。
+
+---
+
+## §123 04:00 cycle（`LUM-2052`，20:00Z 触发）：**起手 1 open PR + 空位 1 + 🔴 磁盘告急（9.6G / 80%）⇒ 非只读轮** —— 判据链合并 **PR #108（M7-17 wecom 中继与出站回复，0 路由）**，base `ffa6622c` → **`bb4e726a`**（落地树 `337a9380…` 逐字命中）；空位 1 ⇒ 派 **`LUM-1783`（M7-18 wecom 媒体面，0 路由，rev 5）**；回收 **18.4G**
+
+### §123.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` = **9.6G 可用（80%）** —— **低于「< 12G 先回收」红线**；连采两次（间隔 5s）10032616 → 10032608 ⇒ **静稳**，是「本来就没空间」而不是「正在被吃」。
+- `git ls-remote origin feat/multica-rs-initial` = **`ffa6622c`**（= §122 的收尾值，未被推进）。
+- 认证 GH `pulls?state=open` = **1**：**#108**（`feat(m7-17)`，head `agent/devbox5/0f0cecd6bacb` / `af2e2620`，base `ffa6622c`，`mergeable: true`）。
+- 逐 PID 扫 `/proc/*/cwd`（从 `/` 起手、**先读 `cmdline` 是不是 `pi`** 再看 `cwd`）：**21060** = 本 cycle ∥ **59135** = `LUM-1778` ⇒ **`LUM-1782` 的 pi 进程 `59134` 已消失**（§122 记它在飞、pid 59134）。daemon `running_task_count = 2` ⇒ 与「3 − 1(cycle) − 1(在飞) = **1 个空位**」逐字吻合。
+
+### §123.2 判据链 —— PR #108（M7-17，0 路由）：五步全绿，**零门禁重跑**
+
+| 步 | 判据 | 实测 |
+| --- | --- | --- |
+| ① | 预检 `merge-base..head` numstat == PR API **逐字** | **26 文件 / +8625 / −0**，两处按 filename 排序后**逐字相等** |
+| ② | base 前进段非 docs 路径 = 0 | `merge-base == base == ffa6622c` ⇒ **平凡成立** |
+| ③ | 三哈希等式 | `merge-tree --write-tree` = `337a9380a6a4591cbb39c211a5c9dbcc2868b8da` == head `^{tree}` == **落地 `^{tree}`** |
+| ④ | 证据（两路任一） | 片自报 `8/8 PASS`（311s）+ **`--with-db` `10/10 PASS`（335s，当轮新建库 `multica_lum1782`、角色带 `CREATEDB`）**；CI `contract` job **绿**（`fast` / `db` 起手时仍在跑） |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | 合并前**重取** head sha = `af2e2620…`（未动）⇒ merge commit **`bb4e726a`** |
+
+- **形态判定**：`merge-base --is-ancestor <base> <head>` = **YES** ⇒ 合并树 ≡ head 树 ⇒ §113 的「零门禁重跑」路径适用。
+- **④ 的证据能省整轮门禁，靠的正是这一步**：形态②把「片自报的 `10/10`」与「合并树」绑成同一棵树；若形态是「base 不是 head 祖先」，片自报的三棵树都不同 ⇒ 必须真合 + 重跑（§123.6 lesson 4）。
+- 落地核对：`tree(bb4e726a)` == 预测树 `337a9380…` **逐字**、`git diff <head> <base>` **空**。
+- ⑦ 片前片后**九个数逐字不变**（0 路由片）：`local 469 | baseline 458 | implemented 383 real + 3 ph = 386 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`。
+- `merged: True` —— commit title 惯例 `merge(m7): PR #108 —— M7-17 wecom 中继与出站回复（LUM-1782，0 路由）`。
+
+### §123.3 回收 **18.4G**（四判据整删）
+
+- 目标 = `lum-1782-0f0cecd6bacb/workdir/paperclip-rs/target`（`du` 报 **18G**）。四判据全满足：
+  ① run **终态**（pi 进程 59134 消失）② **交付已进 base**（#108 合并、落地树逐字命中）③ `/proc/*/cwd` **与** `/proc/*/fd` **逐 PID 零命中** ④ `porcelain` 空、0 未提交。
+- **回收量读数 = `df` 前后差**：27317700 − 8884824 = **18432876 B ≈ 18.4 GiB**（`du` 报 18G ⇒ 两者一致，无低报）。**磁盘 8.9G → 27.3G（44%）**。
+- ⚠️ 删前那一刻 `df` 已从 9.65G 掉到 **8.88G** —— `LUM-1778` 的 `--with-db` 在吃（≈**0.77G/min**）。⇒ **本轮「合并 ⇒ 立刻回收」是可用性动作，不是节约动作**（§123.6 lesson 1）。
+
+### §123.4 派发 —— `LUM-1783`（M7-18 wecom 媒体面，**0 路由**，rev 5）
+
+- **空位 = 3 − 1(cycle) − 1(`LUM-1778`) = 1** ⇒ 派 `LUM-1783`。
+- 三条资格（当轮实测）：
+  ① **硬前置 M7-15 已合**：`git cat-file -e HEAD:crates/mc-channel/src/wecom/{ws_sender,credentials}.rs` **两个都 EXISTS**；
+  ② **前置 `LUM-1782` 已终态且已合并** ⇒ **wecom 树空出**（§122 的「必须等它终态」解除）；
+  ③ 与在飞 `LUM-1778`（lark）**逐字零交集 ⇒ 可同飞**（lark 树 ∥ wecom 树）。
+- 描述 **rev 4 → 5**（新增「起手补充」节）：base `bb4e726a` / 前置解除 / **M7-17 落地值实测 `wecom/mod.rs` = 62 行 / 14 个 `pub mod`（rev 4 的预测「M7-17 落完即 62」**逐字命中**）** / 预算修正为「52 → 62(实测) → **≥68**」/ 号段 `## 35.` 复验 / 当轮 ⑦/⑨ 读数 / M7-17 交的三条拆分与替身 lesson。
+- **派发实测**：`--description-file` → `assign --to-id … --no-start` → `status todo`；**45s 后** daemon `running_task_count` **2 → 3**、新 workdir **`lum-1783-d467ad8eca04`**（pid 36545）⇒ **满位 3/3**。
+
+### §123.5 ⑦ / ⑩ / ⑨ 当轮读数
+
+- ⑦/⑩ 在落地 base `bb4e726a` 上**当场重跑**（`bash scripts/gates.sh --only route-parity,file-size`）：**2/2 绿 / 1s**。
+  `upstream 456` | `local 469 registered` | `baseline 458` | `implemented 383 real + 3 placeholder = 386` | `known_gap 70` | `unclaimed 0` | `regression 0` | `local_only 9`；`gaps by owner: M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = **70** ✓）。
+- ⑨ **主动不冷编（第 7 次生效）**：`git diff --name-only 9b97f824 bb4e726a` 的三个门输入（`crates/mc-conformance/report.json` / `docs/fixtures/*` / `crates/mc-conformance/**`）**逐一恒等**（变了的只有 `mc-channel/wecom/**` + `docs/32` + `docs/37`，**都不在门输入里**）⇒ 继承
+  `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`（`report.json` blob `fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980`）。
+- 🚫 **本轮不刷基线**（`--write-baseline` 仍归 M7-21 INT `LUM-1786`；M8 侧 `LUM-1804` 已合）⇒ `baseline` 保持 **458**。
+
+### §123.6 lesson
+
+1. 🔴 **磁盘紧张的轮次里，「合并」就是最大的回收开关 —— 它必须排在一切之前**。本轮起手 **9.6G（< 12G 红线）**，判据链合并 #108 后**立刻**可整删 **18.4G**。⇒ 正确顺序 = **合并 → 回收 → 派发 → 写文档**。若按旧序（文档在最后、回收排在派发后），`LUM-1778` 的 `--with-db` 很可能撞 `ENOSPC` —— 它在我删前那一刻已把 `df` 从 9.65G 吃到 **8.88G**（`LUM-1835` 就是这么死的）。
+2. 🔴 **四判据的第二条（「交付已进 base」）把回收钉死在合并之后 ⇒ 合并与回收是同一个动作的两半，不可拆轮**。「这轮合、下轮删」在磁盘充裕时无害，在 80% 占用时会直接变成一次运行事故。
+3. ✅ **形态判定是判据链的省钱开关**：`git merge-base --is-ancestor` **一条命令**就决定了「三哈希等式 + 零门禁重跑」是否成立 —— 本轮五步里有两步（②③）是平凡成立的。
+4. 🔴 **片自报的门禁记录，只在「与合并树同一棵树」时才算证据**。本轮能省整轮门禁，靠的是**形态②（base 是 head 祖先）⇒ 合并树 ≡ head 树**这一步把片自报的 `10/10` 与合并树绑死；**若形态是③（base 不是 head 祖先），片自报的三棵树（起手树 / 那次跑门禁的树 / 合并树）互不相同 ⇒ 必须真合 + 重跑**，不得引用片自报读数。**引用别人读数前，先证明两棵树是同一棵。**
+5. ✅ **「从在飞片的工作树实测预算」第 2 次被证实**：rev 4 给 `wecom/mod.rs` 写的「M7-17 落完即 62 行」在合并后实测 **62 行 / 14 个 `pub mod`** —— **逐字命中** ⇒ §122 确立的「预算来源顺序 = ① 在飞工作树实测 > ② base 实测 + `pub mod` 条数推算 > ③ 计划期预测」可继续当纪律用。
+
+### §123.7 观察项（第 60 轮）
+
+- **无并发 cycle（连续第 16 轮）** —— 本轮起手逐 PID 只看到 cycle 自身 + 两个切片 run，**没有第二条在飞 cycle**。
+- 积压 `todo` cycle **11 条**（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`）**只登记不动状态**（`1835` 是 `ENOSPC` 死，其余 `502` 或秒级静默死亡）；autopilot 建单护栏**仍未落地**。🔴 本轮的磁盘告急（80%）正是该护栏缺失的**第二个可用性后果**：并发 cycle 会同时吃盘。
+- `blocked` = **0**。
+- ✅ **看板 `in_progress` 连续第 3 轮与 daemon 逐字吻合**：`in_progress 3` = `LUM-2052`(cycle 自身) + `LUM-1778` + `LUM-1783`（新派即入账）。看板（项目内 263）：`in_review 233 / todo 11 / in_progress 3 / backlog 16 / blocked 0`。
+- 号段：`docs/32` 已占 `24,25,26,27,28,29,31,33,34` ⇒ 空号 `30`=`LUM-1779` / `32`=`LUM-1778`(在飞) / `35`=`LUM-1783`(本轮已派)。
+
+### §123.8 next cycle 起点（04:30 / 20:30Z）
+
+- base **`bb4e726a`**（本 run §123 docs-only 直推后另加一个 commit，**起手一律 `git rev-parse` 实测**）；GH **0 open PR**；**在飞 3/3** = cycle ∥ `LUM-1778`（M7-13 lark，0 路由，workdir `lum-1778-9d0e47bdfd84`，pid 59135，起手点 `6af3fb3d`，`porcelain` 15 项、0 提交，**在跑 `gates.sh --with-db`**，target 8.0G+ 活物）∥ `LUM-1783`（M7-18 wecom，0 路由，workdir `lum-1783-d467ad8eca04`，pid 36545，起手点 **`bb4e726a`**，冷建中）。
+- **第一动作**：`df -h /` **连采两次**（本轮收尾 27.3G / 44%，但在飞冷建会吃掉不少）→ `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）→ 逐片「run 终态（`porcelain` 空 + pi 进程消失）∧ 形态判定」。
+- **判据链铁律**：① 预检 `merge-base..head` numstat == PR API 逐字 ② base 前进段非 docs = 0 ③ **三哈希等式**（`merge-tree --write-tree` == rehearsal `write-tree` == 落地 `^{tree}`）④ 证据两条路任一：head CI 3/3 绿 **或** 在**与合并树同一棵树**上当场 `--with-db` 10/10 ⑤ API 钉 40 位 sha + `merge_method=merge`。
+- 🔴 **两片起手点**：`LUM-1778` 起手于 `6af3fb3d`，base 前进段 `6af3fb3d..bb4e726a` **含非 docs 路径**（#108 的 25 个 `mc-channel/wecom/**` 文件）⇒ **若 base 不是它 head 的祖先，必须真合 + 在它自己的热 target 上重跑 `--with-db` 10/10**（热 target 在 `lum-1778-9d0e47bdfd84`，**勿清**；三前置 = run 终态 ∧ `porcelain` 空 ∧ `/proc` 零 PID）。`LUM-1783` 起手于 `bb4e726a` ⇒ 只要中间不再合代码片就是**祖先形态**（零门禁重跑）。
+- **槽位一空即派**：`LUM-1778` 终 ⇒ **`LUM-1779`（M7-14 lark 5 路由，rev 6）**（**同 lark 树 ⇒ 必须等 1778 终**；**⑨ 唯一会动快照的普通片** —— 7 条 lark `actor=anonymous` fixture 必须转 pass；合入 ⇒ **`owners.M7 5 → 0`** ⇒ M7-21 INT `LUM-1786` 前置满足）；`LUM-1783` 终 ⇒ **`LUM-1784`（M7-19 wecom 入站与解析，0 路由，rev 2）**（同 wecom 树 ⇒ 必须等 1783 终）。
+- **递补**：`1784` 终 ⇒ `1785`（M7-20，rev 2）⇒ `1786`（M7-21 INT，rev 3，须 `owners.M7 → 0`，**与任何 `--write-baseline` 片不同轮**）。
+- **禁同飞**：lark 树 ∥ wecom 树可同飞；**同树内也不得两片同飞**。
+- ⑦ 当轮 = `local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`、`owners M9=33 M3+=16 M3=11 M10=5 M7=5`；⑨ totals `365/7/23/29/0/306`（`report.json` blob `fa53d084…`）。
