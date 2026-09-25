@@ -47,6 +47,16 @@ pub mod ws_endpoint;
 pub mod ws_frame;
 pub mod ws_frame_decoder;
 
+// M7-12（`LUM-1777`）落地的五个子模块（lark 入站回路）：
+// `content_flatten` = 正文摊平 + 提及改写 + markdown 探测；`enricher` = 富上下文装配
+// （引用 / 转发 / 群近况）；`media` = 媒体引用抽取与摄入；`resolvers` = 安装 / 身份 / 去重 /
+// 会话 / 审计的解析器集合；`feishu_channel` = 归一化 + `Channel` 实现 + 工厂。
+pub mod content_flatten;
+pub mod enricher;
+pub mod feishu_channel;
+pub mod media;
+pub mod resolvers;
+
 /// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
 ///
 /// 签名里的两个实参就是 adapter 能拿到的全部外部世界：一个共享注册表 + 一个 port 袋。
