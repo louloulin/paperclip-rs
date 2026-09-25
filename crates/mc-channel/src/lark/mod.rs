@@ -1,11 +1,13 @@
 //! Feishu / Lark adapter（上游 `internal/integrations/lark`（72 文件 / 37 非测试 / 10,957 上游行））。
 //!
-//! **状态：子模块已落地到 M7-11；`register()` 仍是 anchor 的空实现**
+//! **状态：子模块已落地到 M7-13；`register()` 仍是 anchor 的空实现**
 //! （`LUM-1765` / `docs/60-M7-PLAN.md` §5）—— 本文件的职责仍是"这个平台在这里注册工厂"
 //! 的位置声明 + 子模块声明；实现归 M7-10 … M7-14（`docs/60` §3.3 的写集表：本目录下的
 //! 每个子文件都有**一个**写者）。落地进度：M7-10 落 `client`/`http_client`/`params`/`types`
 //! （lark HTTP 客户端与类型），M7-11 落 `ws_connector`/`ws_endpoint`/`ws_frame`/
-//! `ws_frame_decoder`（自建 WS 长连接），其余归 M7-12 … M7-14。
+//! `ws_frame_decoder`（自建 WS 长连接），M7-12 落入站回路，M7-13 落**出站 / 回复 / 会话桥**
+//! （`store`/`channel_store`/`audit`/`typing`/`replier`/`outbound`）；其余（安装与绑定面 + 5 条
+//! 路由 + 注册工厂）归 M7-14。
 //!
 //! # 这个平台的面（实现者按这三条认领自己的文件）
 //!
@@ -57,9 +59,23 @@ pub mod feishu_channel;
 pub mod media;
 pub mod resolvers;
 
+// M7-13（`LUM-1778`）落地的六个子模块（出站 / 回复 / 会话桥）：
+// `store` = 存储值形状与两族表的 config 边界；`channel_store` = 数据层桥（上游 `ChannelStore`）；
+// `audit` = 丢弃审计写入面；`typing` = 打字指示生命周期；`replier` = 判决回复器；
+// `outbound` = 任务生命周期 → 文本 / markdown 卡 / 错误卡 / 卡片 patch。
+pub mod audit;
+pub mod channel_store;
+pub mod outbound;
+pub mod replier;
+pub mod store;
+pub mod typing;
+
 /// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
 ///
 /// 签名里的两个实参就是 adapter 能拿到的全部外部世界：一个共享注册表 + 一个 port 袋。
+#[cfg(test)]
+mod tests;
+
 pub fn register(_registry: &Registry, _deps: &ChannelDeps) {
     // M7 的 M7-10 … M7-14 在这里 `registry.register(ChannelKind::Lark, factory)`
     // （注册键是枚举变体 `Lark`；**存库**口径才是 `feishu`，见 `ChannelKind::storage_str`）。
