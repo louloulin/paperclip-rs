@@ -7849,3 +7849,63 @@ gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5      （和 = 121 �
 - ⑦/⑩ 当轮实测（base `d1c5b797`）：`local 411 / baseline 406 / implemented 335 = 331 real + 4 ph / known_gap 121 / unclaimed 0 / regression 0 / local_only 9`；`gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5`（和 = 121 ✓）。**不刷基线**（唯一一次归 M7-21 `LUM-1786` / M8-7 `LUM-1804`）。
 - **槽位一空就派**：`1799` 终 ⇒ **M8-3（`LUM-1800`，8 路由）**；`1768` 终 ⇒ **M7-4**（slack 出站/注册，写 `slack/mod.rs` 的 `register()` 补齐）。`LUM-1691`/`LUM-1793`（+12/+1 路由，争注册段 + `Cargo.lock`）、`LUM-1745`（M5-D8，争 `state.rs`）仍等。
 - 观察项第 27 轮：积压 `todo` cycle 10 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835`）只登记不动状态；`blocked` = 0。
+
+## §90 12:00 cycle（`LUM-1849`，03:00Z 触发）：**0 open PR + 空位 0 ⇒ 只读监控轮（第五次）**；回收死物 1.3G；**零空位不放空 —— 转做下一片派发预飞，逮到 M7-4 的一条「第二类漏项」（`slack/mod.rs` 未入写集），并证实 M8-3 的 0 缺件**
+
+### §90.1 起手三连（当轮实测，03:00:45Z）
+
+| 项 | 值 |
+| --- | --- |
+| 磁盘 | **16G 可用（66%）** —— 高于 12G 阈值（仍按纪律当场实测，未抄 §89 的 next-cycle 行） |
+| base | **`6b7795b4`**（= §89 收尾值，自 02:45Z 未前进） |
+| open PR | **0** —— `pulls?state=open&base=feat/multica-rs-initial` 返回空数组 |
+| daemon | `running_task_count = 3` ⇒ 逐 PID 拆 = **cycle 自身**（pi 45145）+ **`LUM-1799`**（pi 9418 + gates 43086/43090/45044）+ **`LUM-1768`**（pi 13968）⇒ **空位 0** |
+
+**ⓘ 并发 cycle 检查**：`todo` 里 cycle 类 issue 共 **11** 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835` + 本 issue），全部只有登记、不改状态；本轮起手**无本项目并发 cycle 在场**（第 28 轮观察；`blocked` = 0）。
+
+### §90.2 在飞两片健康复核（判活三件套取三，全部当轮生成）
+
+| 片 | `/proc/*/cwd` 逐 PID 命中 | 3 分钟内文件写入 | 分支 / 提交 / PR |
+| --- | --- | --- | --- |
+| **`LUM-1799`**（M8-2，5 路由） | ✓ pi 9418 + gates 43086/43090/45044 | ✓ `gates-m8-2.log`（正在写） | `agent/devbox5/d5e6f9e7d094` @ `ca05edbd`（含 #85 合并点）；**9 未提交**（`routes/vcs/{connections,dto,webhook}.rs`、`mc-repos/src/vcs/{commit_status,connection,pull_request}.rs`、`mc-vcs/src/{forgejo,gitlab}.rs` + 新 `tests/vcs/`）；**未推分支、无 PR** |
+| **`LUM-1768`**（M7-3，0 路由） | ✓ pi 13968 | ✓ 5 个 `slack/*.rs`（`config/inbound/media/mrkdwn/resolvers`） | `agent/devbox5/fa1f533002ea` @ `6b7795b4`；`slack/mod.rs` 改 **+213/−14** + 5 个**新文件未提交**；**未推分支、无 PR** |
+
+**`LUM-1799` 的进度证据比 mtime 更硬**：`gates-m8-2.log` 末尾逐字 `GATE_DB_MIGRATE_EXIT=0` → `GATE_DB_EXIT=0` → `=== [⑧] gate schema-drift ===` ⇒ 它已经跑完 **⑥ db 门**（`migrate=0`，即 #85 的迁移面在真库上干净）并进入 ⑧，**不是空转**。两片 target：`1799` **15G**（冷建后已回填）、`1768` **2.2G**。
+
+### §90.3 磁盘：回收一个死物的 `target/`（1.3G）—— 四判据逐条实测
+
+- 全工作区只有三个 target：`1799` **14–15G**（活物）、`1768` **2.2G**（活物）、**`lum-1847-399f59f1a190` 1.3G（死物）**。
+- 死物四判据：① 其 issue `LUM-1847` 已 `in_review`（run 终态）✓；② 其 `HEAD = 6b7795b4` **就是 base 本身**（`merge-base --is-ancestor` 成立，交付已在远端）✓；③ `/proc/*/cwd` **逐 PID 零命中**（且排除自身/父 shell 后复扫，仍零命中）✓；④ `git status --porcelain` **空**✓ ⇒ 整删 `target/`。
+- **回收量权威读数 = `df` 前后差**：16G → **18G 可用（63%）**（`du` 报 1.3G，两者一致，因为盘面未触顶）。
+- **两个活物的 target 一个字节都没动**：1799 的 `target/debug/incremental/mc_core-*` 命中 `-newermt '-10 minutes'`（活跃桶）⇒ 按 §89 的口径**不碰**；`deps` 永不删。
+
+### §90.4 零空位 ≠ 零产出：转做**下一片派发预飞**（两条结论，一条新逮到）
+
+槽位一空就派的两片，本轮把「派发前必做」提前做完（成本 = 3 条 `git show | grep`，收益 = 下一轮派发时不必现查）：
+
+**（A）`LUM-1800`（M8-3，8 路由）—— 0 缺件，逐条复验通过**（base `6b7795b4`）：
+`mc-core/src/mcp.rs` 已 `pub mod overlay;`（1 行）✓；`mc-repos/src/mcp/mod.rs:26-27` 已 `pub mod {agent_binding, workspace_server};` ✓；`routes/mcp/mod.rs:23-24` 已 `pub mod {agent, workspace};` ✓；`mc-core/src/lib.rs` 已 `pub mod mcp;` ✓；写集 5 个目标文件（`mc-core/src/mcp/overlay.rs` 等）在 base 树上**全部存在**（anchor 桩）⇒ 描述里「0 缺件、`routes/{mod,mount}.rs`/`state.rs` 由 anchor 冻结」的说法**在新 base 上依然成立**。ⓘ 其描述里的 ⑦ 绝对读数是**计划期值**（`local 430 / owners.M8 24`，取自 base `eeac897d`），下一轮派发时按当轮实测重取并追加「起手补充」。
+
+**（B）`LUM-1769`（M7-4，4 路由）—— 逮到一条「第二类漏项」**：写集只列 `crates/mc-channel/src/slack/{outbound,replier,typing,history,slash,install,binding}.rs` 7 个**新文件**，而 `routes/channels/mod.rs` 与 `mc-repos/src/channel/*` 被标为只读；但实测 base `crates/mc-channel/src/slack/mod.rs` 的 `pub mod` 声明数 = **0**、`register()`（`mod.rs:35`）仍是空壳 ⇒ **这 7 个新文件要可见，必须由写者编辑 `crates/mc-channel/src/slack/mod.rs`**，而该文件**既不在写集、也不在只读清单**（三处都没有）。→ 派发时写集须补 `crates/mc-channel/src/slack/mod.rs`（含补 `register()`）；同时 **M7-4 与在飞 M7-3 争同一个 `mod.rs` ⇒ 只能串行**（M7-3 终态后才派 M7-4），这一条正好与「1768 终 ⇒ M7-4」的槽位映射相容。
+
+### §90.5 「树差异只含 docs」⇒ 上一轮 ⑦/⑩ 读数在本轮 base 上**仍有效**（免跑论证，两件证据）
+
+本轮**不重跑** ⑦/⑩（两片正在争 CPU/盘面，重跑一次 workspace 构建要多花数 GB 与数分钟），依据：
+
+1. `git diff --name-only d1c5b797 6b7795b4` = **只有 `docs/37-M3-W3C-PREFLIGHT.md`**（`--stat`：1 文件 `+60`，即 §89 自身）⇒ 所有 crate 源码逐字节未变；
+2. ⑦（route parity）与 ⑩（file-size）都**不看 docs**：`scripts/file_size_baseline.tsv` 共 22 行、`grep -c '^docs/'` = **0** ⇒ 文档增行不可能进 ⑩；§89 的读数（`local 411 / baseline 406 / implemented 335 = 331 real + 4 ph / known_gap 121 / unclaimed 0 / regression 0 / local_only 9`；`owners M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5`，和 = 121 ✓）在 `6b7795b4` 上逐字成立。
+
+ⓘ 该论证的**前提是逐字列出差异文件名**（本轮恰好 1 个 docs 文件）；若差异里混进任何 `.rs`/`Cargo.toml`/`migrations/`，则免跑论证**立即失效**，必须真跑。
+
+### §90.6 lesson（本轮新增三条）
+
+1. **零空位的只读轮，把「下一片派发预飞」做掉比空等有价值** —— 本轮用 3 条 `git show | grep` 就产出了一条真实缺件（M7-4 的 `slack/mod.rs` 未入写集）和一条 0 缺件确认（M8-3）。这与 §87 逮到 M7-3「第二类漏项」是同一杠杆：**漏项的典型形态恒为「新文件要可见，必须改哪个既有父文件」**，而它只能逐文件实测，不能按 anchor 外推。
+2. **「树差异只含 docs」+「门不读 docs」= 可复用的免跑门禁论证** —— 必须两件证据齐（差异文件名逐字 + 该门的数据源不含 docs），缺一即为过度外推。省下的是一次 workspace 构建与数 GB 盘面，在并发片满载时尤其划算。
+3. **盘的读数在同一分钟内会变，`du` 不是稳定量** —— 本轮 `1799` 的 target 在相邻两次 `du` 里报 14G / 15G（cargo 正在写）；**回收量只认 `df` 前后差**，`du` 只用于「谁是死物、谁在长」的相对判断。同理，判活优先读**日志里的状态推进**（`GATE_DB_EXIT=0` → `[⑧]`），它比 mtime 与 `du` 都硬。
+
+### §90.7 收尾态与下一轮起点
+
+- **base = `6b7795b4`（本 §90 之上一行提交后前进）**；GH **0 open PR**；**空位 0** ⇒ 零派发。
+- 在飞 **2/3**：`LUM-1799`（M8-2，5 路由；⑥ 已绿、⑧ 进行中，**逼近交 PR**）∥ `LUM-1768`（M7-3，0 路由；5 新文件 + `mod.rs`，正在 `cargo test -p mc-channel`）；daemon **3/3**（含 cycle 自身）。
+- **槽位一空就派**（预飞已做完，措辞见 §90.4）：`1799` 终 ⇒ **M8-3（`LUM-1800`，8 路由，0 缺件）**，派前只需重取当轮 ⑦ 并追加「起手补充」；`1768` 终 ⇒ **M7-4（`LUM-1769`，4 路由）**，派前**必须**把 `crates/mc-channel/src/slack/mod.rs` 补进写集。`LUM-1691`/`LUM-1793`（+12/+1 路由，争注册段 + `Cargo.lock`）、`LUM-1745`（M5-D8，争 `state.rs`）仍等。
+- 待办计数（当轮）：`in_progress` **2**、`backlog` **37**、`todo` **11**（全为 cycle 登记）、`blocked` **0**。
