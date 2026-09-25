@@ -9926,3 +9926,78 @@ InvalidLastSymbol ⇒ state.rs:213 的 `.map_err(|_| Malformed)` 先于常量时
 - **观察项第 50 轮**：积压 `todo` cycle 10 条**只登记不动状态**；autopilot 建单护栏**仍未落地**；本轮起手**无并发 cycle（连续第 11 轮）**。
 - **在飞 3/3**（cycle ∥ `LUM-1745` ∥ `LUM-1775`）⇒ 槽位一空即派：`LUM-1775` 终 ⇒ **`LUM-1776`（rev 2 已就绪，可直派）**；`LUM-1745` 终 ⇒ 判据链 + ⑦ 预期（M5-D8 是 M5 最后一条缺口，`owners.M5` 早已为 0 ⇒ **本片 0 路由 ⇒ ⑦ 逐字不变**）。
 - **门 ⑥ 纪律（连续第 7 轮）**：`--with-db` 一律**当轮新建测试库**（角色建时就带 `CREATEDB`）；撞上 `LUM-1980` 的已知噪声（telegram 共用 `BOT_TOKEN` / composio 跨用例互踩 / `state.rs` 末字符取反）⇒ 换新库重跑，不追当片回归。
+
+## §113 22:30 cycle（`LUM-1997`，14:30Z 触发）：**起手 0 open PR + 空位 0 + 磁盘 13G/73% 但它在飞两棵热 target（17G + 7.1G）仍被吃 ⇒ 只读监控轮（第十七次）**；①⑦⑩ 在 base `0ae8a83b` 当场重跑 **3/3 绿（3s）**；🔴 **新 lesson：「门输入 blob 恒等」是比「重跑」更强也更便宜的证据**（本轮据此**主动不冷编 ⑨**）；派发预飞改三片描述（M7-12/14/15，同一类漏项第 8–10 次）；**新发现：M7 lark 子波剩余四片被一个 45 行文件串行化**；补齐 §112.4 少算的 1 条 `unmounted`
+
+### §113.1 起手三连 + 逐 PID 判活（数出来的在飞，不是看板读出来的）
+
+- **磁盘**：`df --output=avail` = **13,573,876K**（13G / 73%）；30 分钟后 **10,438,380K**（-3.0G）—— 见 §113.5，这是本轮所有取舍的**紧约束**。
+- **base**：`git ls-remote origin feat/multica-rs-initial` = **`0ae8a83b`**（相对 §112 收尾**零前进**）；`git log --oneline -1` 同名（「§112 …… 只读监控轮（第十六次）」）。
+- **GH**：认证 `pulls?state=open` = **0**（rate 4896/5000）。
+- **在飞**：daemon `running_task_count = 3`，逐 PID `/proc/*/cwd` **三个全落本项目 workdir** —— cycle(**58450**) ∥ `LUM-1745`(**42448**，子链 `59522`→`59526` = `timeout 1700 bash scripts/gates.sh --only db --db-url postgres://mc_lum1745:…`，其下 `59586` = `cargo test -p mc-repos -p mc-http -p mc-scheduler -p …`) ∥ `LUM-1775`(**56583**，子链 `56722`→`56723` = `timeout 2700 bash scripts/gates.sh`，其下 `56816` = `cargo build --workspace --all-targets --locked`)。
+  ⇒ **在飞 2 / 空位 0 ⇒ 零合并、零派发**。起手**无并发 cycle（连续第 12 轮）**，**无别的 project 干扰**（首次 3/3 全被本项目占满）。
+- **两片都在门禁阶段**（不是"有改动未提交"那种停滞）：
+  - `LUM-1745`（M5-D8，起手点 `0cb9ff6a`）：`git status --porcelain` **10 项**，与 rev 5 写集**逐格相符**（`apps/mc-server/src/main.rs`、新 `webhook_worker.rs` + `webhook_worker/tests.rs`、`mc-autopilot/src/webhook/{admission,mod}.rs`、`mc-http/src/routes/autopilots/delivery.rs`、`routes/webhooks/autopilots.rs`、`tests/autopilots/{deliveries_replay,main}.rs` + 新 `webhook_notify.rs`）；target **17G**、近 3 分钟 **0** 个新文件 ⇒ 在跑真库 e2e（不是编译）。
+  - `LUM-1775`（M7-10，起手点 `af729ecf`）：`git status --porcelain` **13 项** = **12 个新文件**（`lark/{client,client/tests,http_client,http_client/api,http_client/api/tests,http_client/resource,http_client/resource/tests,http_client/tests,params,params/tests,types,types/tests}.rs`）+ **`lark/mod.rs` 已追加**（正是 §112 rev 2 要求的那类改动）；target **7.1G → 7.4G**、3 分钟内 **1526** 个新文件 ⇒ 明确在编译。
+- 判活三件套本轮用「`/proc` 命中 + target 新文件数 + 与写集逐格相符」；`/proc/*/cwd` 从 `/` 起手扫（**禁 `cd` 进进程目录**），零污染。
+
+### §113.2 门禁：①⑦⑩ 当场重跑（3/3 绿 / 3s）；⑤⑥⑧⑨ **用「输入 blob 恒等」代替重跑**
+
+- 当轮 `bash scripts/gates.sh --only fmt,route-parity,file-size` = **3/3 PASS，3s**（`GATE_FMT_EXIT=0` / `GATE_ROUTE_PARITY_EXIT=0` / `GATE_FILE_SIZE_EXIT=0`）。⑦ 输出九个数与 §111/§112 **逐字相同**：
+  `upstream 456 | local 465 | baseline 458 | implemented 379 real + 3 placeholder = 382 | known_gap 74 | unclaimed 0 | regression 0 | local_only 9`。
+- **⑤/⑥/⑧/⑨ 本轮不重跑，理由是一条被证过的恒等**：`git diff --name-only 4cdd897e 0ae8a83b` = **只有 `docs/37-M3-W3C-PREFLIGHT.md` 一个文件**（+77 行），且**每道门的全部输入 blob 逐字节相同** ——
+
+  | 门输入 | blob（`0ae8a83b` 与 `4cdd897e` 逐字相同） |
+  | --- | --- |
+  | `crates/mc-conformance/report.json`（⑨） | `fa53d0842e9a` |
+  | `docs/fixtures/slash-alias-allowlist.tsv`（⑦ 第二条） | `45e118ea3a26` |
+  | `scripts/file_size_baseline.tsv`（⑩） | `2927b320ea4a` |
+  | `docs/fixtures/route-parity-baseline.json`（⑦ 第一条） | `a505d0b2d96d` |
+  | `Cargo.lock`（②③④⑤⑥ 的依赖面） | `cc7d35b8990c` |
+
+  ⇒ 本轮的 base 与 §112 实测 ⑨（`report matches`，116s）**是同一棵代码树**，重跑只能复现同一结果；而"只前进了一个 docs-only 提交"这个事实**已被逐 blob 核对**，不是靠时间推断。
+- 🔴 **lesson：证据强度与成本不同向**。此前十六轮的默认动作是"当场重跑"；本轮把它换成**「门输入恒等 + 上一次同树实测」** —— 它排除的是「任意输入变化」这一类反例，比"这一次没红"更强，成本 3s vs 一次冷编。**判据（三行，缺一不可）**：① `git diff --name-only <上次实测 sha> HEAD` 的**每一个**路径都不属于任何门的输入面（`crates/**`、`scripts/**`、`docs/fixtures/**`、`Cargo.lock`、`migrations/**`）；② 逐 blob 核对**门的输入**（不是"看一眼目录"）；③ 上一次实测是在**同一棵代码树**上做的（sha 与 blob 双证）。
+- ⚠️ **反向不成立**：只要 ① 里出现任何 `crates/**` / `scripts/**` / `docs/fixtures/**` / `Cargo.lock` / `migrations/**` 路径，就必须真跑（哪怕只是"改了个注释"）。
+- ⑨ 的 fixture 面本轮另作一次**只读核对**（不带 `--write`，不建库）：`totals = fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`，`by_actor = anonymous {pass 7, mismatch 23, unmounted 29} + member 293 + agent 13`，与 §112 逐字相同。
+
+### §113.3 派发预飞：同一类漏项**第 8–10 次**（`lark/mod.rs` ×2 + `wecom/mod.rs` ×1）
+
+当轮实测（base `0ae8a83b`）：`crates/mc-channel/src/lark/` **只有 `mod.rs`**（**38 行**、`pub mod` = **0**）；`crates/mc-channel/src/wecom/` **只有 `mod.rs`**（**37 行**、`pub mod` = **0**）；`crates/mc-channel/src/lib.rs:71/:76` 已分别 `pub mod lark; / pub mod wecom;`。⇒ **三片的写集都漏了自己的模块声明文件**，不补则新文件不进编译单元（连 `dead_code` 都不会报）：
+
+| 片 | 须补进写集 | 追加行 | 行数预算 | 描述 |
+| --- | --- | --- | --- | --- |
+| M7-11 `LUM-1776` | `lark/mod.rs` | 3 | 38 → 42(1775) → **45** | rev 2（§112 已落） |
+| M7-12 `LUM-1777` | `lark/mod.rs` | 5 | → **50** | **rev 2（本轮落）** |
+| M7-14 `LUM-1779` | `lark/mod.rs` | 4 | → **54** | **rev 2（本轮落）** |
+| M7-15 `LUM-1780` | `wecom/mod.rs` | 7 | 37 → **44** | **rev 2（本轮落）** |
+
+- **阴性对照（一次说清，省得后来者重复怀疑）**：`crates/mc-http/src/routes/channels/mod.rs:74/:77` 已有 `pub mod lark; / pub mod wecom;`，且 `routes/channels/{lark,wecom}.rs` **都在 base 上存在** ⇒ **HTTP 侧不需要任何 `mod.rs` 改动**；漏项只发生在 **channel 侧**。
+- 三片描述已按同一模板落「起手补充（rev 2）」：当轮 base `0ae8a83b` + 当轮 ⑦ 九个数 + 号段（1777 = `## 29.`；1779 = `## 30.`；1780 = `## 31.`，且都写明**号由派发顺序占、先派者取小号、起手复核一次**）+ **硬前置的可观测判据**（逐个 `git cat-file -e HEAD:<只读清单文件>`，任一 MISSING 不许起手）+ 同飞/不同飞的逐字理由。
+- 🔴 **新发现（补齐 §112.4 少算的那 1 条）**：上轮把 `unmounted` 里"会动快照"的簇枚举成 `17(config) + 1(health) + 7(lark) + 3(stripe) = 28` —— **合计对不上 totals 的 29**。第 **29** 条是 `users/TestGoogleLoginSuccessfulExistingUser@server/internal/handler/auth_google_error_code_test.go:311#1`：`GET /users/me`、`actor=anonymous`、`via=handler`、`exp=200`、当前 `outcome=unmounted`。
+  - 它**不在 upstream 456 之内**（否则 `unclaimed` 不会是 0），而 `docs/27-W0-GOLDEN-FIXTURES.md:264` 明确记着它「`route-owners.tsv` 未命中（按 first-match 规则见 `docs/22-ROUTE-PARITY.md`）」、`:285` 把它与 `/api/config`、`/auth/google` 并列为**口径外项**（"加进去只是把 `mismatch` 从 3 变 6，不增加信息量"）。
+  - ⇒ **排期结论不变**：能改快照的仍只有 **lark 7（⇒ M7-14 `LUM-1779`）+ stripe 3（⇒ M9-6 `LUM-1821`）** 两簇，加 **M10** 的 `config 17 / health 1`；**第 29 条恒不该被任何片挂上** —— 谁把 `/users/me` 挂进路由，就把 ⑨ 打红而 ⑦ 一个字不动。已逐字写进 `LUM-1779` 的 rev 2。
+  - ⇒ **方法论 lesson：枚举必须与 totals 对账**（`17+1+7+3 = 28 ≠ 29`）。上轮只差 1 条，就足以让下一轮把"第三簇不存在"当结论继续传下去 —— 而"某某簇不存在"这种**否定判断**最需要枚举闭合。
+- **`LUM-1780`（M7-15 wecom）的 ⑨ 义务：无，且不许刷快照**。当轮实测 `report.json` 里**路径含 `wecom` 的 fixture = 0 条**（`domain=wecom` 也是 0）⇒ 本片挂 4 条路由只动 ⑦（`implemented 379 → 383`、`known_gap 74 → 70`，不变式 `implemented + known_gap == 456` 仍成立），**⑨ 逐字不变** ⇒ 它是「挂路由 ≠ 必刷快照」的**第二组对照**（第一组 = M7-9 dingtalk 7 路由，§112.4）。已写进该片 rev 2。
+
+### §113.4 排期发现：M7 lark 子波的**剩余四片被一个 45 行文件串行化**
+
+- `LUM-1775`(M7-10，在飞) → `LUM-1776`(M7-11) → `LUM-1777`(M7-12) → `LUM-1779`(M7-14)：**四片的写集两两都在 `crates/mc-channel/src/lark/mod.rs` 上相交**（各自追加自己那几行 `pub mod`）⇒ 按「一格 = 一个文件 = 一个写者」纪律，**lark 链一次只能飞一片**（要并行就得让后合者 rebase 两侧保留 —— 先例 `telegram/mod.rs` 的 M7-5 ∥ M7-6 —— 但那只是把冲突成本推给后合者）。
+- `wecom` 侧是**另一棵树**（`crates/mc-channel/src/wecom/mod.rs`）⇒ **`LUM-1780` 与任一 lark 片同飞合法**（逐字文件交集 ∅）。
+- ⇒ **两个空位的最优配对 = （一片 lark）∥ （`LUM-1780` 或零共享文件的 `LUM-1980`）**；把两个空位都给 lark 片（如 1776 ∥ 1777）是**同树相撞**，不是并行。
+- 本结论只据**当轮 base 的逐字文件**推出（不引 issue 正文措辞、不引计划表），与 §112 的派发判据同纪律。
+
+### §113.5 磁盘：本轮**主动不冷编**（紧约束下的顺序纪律）
+
+- 起手 **13,573,876K** → 30 分钟后 **10,438,380K**（-3.0G，且**只降不升**）；两棵**热** target = **17G**（`LUM-1745`，同时挂着真库 e2e）与 **7.1G → 7.4G**（`LUM-1775`，`cargo build --workspace --all-targets` 正进行）。
+- ⇒ **本轮不新开任何 cargo 构建**：⑨ 的冷编（历史 ~1.8G）会给**正在跑门的另两片**制造 `ENOSPC` 假红（`docs/37` §107/§111 实测过这种红：`couldn't create a temp dir` / `ld … Bus error` —— **不是代码红**，却会让在飞片把一整轮跑废）。本 run 的 checkout 只有 **612K**（无 `target/`）。**这是本轮唯一的偏离动作，动机是保护在飞片，不是省时间。**
+- **回收：本轮零删除**。终态大物没有：`lum-1774` **100M**、`lum-1987` / `lum-1992` 各 **27M**（判据齐、体积远低于阈值 ⇒ 按 §110「排序键 = 判据数量 × 可逆性」留作 ENOSPC 储备）；`.repos` **1.7G**（12 个**跨项目**裸库镜像）明确不动。
+- 🔴 **lesson：`df` 的绝对值不决定"能不能开跑"，`df − 在飞 target 的增长速率` 才决定**。本轮起手 13G 看着"健康"（§112 是 30G），但它是**两个正在吃盘的构建**手里的 13G；§107 那条"低于 ~10G 别开 `--with-db`"的口径应升级为**「低于 ~10G 或 df 在 5 分钟内下降 >2G ⇒ 两样都别开」**。
+
+### §113.6 元数据 / next
+
+- 看板（项目 `da4310b1-4d33-4e4f-9bed-d2073388abf5`，全量分页 **252**）：`in_review 216 / backlog 23 / todo 12 / in_progress 1 / blocked 0`。**状态字段连续第 5 轮不可信**：唯一 `in_progress` 是 **cycle 自己**（`LUM-1997`），而两片在飞（`LUM-1745` / `LUM-1775`）都挂 `todo`。**观察项第 51 轮**：积压 `todo` cycle **10** 条（`1521 1533 1726 1737 1740 1748 1805 1810 1826 1835`）只登记不动状态；autopilot 建单护栏**仍未落地**。
+- **在飞 3/3**（cycle ∥ `LUM-1745` ∥ `LUM-1775`）；**零空位 ⇒ 零派发**。槽位一空即派：
+  - `LUM-1775` 终 ⇒ **`LUM-1776`**（rev 2 已就绪，可直派；起手自带硬前置判据）；
+  - `LUM-1745` 终 ⇒ 判据链（其起手点 `0cb9ff6a` 已落后 base **4 个提交** ⇒ 多半要真合 + rebase；⑦ 预期：M5-D8 是 M5 最后一条缺口、**0 路由 ⇒ 九个数逐字不变**）；
+  - **另一个空位给 `LUM-1780`**（与任一 lark 片逐字交集 ∅，见 §113.4），除非要优先把 `owners.M7` 的 lark 5 条推完 —— 但那时**不能**派第二片 lark（同树）。
+- 门 ⑥ 纪律（**连续第 8 轮**）：`--with-db` 一律**当轮新建测试库**（角色建时就带 `CREATEDB`）；撞上 `LUM-1980` 的已知噪声（telegram 共用 `BOT_TOKEN` / composio 跨用例互踩 / `state.rs` 末字符取反）⇒ **换新库重跑**，不追当片回归。
