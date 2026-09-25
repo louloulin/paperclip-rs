@@ -1399,3 +1399,116 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:54
   下一次刷新（`--write-baseline`：`baseline 406 → ？`）归 M8-7。请一并收口两条文案债（§14.2 末）与
   **D9/D10 两条「登记过的不实现」**（VCS 侧自动关联/关闭、跨表关闭聚合），并在 INT 报告里复述
   「`issue_vcs_pull_request` 在本波结束时仍为空」这条已知缺口。
+
+## 16. M8-3（`LUM-1800`）：MCP 服务器库 + agent 绑定 + per-task overlay 纯函数（8 路由）的落点、偏离与门禁读数
+
+> **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
+> `## 11.` 是 M8-0）⇒ 按派发时的约定取 **`§16`**。`§15` **刻意留空**给并发片 M7-4
+> （`LUM-1769`，slack 出站）—— 本片**不回填**、也不占用它的号。
+
+### 16.1 落点（写集逐字）
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `crates/mc-core/src/mcp/overlay.rs` | 638 | anchor 建桩、本片原地填充：`merge_task_overlay`（上游 `mcp_overlay.go` 160 行）+ `resolve_agent_mcp_config` + `WorkspaceMcpBinding`（上游 `workspace_mcp.go` 的折叠段，含两个容器 `mcpServers` / `mcp` 的规范化）+ 25 条纯函数用例 |
+| `crates/mc-repos/src/mcp/workspace_server.rs` | 487 | `workspace_mcp_server` 的 CRUD（4 条 ORM 语句 + 2 条锁语句）+ 条目名/形状校验 + 6 条单测 |
+| `crates/mc-repos/src/mcp/agent_binding.rs` | 307 | `agent_mcp_server` 的绑定 / 开关 / 摘除 + claim 路径的 `list_enabled_for_agent` + 2 条单测 |
+| `crates/mc-http/src/routes/mcp/workspace.rs` | 471 | 库面 **4** 条路由 + `McpServerResponse`（write-only DTO）+ `mcp_transport_of` + 5 条单测 |
+| `crates/mc-http/src/routes/mcp/agent.rs` | 323 | agent 面 **4** 条路由（响应恒为更新后的绑定列表）+ 4 条单测 |
+| `crates/mc-http/tests/mcp/{main,support,workspace,agent}.rs` | 26 / 400 / 405 / 503 | **新测试目标**：11 条真库 e2e（含 1 条并发栅栏） |
+
+**零编辑（anchor 冻结，逐条实测未动）**：`crates/mc-core/src/mcp.rs`（`pub mod overlay;` 与
+`merge_task_overlay` 的 re-export 都已在 anchor 落好 ⇒ 本片新增的两个符号走
+`mc_core::mcp::overlay::…` 路径，**不需要也不得**改这个文件）、`routes/mcp/mod.rs`、
+`routes/{mod.rs,mount.rs}`、`state.rs`、根 `Cargo.toml` / `Cargo.lock`、
+`docs/fixtures/**`、`scripts/file_size_baseline.tsv`；**只读面**零触碰：
+`crates/mc-mcp/**`、`crates/mc-daemon/src/mcp/**`、`crates/mc-repos/src/plugin/**`、
+`crates/mc-http/src/routes/plugins/**`、`crates/mc-repos/src/task/**`。
+
+**写集追加一个目录**：`crates/mc-http/tests/mcp/**`（DoD 要求「真库 CRUD + 校验反例」证据；
+与 M8-1 的 `tests/github/`、M8-2 的 `tests/vcs/` 同款 —— 新路径、与任何片零交集）。
+
+### 16.2 偏离登记（M8-3-D1 … M8-3-D10）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **M8-3-D1** | 「拒 agent actor」的两个分支**不可实现** | `routes/mcp/{workspace,agent}.rs` | 上游 `requireWorkspaceMcpWriter` / `requireAgentMcpWriter` 先判 `resolveActor(...) == "agent"` ⇒ 403（`agents cannot modify the workspace MCP servers` / `…assignments`）。本仓 mc-http 只有 `AuthUser`（会话头 / `X-Multica-User-Id`，**恒人类成员**）⇒ 没有 agent 身份的请求上下文。与 M2-E `properties.rs` 的同一登记同款。**保留的部分**：库面 owner/admin 门、agent 面 `canViewAgentSecrets` 门逐条在 |
+| **M8-3-D2** | `McpOverlayError` 是**三值、不带载荷**的枚举 | `mc-core/src/mcp/overlay.rs` | 上游 `unmarshalServerMap` 会把出错的 server 名写进错误文案（`mcpServers.<name> must be a JSON object`）；anchor 冻结的签名只有三支 ⇒ 四类非法输入（agent 文档非对象 / overlay 非对象 / 容器非对象 / 条目非对象或空名）折进三支。**四种情形的调用侧动作完全相同**（保留 agent 配置 + 一条 warn），丢的只是文案细节。四格对照表写在模块头 |
+| **M8-3-D3** | `merge_task_overlay` 的「原值 + error」形态 | 同上 | 上游返回 `(bytes, error)` 双值；本仓的入参是 `&Value`（调用方**始终持有**）⇒ 「失败时回 agent 原值」等价于「返回 `Err`，调用方继续用自己手上那份」。签名由 anchor 冻结，语义未变 |
+| **M8-3-D4** | `UPDATE` 的真实库故障回 **500** | `routes/mcp/workspace.rs` | 上游把 `UpdateWorkspaceMcpServer` 的**任何** `:one` 错误都折成 404（sqlc 的副产物）。本仓 409 只留给真·唯一冲突（`23505`）、404 只留给真·未命中，其余 → `Error::Database`（500）。与 M8-2-D11（rotate 的 500 → 404）方向相反但同一条理由：状态码要诚实 |
+| **M8-3-D5** | 404 / 400 的**文案** | 两个 route 文件 | 本仓 404 体是 `Error::NotFound` 的渲染（`not found: mcp server`），上游是自由文本（`MCP server not found`）；坏 uuid 是 M3-5 约定的 `<field> must be a valid uuid`，上游 `invalid <field>`。**状态码逐条一致**，只有文案不同（同 `docs/40` §5 的既有偏离） |
+| **M8-3-D6** | 时间戳口径 | `McpServerResponse` | 上游 `timestampToString` 是 `time.RFC3339`（**无**小数秒），本仓统一 `to_rfc3339()`（带纳秒）—— 与 M8-2 的 `routes/vcs/dto.rs` 同一口径、同一理由（`mc_repos` 的行类型给的是 `DateTime<Utc>`） |
+| **M8-3-D7** | 授权判定的**顺序** | `routes/mcp/agent.rs` | 上游先 `loadAgentForUser`（404）再判 workspace 成员；本仓 `AgentScope::resolve` 先解析 workspace（400 / 非成员 404）再 `load_agent`（404）。状态码组合相同，只是「workspace 不是我的」与「agent 不存在」同时成立时报哪个的优先级不同（M6-4 `/skills*` 同款） |
+| **M8-3-D8** | 新符号的**可见路径** | `mc-core/src/mcp/overlay.rs` | `resolve_agent_mcp_config` / `WorkspaceMcpBinding` / `MCP_SERVER_CONTAINERS` 只能从 `mc_core::mcp::overlay::…` 取（`mcp.rs` 是 anchor 冻结文件，只 re-export 了 `merge_task_overlay` + `McpOverlayError`）。不改锚点文件的代价，换来「一个文件一个写者」成立 |
+| **M8-3-D9** | **登记缺口**：claim 的 agent 数据块尚未实现 ⇒ `resolve_agent_mcp_config` / `list_enabled_for_agent` 本波**无调用点** | `mc-repos/src/mcp/agent_binding.rs`、`mc-core/src/mcp/overlay.rs` | 上游的消费者是 `daemon.go:2470-2505`（claim 时把绑定折进 `mcp_config`、再叠 overlay）。本仓 `routes/daemon/dto.rs` 的模块头逐字写着「`agent.*` / `repos` / `skills` 等由别的 builder 填（本切片不实现）」⇒ claim 载荷里**没有** `mcp_config` 这个字段。与 R-M8-9（3 处 enqueue 接线）同性质的**登记缺口，不是遗漏**：`runtime_mcp_config` 在本波结束后仍不带托管 MCP。接线点与顺序写在 §16.5 |
+| **M8-3-D10** | 同一份数据**两个 transport 口径**（刻意） | `mc-repos/mcp/*.rs` vs `routes/mcp/workspace.rs` | 线格式 = 上游 `mcpTransportOf`：未知 `type` **原样透传**（`{"type":"websocket"}` ⇒ `websocket`），只有没声明 `type` 时才按 `command`/`url` 推断；领域层 = anchor 的 `McpTransport` 三值枚举：未知 `type` 会继续按 `command`/`url` 推断（⇒ `Http`）。**响应只用线格式那个函数**，两个 `transport()` 访问器的文档都逐字写了「不要拿它生成 wire 值」，并有一条用例把差异钉在同一处 |
+
+### 16.3 专属 `DoD` 的证据（`docs/61` §6.5 的 M8-3 行逐条）
+
+| `DoD` 条目 | 证据（用例 / 命令） |
+| --- | --- |
+| **8 条路由**全部注册、每条至少一条用例 | ⑦：`local 416 → 424`（+8），`owners.M8 14 → 6`；形态门 `slash_alias_audit.py` = **0 defect**（8 条全是上游 plain 注册，无 `dual-form` 需求）。单测：`routes::mcp::{workspace,agent}::tests::{router_builds_without_panicking,…}`；e2e：`tests/mcp/{workspace,agent}.rs` 的 11 条 |
+| **write-only**：列表/详情响应里 `headers` / `env` 的值一个字节都不出现 | `tests/mcp/workspace.rs::library_crud_round_trip_never_echoes_the_entry`（在**原始 body** 上断言：create / list（admin+member+guest 三次）/ 均不含 `sk-live-…`，**也不含 URL** —— URL 本身就是凭据材料）；`tests/mcp/agent.rs::binding_add_toggle_remove_is_idempotent`（绑定列表同样两样都不含）；`routes/mcp/workspace.rs::response_never_carries_the_entry`（DTO 级） |
+| **重名拒绝**（迁移 `316` 的唯一约束） | `tests/mcp/workspace.rs::library_rejects_duplicate_names`：create 撞名 ⇒ **409**、把另一条改名撞过去 ⇒ **409**、原地改自己（名字不变）⇒ 200 |
+| agent 绑定的 `enabled` 开关**幂等** | `tests/mcp/agent.rs::binding_add_toggle_remove_is_idempotent`：`add` 两次 ⇒ `count_bindings == 1`；`enabled=false` 两次 ⇒ 仍 1 行、值仍 `false`（**绑定存活**，不删不插）；再 `true` ⇒ 回到 `true`；`DELETE` 两次 ⇒ 第二次 404；摘完库条目**仍在** |
+| **overlay 合并纯函数**与既有合并语义逐条一致（同名覆盖、runtime 层做底） | `mc-core/src/mcp/overlay.rs` 的 **25** 条：`merge_*` 12 条（上游 `mcp_overlay_test.go` 逐条移植，含「两侧都坏报 agent 支」「非对象条目拒绝」「顶层键只从 agent 侧保留」）+ `resolve_*` 12 条（上游 `workspace_mcp_test.go` 逐条移植，含**遗留容器 `mcp` 折进 `mcpServers`** 的 OpenCode 回归点、同名 agent 胜出、`mcp` vs `mcpServers` 的优先级）+ 1 条 `Debug` 脱敏。**与 daemon 侧的关系**：daemon 的 `runtime×agent` 本地合并在 `mc-daemon/src/mcp/runtime.rs`（M6-9 交付，本片**只读**）；本文件是它**上游一层**（agent 已解析后的 `mcp_config` ← per-task overlay），两层不是同一份逻辑、也没有第二份实现 |
+| **无需平台替身**：真库 CRUD + 校验反例 + overlay 纯函数用例 | 真库 11 条（`tests/mcp/`，门 ⑥ 拉起）+ 校验反例：空名 / 非法字符名（空格、点、斜杠、emoji）/ 非对象条目（`[]`、字符串、`null`、缺失）/ 空对象 / 重名 / 未知 transport **原样透传**（`library_rejects_bad_input_but_keeps_unknown_transports` —— 上游刻意让 transport 是自由字符串，本片**不**把它做成硬校验，理由逐字写在 `mcp_transport_of` 的文档里） |
+| **授权面**：agent 4 条必须是 `loadAgentForUser` 语义，**不是**裸 workspace member | `tests/mcp/agent.rs::binding_authorization_is_load_agent_for_user`：agent owner（**member 角色**）四条全 200；admin 200；**另一个同 workspace 的 member** 403；guest 403；非成员 404；缺 workspace 400；无会话 401；别的 workspace 的 agent 404；`kind<>'user'` 的 agent 404。库面：`library_authorization_matrix_per_endpoint`（读 member/guest 200、写 403、非成员 404、`null` body 400） |
+| **应用层栅栏**（两张表无 FK ⇒ 竞态只能自己防；上游有专门的竞态用例） | `tests/mcp/agent.rs::binding_add_cannot_land_after_the_server_delete_commits`：真持锁的 `FOR UPDATE` + 真 handler 并发 ⇒ 断言写入方确实**停在锁上**（`pg_stat_activity.wait_event_type='Lock'` 且 query 命中 `…FOR SHARE`）、删除提交后才返回且**不是 200**、库里 **0** 行孤儿绑定；仓储层：`create` 的 `FOR KEY SHARE`（上游 `LockWorkspaceForChatSessionCreate`）、`delete` 的 `FOR UPDATE`（上游 `LockWorkspaceMcpServerForUpdate`）、`add` 的 `FOR SHARE`（上游 `LockWorkspaceMcpServerForShare`） |
+
+### 16.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-3.log`）
+
+```
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1800:…@127.0.0.1:5432/mc_lum1800'
+  ①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑥db 0（migrate=0, e2e=0）
+  ⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0
+  ⇒ overall: PASS — 10/10 gate(s) green in 133s
+```
+
+- ⚠️ **首跑是 9/10**：⑧ 报 `permission denied to create database` ⇒ **exit 2**（`gates.sh` 里 2 是
+  「根本没法开跑」而不是门失败）。原因是本 run 新建的测试角色 `mc_lum1800` 没有 `CREATEDB`
+  权限（⑧ 要建自己的 scratch 库 `schema_probe_w0b_drift_<pid>`）。`ALTER ROLE mc_lum1800 CREATEDB`
+  后**单跑 ⑧ = 26s PASS**，随后**整套重跑 = 10/10 / 133s**（上表就是那一次）。
+  ⇒ **lesson**：`--with-db` 之前先给角色 `CREATEDB`，否则会把「环境缺权限」误读成「本片红了」。
+- ⑦（**本片会动读数**；`baseline 406` **不动**）：`upstream 456 (commit f41fae6b08fb) |
+  local 424 registered`、`implemented 344 real + 4 placeholder = 348 / 456`、`known_gap 108`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`gaps by owner: M9=33 M7=24 M3+=16 M2-A=13
+  M3=11 **M8=6** M10=5`（和 = 108 ✓）。**与 issue 描述「起手补充（12:30 cycle）」的片后预期逐字相同**：
+  `local 416→424`、`implemented 340→348`、`known_gap 116→108`、`owners.M8 14→6`（−8 = 本片 8 条路由）。
+  `--write-baseline` **未跑**（唯一一次刷新归 M8-7 `LUM-1804`）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py` = `0 defect(s)`、exit 0（M8 `dual-form required: 0`，
+  **没有** allowlist 退路）；命令输出的逐字一行：`registered upstream-key literals: 428`。
+- ⑩：**0 违规**，`scripts/file_size_baseline.tsv` **未动**。本片最大文件在 `cargo fmt --all` **之后**量：
+  `mc-core/src/mcp/overlay.rs` **638**、`tests/mcp/agent.rs` 503、`mc-repos/mcp/workspace_server.rs` 487、
+  `routes/mcp/workspace.rs` 471 —— 全部 ≤800（余量最小的那条是 162 行）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片 0 fixture 改动 ⇒ 未漂移）。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表改动 ⇒ 与基线同形）。
+- ⑥：`mc-migrate` 566 个迁移 + `--ignored` 全绿，含本片 **11** 例真库 e2e（`mc-http --test mcp`）。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿。本片新增 **42** 条**零 DB** 单测
+  （`mc-core::mcp::overlay` 25 + `mc-repos::mcp` 8 + `mc-http` lib 的 `routes::mcp` 9）
+  ⇒ 连同真库 11 例，本片共 **53** 例新测试。
+- **【lesson·磁盘】** 起手 `df` 26G 可用，本 run 只保留一份 `target/`（`CARGO_INCREMENTAL=0` 全量重建后
+  5.1G，默认增量式要 11G）；三轮门禁跑完仍 20G+。与 M8-2 同手法：**所有 cargo 调用都带
+  `CARGO_INCREMENTAL=0`**，读数不受影响（同一脚本、同一批命令）。
+
+### 16.5 交接（给 M8-6 / M8-7 / 未来接 claim 的切片）
+
+1. **M8-6（composio）**：per-task overlay 的**合并侧**已经就位 ——
+   `mc_core::mcp::overlay::merge_task_overlay` 是唯一实现点，**不要**在 `mc-composio` 里写第二份；
+   落库原语 `mc_repos::task::overlay::attach_runtime_mcp_overlay` 仍是 `todo!()`（R-M8-9），
+   本片**没有**碰它（它在 anchor 的写集里，实现归尾账）。
+2. **M8-7（INT）**：本片把 ⑦ 推成 `local 424 / implemented 348 / known_gap 108 / owners.M8 6`；
+   下一次刷新（`--write-baseline`）归你。请一并：① 在缺口清单里复述 **D9**（claim 的 agent 数据块
+   未实现 ⇒ 绑定折叠与 overlay 合并本波都没有调用点）；② 复核 M8 面剩余 `unevaluable`；
+   ③ `mc-core/src/mcp.rs` 与 `mc-repos/src/mcp/mod.rs` 的模块头仍写着「M8-3 待落地 / doc-only 桩」，
+   是 anchor 冻结文件里的**文案债**（本片不得改，与 §14.2 末两条同性质）。
+3. **未来接 claim 的切片**：接线点是 `crates/mc-http/src/routes/daemon/dto.rs` 的 agent 数据块
+   （目前**没有** `mcp_config` 字段）。按上游 `daemon.go:2466-2505` 的顺序：
+   `list_enabled_for_agent(agent)` → `resolve_agent_mcp_config(&bindings, agent_mcp_config)`
+   → `merge_task_overlay(&resolved, task.runtime_mcp_overlay)`；**两段都要 fail-soft**
+   （`Err` ⇒ 用上一步的原值 + 一条 `warn`），**绝不**因为共享条目或 overlay 坏掉就 panic 或丢掉
+   agent 自己保存的 servers —— 这是上游注释逐字点名的失败模式。
+4. **给后续任何写 `workspace_mcp_server` / `agent_mcp_server` 的片**：`config` 是 **write-only**
+   （响应永不带值，连 `url` 都不带）；绑定**以 id 为键**（改名不影响使用）；两张表**没有 FK**
+   ⇒ 删除 / 建行的栅栏只能靠应用层的三条锁语句（`create` 的 `FOR KEY SHARE`、`delete` 的
+   `FOR UPDATE`、`add` 的 `FOR SHARE`），**不要**绕过它们直接写 SQL。
