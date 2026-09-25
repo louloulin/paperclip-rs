@@ -5073,16 +5073,22 @@ lib 用例 902 条全绿。
 
 ### 36.3 门禁证据（当轮实测，base `b232f7e4` + 本片）
 
-* **`bash scripts/gates.sh --with-db` = 10/10 PASS，556s**（① 3s ② 220s ③ 55s ④ 37s ⑤ 62s ⑥ 66s
-  / `migrate=0,e2e=0` ⑧ 31s ⑦ 0s ⑨ 82s ⑩ 0s）。当轮新建库 `multica_lum1784` / 角色 `mc_lum1784`
-  （`CREATEDB`）。
-* 🔴 **门 ⑥ 在本次轮里红过一次，而原因是 `ENOSPC` 不是代码**（`docs/32` §35 的 D-lesson 第 3 次
-  实证）：第一次 `--with-db` 跑出 `9/10（⑥ FAIL, e2e=101）`，而根因是 `/` 到 **100%**，
-  `cargo` 连 `target/debug/incremental` 的会话目录都建不出来（`os error 28`），四个 `mc-http` 测试
-  目标整体编译失败 ⇒ e2e 退出码 101。删掉本 workdir 的 `target/debug/incremental`（**9.9G**，纯缓存）
-  并 `CARGO_INCREMENTAL=0` 重跑 ⑥ ⇒ **`migrate=0,e2e=0` 绿**，随后整轮 10/10。
-  ⇒ **纪律重申：⑥ 一红先看 `df -h /`，再看代码**；本 workdir 一轮 ② build 就能把 `incremental/`
-  长到 9.9G。
+* **`bash scripts/gates.sh --with-db` = 10/10 PASS，857s**（① 3s ② 186s ③ 86s ④ 39s ⑤ 155s ⑥ 292s
+  / `migrate=0,e2e=0` ⑧ 26s ⑦ 0s ⑨ 70s ⑩ 0s）。当轮新建库 `multica_lum1784` / 角色 `mc_lum1784`
+  （`CREATEDB`）。这一行是**交付提交 `ec95337d`** 上的一次完整 10/10（`CARGO_INCREMENTAL=0`）。
+* 🔴 **门 ⑤ 与 ⑥ 各红过一次，两次的原因都是 `ENOSPC` 而不是代码**（`docs/32` §35 那条 lesson 的
+  第 3、4 次实证）：
+  * **⑥（第一次 `--with-db`）**：跑出 `9/10（⑥ FAIL, e2e=101）`，根因是 `/` 到 **100%** ——
+    `cargo` 连 `target/debug/incremental` 的会话目录都建不出来（`os error 28`），四个 `mc-http`
+    测试目标整体编译失败 ⇒ e2e 退出码 101。删掉**本 workdir** 的 `target/debug/incremental`
+    （**9.9G**，纯缓存）后重跑 ⑥ ⇒ `migrate=0,e2e=0` 绿。
+  * **⑤（docs 追加前的那次 `--with-db`）**：`9/10（⑤ FAIL, 101）`；⑤ 单独重跑 **exit 0**，
+    失败时 `/` 只剩 **3.4G**。
+  * **真正的止血动作**：`target/debug/deps` 里积了 **2406 个陈旧副本（24.8G）** —— 同一个 crate
+    的多个历史哈希产物，`cargo` 自己不会及时回收。按"每个 stem 只留最新"清掉后 `df` 从 3.0G
+    → **26G**，随后整轮 10/10。
+  ⇒ **纪律重申（两处都值得写进下一轮 cycle）**：门一红先看 `df -h /`，再看代码；而本仓一个
+    workdir 的 `target/debug/deps` **陈旧副本**是比 `incremental/` 更大的那块死物（24.8G vs 9.9G）。
 * **⑦ 读数（片后，逐字，`python3 scripts/route_parity.py`）**：
   `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
   `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
