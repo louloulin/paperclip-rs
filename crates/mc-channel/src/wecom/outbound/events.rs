@@ -12,7 +12,7 @@ use mc_core::channel::message::ChatType;
 use crate::wecom::ws_frame::aibot_chat_type_from_channel;
 use crate::wecom::ws_sender::Deadline;
 
-use super::{Outbound, FALLBACK_SEND_TIMEOUT, INBOX_BUDGET};
+use super::{Outbound, INBOX_BUDGET};
 
 // =====================================================================
 // 预算（上游的 `context.Context` 那一半）
@@ -61,26 +61,11 @@ impl DeliveryBudget {
         Some(self.deadline)
     }
 
-    /// 上游 `fallbackBudget`：给普通消息一份**气泡不可能已经花掉**的预算。
-    ///
-    /// **气泡不许花掉回答的预算。** `seal` 会把一个丢掉的 ack 最多重试
-    /// [`crate::wecom::stream_store::STREAM_CLOSE_RETRIES`] 次，每次花掉一个 `ackTimeout` 与一个
-    /// 重试间隔，而调用方那点预算并不覆盖它：预算在 `seal` 内部跑完时，这条路径**存在的全部
-    /// 意义**——那条普通消息——就落在过期的预算上、一个字节都没写，而 WARN 还说它发出去了。
-    ///
-    /// 判据是**还剩多少**，不是"是不是已经没了"。一个已经过期的预算到不了这里
-    /// （过期后的收尾返回的是一条上下文错误，而那不是"没投递"的证明 —— 它被归为
-    /// [`SealVerdict::Unknown`]）。真正会到这里的是：收尾花掉了大半预算、然后读到一个**真的**
-    /// 拒绝，留给普通消息的时间比一次推送还短。
-    ///
-    /// 上游用 `WithoutCancel` 而不是"给一个更长的截止时刻"：这份预算之所以短，理由就是那个气泡，
-    /// 而它已经结束了。
+    /// 上游 `fallbackBudget`（**判据在 [`crate::wecom::seal::fallback_budget`]**，见交接 H2 的
+    /// 收敛）：给普通消息一份**气泡不可能已经花掉**的预算。这里只做转发，不做判断。
     #[must_use]
     pub fn fallback(self, now: Instant) -> Self {
-        if self.expired(now) || self.remaining(now) < crate::wecom::ws_sender::ACK_TIMEOUT {
-            return Self::at(now + FALLBACK_SEND_TIMEOUT);
-        }
-        self
+        crate::wecom::seal::fallback_budget(self, now)
     }
 }
 
@@ -89,6 +74,12 @@ impl DeliveryBudget {
 // =====================================================================
 
 /// 一条 `inbox:new` 的归一化投影（上游 `events.Event` 的 payload 那两层的 map 形态）。
+///
+/// # `title` / `body` 是 M7-19 补进来的（端口形状勘误，`docs/32` §37 的 D2）
+///
+/// M7-17 的这一份投影只抽了路由需要的字段，而**渲染**要的那张卡（上游 `buildInboxMarkdown`）
+/// 是「标题 + 正文 + 深链」 —— 少了这两个字段，卡片会缺标题与正文，那是**降级**而不是等价。
+/// 本片（第一个真正需要渲染的片）把形状补齐，于是 `InboxCardRenderer` 交出的是等价实现。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InboxPush {
     /// 通知自己的 id。**投递幂等就靠它**：两个副本读到同一条重放的帧时，
@@ -99,6 +90,10 @@ pub struct InboxPush {
     pub recipient_type: String,
     pub recipient_id: String,
     pub workspace_id: String,
+    /// 通知标题（**成员写的**文本；卡片会把它过 [`super::super::markdown::break_member_links`]）。
+    pub title: String,
+    /// 通知正文（同上）。缺省空串。
+    pub body: String,
 }
 
 impl InboxPush {
@@ -121,6 +116,10 @@ impl InboxPush {
             recipient_type: text("recipient_type"),
             recipient_id: text("recipient_id"),
             workspace_id: text("workspace_id"),
+            // 渲染要的那两个字段（M7-19 的 D2）：缺失时是空串，卡片照发但少一段 —— 与
+            // 上游 `item["title"].(string)` 取不到值时同义。
+            title: text("title"),
+            body: text("body"),
         })
     }
 

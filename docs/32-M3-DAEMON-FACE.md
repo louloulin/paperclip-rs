@@ -5183,3 +5183,175 @@ after **0/40**（修前未复现：CI 1 例 + §128 的读码分析）。
   §128 的口径修正 2 同时适用：`gates.sh` 的 ⑥ **没有 `--no-fail-fast`** ⇒ 每次 CI 红只暴露**一个** target 的
   签名，按 CI 给签名计频会**系统性低估**。
 * **号段**：本段占 `## 36.`（末号为 §35 = M7-18）。`LUM-1784` 若先落 §36，则本段随合入顺序改号。
+
+---
+
+## 37. M7-19（`LUM-1784`）：wecom 入站与解析（**0 路由**）
+
+> **号段说明**：起手复核 `docs/32` 末号 = **`## 35.`**（M7-18 / PR #110）+ `## 30.` / `## 32.` 已由
+> M7-14 / M7-13 占用 ⇒ 本片取 **`## 36.`**（与 rev 2 的取值一致，当轮再复核一次仍正确）。
+
+`docs/60-M7-PLAN.md` §4.1 的 **stage 8 第一片**（上游
+`wecom/{wecom_channel,wecom_resolvers,inbox_message,markdown,seal_outcome}.go` = **1,785 行**，外加
+`ws_frame.go` 后半段约 **640 行** 的入站归一化 —— 后者在 M7-16 的 `ws_frame.rs` 模块文档里被**逐条点名**
+交给本片，见 `## 33.` 的 D2）。
+
+它是 **wecom 子波的最后一个代码片**，也是这一波**门禁证据**（端到端收发回路，`docs/60` §4.2）的承担者：
+收（本片）/ 发（M7-17）两半都在本片手上。同时它填上了 anchor 留在 `wecom/mod.rs` 里的那条
+`register()`（`0 路由` 的复归口）。
+
+### 36.1 写集（逐字；**12 个新代码文件**，`wecom/mod.rs` **+5 行 `pub mod` + `register()` 填充**，
+### `outbound.rs` / `outbound/events.rs` / `outbound/tests/attachments.rs` 的**收敛改动**，`docs/32` +本段）
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/wecom/wecom_channel.rs` | 470 | `wecom_channel.go`（672）的 **Channel / 工厂 / 装配袋 / 注册面**一半 |
+| `.../wecom/wecom_channel/loop.rs` | 576 | 同文件的 **`Connect` / `subscribe` / `dispatchFrame` / `pingLoop`** 一半（§6.3 拆） |
+| `.../wecom/wecom_channel/inbound.rs` | 773 | `ws_frame.go` 后半段的**入站归一化**（`ownText` / `ownCommandSource` / `quotedContext` / `stripLeadingMentions` / `normalizeWeComControlLayout` / `isIssueCommand` / `channelMsgType` / `channelMessageFromCallback`） |
+| `.../wecom/wecom_channel/socket.rs` | 207 | `gorilla` 的**拨号 + 读写两半**（本地端口 + `tokio-tungstenite` 实现） |
+| `.../wecom/resolvers.rs` | 500 | `wecom_resolvers.go`（340）：五端口 + `NewResolverSet` |
+| `.../wecom/inbox_message.rs` | 330 | `inbox_message.go`（232）：收件箱卡片 + `InboxRenderer` 实现 |
+| `.../wecom/markdown.rs` | 414 | `markdown.go`（456）：`breakMemberLinks` 的两段 |
+| `.../wecom/seal.rs` | 140 | `seal_outcome.go`（85）：`classifySeal` / `fallbackBudget` |
+| 用例：`wecom_channel/tests.rs` + `tests/{harness,doubles,round_trip}.rs` | 253 / 389 / 286 / 554 | 装配面 + **端到端回路** |
+| 用例：`wecom_channel/inbound/tests.rs` | 601 | 归一化的逐条判据 |
+| 用例：`resolvers/tests.rs` | 533 | 三个平台特有翻译 + 端口包形状 |
+| 用例：`markdown/tests.rs` | 663 | 两道闸 + 容器两半一致性 + 全偏移扫描 |
+| 用例：`inbox_message/tests.rs` | 584 | 卡片形态 + 两个接缝扫描 |
+| 用例：`seal/tests.rs` | 170 | `SenderError` 逐变体 |
+| `crates/mc-channel/src/wecom/mod.rs` | **81 → 92 行**（+5 `pub mod` + 再导出 + `register()` 转发） | 见 D1 |
+| `crates/mc-channel/src/wecom/outbound.rs` / `outbound/events.rs` / `outbound/tests/attachments.rs` | −36 / −30 / +4 | 交接 **H2** 的收敛（见 D2） |
+
+**新增用例 198 条**；`mc-channel` 整 crate 的 lib 用例 **1449 passed / 0 failed**。
+
+### 36.2 偏离（D1…D10；每条要么有落点，要么有用例）
+
+* **D1（写集漏项，同一类第 15 次）**：`crates/mc-channel/src/wecom/mod.rs` **不在** issue rev 5 的写集里，
+  但本片 5 个新文件必须先被它声明才进编译单元（否则连 `dead_code` 都不报）。本片**追加** 5 行 `pub mod`
+> + 一段注释 + 一小簇再导出，并把 anchor 留下的**空 `register()`** 转发到
+> `wecom_channel::register`（issue 正文把"注册工厂与渠道路由的归口"判给本片）。`81 → 92 行 / 21 → 26 个
+> `pub mod`**；别人的行**未动**。
+* **D2（交接 H2 的收敛：收尾判决只有一处）**：M7-17 把 `classify_seal` / `SealVerdict` 暂住在
+  `outbound.rs`（上游在 `seal_outcome.go`），理由是它当时**就有两个**收尾器、拆开会让它自己写第三份
+  读法。本片把判据搬进 `seal.rs`（本片写集），`outbound.rs` 改为 `pub use`，`DeliveryBudget::fallback`
+  改为转调 `seal::fallback_budget` ⇒ `outbound/pipeline.rs` / `relay/relayed.rs` / 用例**一字未改**。
+  判据从两份变一份，`seal/tests.rs::the_convergence_is_one_reading` 钉住"再导出与本体答案逐字相同"。
+* **D3（上游对着 goldmark 的断言换成形态判据）**：`markdown_test.go` 的强断言是把未守/守过的正文分别
+  渲染、要求攻击者的主机**真的**作为目标回来/不回来。本仓**没有** Markdown 解析器依赖（`docs/60`
+  §3.1：M7 各片不得新增三方依赖）⇒ 换成两条不需要解析器的判据：① 每条攻击正文在块位置**必须**含有
+  定义形态（`]:`），否则用例证明不了任何事；② 守过的正文**再无任何** `]:`（语料里每个目标都合格）。
+  换来的是**更弱**的一条保证（验形态，不验某个渲染器真的会解析）—— 登记在此，不当作等价。
+* **D4（app URL 是装配参数，不是函数里读 env）**：上游 `inboxAppURL()` 在渲染函数内部读三个环境变量。
+  本仓把 app 主机做成 [`InboxCardRenderer::new`] 的装配参数（与 `WeComOutboundReplier::new` 同款），
+  env 解析保留为 `inbox_app_url_from_env`（读取口是 `Fn(&str) -> Option<String>`，于是"非 HTTPS 被静默
+  丢掉"与"优先级"两条可以用例钉，而不必改进程环境）。
+* **D5（`InboxPush` 的端口形状勘误）**：M7-17 的 `InboxPush` 只有路由字段（`item_id` / `item_type` /
+  `issue_id` / `recipient_*` / `workspace_id`），而上游 `buildInboxMarkdown` 的整张卡片是**标题 + 正文 +
+  深链** ⇒ 少了 `title` / `body`，渲染器只能交出一张**缺标题与正文**的卡（降级）。本片（第一个真正需要
+  渲染的片）把这两个字段补进 `from_payload`，于是 `InboxCardRenderer` 是**等价**实现而不是降级版。
+  改动落在 `outbound/events.rs` 的**类型**上 + `outbound/tests/attachments.rs` 的两处字面量。
+* **D6（取消由任务 abort 表达，不引 watchdog goroutine）**：上游把 `ctx` 带进读循环、并用一个
+  goroutine 在取消时 `conn.Close()` 把阻塞在 `ReadMessage` 上的读踢醒。本仓的取消是 supervisor 对
+  `connect` 任务的 `abort`（`Channel` trait 的模块文档逐字）⇒ 读循环不需要 watchdog；两个派生任务
+  （心跳 / worker）由 `AbortOnDrop` 兜住（`connect` 的 future 被丢掉时它们也被 abort）；worker 死掉时
+  读循环 `select!` 在一份 `watch` 上而不是去关 socket。语义等价、少一次对 socket 的操作。
+* **D7（去重与审计复用 M7-2 的泛化实现，不另写一份）**：上游 `wecom_resolvers.go` 自带 `deduper` 与
+  `auditor` 两个纯搬运解析器。本仓已有一模一样的 `ChannelDeduper::generalized` /
+  `ChannelAuditor::generalized` ⇒ 复用（写第二份 = 把"丢弃审计长什么样"切成两半）。**差异**：上游的
+  `auditor.RecordDrop` 把 `event_type` 填成**平台事件名**（`"image"` / `"mixed"`…），本仓填**归一化后的**
+  `MessageKind` —— 这条口径由 M7-2 登记（`engine/session/audit.rs` 的 `drop_from_message`），本片照抄。
+* **D8（"真 DB"那一半的边界）**：`mc-channel` **没有** `sqlx` 依赖 ⇒ 端到端回路的数据层是内存替身，
+  而 `docs/60` §4.2 逐字要求的"真 DB 写入"由**门 ⑥** 的 `crates/mc-http/tests/channels/*` 与 `mc-repos`
+  的真库用例承担（与 lark M7-13 同一条边界）。⇒ 本片承担"帧 → 归一化 → 判决 → 出站 → 帧回到替身"的
+  **整条业务链**，门 ⑥ 承担仓储层。**不是**"用替身绕过真库"。
+* **D9（`SenderRegistry` 端口：登记表的**写入**面）**：上游的 `sendersRegistry`（`senders_registry.go`，
+  204 行）按 `docs/60` §3.3 归 **M7-20**（`senders.rs`）。本片需要它的**写入面**（连接建立时 `set`、
+  退出时 `clear`，且 `clear` 带令牌语义），所以落 `SenderRegistry` 端口；M7-20 的实现将同时满足它与
+  M7-17 已落下的读侧 `SenderLookup`（用例里的 `TestSenders` 就是那张表的两个面）。
+* **D10（`unknown` 命令帧的路由）**：上游 `dispatchFrame` 的 `default` 分支把**任何**非已知 cmd 的帧
+  交给 `routeResponse`。本仓 M7-16 的 `decode_frame` 把非空未知 cmd 归 `Frame::Unknown`；本片的
+  `dispatch_frame` **先**按 envelope 走同一条 `default` 逻辑（`route_response` → 没人等且 `errcode != 0`
+  就 WARN），与上游逐字一致。
+
+### 36.3 门禁证据（当轮实测，base `b232f7e4` + 本片）
+
+* **`bash scripts/gates.sh --with-db` = 10/10 PASS，556s**（① 3s ② 220s ③ 55s ④ 37s ⑤ 62s ⑥ 66s
+  / `migrate=0,e2e=0` ⑧ 31s ⑦ 0s ⑨ 82s ⑩ 0s）。当轮新建库 `multica_lum1784` / 角色 `mc_lum1784`
+  （`CREATEDB`）。
+* 🔴 **门 ⑥ 在本次轮里红过一次，而原因是 `ENOSPC` 不是代码**（`docs/32` §35 的 D-lesson 第 3 次
+  实证）：第一次 `--with-db` 跑出 `9/10（⑥ FAIL, e2e=101）`，而根因是 `/` 到 **100%**，
+  `cargo` 连 `target/debug/incremental` 的会话目录都建不出来（`os error 28`），四个 `mc-http` 测试
+  目标整体编译失败 ⇒ e2e 退出码 101。删掉本 workdir 的 `target/debug/incremental`（**9.9G**，纯缓存）
+  并 `CARGO_INCREMENTAL=0` 重跑 ⑥ ⇒ **`migrate=0,e2e=0` 绿**，随后整轮 10/10。
+  ⇒ **纪律重申：⑥ 一红先看 `df -h /`，再看代码**；本 workdir 一轮 ② build 就能把 `incremental/`
+  长到 9.9G。
+* **⑦ 读数（片后，逐字，`python3 scripts/route_parity.py`）**：
+  `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
+  `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33 M3+=16 M3=11 M10=5 **M7=5**`（和 = 70 ✓）。
+  **九个数与片前逐字相同** —— 0 路由片该有的形态证据。**`--write-baseline` 未跑**（归 M7-21 INT）。
+* **形态门**：`slash_alias_audit.py --quiet` **exit 0**（`MISSING_ALIAS` / `MISSING_EXACT` /
+  `EXTRA_ALIAS` 三类全 0）⇒ 本片**未注册任何路由**（`register()` 填的是**工厂**，不是路由）。
+* **⑨**：`report matches crates/mc-conformance/report.json`（快照**未动**，blob `fa53d084`）。
+  **wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**、也**不把它当战绩**（阴性对照组）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **未改**。
+  24 个新文件最长 **773 行**（`wecom_channel/inbound.rs`），全部 ≤ 800。
+  ⚠️ **这一道门的坑**：它只看 `git ls-files`（**跟踪的**文件）⇒ 未 `git add` 的新文件它**看不见**。
+  本片第一次自查时 `round_trip.rs` 是 **820 行**（超限）而门报绿；`git add` 之后复核发现，遂按 §6.3
+  把端口替身拆进 `tests/doubles.rs`（无参代码），复跑 ⑩ 绿。**登记为新增的坑**。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`）。本片踩到并修掉的具体 lint：
+  `needless_range_loop`（`has_character_reference`）、`match_same_arms`（`mixed` 与 `text` 同格，
+  合并 + 保留解释）、`assigning_clones`（`command.clone_from(&text)`）、`similar_names`、
+  `needless_pass_by_value`、`unchecked_duration_subtraction`、`single_match`、
+  `doc_markdown` 与 `unused_variables`。
+* **⑤**：`mc-channel` lib 用例 **1449 passed / 0 failed**；其中本片新增 **198** 条。
+
+### 36.4 交接（H1…H4；都写在代码的模块文档里，这里只列指针）
+
+* **H1（M7-20 `LUM-1785`）**：`wecom_channel::SenderRegistry`（**写入面**）是本片留给你的接缝 ——
+  与 M7-17 的读侧 `SenderLookup` / `LiveSender` 一起构成上游 `senders_registry.go` 的完整形态。
+  本片只调用 `set` / `clear`，**不**实现任何一行表本身。
+  同片还要实现 M7-17 列的其余交接（`DedupeStore` 生产实现 / `RootResolver` / 限流与打字）。
+* **H2（M7-20）**：收件箱卡片的渲染**已经落地**（本片的 `InboxCardRenderer`）。宿主接线时用
+  `InboxCardRenderer::from_env()` 或 `::new(app_url)` 挂上；`InboxPush` 现在带 `title` / `body`
+  （D5），所以卡片是等价的而不是降级版。
+* **H3（宿主 / M7-21 INT）**：`wecom::wecom_channel::register_with`（工厂）+
+  `wecom::register_resolvers`（解析器面）是本平台的两条接线口；`apps/mc-server/src/channels.rs` 属
+  anchor 写集，**本片未动**（它仍走失败关闭的 `wecom::register`）。
+* **H4（M7-21 `LUM-1786` INT）**：⑦ 基线 / ⑨ 报告 / ⑩ 基线三件套的刷新**全归 INT**。
+  本片**未**刷任何快照。
+
+### 36.5 风险（R1…R3）
+
+* **R1（端到端回路的"真库"是门 ⑥，不是本文件的替身）**：见 D8。若将来有人在 `mc-channel` 里加
+  `sqlx`，这条边界应当重画；在那之前，"收 → 判决 → 发"与"仓储"分属两处证据。
+* **R2（上游两处自身不闭合，照抄并标出）**：① `SenderError::Sink(_)` 在 `is_not_attempted` 里被判成
+  "确定没发出"（因为 `WsSender` 只把 `SinkFailure::BeforeWrite` 翻成它）—— 与上游 `provablyNotSent`
+  的 `default: true` 同源，但**一个手写的 `Sink(WriteAttempted)` 值会被错判**；本片在
+  `seal/tests.rs` 逐字记下这条现状，不顺手改分类（一个片顺手改会让别的片的读数漂）。
+  ② 上游 `disconnected_event` 让 `Connect` 返回错误（而不是 `nil`），本片照抄。
+* **R3（读写两半的关闭不对称）**：`WsReader::close` 在 `tokio-tungstenite` 实现里是 no-op —— 关 socket
+  是写半（`WsSink::close`）的事，而 `SplitStream` 上没有 `close`。⇒ 只持有读半的调用方无法单独关链路。
+  本仓的调用方（读循环）**同时**持有两半，所以当前无影响；登记以备将来。
+
+### 36.6 合并期复核（当轮实做）
+
+* **base**：起手 `git fetch` + `git rev-parse origin/feat/multica-rs-initial` = **`b232f7e4`**
+  （= `bb4e726a` 之上的 PR #110 合并提交，rev 4 写的"当轮实测"值逐字命中）。
+* **硬前置六条当场成立**：`git cat-file -e HEAD:crates/mc-channel/src/wecom/{ws_frame,ws_sender,
+  stream_store}.rs`（M7-16 产物）与 `...{relay,outbound,replier}.rs`（M7-17 产物）**六条全 EXISTS**。
+* **`wecom/mod.rs` 的写者链已清空**：`LUM-1783`（M7-18）的 run 已终态、PR #110 已合 ⇒ 本片是追加段
+  **此刻的唯一写者**（rev 4 那条"首选等 M7-18 终态"当轮满足）。base 实测 `mod.rs` = **81 行 / 21 个
+  `pub mod`**（与 rev 4 逐字一致）。
+* **遗留写集勘误（rev 2 的裁决，本片继续执行）**：`crates/mc-channel/src/wecom/dedupe.rs` 归 **M7-20**，
+  本片**未**把它当前置、也**未**为拿它而起手 M7-20；本片只落地**入站回路里的去重调用点**，去重实现与
+  命中语义由 M7-20 落地（见 D7 与 H1）。
+* **一个平台级的陷阱（本片第一次踩到）**：`multica repo checkout` 为**新** workdir 建的 `agent/...`
+  分支起在**默认分支**（`pc-*` 那条**另一个根**）上，与 `feat/multica-rs-initial` **没有共同祖先**
+  （`git merge-base` 为空）。起手必须先
+  `git checkout -B <本任务分支> origin/feat/multica-rs-initial`，否则"前置文件全 MISSING"是假象。
+  登记给后续片（以及 cycle）。
+* **同轮在飞**：`LUM-1779`（M7-14 lark）与本片不同轮（它在本片起手时已终态/在收尾）。本片只写
+  `crates/mc-channel/src/wecom/{wecom_channel*,resolvers*,inbox_message*,markdown*,seal*,mod.rs}` +
+  `outbound*` 的三处收敛 + `docs/32` ⇒ 与任何 lark 片**路径交集 ∅**。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。
