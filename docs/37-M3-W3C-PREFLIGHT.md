@@ -9088,3 +9088,117 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5        （和 = 86 ✓�
 - **槽位一空即派（无需再补描述，两片都已 rev 到位）**：`LUM-1773` 终 ⇒ `LUM-1774`（**rev 3**；`dingtalk/mod.rs` 追加段交集 ⇒ **只能单独飞**，不得与 M7-8 同轮）；`LUM-1802` 终 ⇒ `LUM-1803`（**rev 2**）。
 - **两片 INT 仍必须等**：`owners.M7 → 0`（→ `LUM-1786` M7-21）/ `owners.M8 → 0`（→ `LUM-1804` M8-7，本片片后即 0，但 M7-14/M7-15 未派 ⇒ M7 侧仍远）；`register_with` 的宿主调用（全仓调用点 = 0）仍是已登记缺口，归 INT 一次收口。
 - 起手必验（每轮重取，不照抄本节）：`df` / `ls-remote` / GH open PR / daemon 逐 PID；⑦ 前 `git rev-parse HEAD` 必须逐字等于当轮 base。
+---
+
+## §104 18:00 cycle（`LUM-1940`，10:00Z 触发）：**起手 0 open PR + 空位 0 + 磁盘健康（起手 29G / 39%）⇒ 只读监控轮（第十二次）**；⑦/⑨/⑩ 与 §103 逐字相同；零空位不放空 ⇒ 派发预飞逮到 **`LUM-1745` 的「`Notify` 句柄只能落 `AppState`」已是过时方案**（本仓已有两处「进程级注入槽 + 诚实退化」先例，且 **M8-5 正在飞地把同一手法真装配**）⇒ 该片写集可**整条去掉 `state.rs`**、共享文件归零
+
+### §104.1 起手三连与在飞复核
+
+| 项 | 当轮实测 | §103（09:30Z）对照 |
+| --- | --- | --- |
+| `df -h /`（**起手第一命令**） | **29G 可用（39%）** | 33.7G ⇒ 本轮**无压力**，不开急救 |
+| `git ls-remote origin feat/multica-rs-initial` | **`e3adc5e7`**（相对 §103 收尾**零前进**） | §103 起手 `e1a30cbd`，其自己那笔 docs 推到 `e3adc5e7` |
+| 认证 GH `pulls?state=open` | **0** | 0 |
+| daemon `running_task_count` | **3** | 3 |
+
+**空位拆解（逐 PID `/proc/*/cwd`，**从 `/` 起手扫、不 `cd` 进目标目录**）**：3 = cycle 自身（10961）+ `LUM-1773`（30512）+ `LUM-1802`（30506），三个主 cwd 全落本项目 workdir ⇒ **无并发 cycle**（连续第 **4** 轮）、无外项目进程混入。另见 `LUM-1802` 名下 9 个子 pid（9171-9173、13144、13153、13519、13649、13702、13706，cwd 在同一 `paperclip-rs`）= 其 cargo/rustc 编译进程 ⇒ 该片**正在构建**。
+
+**在飞两片判活（三件套取二）**：
+
+| 片 | pid / etime | 分支（起手点 `a20f69a2`） | 未提交面（当轮实测） | 提交 | `target` |
+| --- | --- | --- | --- | ---: | ---: |
+| `LUM-1773`（M7-8，0 路由） | 30512 / **46m38s** | `agent/devbox5/f0eef19aebc6` | `M dingtalk/mod.rs` + **8 条新路径**（`dingtalk/{ack.rs,ack/,markdown.rs,markdown/,media.rs,media/,outbound.rs,outbound/}`） | **0** | 3.0G |
+| `LUM-1802`（M8-5，0 路由） | 30506 / **46m38s** | `agent/devbox5/ee6724bec179` | **10 文件已 `git add`、`+4544/−116`**（`apps/mc-server/src/integrations.rs` +437、新 `integrations/tests.rs` 623、`mc-vcs-github/src/ghsnapshot/refresh{,.rs,/ports.rs,/test_support.rs,/tests.rs,/tests/wire.rs}`、`ghsnapshot/snapshot{,.rs,/tests.rs}`、`port.rs` +28） | **0** | **9.7G** |
+
+- 两 pid 皆活 ∧ session 两文件 10:04Z 仍在增长（1.81M / 1.76M）⇒ **判活成立**；两片都比 §103 时点**明显前进**（1773：2 文件面 → 8 路径；1802：`ghsnapshot/snapshot/` → 10 文件 `+4544` 并已 `git add`）。**均未推分支、无 PR**。
+- ⇒ **空位 = 3 − 1 − 2 = 0** ⇒ **零派发**（四组候选当轮就绪度与 §103 一致，逐条见 §104.5）。
+
+### §104.2 ⑦ / ⑨ / ⑩ 实测（base `e3adc5e7`，九个数与 §103 **逐字相同**）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 453 registered | baseline 406
+implemented  367 real +   3 placeholder =  370 / 456   known_gap   86   unclaimed 0   regression 0   local_only 9
+gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5        （和 = 86 ✓）
+```
+
+- **读数绑定核对**：跑 ⑦ 前 `git rev-parse HEAD` = `e3adc5e71a1746ea9f2715d7d162b40408bb0898` **逐字等于**当轮 base；base 未前进 ⇒ 九个数**一个都不该动**，实测逐字相同（§99.6 / §100.2 / §103.2 的第四次续证）。
+- 门 ⑦ 两条命令（`route_parity.py --quiet` / `slash_alias_audit.py --quiet`）**exit 0**；门 ⑩ `file_size_check.py --quiet` **exit 0**。
+- 门 ⑨ `env -u MULTICA_TEST_DATABASE_URL cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` = **`report matches crates/mc-conformance/report.json`**（exit 0，本 workdir 无 `target` ⇒ 冷编 **2m30s**）。
+- **⑨ totals 当轮首次记全**：`fixtures 365 / pass 6 / mismatch 23 / unmounted 30 / placeholder 0 / unevaluable 306`（`by_via`：handler 23 mismatch、router 5 pass）。对照 §94 记的 `5/23/31/0/306` ⇒ **M8-4 的 2 路由把 1 条 `unmounted → pass`（`31→30`）**，其余四格未动。
+- **⑦ 基线仍 406**（刷新仍归 `LUM-1786` M7-21 INT / `LUM-1804` M8-7 INT，两者**不得同轮**跑 `--write-baseline`）。
+
+### §104.3 看板与状态
+
+- **项目内口径**（`--project da4310b1-…`，`--limit 100` + `--offset` 分页，3 页）：共 **242** 条 → `in_review 202 / backlog 27 / todo 11 / in_progress 2 / blocked 0`。
+- `in_progress` 恰好 = 两片在飞（`LUM-1773` / `LUM-1802`），**零漂移**；`blocked 0`。
+- 本 issue：更名 + `in_review` + 顶层评论（此前 0 评论）。
+- **观察项第 42 轮**：积压 `todo` cycle **10** 条（`1521 1533 1726 1737 1740 1748 1805 1810 1826 1835`）+ 本单 = 11，只登记不动状态；autopilot「同项目已有未终态 cycle 单时不建新单」护栏**仍未落地**（本轮起手无并发 cycle）。
+
+### §104.4 回收：本轮**零回收**（大盘 16G，健康）
+
+- 终态工作区逐个数：`lum-1772`(M7-7，已合) **99M**、`lum-1801`(M8-4，已合) **28M**、`lum-1894`/`lum-1924`/`lum-1930`/`lum-1935`（四个终态 cycle）各 **25M** ⇒ **合计 ≈ 227M**。
+- 四判据（§98.3/§100.4）**全部满足**，但 227M 相对起手 **29G 可用（39%）** 远低于阈值 ⇒ **本轮不动，留作下一次 ENOSPC 的现成储备**（§87 形态：真触 0 字节时先吃这 227M）。
+- 在飞两片 `target/`（3.0G / 9.7G）属**活物**，不动。银行家口径：`lum-1802` 单片已 9.7G，是下一次回收的最大单块（其 PR 一合即按四判据整删）。
+- 本 cycle 自己的 `target/`（⑨ 冷编 ≈2.9G）**收尾再回收**（§99/§100/§103 同款）。
+
+### §104.5 零空位不放空：派发预飞（**1 条新形态 = 「方案过时」+ 1 条「片间预测互相不自洽」+ 1 条负面结论**）
+
+**A. 【新形态：不是漏项、不是标注错，而是「描述里认定唯一的那条出路，已被本仓先例取代」】`LUM-1745`（M5-D8，0 路由）**
+
+描述把「`Notify` 句柄挂 `AppState`」当成**唯一**出路，并由此派生出两条硬约束：
+
+> ⚠️ …若把进程内 `Notify` 句柄挂到 `AppState`，需改 `crates/mc-http/src/state.rs` + 该 route —— `state.rs` 是 **M6 波的冻结/热区** …⇒ **本片必须在 M6 波次收口后开工**，开工时只允许这两个文件的最小增量
+> DoD 7：若 `Notify` 句柄只能落 `AppState` ⇒ 登记这条跨片写入
+
+**当轮实测：本仓已有两处同形先例**，都是「anchor 冻结 `state.rs` 之下的本地处置」，且都登记在偏离表里：
+
+| # | 文件:行（base `e3adc5e7` 实测） | 形状 | 出处 |
+| --- | --- | --- | --- |
+| 1 | `crates/mc-http/src/routes/github/install.rs:422` | `static GITHUB_API_BASE: Mutex<Option<String>>` + 读/写/清三件 | M8-1 |
+| 2 | `crates/mc-http/src/routes/github/webhook.rs:88` | `static PR_REFRESH_SLOT: Mutex<Option<SharedPrRefresh>>` + `pr_refresh_port()/set_pr_refresh_port()/reset_pr_refresh_port()`，缺省回 `DisabledPrRefresh` | M8-2（登记 `docs/32` §19.2 的 D2） |
+
+**第 2 处不是纸面方案 —— 本轮在在飞片里实测到它被真装配**：`LUM-1802`（M8-5）的工作树 `apps/mc-server/src/integrations.rs:205` 逐字
+
+```rust
+mc_http::routes::github::webhook::set_pr_refresh_port(manager.clone());
+```
+
+位置在 `pub fn start(keys: &GithubKeys)`（同文件 `:129`）**内部**；其 10 文件 diff **不含 `main.rs`** ⇒ 宿主是经由 anchor 已经写好的调用点 `integrations::start(&github_keys)`（`apps/mc-server/src/main.rs:188`）注入的，**`main.rs` 一行没动**。这就是本片可以直接照抄的机制。
+
+**⇒ 落到 `LUM-1745` 的落地形状（当轮建议，已写进该片描述 rev 4）**：
+
+- `Notify` 在上游是**非阻塞的延迟提示**（`select { case w.notify <- struct{}{}: default: }`），与本片 DoD 2（「不调 `Notify()` 也能在 1s 量级内被消费」）**同源** ⇒ 缺省值取 **no-op 的 `DisabledNotify`** 正是本仓要求的「诚实退化」：未接线时 worker 仍靠 1s ticker 消费，**绝不假装被唤醒**。
+- 注入点写在**本片自己的宿主** `apps/mc-server/src/webhook_worker.rs` 的 `start()` 里（与 M8-5 在自己的宿主里注入同款）；请求面在**既有构造点**读槽 —— `crates/mc-http/src/routes/webhooks/autopilots.rs:127` 现为
+
+```rust
+let ingress = WebhookIngress::new(state.db.pool().clone()).with_events(state.realtime.clone());
+```
+
+⇒ 追加 `.with_notify(webhook_notify_port())`（`with_events` 的既有 builder 形态见 `crates/mc-autopilot/src/webhook/mod.rs:457–461`）。
+
+- **收益**：`crates/mc-http/src/state.rs` **可以整条从写集去掉** ⇒ 本片变成**零共享文件**（`apps/mc-server/src/main.rs` 是它自己的宿主；`mc-autopilot/src/webhook/mod.rs` 只加 builder）⇒ 描述里「与 M6 波次争 `crates/mc-http`」这条排期约束**随之作废**，槽位一空即可插，不必等任何波次。
+- **代价**：多一条包级 `Mutex<Option<…>>` 状态 + 一条偏离登记（与 M8-2 同款，写 `docs/32`）。
+- ⚠️ **不要改 `WebhookIngress::new` 的签名**：单参 `new(pool)` 被 `crates/mc-http/tests/autopilots/webhook_worker.rs` **9 处**测试直接调用 ⇒ Notify 必须是 **additive builder + 默认 no-op**（照 `with_events` 先例）。
+
+**B. 其余候选当轮复核**
+
+- `LUM-1774`（M7-9，**rev 3**）**无缺件，§103 的三条读数当轮逐条续证**：① 7 条路由**逐条实测**落在 `known_gap[].owner == M7` 里（`GET /api/workspaces/{id}/dingtalk/{installations,groups}`、`DELETE …/installations/{id}`、`DELETE …/installations/{id}/groups/{conversationId}`、`POST /api/workspaces/{id}/dingtalk/install/byo`、`POST /api/dingtalk/binding/redeem`、`GET /api/agents/{id}/dingtalk/groups`）；余 **9 = lark 5 + wecom 4** ⇒「`owners.M7` 片后 = 9，不归零」成立；② `docs/32` base 最大节号 = **`## 20.`** ✓；③ `dingtalk/mod.rs` = **726** 行 / `pub mod` **6** 行 ✓（在飞 1773 只追加 2 行 ⇒ 728，本片再追加 5 行 ⇒ **733 ≤ 800**）。
+- `LUM-1803`（M8-6，**rev 2**）**第二次零漏项**：9 格写集逐格实测全在（`mc-composio/src/{service,state,catalog,overlay}.rs` = **139/65/15/26**、`mc-repos/src/composio/connection.rs` = **9**、`routes/composio/{callback,connect,catalog}.rs` = **17/15/18**，与 §103 逐字相同），三层声明全就位（`mc-composio/src/lib.rs` 5 个 `pub mod`、`mc-repos/src/composio/mod.rs` 的 `connection`、`routes/composio/mod.rs` 三个 `pub mod` + 三个 `merge`、`routes/mod.rs:123`、`mount.rs:423`）。
+
+**C. 【过期读数·第 4 类：片与片之间的预测互相不自洽】** `LUM-1804`（M8-7 INT）的「片前」写 `local 454 / implemented 378（375 real + 3 ph）/ known_gap 78`，而 `LUM-1803`（M8-6，**前一序**）rev 2 的「片后」写 `local 458 / implemented 375（372 real + 3 ph）/ known_gap 81` —— **两者对同一时刻给出不同值**；当轮实测 = `453 / 370 / 86`。三者两两都不是同一个点。
+
+- 成因：两片的绝对读数写在**不同轮次**（M6-INT 刷基线前后、M8-4/M8-5 合入前后）。
+- 危害：有人若拿「后片片前 − 前片片后」当 delta，会得到 `−4` 这种负 delta。
+- ⇒ 记法纪律追加一条：**同一波内两片的「片前/片后」读数，若写在不同轮次，不能当同一坐标系相减**；INT 片起手一律当轮重取（`LUM-1804` rev 2 起手补充已写「起手重取」，本轮只补上「互相不自洽」这个性质）。
+- 遗留（看板可见）：`LUM-1804` 的**标题**仍写 `baseline 344→454`（正文已由 rev 2 更正，标题未改）⇒ 归下一轮 cycle 或 owner 顺手改。
+
+**D. 【负面结论，续证 §103 的 F 项】** ⑨ 里 M8 的唯一 fixture `integrations/TestComposioCallbackIsPublic_NoCookieNot401@server/cmd/server/composio_callback_public_test.go:25#1` 当轮实测 `outcome: unmounted`、`status_observed: 404`（`status_expected: 401`、`detail: no route: 404 with empty body (axum fallback)`）⇒ **没被任何在飞片提前转绿**，`LUM-1803` 的 `unmounted → pass` 承诺原样成立，本片不需要 rebase 判据。
+
+### §104.6 next cycle 起点
+
+- **base `e3adc5e7`**；GH **0 open PR**；在飞 2 片（`LUM-1773` ∥ `LUM-1802`，起手点均 `a20f69a2`，两片都**未推分支、0 提交**）。
+- **槽位一空即派（描述已 rev 到位，无需再补）**：`LUM-1773` 终 ⇒ **`LUM-1774`（rev 3；`dingtalk/mod.rs` 追加段交集 ⇒ 只能单独飞）**；`LUM-1802` 终 ⇒ **`LUM-1803`（rev 2）**。
+- **本轮新变更**：`LUM-1745` 描述已补 **rev 4**（§104.5 A：走进程级注入槽 + `DisabledNotify` 诚实退化 ⇒ 写集去掉 `state.rs`）⇒ 更正后它是**零共享文件**片，可与任意片并飞、不必等任何波次；下一轮派发首验「该片是否按 rev 4 起手」。
+- **两片 INT 仍必须等**：`owners.M7 → 0`（→ `LUM-1786` M7-21）/ `owners.M8 → 0`（→ `LUM-1804` M8-7）；两者**不得同轮**跑 `--write-baseline`（同一份 `docs/fixtures/route-parity-baseline.json`）。
+- 起手必验（每轮重取，不照抄本节）：`df` / `ls-remote` / GH open PR / daemon **逐 PID**；⑦ 前 `git rev-parse HEAD` 必须逐字等于当轮 base。
+- 回收预告：`lum-1802` 的 **9.7G** 是最大单块（PR 合 + run 终态 + `/proc` 零命中 ⇒ 立即整删）；`lum-1773` 3.0G 次之。
