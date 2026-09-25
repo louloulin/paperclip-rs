@@ -119,16 +119,21 @@ async fn issue_auth_workspace_and_not_implemented() {
     assert_eq!(quick["origin"], "quick_create");
     assert_eq!(quick["status"], "todo");
 
-    // 501 占位（M3 能力）。这条断言换过三次落点：先是 `/api/issues/table/groups`，
+    // 501 占位（M3 能力）。这条断言换过四次落点：先是 `/api/issues/table/groups`，
     // M2-D（LUM-1355）实现后改用 `preview-trigger`，M3-6（LUM-1429）把它也实现成
     // 真实路由（入队预演 200）后改用 `GET /api/issues/:id/labels`；M2-E（LUM-1370）
-    // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests` —— 它要等 M9 的
-    // PR 同步（见 `docs/11-M2-ISSUE.md` §5 缺口表），是当前最远的缺口。
+    // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests`；**M8-4（LUM-1801）
+    // 又把它实现成真实读面**（GitHub / VCS 的 PR 卡片列表 ⇒ 这条路由不再是缺口），
+    // 于是改用 `GET /api/issues/:id/attachments`。
+    //
+    // 为什么选 attachments：它是本仓**已登记**的最远缺口之一 —— `docs/61` §9.2 把附件面
+    // 维持判给 `M3+`、并作为 W8 的尾账登记（`docs/32` §18 的缺口清单里复述）。它**不是**
+    // 「等某个在飞切片顺手做掉」的能力，所以比其它候选更耐久。
     let res = app
         .clone()
         .oneshot(req(
             "GET",
-            &format!("/api/issues/{}/pull-requests", Uuid::new_v4()),
+            &format!("/api/issues/{}/attachments", Uuid::new_v4()),
             ws,
             user,
             None,

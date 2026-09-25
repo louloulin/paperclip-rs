@@ -1815,3 +1815,156 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
   `telegram/inbound.rs` 里的 `mod tests;` → `telegram/inbound/tests.rs`；而
   `telegram/mod.rs` 里的 → `telegram/tests.rs`（**不是** `telegram/mod/tests.rs`）。本片第一次
   就把它写错到 `mod/` 下，编译器只报"找不到文件"，改个目录名就过了。
+
+## 18. M8-4（`LUM-1801`）：GitHub 入站 webhook + PR 镜像 + 自动关联/关闭 + issue↔PR 读面（2 路由）
+
+> **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
+> `## 11.` 是 M8-0）⇒ 按派发时「起手复核 `N+1`」的约定取 **`## 18.`**（起手实测最大 =
+> `## 17.` = M7-5）。
+
+### 18.1 落点（写集逐字）
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `crates/mc-vcs-github/src/payload.rs` | 448 | anchor 建桩、本片原地填充：`GithubEventKind`（三族 + **`Ping`**）+ 三个 wire 结构（`installation` / `pull_request` / CI）+ `coalesce` / `str_ptr_or_nil` / `parse_gh_time{,_required}` + 5 条单测 |
+| `crates/mc-vcs-github/src/webhook.rs` | 146 | 原地上填：`verify_webhook_signature`（`hmac`/`sha2`/`hex` 直连边复刻上游三语义）+ `sign_webhook_body`（替身发帧用）+ `event_kind_for_request` + 4 条单测 |
+| `crates/mc-vcs-github/src/links.rs` | 368 | 原地上填：`extract_identifiers` / `extract_closing_identifiers` / `issue_number_for_prefix` —— **手写扫描器**逐字复刻上游两条正则（理由与两条 Go/Rust 语义差见模块头）+ 14 条单测（`DoD` 点名的 **6 个边界**逐条） |
+| `crates/mc-vcs-github/src/closepolicy.rs` | 218 | 原地上填：`CloseIntent` 三态 + `close_intent_policy` + `preserve_close_intent` + `CloseIntentPolicy`（`unrestricted`/`owner` + `permits` + `from_resolvers` + `for_bindings`）+ 6 条单测 |
+| `crates/mc-vcs-github/src/mirror.rs` | 496 | **形状修订**（见 D5）：`MirrorRequest` 保留、新增 `identifiers` / `derived_state` / `mergeable_write` / `refresh_request` / `plan` → `MirrorPlan`；`derive_pr_state` / `derive_pr_mergeable_state` / `base_ref_changed` 逐字对齐上游 + 11 条单测 |
+| `crates/mc-repos/src/github/check_suite.rs` | 263 | 原地上填：`GithubCheckSuiteRepo` 两条查询（`list_pr_numbers_by_head_sha` 上游逐字 SQL；`list_workspace_pr_numbers` 按载荷直接给的号）+ 1 条真库单测 |
+| `crates/mc-repos/src/github/pending.rs` | 55 | **doc-only 结论**（见 D7）：实测上游 `f41fae6b` 上 `github_pending_check_suite` **零写者零读者**（Plan C 取代了迁移 `096` 描述的暂存-回放）⇒ 本波**不**造无调用方的仓储面 |
+| `crates/mc-http/src/routes/github/webhook.rs` | 232 | 入口与装配：`router()`（1 个**新增**注册键）+ 端口注入槽 + `handle_github_webhook`（验签/分派/状态码）+ `flat_error` + 3 条单测 |
+| `crates/mc-http/src/routes/github/webhook/installations.rs` | 184 | `installation` 族处理 + 3 条按 `installation_id` 的查询 |
+| `crates/mc-http/src/routes/github/webhook/mirror.rs` | 551 | `pull_request` 族：扇出 + 投递级关闭裁决 + 逐 workspace 镜像 + 自动推进 + 跨 provider 关闭聚合 + 3 条共享读 + 2 条单测 |
+| `crates/mc-http/src/routes/github/webhook/ci.rs` | 111 | 三族 CI 事件（纯触发器 → 入队） |
+| `crates/mc-http/src/routes/github/issue_pr.rs` | 540 | 原地上填：`GET /api/issues/:id/pull-requests` 真实现（替换 501 占位）+ `PullRequestCard`（上游 31 字段形状）+ 3 条单测 |
+| `crates/mc-http/tests/github_webhook/{main,support,webhook,ci,issue_pr}.rs` | 26 / 372 / 711 / 205 / 282 | **新测试目标**：14 条真库 e2e（三族事件 + 幂等 + 两个反例 + 端到端四条链 + 读面/越权/VCS 合流） |
+
+**零编辑（anchor 冻结，逐条实测未动）**：`crates/mc-http/src/state.rs`、`routes/mod.rs`、`routes/mount.rs`、
+`routes/github/mod.rs`、`routes/issues/**`、三个 `Cargo.toml`、`Cargo.lock`、`docs/61-M8-PLAN.md`、
+`docs/fixtures/**`、`scripts/file_size_baseline.tsv`。
+**只读面零触碰**：`mc-vcs-github/src/{app,token_cache,rest,dto}.rs`、`ghsnapshot/**`、`port.rs`、
+`mc-repos/src/github/{installation,pull_request}.rs`、`mc-repos/src/vcs/pull_request.rs`、
+`routes/github/{dto,install,setup}.rs`。
+
+**写集追加一个目录**：`crates/mc-http/tests/github_webhook/**`（`DoD` 要求真库端到端证据；与 M8-1 的
+`tests/github/`、M8-2 的 `tests/vcs/`、M8-3 的 `tests/mcp/` 同款 —— 新路径、与任何片零交集）。
+**另加一个子目录**：`crates/mc-http/src/routes/github/webhook/`（三个子模块）。这不是新写者：这三个
+文件只因 `webhook.rs` 的 `mod` 声明而存在，写者仍是本片；起因是 `webhook.rs` 单文件到了 **981 行**
+（门 ⑩ 的 800 硬上限），按 `channels/slack.rs` + `channels/slack/store.rs` 的既有手法拆
+（`webhook.rs` 里 `mod ci; mod installations; mod mirror;` ⇒ `routes/github/webhook/*.rs`）。
+
+### 18.2 偏离登记（M8-4-D1 … M8-4-D9）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **D1** | body 超限 ⇒ **413 `payload too large`**（上游 `io.LimitReader` 是**静默截断**，截断后验签必然失败 ⇒ 上游实际回 401） | `routes/github/webhook.rs` 的 `GITHUB_WEBHOOK_MAX_BODY_BYTES` + 抽取器 | 与 M8-2 的 `vcs/webhook.rs` **同判同措辞**（那一片已经登记过同一处）。理由：`Bytes` 抽取器给不出「截断后的前缀」，而 413 比「看起来像签名不匹配」更容易被 provider 的投递 UI 解释清楚。**不是**语义宽松：两条路径都拒绝处理 |
+| **D2** | 快照刷新端口落在**本片自己的文件**里的进程级注入槽（`set_pr_refresh_port` / `pr_refresh_port`，默认 `DisabledPrRefresh`），而不是 `AppState` 字段 | `routes/github/webhook.rs` | **本片发现的 anchor 缺口**：上游 `h.PRRefresh` 是 Handler 字段，本仓 `docs/61` §5 的 `state.rs` 行只加了 vcs/github/composio 三组密钥 ⇒ 请求面**没有**端口来源，而 `state.rs` 是 anchor 冻结文件。写法与纪律逐条复刻 M8-1 的 `GITHUB_API_BASE`（同款进程级可变状态、同款「生产装配点将来改成 state 字段」的注记、测试注入记录型端口）。**建议 M8-7/M8-5**：把端口正式挂到 `AppState`（需要一次 anchor 级改动），本槽降级为纯测试接缝 |
+| **D3** | 6 条查询落在**本片自己的文件**里（`webhook/installations.rs` 3 条按 `installation_id`，`webhook/mirror.rs` 3 条：workspace settings / issue 存在性+整行 / 跨 provider 关闭聚合），而不是 `mc-repos` | 同上 | `docs/61` §3.3 逐字规定 M8-4 对 `mc-repos/src/github/{installation,pull_request}.rs` 是**只读**（那是 M8-1 的写集），而 `mc-repos/src/github/mod.rs` 是 anchor 冻结（加不了新模块）⇒ 本片所需的「按 installation_id 列出/删除/刷新」与「`GetIssueCombinedPullRequestCloseAggregate`」只能落在自己的文件里。M8-2 的 `vcs/pull_request.rs` 模块头已经把后者的落点判给 M8-4（「落点应由关闭策略的写者（M8-4）决定」）⇒ 本片按写集纪律选择了 HTTP 层。**建议 M8-7**：若要归位，统一挪进 `mc-repos` 并同步改本表 |
+| **D4** | 三处**逐字对齐之外**的差异，每条都写进了对应函数的文档注释：① 入队**每个绑定一次**（上游一次，端口键含 `workspace_id`）；② CI 事件先查库把号映射回 `(workspace, 号)` 再入队（上游直接入队、未镜像的 PR 也入队；本仓未镜像的 PR 本来也没有可写快照的行）；③ CI 的 `status` 事件入队载荷**带上**解析出的 `head_sha`（端口有 `Option<sha>` 字段，上游没有） | `webhook/{mirror,ci}.rs` | 三条都是**端口形状**（anchor 冻结）与上游 Handler 形状的差，**不是**业务判定差。取「更严/更可观测」的那一侧并逐条登记（D4 一律是「窄化」：只会更少入队，不会更多） |
+| **D5** | `mc-vcs-github/src/mirror.rs` **不从 `MirrorRequest` 直接做 I/O**：`pub async fn mirror_pull_request(..) -> Result<(), GithubError>` 改成纯函数 `plan(&self, resolved, auto_link, prefix) -> MirrorPlan`，I/O 编排留在 HTTP 层 | `mirror.rs` / `webhook/mirror.rs` | anchor 的签名要求本 crate 能持有 `Db`/仓储/`state.realtime`，但本 crate 的依赖边**没有** `mc-db`/`sqlx`/`mc-realtime`（`Cargo.toml` 注释逐字「此后 M8-1/4/5 的写者不得再新增三方依赖」）⇒ 只能这样切，而这样切还有个好处：**决策核变成可纯函数逐条钉住的**（11 条单测覆盖 claim/裸提及/掉链/冻结/不放行/自动关联关）。与 M8-1 把广播留在 HTTP 层同判例 |
+| **D6** | 不接线 `StopClosedIssueWakeups` 与 `notifyParentOfChildDone`（上游 `advanceIssueToDone` 里的两段） | `webhook/mirror.rs::advance_issue_to_done` | 它们在 M5（wakeup 停机）与 M2（父 issue 完成通知）的模块里，接线需要一次跨波改动；本片只做「status → done + `issue:updated` 广播」。**登记为缺口**：合并的 PR 把 issue 推到 done 时，`agent_task_queue` 里为该 issue 排的 wakeup **不会**被取消，父 issue 也**不会**收到子完成通知 —— 两条都是可见行为，归 **M8-INT**（`LUM-1804`）或 M5/M2 的尾账 |
+| **D7** | `mc-repos/src/github/pending.rs` 保持 **doc-only**（本波零实现），并把「为什么无事可做」写成三条实测判据 | `pending.rs` | anchor 的文件头假定 `check_suite` 事件会**写** check 行、乱序时先暂存；在钉住的上游 `f41fae6b` 上这假定**不成立**：三族 CI 事件一律走 `triggerPRRefreshFromCIEvent`（Plan C：「payload is never read for display」），而 `github_pull_request_check_{suite,run}` 的唯一写者是 `github_snapshot.sql.go`（**M8-5** 的 snapshot 管道）。若本片按 anchor 描述落 suite/check_run 的写面，就会成为与 M8-5 争同一批表的**第二个写者** |
+| **D8** | `docs/61` §6.5 M8-4 行点名「`extractIdentifiers`/`extractClosingIdentifiers` 的 **6 个边界**」在计划书里没有逐个列出 ⇒ 本片把「大小写 / `#` 前缀 / 跨行 / 代码块内 / `owner/repo#n` / 去重」六个写进 `links.rs` 的模块文档与用例名，作为**可复核的口径固定** | `links.rs` | 上游**不**做 Markdown 解析（代码块里的标识符照样命中）是刻意的逐字对齐，这一条最容易被「顺手加个 fenced-code 过滤」改坏 ⇒ 单独一条用例 + 一条反例钉住 |
+| **D9** | `link_issue` 的 `linked_by_type` 写 **`"system"`**（上游 `LinkIssueToPullRequest` 的 `strToText("system")`），而非本仓其它路径惯用的 `"webhook"` | `webhook/mirror.rs::apply_auto_link` | 逐字对齐上游 GitHub webhook 路径。**注意** M8-1 的 repo 单测用的是 `"webhook"` —— 那是**测试自己的取值**，不是生产口径；生产口径只有上游这一个 |
+| **D10** | **写集之外**唯一一处改动：`crates/mc-http/tests/issues/auth.rs` 的 501 占位断言重新指向（`pull-requests` → `attachments`，+5 行注释） | `tests/issues/auth.rs:121-140` | 这条断言的**既有惯例**就是「不管哪个切片实现掉当前那条占位，就由它把断言指向下一条最远的缺口」（原注释逐字：「这条断言换过三次落点」，并逐次列出了前三片）。本片把 `GET /api/issues/:id/pull-requests` 从 501 换成真实现（`docs/61` §6.1 预测的 `implemented_placeholder 4→3` 正是这一条）⇒ 断言必然变红（门 ⑥ 实测 `left: 404, right: 501`），**不修就是留一条已知错误的测试**。取 `attachments` 的理由：`docs/61` §9.2 把它判给 `M3+` 并作为 W8 尾账登记 ⇒ 比其它候选耐久。**本片之外零改动**（`git diff` 只有这 13 + 3 个文件） |
+
+### 18.3 专属 DoD 逐条证据（`docs/61` §6.5 的 M8-4 行）
+
+| DoD 条目 | 证据 |
+| --- | --- |
+| **离线替身端到端**：断言链 = webhook → PR 行 → issue 关联 → 自动关闭 → **快照入队**，中间零 mock | `tests/github_webhook/webhook.rs::pull_request_webhook_drives_the_whole_chain` —— 一帧带**真实 HMAC-SHA256 头**的载荷（`sign_webhook_body` 与被测代码共用同一份 HMAC）走完五环：① `github_pull_request` 行（`state='merged'` / `head_sha` / 统计 / 作者）；② 两行 `issue_pull_request`（`close_intent` **一真一假**）；③ `#8` 被推进到 `done` 而 `#7` 留在 `todo`（逐字验证闸门第 ③ 条）；④ 记录型端口收到 `reason=Webhook` + `head_sha` 的入队；⑤ `pull_request:updated` 与 `issue:updated` 两条广播。**这条用例同时也是「离线替身」的形态说明**：本面的方向是「GitHub 打我们」⇒ 替身是**发帧的那一侧**，不需要本地 HTTP 服务端 |
+| **三族事件各一条** | `installation`：`installation_deleted_drops_every_binding_and_broadcasts_per_workspace` + `installation_created_stores_pending_then_refreshes_the_bound_account`（含 `deleted` / `suspend` / `created` / `new_permissions_accepted` / 未建模 action 五种 action）；`pull_request`：上面的端到端 + `redelivering…` + `a_passing_mention…` + `ambiguous…`；`check_suite`：`ci.rs` 的两条（`check_suite` 直给号 + `status` 走 SHA 回查 + `check_run` 同族同路） |
+| **幂等**：同一 webhook 重投 2 次**只插 1 行** PR | `redelivering_the_same_webhook_inserts_one_pr_row_and_keeps_one_link`：两帧同载荷 ⇒ `pr_count == 1`、关联账 `vec![(issue, false)]` 恰好一行、两帧各入队一次（幂等在**行**上，不在入队上 —— 上游同判） |
+| **两个反例**：验签失败 ⇒ 401 且**不落库**；缺密钥 ⇒ 拒收 | `bad_signature_is_401_and_persists_nothing`（错密钥 + 无签名头两种 ⇒ 401 + `pr_count == 0` + 零关联账）；`missing_webhook_secret_is_404_rather_than_a_permissive_accept`（`None` 与 `""` 两种 ⇒ 404 `not found`，且**带合法签名也不放行**） |
+| **自动关联 identifier 的 6 个边界** | `links.rs` 的 14 条单测逐条：`boundary_case_is_folded_to_uppercase`（大小写）/ `boundary_hash_prefix_matches`（`#` 前缀）/ `boundary_cross_line_matches`（跨行）/ `boundary_inside_code_block_still_matches`（代码块内**仍命中**）/ `boundary_owner_repo_hash_form_matches`（`owner/repo#n`）/ `boundary_dedup_keeps_first_occurrence_order_across_parts`（去重保序），外加 `prefix_is_capped_at_ten_characters`、`identifier_needs_a_non_word_left_edge_and_a_digit_right_edge`、`issue_number_for_prefix_boundaries` |
+| **自动关闭的三态**（`closeIntentPolicy.permits`） | `closepolicy.rs`：`CloseIntent` 三态（`three_state_close_intent`）+ `preserve_close_intent`（`preserve_close_intent_freezes_after_terminal_events`）+ `permits` 的四条（零值全拒 / 单绑定无限制 / 只放行记录的 owner / 歧义不放行）。真库侧：`ambiguous_closing_identifier_is_withheld_across_bound_workspaces` —— 两个 workspace（**同前缀**、同 installation）都能解析 `Closes <P>-7` ⇒ 两边都**照建关联账但不带 `close_intent`**，于是两边都**不推进**（`#6804` 的 fail-closed） |
+| **`pull-requests` 从 501 → 真实现且路由仍在** | `issue_pr.rs::read_face_returns_the_linked_card_and_triggers_a_page_view_refresh` 第一条断言就是 `assert_ne!(status, StatusCode::NOT_IMPLEMENTED)`；⑦ 读数同时给出双向证据：`local 452→453`（新增 webhook 键）而 `implemented_placeholder 4→3`（占位换真实现） |
+| **公开路由不得挂会话 middleware / 不得因缺会话 401** | 本面两族用例的帧**从不带** `x-multica-user-id`（`signed_webhook_request` 只放 `x-github-event` 与签名头）—— 全部 202/200/401/404 都在**无会话**下取得；401 只由**验签失败**触发 |
+| ⑩：新文件 ≤800 行 | 见 18.4；`scripts/file_size_baseline.tsv` **未动** |
+| 凭据面：手写 `Debug` 脱敏 + 「错误路径不回显凭据」 | 本片**不新增**凭据类型（App 私钥 / installation token 在 M8-1 的 `app.rs` / `token_cache.rs`，本片只读其不透明接口）。本面对应的一条是**广播不得回显管理手柄**：`installation_deleted…` 断言广播载荷里不出现数字 `installation_id`（只出现内部行 id），`installation_id` 本身是 GitHub 的公开数字标识、但对非 admin 成员是管理手柄（上游逐字口径） |
+
+### 18.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
+
+1. **M8-5（ghsnapshot 管道）—— 本片给你留了一个**装配点**，请接上**：`routes/github/webhook.rs`
+   的 `set_pr_refresh_port(Arc<dyn PrRefreshPort>)` 就是 `h.PRRefresh` 的等价物；M8-5 实现
+   `impl PrRefreshPort for Manager` 之后，在 `apps/mc-server` 的装配里调用它（**在** `router()`
+   之前），webhook 与页面访问两条入队路径就都活了。**不要**在 `mc-http` 里造第二份 worker。
+   另外：**不要**碰 `github_pull_request_check_{suite,run}` 的写面 —— 那是你的
+   （`github_snapshot.sql.go` 的对应物），本片刻意一行没写（D7）。
+2. **M8-7（INT）**：本片把 ⑦ 推成 `local 453 / implemented 370 (367 real + 3 placeholder) /
+   `known_gap 86 / owners.M8 5`；下一次 `--write-baseline`（406 → …）归你。请一并：① 把
+   **D2**（端口注入槽）登记为「anchor 缺口的临时处置」并决定是否正式挂到 `AppState`；
+   ② 把 **D3** 的 6 条查询要么归位到 `mc-repos`、要么在写集表里显式认下它们的当前位置；
+   ③ 把 **D6**（wakeup 停机 + 父 issue 通知未接线）与 **D7**（`github_pending_check_suite`
+   无归属）写进缺口清单；④ `mc-vcs-github/src/{lib,mirror}.rs` 与 `mc-repos/src/github/{mod,
+   check_suite,pending}.rs` 的模块头里还有「M8-4 待落地 / doc-only 桩」的**文案债**（anchor
+   冻结文件，本片不得改，与 §14.2 / §16.5 第 3 条同性质）。
+3. **给后续任何写 GitHub 面的片**：三个**顺序契约**不要动 —— ① 投递级关闭裁决必须在任何
+   workspace 关联**之前**算完（`resolve_close_intent_policy`），镜像那趟只能收紧它；
+   ② 推进闸门必须读**持久化之后**的聚合（跨 GitHub + VCS 两张关联账），不是本次载荷；
+   ③ 裸提及在 PR 仍可编辑时**要掉链**、终态之后**不得**掉链（`preserveCloseIntent` 的
+   `Action != "closed"` 那一半最容易被读反）。
+4. **给后续任何写 `routes/github/webhook.rs` 的片**：本文件已按门 ⑩ 拆成
+   `webhook.rs` + `webhook/{installations,mirror,ci}.rs`（`channels/slack.rs` 的同款手法）。
+   新增事件族请**新开子模块**，不要把 `webhook.rs` 顶回 800 行以上（它现在 232 行，入口与
+   装配是它唯一的职责）。
+### 18.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-4b.log`）
+
+```
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801'
+  ①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑥db 0（migrate=0, e2e=0）
+  ⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0
+  ⇒ overall: PASS — 10/10 gate(s) green in 360s
+```
+
+- ⚠️ **首跑是 9/10**（`gates-m8-4.log`）：⑥ 的 e2e 报 `left: 404, right: 501`，红在
+  `tests/issues/auth.rs::issue_auth_workspace_and_not_implemented` —— 那条断言断的正是本片
+  实现掉的 `GET /api/issues/:id/pull-requests` 占位。按该断言自己的既有惯例重新指向
+  `attachments`（见 **D10**）后**整套重跑 = 10/10 / 360s**（上表就是那一次）。
+  ⇒ **lesson**：`implemented_placeholder` 那条读数每减 1，就有一条**别人写的**测试会变红；
+  「占位搬运」只保证了注册键不变，**没有**保证断言不变 —— 派发时就该把这条写进写集
+  （本片是第一次踩到；M8-5/M8-6 若也实现占位，请同样先 `grep` 一遍
+  `NOT_IMPLEMENTED` 与 `not_implemented` 的测试断言）。
+- ⑦（**本片会动读数**；`baseline 406` **不动**）：`upstream 456 (commit f41fae6b08fb) |
+  local 453 registered`、`implemented 367 real + 3 placeholder = 370 / 456`、`known_gap 86`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`gaps by owner: M9=33 M3+=16 M7=16 M3=11
+  M10=5 **M8=5**`（和 = 86 ✓；`implemented + known_gap = 456` ✓）。
+  **与「起手补充」的实测起手值逐差相等**：`local 452→453`（+1 = 新增 `webhooks/github`）、
+  `implemented 369→370`（**real 365→367**：新增 1 条 + 占位换真实现 1 条；**placeholder 4→3**）、
+  `known_gap 87→86`、`owners.M8 6→5`。`--write-baseline` **未跑**（唯一一次刷新归 M8-7 `LUM-1804`）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py` = `0 defect(s)`、exit 0（M8 `dual-form required: 0`，
+  **没有** allowlist 退路）—— 本片两条键都是上游 plain 注册（`r.Post` / `r.Get`），只注册字面量形态。
+- ⑩：**0 违规**，`scripts/file_size_baseline.tsv` **未动**。本片最大文件在 `cargo fmt --all`
+  **之后**量：`tests/github_webhook/webhook.rs` **709**、`webhook/mirror.rs` 567、
+  `issue_pr.rs` 542、`mc-vcs-github/src/mirror.rs` 528、`payload.rs` 510（余量最小的那条是 91 行）。
+  ⚠️ **一个实测坑**：门 ⑩ 走 `git ls-files` ⇒ **未 `git add` 的新文件根本不被扫**。本片第一次
+  跑 ⑩ 报「0 违规」是在新文件还没入索引时拿到的 —— 那条读数是**假绿**。`git add -A` 后重跑
+  才是真读数（本节的数就是重跑后的）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片 0 fixture 改动 ⇒ 未漂移）。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表改动 ⇒ 与基线同形）。
+- ⑥：`mc-migrate` 566 个迁移 + `--ignored` 全绿，含本片 **14** 例真库 e2e
+  （`mc-http --test github_webhook`：`14 passed; 0 failed`）与 `mc-repos` 的那 1 例
+  （`github::check_suite::tests::head_sha_lookup_is_scoped_to_installation_and_repo ... ok`）。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿。本片新增 **47** 条**零 DB** 单测
+  （`mc-vcs-github` 37 = payload 5 + webhook 4 + links 13 + closepolicy 5 + mirror 10；
+  `mc-repos` 2 = check_suite 1 + pending 1；`mc-http` lib 8 = `routes::github::webhook` 3 +
+  `routes::github::issue_pr` 3 + `webhook::mirror` 2）⇒ 连同真库 **15** 例（14 + 1），
+  本片共 **62** 例新测试。
+- **【lesson·三处 clippy 硬线（本片实测，全部在测试/新建文件上）】** ① 新 lint
+  `assigning_clones`：`x = y.clone()` 要写 `x.clone_from(&y)`（本片 8 处，全在 DTO 映射）；
+  ② `ref_option`：`fn f(v: &Option<T>)` 要改成 `fn f(v: Option<&str>)`（本片 1 处）；
+  ③ `items_after_statements`：测试函数体里不能定义 `struct`/`impl`（提到模块层）。另两条：
+  `needless_pass_by_value`（`serde_json::Value` 形参用 `impl Into<Value>` 最省改）与
+  `too_many_lines`（100 行线，本片把 `mirror_pull_request_for_workspace` 拆出
+  `apply_auto_link`、把超长的 CI 用例拆成两条）。
+- **【lesson·门 ⑩ 的 800 行线会逼出「目录切片」】** `routes/github/webhook.rs` 一度到 **981 行**
+  ⇒ 按 `channels/slack.rs` + `channels/slack/store.rs` 的既有手法拆成
+  `webhook.rs` + `webhook/{installations,mirror,ci}.rs`（`foo.rs` 里 `mod bar;` ⇒ `foo/bar.rs`，
+  **不是** `foo/mod/bar.rs` —— 与 §17.5 最后一条 lesson 同一形状）。测试侧同理：`tests/github_webhook/`
+  从 4 个文件拆到 5 个（`webhook.rs` 711 → 709 + 新 `ci.rs` 205）。
+- **【lesson·同 workdir 的并发片会争 cargo 的 build-dir 锁】** 本轮首次跑门禁时 ③ 卡在
+  `Blocking waiting for file lock on build directory`：另一个切片的 run（`lum-1894-…`）在同时
+  编译。**判据**：门禁日志出现这一行**不是**本片红灯，但不能据此提前报数 —— `ps` 看着自己的
+  `gates.sh` PID 还活着就等它。本片两次全量跑：9/10 / 695s（含等待）与 10/10 / 360s。
+
