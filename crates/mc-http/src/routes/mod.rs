@@ -84,6 +84,14 @@ pub mod v1;
 pub mod labels;
 pub mod properties;
 
+// M2-A 尾片（LUM-1691）：`/api/issue-views*`（5）+ 指派人频次（1）在 `issue_views.rs`；
+// `/api/issue-view-preferences`（2）在 `issue_view_preferences.rs`（上游自成一面 + 门 ⑩ 的
+// 800 行上限要求拆）；`/api/pins*`（4）在 `pins.rs`。三个文件各自只注册自己的键，
+// `mount.rs` 已接好 `mount_slice_issue_view_pin()`。
+pub mod issue_view_preferences;
+pub mod issue_views;
+pub mod pins;
+
 // M7 anchor scaffold（LUM-1765 / docs/60-M7-PLAN.md §3.1 / §5）：**一个**面一次声明，
 // 24 条渠道路由按 5 个平台分文件（`channels/{slack,telegram,dingtalk,lark,wecom}.rs`），
 // 五个写者各自只写自己那一份，**都不再编辑本文件**。`channels/mod.rs` 自己聚合 5 个子

@@ -73,10 +73,14 @@ pub mod invitation;
 pub mod issue;
 pub mod issue_status;
 pub mod issue_table;
+// M2-A 尾片（LUM-1691）：保存视图 + 每用户视图栏偏好（上游 `265` / `268` 两张表）。
+pub mod issue_view;
 pub mod label;
 pub mod mcp;
 pub mod member;
 pub mod pat;
+// M2-A 尾片（LUM-1691）：`pinned_item` 侧栏钉住项（上游 `038` + `270`）。
+pub mod pin;
 pub mod plugin;
 pub mod project;
 pub mod project_resource;
@@ -86,6 +90,8 @@ pub mod scheduler;
 pub mod share_link;
 pub mod skill;
 pub mod squad;
+// M2-A 尾片（LUM-1691）：`GET /api/assignee-frequency` 的两路聚合读（无新表）。
+pub mod stats;
 pub mod subscriber;
 pub mod task;
 pub mod user;
