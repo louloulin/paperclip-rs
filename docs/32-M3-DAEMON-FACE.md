@@ -3503,3 +3503,197 @@ ticker**：先 `ProcessNext`，`worked == false` 才 `select { ctx.Done / notify
 5. **池的启动会替你把第一把扫掉**：`run_loop` 起身就先认领一次 + `interval` 首拍立即就绪 ⇒
    量「ticker 多久消费」时必须在**池静下来之后**才落行（本片的 `await_pool_idle`）；
    否则量到的是「起飞」而不是「ticker」（本片第一版实测 843µs，把 `DoD` 2 的证据变成了噪声）。
+
+## 28. M7-11（`LUM-1776`）：lark 长连接（WS）（**0 路由**）
+
+> **号段说明**：派发描述 rev 3（`docs/37` §114）定 `## 28.`。落笔前实测 base `83761edb` 的
+> `docs/32-M3-DAEMON-FACE.md` 末四节 = **`## 24.`(M7-9) / `## 25.`(M7-10) / `## 26.`(M8-7) /
+> `## 27.`(M5-D8)**，四节**全在 base 上**（前两轮标着「在飞」的两节已落地）⇒ 全局最大 + 1 = **`## 28.`**。
+> ⚠️ 本轮**同时**在飞的 `LUM-1780`（M7-15）按其描述取 **`## 31.`** ⇒ 两片**都**在文件尾部追加，
+> 本节在前、它在后。本仓那条「号段插中段、别尾行追尾」的纪律（§24 / §25 的裁定）在
+> **「本片就是紧邻 base 末号的那一号」时不可用** —— 没有比 §27 之后更"中段"的位置了。
+> 记在 §28.5 的 R2（合并时按数值序保留两段即可，两份 diff 的重叠区只有 §27 的尾巴）。
+
+**口径**：本节一切落点、偏离与读数都在上游 `f41fae6b08fb` 与**本片实测树**上核对。
+
+- **起手 base**：`83761edb`（当轮 `git fetch` 后 `git rev-parse origin/feat/multica-rs-initial` 实测，
+  与 rev 3 逐字一致）。
+- **提交身份**：`git config --worktree user.name devbox5` / `user.email devbox5@multica.local`。
+- **在飞交集**：起手认证 `pulls?state=open` = **0**；本轮同飞的 `LUM-1780`（M7-15）写
+  `crates/mc-channel/src/wecom/mod.rs` + 本节之外的另一段 `docs/32`，与本片逐文件 **∅** ⇒ 合法并行。
+  ⚠️ `LUM-1777`(M7-12) / `LUM-1779`(M7-14) 与本片**不得同飞**：四片都在
+  `crates/mc-channel/src/lark/mod.rs` 上追加（一格 = 一个文件 = 一个写者）。
+- **上游只读副本**：克隆进**自己的** workdir（`<workdir>/upstream`），钉 `f41fae6b08fb`
+  （不依赖别的 run 的 workdir；GC 掉也不影响本片）。
+- **硬前置 M7-10 的**可观测**判据（rev 2 的判据，当轮逐条 `git cat-file -e HEAD:<path>` 实测）**：
+  `lark/{http_client.rs 485,client.rs 576,types.rs 612,params.rs 706}` 四个 **EXISTS**；
+  三个写集文件 `ws_connector.rs` / `ws_frame.rs` / `ws_endpoint.rs` **MISSING**（正是本片产物）✓
+  ⇒ 起手合法（`LUM-1775` 已于 `8a48ae6e` 合入 base）。
+- **上游构成**：`lark/{ws_connector.go 582, ws_frame.go 387, ws_frame_decoder.go 350, ws_endpoint.go 202,
+  ws_chunk_assembler.go 170, noop_connector.go 64, connector.go 38}` = **1,793 行**（逐文件分配表
+  `docs/fixtures/m7-slice-upstream-files.tsv` 的 `M7-11` 七行，实测合计 1793 ✓）。
+
+### 28.1 落点（逐字路径）
+
+| 落点 | 写者 | 上游 / 说明 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/lark/mod.rs` | M7-0 建 / M7-10 追加 4 行 / **M7-11 追加 4 行** | 44 → **53** 行（4 行 `pub mod` + 5 行注释 + 状态段 3 行改写）。`register()` **一行未动**（仍是 anchor 空实现：注册工厂与 5 条路由归 **M7-14**） |
+| `lark/ws_frame.rs` + `ws_frame/tests.rs` | **M7-11** | `ws_frame.go`(387) 的二进制帧信封（9 字段 protobuf 手写编解码 + ping/pong/ACK 三构造）**∪** `ws_chunk_assembler.go`(170) 的分片重组与惰性 GC |
+| `lark/ws_frame_decoder.rs` + `ws_frame_decoder/tests.rs` | **M7-11** | `ws_frame_decoder.go`(350) 的信封 → 归一化事件（三分支：Message / Ignored / Err） |
+| `lark/ws_endpoint.rs` + `ws_endpoint/tests.rs` | **M7-11** | `ws_endpoint.go`(202) 的 `POST /callback/ws/endpoint` 引导 + `WSEndpoint` 与 `service_id` 解析 **∪** `connector.go`(38) 的 `EndpointFetcher` 端口 |
+| `lark/ws_connector.rs` + `ws_connector/tests.rs` + `ws_connector/tests/{harness,supervised}.rs` + `ws_connector/tungstenite.rs` | **M7-11** | `ws_connector.go`(582) 的会话与帧循环（引导 → 拨号 → ping/pong → 分片 → 解码 → emit → ACK）+ `connector.go` 的 `EventConnector`/`EventEmitter` 端口 + `gorilla` 拨号器的等价物 |
+
+**Δ 行数**：**10 个新文件**（4 个生产 + 6 个用例/端口拆分），最大 **689**（`ws_frame.rs`）≤ 门 ⑩ 的 800；
+`ws_connector.rs` 612、`ws_connector/tests.rs` 599、`tests/harness.rs` 413、`tests/supervised.rs` 443、
+`ws_endpoint.rs` 432、`ws_frame/tests.rs` 405、`ws_frame_decoder.rs` 381、`ws_endpoint/tests.rs` 365、
+`ws_frame_decoder/tests.rs` 281、`tungstenite.rs` 101。
+`scripts/file_size_baseline.tsv` **一行未动**（仍 10 条）。
+
+**测试账**：`cargo test -p mc-channel lark::` ⇒ **170 passed / 0 failed**（本片新增 **81** 条：
+`ws_frame` 23 / `ws_frame_decoder` 13 / `ws_endpoint` 16 / `ws_connector` 26 / `supervised` 3；
+M7-10 的 89 条全绿未动）。
+
+### 28.2 偏离（D1…D8，逐条可核对）
+
+- **D1 写集勘误（三类，接 §25 的 D1）**：`docs/60` §3.3 给本片的格子是
+  `lark/{ws_connector,ws_frame,ws_endpoint}.rs`。本片**追加**的路径只有三类：
+  1. **`lark/mod.rs` 的 4 行 `pub mod`**（rev 2 已点名的第 7 次系统性漏项；rev 3 又把它修正为
+     「4 行、44 → 48」的预测 —— 实测因状态段改写是 44 → **53**）；
+  2. **`*/tests.rs` 六个子模块**（同目录先例：`lark/*/tests.rs`、`dingtalk/*/tests.rs`）；
+  3. **门 ⑩ 逼出来的四个文件**：首版 `ws_frame.rs` 把「帧信封 + 分片 + JSON 解码」装在一起
+     （上游 907 行 Go 的量级）⇒ 按**上游自己的文件边界**切开：帧信封+分片（父模块）∥ 事件解码
+     （`ws_frame_decoder.rs`）；`ws_connector/tests.rs` 首版 **990** 行 ⇒ 按「工具 ∥ 断言 ∥
+     监管集成」三切（`tests/harness.rs` / 父文件 / `tests/supervised.rs`）；生产拨号器
+     （唯一碰第三方 WS 库的地方）单独成 `ws_connector/tungstenite.rs`（同 `dingtalk/stream/tungstenite.rs`）。
+- **D2 手写 protobuf 而不是引 `prost`/官方 SDK**：上游逐字的理由是依赖树；本仓多一条**硬约束** ——
+  依赖面在 M7-0 anchor 一次定死（`crates/mc-channel/Cargo.toml` 的注释），本片**不得**新增三方包
+  ⇒ 手写 `protowire` 的三条原语（varint / tag / length-delimited）。**字节级兼容是承重的**：
+  `Frame::payload` 用 `Option<Vec<u8>>`（上游 `nil` 与空切片在 wire 上是两种字节序列），
+  五组黄金向量逐字节抄自上游 `ws_frame_test.go`（**不许为了迁就重构而改它们**）。
+- **D3 两个 `Debug` 手写脱敏（本片承载凭据的类型）**：`BootstrapRequest`（请求体里是**明文**
+  `AppSecret`）与 `WsEndpoint`（`url` 自带一次性的 `device_id`、`headers` 是握手头）。
+  两者都输出 `<redacted>`，且各有专门用例。`AppSecret` / `InstallationCredentials` 用 M7-10 已有的
+  手写脱敏类型，**不**再造一份。
+- **D4 引导的错误面三处收紧（上游把响应体拼进错误）**：
+  1. **非 2xx 只带状态码**（上游带 `truncate(body,512)`）—— 网关的错误体可能回声请求，
+     而请求体里就是 `AppSecret`；
+  2. **业务错误保留 `code` + 脱敏后的 `msg`**：运维要靠 `code`/`msg` 区分「应用类型不支持」
+     （`PersonalAgent` 那条已知开放风险）、「凭据错」、「lark 宕机」，但 `msg` 是**不可信输入**
+     ⇒ 先过 `scrub_secret(msg, app_secret)`（命中即 `<redacted>`）；两条用例各钉一边；
+  3. **解析不出 `service_id` 一律失败，且错误文案不含那条 URL**（它自带 `device_id`）。
+- **D5 不读 env**：上游的部署级覆盖来自 `MULTICA_LARK_CALLBACK_BASE_URL`。本 crate 的纪律是
+  **只有** `mc_http::state::ChannelKeys` 读 env（`docs/60` §2.3 第 4 条）⇒ 本片只提供
+  `HttpEndpointFetcher::with_base_url` 这个**注入口**，值由宿主装配时传入。
+- **D6 平台 JSON 的摊平 / 提及改写**：上游 `ws_frame_decoder.go` 会调 `flattenContent` /
+  `resolveMentions` / `containsMention`。那三个 helper 属于 **M7-12 的写集**
+  （逐文件分配表里 `content_flatten.go`(172) 与 `mention.go`(64) 都归 M7-12）⇒ 本片**不重实现**，
+  只把解码所需的一切原样交出：`LarkInboundEvent::{content, mentions, raw}`。
+  这是**有意为之的接缝**，不是未完成项（见 §28.4 的 H1）。
+- **D7 `chat_type` 未知取值失败关闭到群**：上游把未知取值原样塞进 `ChatType(t)`；本仓的
+  `ChatType` 只有两个变体 ⇒ 照本 crate 的既有先例（`dingtalk_chat_type`）**归群**（群走 engine 的
+  「必须 @ bot」过滤，最坏是漏一条闲聊，而不是把群消息当私聊提示词）。比较大小写不敏感。
+- **D8 未落项（明确不做，不是漏）**：
+  1. **`noop_connector.go`(64) 不落地** —— 它的存在理由是「真实连接器落地之前先把 Hub 接进启动路径，
+     免得半成品连接器看起来像 wire 协议坏了」。本仓**没有**那个 bootstrap 阶段（M7-0 的 `register()`
+     是空实现，M7-14 才注册工厂），凭空造一个 `NoopConnector` 只会是**没有调用点的死代码**；
+  2. **`connector.go` 的 `ConnectorFactory`**（上游注释逐字：`Kept for the bootstrap / fallback path`）
+     同上；`EventConnector` / `EventEmitter` 两个端口**照落**（它们是 M7-12 的接缝）；
+  3. **凭据由调用方解析**（上游有 `CredentialsProvider` 端口）：解密 `app_secret` 需要解密器与安装行，
+     那是 M7-12 的 `feishu_channel.rs` / M7-14 的安装面 ⇒ 本片直接收 `InstallationCredentials`，
+     明文 secret 的生命周期因此**只覆盖一次会话**（不驻留在连接器对象里）；
+  4. **`ReconnectInterval` / `ReconnectNonce` / `ReconnectCount`** 只随连接日志上报、**不驱动重连** ——
+     重连节奏归 `engine::Supervisor`（`docs/60` §2.4；`on_connect_logged` 之外无消费）。
+  5. 富卡片 / 出站 / 安装绑定（→ **M7-12/13/14**）；`register()` 仍是 anchor 空实现、
+     `docs/fixtures/route-parity-baseline.json` **未动**、`--write-baseline` **未跑**
+     （M7 线唯一的刷新权归 M7-21）。
+
+### 28.3 门禁与读数（**本片树上实测**）
+
+`bash scripts/gates.sh`（**不带** `--with-db`：本片零 DB 触碰 —— `docs/60` §6.5 明确把 M7-0/10/11
+排除在 `--with-db` 之外：没有仓储、没有迁移、没有 `mc-http` 改动）：
+
+```
+  ①  fmt                   0     3s  PASS
+  ②  build                 0   159s  PASS
+  ③  clippy                0    56s  PASS
+  ④  clippy-test-util      0    33s  PASS
+  ⑤  test                  0    47s  PASS
+  ⑦  route-parity          0     1s  PASS
+  ⑨  conformance           0    65s  PASS
+  ⑩  file-size             0     0s  PASS
+  overall: PASS — 8/8 gate(s) green in 364s
+```
+
+⑦（本片 **0 路由** ⇒ 应与 rev 3 的当轮值**逐字相同**，实测**逐字相同**）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 465 registered | baseline 458
+  implemented  379 real +   3 placeholder =  382 / 456   known_gap   74   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M3=11  M7=9  M10=5
+```
+
+- **不变式**：`implemented + known_gap == 456` ✓、`regression == 0` ✓、`unclaimed == 0` ✓、
+  `local_only == 9` ✓、`owners.M7 == 9`（**本片不动**：0 路由 ⇒ 这正是「0 路由片 = 读数正面控制组」）。
+- **形态门（⑦ 第二条）**：`slash_alias_audit.py --quiet` exit **0** —— 未引入 `MISSING_ALIAS` /
+  `MISSING_EXACT` / `EXTRA_ALIAS`；`docs/fixtures/slash-alias-allowlist.tsv` **未加行**。
+  本片的形态证据是**反向**的：`/callback/ws/endpoint` 是**出站**引导（见 `ws_endpoint.rs` 的模块文档），
+  **不注册**任何路由 ⇒ 没有可引入形态缺陷的面。
+- **⑨**：`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`
+  ⇒ `report matches`；`crates/mc-conformance/report.json` 在 `git status` 里**未出现**
+  （lark 的 7 条 `actor=anonymous` fixture 归 **M7-14**，本片不该动一格）。
+- **⑩**：`file_size_check: limit=800 scanned=988 baseline=10 violations=0`；本片 10 个新文件最大 689。
+
+### 28.4 交接给后续片（M7-12 / M7-13 / M7-14 的可用面）
+
+- **H1（M7-12 必读）** 入站链的接缝是 [`LarkInboundEvent`]：它是上游 lark 包局部 `InboundMessage`
+  **减去**三个派生字段（`Body` / `CommandBody` / `AddressedToBot`）。M7-12 的 `feishu_channel.rs`
+  要做的是：`Connector::run_session(&creds, emitter, stop)` + 一个 `EventEmitter` 实现，
+  把 `content`（双重编码 JSON）交给自己的 `content_flatten.rs`、把 `mentions`（**WS 形状**的三字段
+  嵌套对象，**不是** `types::LarkMessageMention` 的裸 `open_id`）交给 `resolvers.rs`，
+  再拼成 `mc_core::channel::message::InboundMessage`（`raw` 装本事件的信封逐字）。
+- **H2** `EventConnector` / `EventEmitter` / `WsDialer` / `WsConnection` / `EndpointFetcher` /
+  `FrameDecoder` 六个端口都可 `Arc<dyn …>` 装箱；生产实现分别是
+  `Connector`（`EventConnector`）、`TungsteniteDialer`、`HttpEndpointFetcher`、`LarkJsonFrameDecoder`。
+- **H3** 停机是 `StopSignal`/`StopHandle`（`watch<bool>`）；`StopHandle::from_receiver` 可接宿主的收口信号。
+  **取消语义**：置位 ⇒ `run_session` 返回 `Ok(SessionOutcome::Cancelled)`（**不是错误**），
+  与 `Channel::connect` 的契约一致（supervisor 也可直接丢弃 future —— 本片的分片状态与写都是单
+  所有者，**丢 future 即拆链路**，不需要额外的 watchdog）。
+- **H4** `SessionKnobs` 的时间旋钮（`ping_interval` / `read_deadline` / `write_timeout` / `chunk_ttl`）
+  是后续片做毫秒级用例的唯一入口；**服务端下发的 `PingInterval` 优先**，旋钮只是它缺席时的兜底。
+- **H5（M7-13 / M7-14）** 引导基址可覆盖：`HttpEndpointFetcher::with_base_url`（宿主注入，
+  **不在本 crate 读 env**，见 D5）⇒ 用例指到本地替身即可，无需串行锁。
+- **H6（M7-14）** 5 条路由的「未配置」语义与注册工厂**都还没落**：`lark/mod.rs` 的 `register()` 仍是
+  anchor 的空实现（本片一行未动），M7-14 追加 `pub mod` 行时**记得**本文件已被 M7-10/M7-11 各追加过
+  （先 rebase，两段都保留 —— 先例：M7-5 ∥ M7-6 在 `telegram/mod.rs`）。
+
+### 28.5 观察项与风险（登记，不实现）
+
+- **R1「不重复投递」的四条事实（本片实测，逐条有用例）**：
+  1. 分片没齐 ⇒ **不 emit、不 ACK**（服务端才好重投整条事件）；
+  2. emit 成功**才** ACK 200（未 ACK 的事件会被重投 ⇒ 不丢消息）；解不开的载荷与未订阅的事件
+     也回 200（避免"重投一个已证明解不开的载荷"）；
+  3. emit 报基础设施错 ⇒ NACK 500 + **结束本次会话**（supervisor 退避重连）—— 事件已交付过一次，
+     不会因为 ACK 写失败而丢；
+  4. 同一条事件的**重复片**不产生第二次 emit（`ChunkAssembler` 凑齐即删条目）。
+  跨会话 / 跨副本的去重**不在本层**：那是 M7-2 的 `channel_inbound_message_dedup`（键
+  `(installation, message_id)`）与租约。
+- **R2（合并期注意）** 本节与 `LUM-1780`（§31）**都**在 `docs/32` 尾部追加。两份 diff 的重叠只有
+  §27 的尾巴 ⇒ 合并时按数值序保留两段即可。**根因**：本片是"紧邻 base 末号"的那一号，
+  "插中段"纪律无可用位置（见本节开头的号段说明）。
+- **R3（实测发现，写给 M7-21 / 后续 cycle）** 本仓 `Supervisor::supervise` 的每一圈循环都
+  **在退避之前**释放租约（`release` → `record_failure` → `sleep`），下一圈开头再 CAS 重取
+  （`crates/mc-channel/src/engine/supervisor.rs` 的 `supervise`）。后果两条：
+  (a) **不可能两个副本同时连一条安装**（每次拨号前都持有过租约，`supervised.rs` 用例断言
+  `acquired >= attempts`）—— 这是「不重复投递」的第一道闸；
+  (b) 但**退避窗口里租约不在手上** ⇒ 期间别的副本可以抢走它（抢不到的一方不再建连，用例
+  `a_lease_held_elsewhere_means_no_session_and_no_delivery` 钉住）。所以「租约跨重连一直握在手里」
+  这个直觉在本仓**不成立**，跨窗口的幂等仍要靠 M7-2 的去重表。
+- **R4** `#[async_trait]` 下同一 trait 只能有**一个** impl 块（§25 的 D2 同款）：本片的
+  `FrameDecoder` / `WsDialer` / `WsConnection` / `EndpointFetcher` / `EventEmitter` 各自的 impl
+  都在单一文件里。
+- **R5** `docs/32` §25 的 D4（`ResourceBody` 拉取式）与本片的 **D2**（手写 protobuf）同源：
+  本 crate 的依赖面冻结 ⇒ 后续片若要 `AsyncRead` / `prost`，得走 `docs/15` §8.4 的仲裁。
+- **R6（凭据面的一条可达检查）** `WSEndpoint` 的一次性地址**等价于凭据**：本片保证它在
+  `Debug`、错误文案、日志字段三处都不出现（三条用例）。⚠️ 但**上游把同一条地址存在的形态**
+  保留在 `WsEndpoint` 上（拨号必须用它）⇒ 后续片（M7-12）若把它塞进任何结构化日志或
+  持久化字段，本片的保证就失效 —— 这条写在这里供 review 用。
