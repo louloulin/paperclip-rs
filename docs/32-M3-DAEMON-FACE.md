@@ -2763,7 +2763,7 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1803:…@127.0.0.1:54
 按「先到者保号」把本节让号为 `## 23.`）并在**合并树上整套重跑**：
 
 ```text
-bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令、同一个库 mc_lum1803）
+bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令、同一个库 mc_lum1803；日志 gates-m8-6-merged.log）
   ①fmt 0(2s) · ②build 0(85s) · ③clippy 0(28s) · ④clippy-test-util 0(51s) · ⑤test 0(45s)
   ⑥db 0(233s；migrate=0, e2e=0) · ⑧schema-drift 0(25s) · ⑦route-parity 0(1s) · ⑨conformance 0(56s) · ⑩file-size 0(0s)
   ⇒ overall: PASS — 10/10 gate(s) green in 526s
