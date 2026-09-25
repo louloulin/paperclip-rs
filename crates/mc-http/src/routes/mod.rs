@@ -125,6 +125,14 @@ pub mod github;
 pub mod mcp;
 pub mod vcs;
 
+// M2-A 尾-补（LUM-1793）：`POST /api/issues/:id/squad-evaluated`（1 条上游键）。
+// 上游把 handler 放在 `squad.go`，但这条键的本仓落点是**新文件**而不是 `issues/mod.rs`：
+// 它登记在 `/api/issues/{id}` 下，而 `issues/` 目录的写者是 M2-A 主体（LUM-1348）及其后续切片
+// —— 新文件 + `mount.rs` 尾部一行追加，两侧都不动别人的行。
+// 上游注册是 `r.Post("/api/issues/{id}/squad-evaluated", …)`（`router.go:2097`）的 **plain**
+// 形态（不是 `Route(…)+Post("/")`）⇒ 只注册无尾斜杠那一种，多注册一条就是 `EXTRA_ALIAS`。
+pub mod squad_evaluations;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

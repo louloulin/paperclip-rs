@@ -64,6 +64,13 @@
 ^/api/comments/[^/]+/sub-issue-preview	M3+	human-only（docs/10 §2 M2-B：M3+）
 ^/api/comments/[^/]+/sub-issues	M2-B	展开子 issue（M2-B 覆盖，随 LUM-1350 落地）
 ^/api/issues/table/	M2-D	issue table 查询面（docs/10 §2 立 M2-D）
+# LUM-1793（M2-A 尾-补）：squad leader 判决面。**这条键以前命中的是下面的兜底行
+# `^/api/issues`**（first-match-wins），也就是说它的 owner 单元格是兜底规则的产物、
+# 不是任何切片计划做的归属裁决 —— 立项时四路取证（fixture 单元格 / 规则表 / 代码侧
+# grep + `git log -S` / 全项目 issue 文本）全部落空，只剩它一条无人承接（docs/37 §78）。
+# 加这条显式规则（而不是改 fixture 的 owner 单元格）是为了让「谁是它的 owner」这件事
+# 从「兜底命中」变成「显式裁决 + 理由」，重生成快照时也仍然命中同一格。
+^/api/issues/[^/]+/squad-evaluated	M2-A	squad leader 判决记录（LUM-1793；handler 在 squad.go，键挂在 /api/issues/{id} 下）
 ^/api/issues	M2-A	issue 核心（M2-A）
 ^/api/comments	M2-B	comment + reactions（M2-B）
 ^/api/issue-statuses	M2-A	status catalog（M2-A）

@@ -90,6 +90,12 @@ pub mod scheduler;
 pub mod share_link;
 pub mod skill;
 pub mod squad;
+
+// M2-A 尾-补（LUM-1793）：squad leader 判决面（上游 `squad.go:976
+// RecordSquadLeaderEvaluation`）。读 `agent_task_queue`（只读）+ 写 `activity_log`
+// （上游没有通用 activity repo），因此**另起一个模块**而不动 `squad.rs` /
+// `task/` / `agent/env.rs` 三个既有写者的文件。
+pub mod squad_evaluation;
 // M2-A 尾片（LUM-1691）：`GET /api/assignee-frequency` 的两路聚合读（无新表）。
 pub mod stats;
 pub mod subscriber;
