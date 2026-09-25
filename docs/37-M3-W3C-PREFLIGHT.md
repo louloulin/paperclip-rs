@@ -10317,3 +10317,12 @@ df before: 11,809,508 KB → df after: 22,152,952 KB   ⇒ +10.3 GiB（量只认
 - **base 前进：`44c68c04` → `7b236087`**；⑦ 在落地树上复测 = `local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`，`owners M9=33 M3+=16 M3=11 M10=5 **M7=5**`（**和 = 70 ✓**；`owners.M7 9 → 5`）。**与 `LUM-1780` 的预测逐字相同。**
 - **空位出现 ⇒ 立即派发 `LUM-1781`（M7-16 wecom WS 帧与发送，0 路由，rev 2 本轮预飞）**：硬前置 M7-15 的**可观测判据当场成立**（`wecom/credentials.rs` + `types.rs` 已进 base）⇒ 新 workdir **`lum-1781-172d0fdda89d`**，daemon 回 **3/3**（cycle ∥ `LUM-1777` ∥ `LUM-1781`）。号段 **`## 33.`**（§117.6 已写进描述）。
 - 🔴 **本节的 lesson（比 §117.9 第 1 条更进一步）**：**判据链的「不合并」也是有时效的判断，必须在本轮内复查一次** —— 我在 17:0x 判定「片 run 仍活（pid 46254 在跑 `clippy --fix`）⇒ 不落地」，两分钟后它就终态了。**正确做法不是「一次判定管一轮」，而是把「片终态」插回工作队列**：监控轮写完文档后**再扫一次 `/proc`**（成本 <1 秒），终态就把合并补完。本轮靠运气（写 §117 花了几分钟）而不是靠纪律拿到这个窗口。
+
+### §117.11 同轮第二次回收：`LUM-1780` 的 `target/` **28G** ⇒ **df 2.6G → 30G（+27.3 GiB）**（本轮合计 **+37.6 GiB**）
+
+合并与派发之后（§117.10），`df` 在几分钟内从 25G 掉到 **2.6G / 95%**（`LUM-1777` 与刚派的 `LUM-1781` 都在冷建）。**这已经贴着 `ENOSPC` 红线**（§87：`LUM-1835` 就是死于 `no space left on device`）⇒ 立即回收。
+
+- 候选 = **`lum-1780-73e3db50b44f`**：该片的 run 已终态、交付已合入 base、**且 `target/` 因为本 cycle 自己那次 `--with-db`（826s，`--all-targets` + 第二份测试二进制）从 9.3G 长到 `du` 报 `28G`**。
+- 四判据全真：① run 终态（`completed 17:05:12Z`）② `HEAD` 是 `origin/feat/multica-rs-initial` 的祖先（交付 `7b236087` 已落地）③ 从 `/` 起手逐 PID 扫 `/proc/*/cwd` **零命中** ④ `git status --porcelain` 空。
+- 量：`df` **2,665,928 KB → 31,281,040 KB = +27.3 GiB**（`du` 报 28G）。
+- 🔴 **lesson：cycle 自己跑的门禁会长出「本片第一大的死物」，必须当场记账并优先回收。** 本轮 `LUM-1780` 的 target 在它的 run 终态时只有 9.3G，是**我**为了判据链第 ④ 步在它里面跑了 `--with-db`，把它推到 28G；若不回收，`LUM-1781` 的冷建会在几分钟内撞 ENOSPC 而**死在门 ② 之前**（症状是 `ld terminated with signal 7 [Bus error]`，看着像代码红）。**回收要排在「自己跑完门禁」之后、而不是「本轮收尾」时。**
