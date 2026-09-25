@@ -2914,20 +2914,31 @@ bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令�
 
 `file_size_check.py` = `OK: 0 violation(s)`；`--write-baseline` 三栏全 `(none)` ⇒ 白名单 10 条**逐字节不变**。
 
-### 26.3 门禁读数（10/10；首轮两条红 = 已知 flake）
+### 26.3 门禁读数（最终提交 tree 上 10/10；期间的每一次红 = 已知 flake）
 
 ```
 第一轮（新建库 multica_lum1804，bash scripts/gates.sh --with-db，537s）: 8/10
   ①fmt 0 ②build 0 ③clippy 0 ④clippy-test-util 0 ⑧schema-drift 0 ⑦0 ⑨0 ⑩0
-  ⑤test 101 ← mc-composio/src/state.rs:390 tampered_signature_is_rejected_bit_for_bit
+  ⑤test 101 ← mc-composio/src/state.rs:390 tampered_signature_is_rejected_bit_for_bit      （flake a）
   ⑥db   1   ← (migrate=0, e2e=101) mc-scheduler/tests/jobs_issue_wakeup.rs:312
-              real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops
+              real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops           （flake b）
 第二轮（再新建库 + 同一条命令，209s）: 10/10 PASS
   ①2s ②1s ③0s ④0s ⑤55s ⑥113s(migrate=0,e2e=0) ⑧32s ⑦0s ⑨6s ⑩0s
 ```
 
-日志留档在 run workdir：`gates-m8-7.log` / `gates-m8-7-run2.log`。
-**纪律**：门 ⑥ 每轮开一个**当轮新建**的库（本片两轮各建一次）；红了先按「已知噪声」处置并**在文档里登记**，不许静默重试。
+**第三轮 = 最终提交 tree 上的认证**（head = `37730f65`，= 本片提交 + `1edb3d83` 的 docs/37 合并）：一条命令跑满 10 道门超出本 run 的单命令预算（在 ⑤ 中途被外部 `SIGTERM` 打断，**不是门红**）⇒ 按 §12.4 的先例拆成两次 `--only` 调用（**同一个脚本、同一批命令**，只换选择集）：
+
+```
+bash scripts/gates.sh --only fmt,build,clippy,clippy-test-util,test          ⇒ 5/5 PASS，65s
+（DROP + CREATE 一个新库）
+bash scripts/gates.sh --only db,schema-drift,route-parity,conformance,file-size
+                                                                            ⇒ 5/5 PASS，270s（⑥231s migrate=0/e2e=0）
+合计 ⇒ 10/10 PASS
+```
+
+⤷ 这两次之间的一次 ⑥ 尝试是 **4/5**，红在 **composio flows 的跨用例互踩**（flake c，见 §26.4 第 4 项）—— 本片在**当轮新建的全新库**上四次 ⑥ 里撞了一次 ⇒ 它**与「复用库」无关**（这一点更正了本片派发补充的归因）。
+日志留档在 run workdir：`gates-m8-7.log` / `gates-m8-7-run2.log` / `gates-m8-7-final-a.log` / `gates-m8-7-final-b.log` / `gates-m8-7-final-b2.log`。
+**纪律**：门 ⑥ 每轮开一个**当轮新建**的库（本片四轮各建一次）；红了先按「已知噪声」处置并**在文档里登记**，不许静默重试。
 
 ### 26.4 登记的缺口（4 项；全文与逐条证据见 `docs/61` §11.6）
 
@@ -2946,13 +2957,19 @@ bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令�
    24 条（`github_test.go` 16 + `agents` mcp-config 8）全部 `unevaluable`，原因是**结构性**的（四态只对
    `actor = anonymous` 的 59 条计算；M8 的 25 条路由里 24 条在 member/admin 授权层）⇒ 不是 M8 的欠账。
    **没有**把任何 `unevaluable` 改写成 `pass`，也没有新增 `unevaluable`（306 逐字未变）。
-4. **两条已复现的测试侧 flake**（本片 0 代码改动 ⇒ 只登记；建议放进一个独立的测试修复小片）：
-   - `crates/mc-composio/src/state.rs:390`：**3/60 ≈ 5%**。机理 = 32 字节 HMAC 的 `base64url_nopad` 恰好 **43 字符**，
+4. **三条已复现的测试侧 flake**（本片 0 代码改动 ⇒ 只登记；建议放进一个独立的测试修复小片）：
+   - **(a)** `crates/mc-composio/src/state.rs:390`：**3/60 ≈ 5%**。机理 = 32 字节 HMAC 的 `base64url_nopad` 恰好 **43 字符**，
      末字符只承载最后 **4** 个有效 bit；用例把末字符换成 `'A'`/`'B'`，当原末字符本就是 `'A'` 时 `'B'`（索引 1）
      会让低 2 bit 非零 ⇒ base64 `InvalidLastSymbol` ⇒ 在常量时间比较**之前**返回 `Malformed`。修法 = 改**首个**字符（1 行）。
-   - `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:312`（M5-8 的用例，与 M8 无关）：**1/6 ≈ 17%**（每轮新建库 +
+   - **(b)** `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:312`（M5-8 的用例，与 M8 无关）：**1/6 ≈ 17%**（每轮新建库 +
      迁移、单条用例独占运行）。机理 = 只读一次 wakeup 的 global plan，而审计行**先以 `Running` 落库、完成才翻 `Success`**。
      修法 = 像 autopilot 那半边一样轮询到 `Success` 或超时。
+   - **(c)** `crates/mc-http/tests/composio/**` 的**跨用例互踩**（M8-6 的用例集，**本片新查明**）：**3/30 = 10%**。
+     三步机理：① `support.rs:85` 的 `static CALLS` 是进程级的、每个用例起手都 `reset_calls()`（`support.rs:88`）⇒ 并行时互相清空；
+     ② `support.rs:559` 的 `flow_state()` 用 **`api_keys.last()`（全进程最后一个 key）** 反查 state ⇒ 拿到**别人的 state**；
+     ③ 重放台账是**进程级**的（D4，刻意的生产行为）⇒ 被偷 state 的那个用例自己的回调被判 `Replayed`。
+     修法 = `flow_state()` 改成按**本用例的 api_key** 过滤（`state_from_link_call()` 已经是这样）。
+     ⚠️ **归因更正**：本片派发补充把它写成「⑥ 复用库 ⇒ 假红，换全新库就绿」；实测在**当轮新建的全新库**上 4 次 ⑥ 里撞了 1 次 ⇒ 真因全在测试侧的进程级共享状态，与库内容无关。
 
 ### 26.5 交接
 
@@ -2972,9 +2989,13 @@ bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令�
 1. **INT 片的「硬前置」必须当轮重取，且 ⑦ 的 `gaps by owner` 里「键消失」是唯一可靠的判据**：
    本片描述里的绝对读数（`baseline 344→454`、`local 454 / implemented 378 / known_gap 78`）
    是计划期快照，本次**第 4 次**被证过期；`owners.M8` 从 5 → **0**（键消失）才是硬前置成立的证据。
-2. **门禁的「红」先分清是代码、环境还是 flake**：本片首轮两条红都不是代码 —— 一条是 5% 的
-   base64 末字符边界，一条是「先写 `Running` 后翻 `Success`」的读-写竞态。
+2. **门禁的「红」先分清是代码、环境还是 flake**：本片 6 次门级尝试里红过 3 次，没有一次是代码 ——
+   一条是 5% 的 base64 末字符边界，一条是「先写 `Running` 后翻 `Success`」的读-写竞态，
+   第三条是两个用例共享**进程级**台账/调用记录造成的互踩。
    判据：**在 `git status` 干净的同一个 base 上直接连跑测试二进制**（不依赖门禁的汇总），
    拿到复现率与机理，再决定是修、是登记、还是重跑。
-3. **「已知噪声」必须写成可复现的数字**（`3/60`、`1/6`）而不是「偶发」：
-   前者能反推出机理（1/16 的末字符取值、50 ms tick 的窗口）并给出 1 行的修法，后者只能靠重试。
+3. **「已知噪声」必须写成可复现的数字**（`3/60`、`1/6`、`3/30`）而不是「偶发」：
+   前者能反推出机理（1/16 的末字符取值、50 ms tick 的窗口、`api_keys.last()` 的全局性）并给出 1–2 行的修法，后者只能靠重试。
+4. **派发补充里的「换库就绿」这类因果句要当成假设去证，不是当成事实去用**：
+   本片对着**全新库**重现了那条「复用库才有」的假红 ⇒ 真实的两个参数是**并行调度的时序**与**进程级共享状态**，
+   把「换库」当理由会在下一次遇到它时归错因（本片把它写进了缺口登记与归因更正）。

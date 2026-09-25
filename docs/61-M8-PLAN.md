@@ -1008,6 +1008,17 @@ report matches crates/mc-conformance/report.json                        (exit 0)
 ⇒ 首轮那两条红**都不是代码问题**，是**已知 flake**（机理、复现率、修法见 §11.6 第 4 项）。纪律沿用本波的既有约定：**门 ⑥ 每轮开一个当轮新建的库**（本片两轮各建一次），红了先按「已知噪声」处置并**在文档里登记**，不许静默重试。
 日志留档在 run workdir：`gates-m8-7.log`（第一轮）、`gates-m8-7-run2.log`（第二轮）。
 
+**第三轮（最终提交 tree `37730f65` 上的认证）**：一条命令跑满 10 道门超出了本 run 的单命令预算（在 ⑤ 中途被外部 `SIGTERM` 打断，**不是门红**），
+因此按 `docs/32` §12.4 的先例把同一份 `gates.sh` 拆成两次 `--only` 调用（仍是同一个脚本、同一批命令，只换了选择集）：
+
+```
+bash scripts/gates.sh --only fmt,build,clippy,clippy-test-util,test   ⇒ 5/5 PASS，65s（①2s ②13s ③1s ④0s ⑤49s）
+bash scripts/gates.sh --only db,schema-drift,route-parity,conformance,file-size
+（先 DROP + CREATE 一个新库 multica_lum1804）                       ⇒ 5/5 PASS，270s（⑥231s migrate=0/e2e=0 · ⑧33s · ⑦1s · ⑨5s · ⑩0s）
+合计 ⇒ 10/10 PASS
+```
+（⤷ 在这两者之间的一次 ⑥ 尝试是 **4/5**：红在 §11.6 第 4 项 **(c)** 的 composio flows 竞态上 —— **4/30 里的一次**，换库重跑即绿。第 (c) 条是本片新查明的，它的真因与「复用库」无关。）
+
 ### 11.6 缺口登记（4 项，逐条 `file:line` / issue 号）
 
 #### 1. 附件面 **9 条**（`§9.2` 的 W8 尾账）—— 建议单独立项，**不塞进 M8 切片**
@@ -1059,7 +1070,7 @@ report matches crates/mc-conformance/report.json                        (exit 0)
 - 它们 `unevaluable` 是**结构性**的，不是 M8 的欠账：本框架的四态只对 `actor = anonymous` 的 **59** 条离线可判 fixture 计算（`by_actor` 实测 = anonymous 59 / member 293 / agent 13，`unevaluable` **恒等于** `member ∪ agent`）。而 M8 的 25 条路由里 **24 条落在 workspace member / admin 授权层**（§1.1 的六簇表）⇒ 天然落在这 306 条外侧。
 - **本波没有把任何 `unevaluable` 改写成 `pass`，也没有新增 `unevaluable`**（`unevaluable` 从 `487a8ce0` 起逐字 306）。
 
-#### 4. 两条**已复现的测试侧 flake**（不是产品缺陷；本片 0 代码改动 ⇒ **只登记**）
+#### 4. **三条**已复现的**测试侧** flake（不是产品缺陷；本片 0 代码改动 ⇒ **只登记**）
 
 **(a) `crates/mc-composio/src/state.rs:390` `tampered_signature_is_rejected_bit_for_bit`**（M8-6 交付的用例）
 
@@ -1075,7 +1086,18 @@ report matches crates/mc-conformance/report.json                        (exit 0)
 - 机理：该用例在「autopilot 那半边看到审计行」之后**只读一次** wakeup 的 global scope 最新 plan，而 wakeup job 的审计行是**先以 `Running` 落库、完成时才翻 `Success`** ⇒ 读到正在跑的那一瞬就红（窗口 = wakeup handler 时长，tick 50 ms）。
 - 修法：像 autopilot 那半边一样**轮询到 `Success` 或超时**，把那一句 `assert_eq!` 换成有界循环。
 
-⇒ 这两条就是 §11.5 首轮唯一的红；换新库重跑即 10/10。建议与 (a) 一起放进一个**独立的测试修复小片**（改它们必须重跑 ⑤/⑥，与「INT 只刷快照」的定位不同）。
+**(c) `crates/mc-http/tests/composio/**` 的跨用例互踩**（M8-6 交付的用例集； **本片新查明**，并**更正**本片派发补充里的归因）
+
+- 症状（4 种，同一根因）：`support.rs:577:34` `.expect("a link call")` panic、`flows.rs:28:29` `.expect("the stub must have seen a link call")` panic、`flows.rs:291` `rows.len() = 0 ≠ 1`（回调 302 但**行写到别人的用户上**）、`flows.rs:97` `401 composio_state_invalid`（自己的 state **已被另一个用例消费**）。
+- 复现率：**3/30 = 10%**（直接跑门 ⑥ 用的那个 test 二进制 `target/debug/deps/composio-*` 加 `--ignored` 30 次）；本片 4 次 ⑥ 里有 **1 次**撞上（`gates-m8-7-final-b.log`）。
+- 机理（三步，逐条可核）：
+  1. `crates/mc-http/tests/composio/support.rs:85` 的 `static CALLS` 是**进程级**的，且每个用例起手都调 `reset_calls()`（`support.rs:88`）⇒ 并行的两个用例会**互相清空**对方的调用记录；
+  2. `support.rs:559` 的 `flow_state()` 用 **`api_keys.last()`（全进程最后一个 api_key）** 反查自己那份 state —— 它假定了「刚调完 connect/init 的最后一个调用就是我自己的」。并行时拿到的是**别人的 key ⇒ 别人的 state**（`disconnect_…` 用的就是这个函数）；
+  3. 而 `mc-composio::state` 的**重放台账是进程级的**（`docs/32` §23.2 的 D4，**刻意的生产行为**）⇒ 被偷走 state 的那个用例自己的回调会被判 `Replayed`（→ `composio_state_invalid`）。
+- ⚠️ **归因更正**：本片派发补充把这条写成「⑥ **复用同一个库** 会出假红，换**全新库**就绿」。实测**不成立** —— 本片在**当轮新建的全新库**上四次 ⑥ 里撞了一次（且真因全在测试侧进程级共享状态，与库内容无关）。同一条补充里「换库重跑」这个**动作**仍然有效（它把并行调度的时序改了），但**理由**要改成这个。
+- 修法（在**测试支撑**里，不在产品代码）：`flow_state()` 改成像 `state_from_link_call()` 那样**按本用例的 `api_key` 过滤**（两个失败用例本来就各自算好了自己的 key）；顺带把 `reset_calls()` 换成「按 key 取」以避免清空别人的记录。
+
+⇒ 这三条就是本片**全部**的红：本次共 **6 次**门级（⑤ 或 ⑥）尝试、红过 **3 次** —— 首轮命中 (a)+(b)，第三轮拆分后的一次 ⑥ 命中 (c)；**每一条都能在 `git status` 干净的同一 base 上直接跑测试二进制复现**。建议 (a)(b)(c) 一起放进一个**独立的测试修复小片**（改它们必须重跑 ⑤/⑥，与「INT 只刷快照」的定位不同）。
 
 ### 11.7 与 §6.1/§6.2 预测的偏差（回填索引）
 
