@@ -35,8 +35,11 @@ pub mod credentials;
 pub mod installation;
 pub mod metrics;
 pub mod store;
+pub mod stream_store;
 pub mod strings;
 pub mod types;
+pub mod ws_frame;
+pub mod ws_sender;
 
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;

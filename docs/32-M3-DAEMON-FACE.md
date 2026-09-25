@@ -3833,3 +3833,150 @@ unclaimed 0 | regression 0 | local_only 9   unclaimed 0 | regression 0 | local_o
   同树第二轮全量 **10/10 绿** ⇒ 判为**既有 flake**，不是本片引入的红（第 6 条同族证据，
   与 `docs/37` §116 的「同一代码树绿红交替」判据同一形态）。
 * **本片不刷任何快照**：⑦ 基线（`route-parity-baseline.json`）、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
+
+---
+
+## 33. M7-16（`LUM-1781`）：wecom WS 帧与发送（**0 路由**）
+
+> **号段说明**：base `c08f36db` 实测 `docs/32` 末号 = **`## 31.`**（M7-15）；29 / 30 / 32 已按
+> **派发顺序**占给 `LUM-1777`（M7-12 lark）/`LUM-1779`（M7-14 lark）/`LUM-1778`（M7-13 lark）
+> ⇒ 本节取 **`## 33.`**（`docs/60-M7-PLAN.md` §117.10 的派发裁定）。`docs/32` 是本片与其他在飞片
+> **唯一共写**的文件（各自往末尾追加；冲突时按 §91/§102/§107/§108/§31 的先例「先到者保号」）。
+
+### 33.0 这一片补的是哪条掉棒
+
+上游 `internal/integrations/wecom/{ws_frame,ws_sender,stream_store}.go` —— aibot 长连接的
+**wire 层**：帧的信封与各命令的 body 形态、**一条 WebSocket 的串行化写侧**（`gorilla` 禁止并发写）、
+以及"每条回答落进它那个问题打开的气泡里"的句柄表。
+
+本片是 wecom 的**第二片**（M7-15 已把契约 / 凭据 / 安装与绑定面落地）。它交出的是后续三片的输入：
+`wecom/ws_frame.rs` 给 M7-19 的读循环解帧、`wecom/ws_sender.rs` 给 M7-17/M7-19 写帧、
+`wecom/stream_store.rs` 给 M7-17 的收尾器找气泡。
+
+**口径更正（本片实测，对全波有用）**：issue 正文写"流存储（`stream_store.go` 1,122，**上游用 Redis**）"
+—— 上游 `stream_store.go` **不用 Redis**（`docs/60` §2.5 列的四处 Redis 是 `redis_lease_store` /
+`dedupe_redis.go` / `install_session_redis_store` / `relay_outbound.go`）。该文件的头注释逐字写的是
+「**IN-MEMORY IS THE RIGHT STORAGE**，and deliberately so」：一个 bot 一条长连接，`Supervisor` 的
+WS 租约已经保证至多一个副本持有它 ⇒ 句柄只在创建它的进程里有意义。所以见 **D1**。
+
+### 33.1 写集（逐字；**14 个新代码文件 +5718/−0**，`wecom/mod.rs` **+3**，`docs/32` **+147**）
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/wecom/ws_frame.rs` | **新增 738** | `ws_frame.go`（1,187）的**帧编解码**半 |
+| `crates/mc-channel/src/wecom/ws_frame/callback.rs` | **新增 188** | `aibotMsgCallback` / `quotedMessage` / `mediaBody` / `mixedItem` / `aibotEventCallback` 的逐字段形态 |
+| `crates/mc-channel/src/wecom/ws_frame/tests.rs` | **新增 626** | 39 条用例（编解码 / 上限 / 文本工具 / 凭据脱敏） |
+| `crates/mc-channel/src/wecom/ws_sender.rs` | **新增 658** | `ws_sender.go`（1,128）的写者槽 / `request` / `send_text` / 流帧入口 |
+| `crates/mc-channel/src/wecom/ws_sender/ack.rs` | **新增 451** | `routeResponse` / `deliverReply` / `deliverAck` / `awaitAck` / `beginStreamFrameLocked` —— **即 §6.3 说的「帧路由」** |
+| `crates/mc-channel/src/wecom/ws_sender/chat_locks.rs` | **新增 138** | `chatLocks` / `chatLock`（每条逻辑消息的顺序） |
+| `crates/mc-channel/src/wecom/ws_sender/error.rs` | **新增 148** | 一组哨兵错误 + `wecomAPIError` + `streamError` |
+| `crates/mc-channel/src/wecom/ws_sender/tests.rs` | **新增 595** | 假 socket 装置 + 19 条并发写 / 配对用例 |
+| `crates/mc-channel/src/wecom/ws_sender/tests/{send.rs,classify.rs}` | **新增 157 / 86** | 12 条（分帧 + 每聊一把锁 + 两张分类表） |
+| `crates/mc-channel/src/wecom/stream_store.rs` | **新增 747** | `stream_store.go`（1,122）：轮次状态机 + `seal` 的重试策略 |
+| `crates/mc-channel/src/wecom/stream_store/types.rs` | **新增 210** | `streamHandle` / `roundAddress` / `roundEntry` / `pendingRun` / `finishedRing` |
+| `crates/mc-channel/src/wecom/stream_store/ports.rs` | **新增 201** | 端口（见 D6）+ 诊断读数 |
+| `crates/mc-channel/src/wecom/stream_store/tests.rs` | **新增 775** | 35 条用例（注入时钟 + 脚本化收尾器） |
+| `crates/mc-channel/src/wecom/mod.rs` | **+3/−0** | 追加 `pub mod stream_store;` / `ws_frame;` / `ws_sender;`（**唯一**的共享文件改动） |
+
+**新增用例 105 条**（`ws_frame` 39 / `ws_sender` 31 / `stream_store` 35）；`mc-channel` 整 crate 的
+lib 用例 902 条全绿。
+
+### 33.2 偏离与口径更正（D1…D10；每条要么有落点，要么有用例）
+
+* **D1（`R-M7-1` 的贡献是"登记"而不是"替换"）**：`stream_store.go` 上游**本来就是进程内**实现
+  （见 33.0 的口径更正）⇒ 本片原样搬过来，没有"Redis → 进程内"的替换可做。
+  `R-M7-1`（单副本部署契约）在本波的真实落点是 **M7-20 的 `dedupe.rs`**（上游 `dedupe_redis.go`，200 行）。
+  本片对契约的贡献是把它**说清**：句柄表是缓存，重启丢掉句柄、回答退回普通 `aibot_send_msg` —— 降级而不是损坏。
+* **D2（入站归一化不在本片）**：`ws_frame.go` 里约 **640 行**是**入站归一化**
+  （`ownText` / `ownCommandSource` / `attachments` / `quotedContext` / `channelMessageFromCallback` /
+  `stripLeadingMentions` / `normalizeWeComControlLayout` / `isIssueCommand` / `channelMsgType`）——
+  本地落点是 **M7-19** 的 `wecom/{inbox_message.rs,wecom_channel.rs,resolvers.rs}`（`docs/60` §3.3 的写集表；
+  上游自己也在 `inbox_message.go` 放归一化信封，两者本就同面）。本片只交出归一化**需要的输入**：
+  `AibotMsgCallback` 的逐字段解析（`ws_frame/callback.rs`）。
+* **D3（帧大小上限是本仓新增）**：`ws_frame::MAX_FRAME_BYTES = 1 MiB`，在读侧（`decode_frame`，**先于**
+  `serde_json`）与写侧（`encode_frame` / `write_payload_locked`）各检查一次。上游**没有**帧级上限
+  （读侧靠 `gorilla` 默认、写侧只有两个 20 KiB 的内容上限），而 `tokio-tungstenite` 的默认是 16 MiB ——
+  一条被投毒的入站帧可以把读循环的内存吃到那个数。这是**收紧**（合法帧的上界由 20 KiB 内容上限决定，
+  1 MiB 已有三个数量级余量）。
+* **D4（配额门归 M7-20）**：上游 `sendTextCtx` → `sendOneTextCtx` → `sendMsgFrame`，而 `sendMsgFrame`
+  在 `rate_limit.go:182`（每聊配额 + 一次 429 重试 + `sendRetryBackoff`）。本片
+  `WsSender::send_text` 的每一段直接走 `request()`，**没有**退避与重试；M7-20 接上时改的是
+  `send_one_text` 这一层（一处）。
+* **D5（`context.Context` → `Deadline = Option<Instant>`）**：workspace 没有 `tokio-util`
+  （依赖边由 M7-0 一次接好、后续片不得新增），而上游真正需要的两个事实都能由截止时刻表达：
+  `None` = 上游的 `context.Background()`。两个哨兵因此按"**哪个限制先到**"区分：
+  ack 计时器先到 ⇒ `AckTimeout`（消息很可能已经投递），调用方的预算先到 ⇒ `AckAbandoned`。用例各钉一条。
+* **D6（两处外部依赖落成端口）**：`StreamSender`（上游 `sendersRegistry` 的 `stream` / `streamRewrite` /
+  `recordEnding`，实现归 **M7-20**）与 `RootResolver`（上游 `taskLookup` 读 `chat_input_task_id`，
+  实现归 **M7-17**）。于是 `stream_store` 自己不依赖注册表、也不读库 ——「adapter 不得直接写 DB」
+  （`docs/60` §2.6 第 1 条）在**类型层面**成立。
+* **D7（`pgtype.UUID` → `mc_core::id::Id`）**：上游 `util.UUIDToString(pgtype.UUID)` 那个中介类型
+  在本仓没有对应物（会话键与 installation id 都是 `Id`）⇒ 存储的键类型直接用 `Id`。
+* **D8（`Instant` 没有零值）**：上游 `open` 在 `h.CreatedAt` 为零值时填 `now`；Rust 的 `Instant`
+  没有可检测的零值 ⇒ 调用方**必须**给一个真实时刻。给一个过去的时刻 = 给一个过期的句柄（协议窗口从它开始数）。
+* **D9（上游一处够不着的分支，实测发现）**：上游 `takeAtLocked` 的
+  `!s.expiredLocked(entry.handle.CreatedAt)` 在 `take` 已先跑过 `s.sweepLocked` 之后**够不着** ——
+  两者读的是**同一个** `createdAt` 字段、**同一个**时钟、**同一个** `maxAge`，能活过扫除的条目不可能已经过期。
+  所以 `roundTurn.HasBubble == false` 那条路是一条**防御性的死路**，而真实的降级形态是：扫除把轮次删掉、
+  `take` 报**不在册**。两种形态对调用方是同一件事（回答退回普通消息），本片按**真实**那一种钉用例
+  （`a_round_past_the_window_is_gone_rather_than_handed_back_stale`），并在那里写明这条观察。
+* **D10（§6.3 的拆分 + 门 ⑩ 的 800 行硬限 ⇒ 6 个子模块文件）**：本片的写集是**逐字 3 条路径**，
+  而 §6.3 明确要求把 1,187 行的 `ws_frame.go` 按「**帧编解码 / 帧路由**」拆两文件；
+  fmt 之后 `ws_frame.rs` 915 / `ws_sender.rs` 1347 / `stream_store.rs` 1131 行，**三个都越 800 硬限**。
+  拆法（逐条落在写集路径**之下**的子模块，父文件保留同名模块根）：
+  1. 「帧编解码」= `ws_frame.rs`；「帧路由」= `ws_sender/ack.rs`（上游 `routeResponse` / `deliverAck` /
+     `deliverReply` 本来就在 `wsSender` 上 —— 拆到两个文件会把"谁在等这一帧"切成两半）；
+  2. 入站 body 形态 → `ws_frame/callback.rs`；
+  3. ack 账本 → `ws_sender/ack.rs`，每聊一把锁 → `ws_sender/chat_locks.rs`，错误分类 → `ws_sender/error.rs`；
+  4. 值类型 → `stream_store/types.rs`，端口 + 诊断 → `stream_store/ports.rs`；
+  5. 用例按门类 → `ws_sender/tests/{send,classify}.rs`（先例：M7-15 的 `binding/tests.rs`，
+     `docs/32` §31 的 D8）。
+  **新路径没有别的在飞写者**：本片 0 路由、写集只在 `crates/mc-channel/src/wecom/**`；同目录其余四片
+  （M7-17/18/19/20 = `LUM-1782/1783/1784/1785`）当时**全部在 `backlog`**（未派发），
+  而 lark 三片（`LUM-1777/1778/1779`）与本目录**零交集**。
+* **另一处实现更正（不是偏离，是 Rust 与 Go 的语义差）**：上游 `wireCutPoint` 的 `s[:budget]` 是**字节**
+  切片（Go 允许在任何字节处切一个 string，只拿它做 `LastIndexByte`），而 Rust 的 `&str` 切片**必须**
+  落在字符边界上。本仓先往回到一个安全前缀再找换行；预算比一个 rune 还窄时往**上**找一个边界
+  （上游那里返回 `budget`，在 Rust 里是 panic，而返回 0 会让 `split_for_wire` 死循环）。
+  用例含 `汉*50` 的实测（`wire_cut_point(&wide, 7) == 6`）。
+
+### 33.3 门禁证据（当轮实测，base `c08f36db`）
+
+* **`bash scripts/gates.sh` = 8/8 PASS，362s**（① 3s ② 57s ③ 34s ④ 32s ⑤ 180s ⑦ 0s ⑨ 56s ⑩ 0s）。
+  **不跑 `--with-db`**：本片 0 路由、零 DB 访问、零迁移（`docs/60` §6.4 的 22 张表全在
+  `migrations/upstream/**`），⑥ 与 ⑧ 的输入与本片 diff **零交集**。
+* **⑦ 读数（片后，逐字，`python3 scripts/route_parity.py`）**：
+  `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
+  `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33 M3+=16 M3=11 M10=5 **M7=5**`（和 = 70 ✓）。
+  **九个数与片前、与 §31.4 的片后读数逐字相同** —— 这正是 0 路由片该有的形态证据。
+  **`--write-baseline` 未跑**：M7 唯一一次基线刷新归 **M7-21 INT**（`LUM-1786`）。
+* **形态门**：`0 defect(s)`（`MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` 三类全 0；
+  M7 无 allowlist 退路）。
+* **⑨**：`report matches crates/mc-conformance/report.json`。**wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**，
+  也**不把它当战绩**（阴性对照组：本片的 diff 里没有任何路由挂载，⑨ 的输入因此逐 blob 恒等）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **未改**。
+  本片 14 个新文件最长 **775 行**（`stream_store/tests.rs`），全部 ≤ 800。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`）。本片踩到并修掉的具体 lint：
+  `wildcard_imports`（子模块的 `use super::*` → 枚举式导入）、`invisible_characters`（零宽空格的断言
+  字面量改成 `\u{200b}` 转义）、`cast_possible_truncation`（`STREAM_CLOSE_RETRIES` 由 `u32` 改 `usize`）、
+  `unchecked_sub`（`Duration` 的减改成 `saturating_sub`）、`unnecessary_wraps`（测试里的 `deadline_in`
+  助手保留 `Deadline` 返回并写明理由）、`similar_names`。
+* **⑤**：`mc-channel` lib 用例 **902 passed / 0 failed**；其中本片新增 **105** 条
+  （`ws_frame` 39 / `ws_sender` 31 / `stream_store` 35）。
+* **合并期复核**：见 **33.4**。
+
+### 33.4 合并期复核（当轮实做）
+
+* **base 前进段**：本片起手 base = **`c08f36db2de0878ffbd24077246a6b2d3c11bbd6`**（`feat/multica-rs-initial`
+  当轮 `git fetch` 实测；`c08f36db` = §117.10/§117.11 两条 cycle docs 提交叠在 `7b236087`
+  （M7-15 的合并提交）之上）。计划期写的 `2394bfcc` / `8104740d` **一律作废**。
+* **硬前置的可观测判据当场成立**：`git cat-file -e origin/feat/multica-rs-initial:crates/mc-channel/src/wecom/credentials.rs`
+  与 `.../types.rs` 两个都**存在**，且 `git merge-base --is-ancestor 6cc7d0de origin/feat/multica-rs-initial`
+  = 真 ⇒ **M7-15（PR #105）已合入 base**（判据不是"排期上先完成"）。
+* **本片是 `wecom/mod.rs` 在 M7-16 时段的唯一写者**：base 实测 `mod.rs` = **49 行 / 7 个 `pub mod`**
+  （M7-15 已落），本片**追加** 3 行（`stream_store` / `ws_frame` / `ws_sender`）⇒ **52 行**，
+  `register()` 仍是 M7-0 的空实现（**未被顺手填充** —— 注册工厂与渠道路由归 M7-19 及其后）。
+* **同轮在飞**：`LUM-1777`（M7-12 lark 入站回路，`in_progress`）∥ 本片。逐字路径交集 = **∅**
+  （本片只写 `crates/mc-channel/src/wecom/**` 与 `docs/32`；lark 片只写 `crates/mc-channel/src/lark/**`）。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
