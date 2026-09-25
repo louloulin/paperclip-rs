@@ -1663,3 +1663,155 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1800:…@127.0.0.1:54
    （响应永不带值，连 `url` 都不带）；绑定**以 id 为键**（改名不影响使用）；两张表**没有 FK**
    ⇒ 删除 / 建行的栅栏只能靠应用层的三条锁语句（`create` 的 `FOR KEY SHARE`、`delete` 的
    `FOR UPDATE`、`add` 的 `FOR SHARE`），**不要**绕过它们直接写 SQL。
+
+## 17. M7-5（`LUM-1770`）：telegram 入站 + 安装与绑定面（4 路由）
+
+> **号段说明**：`docs/60-M7-PLAN.md` §6.5 只在 M7-5 行写「偏离写进 `docs/32` 偏离表」，
+> 没给号；按派发时的约定取**文件末尾的下一个号** `## 17.`（`## 15.` = M7-4、`## 16.` = M8-3）。
+> 14:30 cycle（`LUM-1859`）的派发预飞也点名了「M7-5 → M7-6 的 `api.rs` 写集边界项，在飞片已自
+> 登记 `docs/32` §17 勘误」——本节就是那份自登记。
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片当轮 base 上核对。本片**起手 base**
+是 `f1cd4bbc`（= `43361e92` + merge #90 / M7-4）；提交前 `origin/feat/multica-rs-initial`
+已前进到 **`0b355b0d`**（= `cc6ef9ea`（§94 cycle）+ §95 cycle，**只动 `docs/37`**）⇒ 本片已
+rebase 到它，§17.3 的两个读数（起手 tree 与 rebase 后 tree）都给。
+
+### 17.1 落点（写集逐字）
+
+| 落点 | 内容 |
+| --- | --- |
+| `crates/mc-channel/src/telegram/config.rs` | 安装配置 blob、`Credentials` / `PublicConfig`、`Decrypter`、`Sensitive`、`parse_bot_id` / `parse_stored_bot_id`、`decrypt_token` |
+| `crates/mc-channel/src/telegram/inbound.rs` + `inbound/tests.rs` | Bot API **入站** wire 类型（`Update` / `Message` / `Chat` / `User` / `MessageEntity`）、`RawEvent`、`inbound_from_update` 一族、`message_key` / `parse_message_ref` |
+| `crates/mc-channel/src/telegram/api.rs` + `api/tests.rs` | `TelegramApi` 端口（五个方法）+ `JsonBotApi`（`reqwest`）+ `ApiError`（含 `Conflict` / `retry_after` / `http_code`）+ 进程内基址接缝 |
+| `crates/mc-channel/src/telegram/install.rs` + `install/tests.rs` | `InstallError` 十一变体 + `InstallStore` 端口 + `InstallService::{register,list,get_in_workspace,revoke}` + `classify_credential_verification_error` |
+| `crates/mc-channel/src/telegram/binding.rs` + `binding/tests.rs` | 绑定令牌的铸造与原子兑换（`BindingStore` 端口）、`hash_binding_token`、`random_binding_token` |
+| `crates/mc-channel/src/telegram/resolvers.rs` + `resolvers/tests.rs` | `InstallationRow`（不透明平台值）、`InstallationQueries` / `IdentityQueries` 端口 + 仓储实现、`session_routing`（纯函数）、`TelegramTypingNotifier`、`TelegramResolverSet` |
+| `crates/mc-channel/src/telegram/replier.rs` + `replier/tests.rs` | 判决 → 文案、群聊**不**发 bearer 链接、`is_addressed_issue_command` / `dropped_reply_text`、`url_encode` |
+| `crates/mc-channel/src/telegram/mod.rs` + `tests.rs` | **长轮询回路**（`getUpdates` + offset 推进 + 409/429/传输的三种处置）、`TelegramChannel`（`Channel` 五方法）、工厂、`register` / `register_with`、`spawn_detached` |
+| `crates/mc-http/src/routes/channels/telegram.rs` | 4 条路由、鉴权层、未配置语义、wire DTO |
+| `crates/mc-http/src/routes/channels/telegram/store.rs` | 三条上游查询的 PG 端口实现（`PgInstallStore` / `PgBindingStore`） |
+| `crates/mc-http/src/routes/channels/telegram/tests.rs` | 不依赖库的 wire / 状态码 / 契约键用例 |
+| `crates/mc-http/tests/channels/telegram.rs` | 4 条路由的真库端到端（门 ⑥，`#[ignore]`）+ Bot API 替身 |
+| `crates/mc-http/tests/channels/main.rs` | 追加 `mod telegram;`（M7-4 已在此追加 `mod slack;`） |
+| `crates/mc-conformance/report.json` | ⑨ 快照再生（唯一一条 fixture 状态变化，见 17.2 D11） |
+
+**写集勘误（逐条登记，照 M7-2 / M7-3 / M7-4 先例）**：`docs/60` §3.3 给 M7-5 的格子是
+`telegram/{inbound,resolvers,replier,install,binding,config}.rs` + `routes/channels/telegram.rs`；
+派发时的「起手补充」已追加 `telegram/mod.rs`（新模块要可见、`register()` 要填、长轮询要有家）。
+本片**再追加**的路径只有两类，理由**只有一条** = 门 ⑩ 的 **800 行硬限**（不是拆凑数字）：
+
+- `telegram/api.rs` + `api/tests.rs`：上游 `api.go` 的传输面（见 D2）；
+- 六个 `*/tests.rs`（`inbound` / `api` / `install` / `binding` / `resolvers` / `replier`）+ 根
+  `tests.rs`：用例内联后分别 1118 / 920 / 917 / 680 / 1238 / 991 / 666 行 ⇒ 用例拆成子模块。
+  `config.rs`（605 行，含内联用例）**未拆**。
+
+拆完 `crates/mc-channel/src/telegram/**` 最大文件 **666 行**、`crates/mc-http/src/routes/channels/telegram/**`
+最大 **367 行**、`crates/mc-http/tests/channels/telegram.rs` **695 行** ⇒ 全部 ≤ 800；
+`scripts/file_size_baseline.tsv` **未动**（门 ⑩ 0 违规）。
+
+### 17.2 偏离登记（M7-5-D1 … M7-5-D13）
+
+| # | 偏离 | 处置与理由 |
+| --- | --- | --- |
+| **D1** | **未配置分支先于鉴权**：上游这四条 handler 的第一句都是 `if h.TelegramInstall == nil { …; return }`（**不读**身份），而本仓的 `AuthUser` 是提取器（在 handler 体之前跑） | 四条 handler 改用 `Option<AuthUser>`：**未配置**分支先返回（与上游同序），**已配置**分支再 `ok_or(unauthorized)` 要身份。这是 ⑨ 的 `workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty`（actor `anonymous`、期望 **200**）**唯一**可达的形态 —— 若先鉴权，该 fixture 只会从 `unmounted` 变成 `mismatch`（更糟）。**登记为跨片待定**：lark 面（M7-14）有 **7** 条同形 fixture，建议照本条处理并在 INT 复核「未配置信息可被匿名读到」是否可接受 |
+| **D2** | **`api.rs` 的写集边界**：`docs/60` §3.3 把 `api.rs` 记在 **M7-6** 名下，但 M7-5 的三处调用（入站 `getUpdates`、安装校验 `getMe` + `getWebhookInfo`、判决回复 `sendMessage`）都在这条传输上，而 **M7-6 的硬前置是 M7-5** | 依赖方向只能是「M7-5 落传输、M7-6 在同一文件里补出站流式那一半」（与 M7-3 先落 `slack/socket.rs`、M7-4 再接线 `send` 是同一条先例；anchor 的 `mc-channel/Cargo.toml` 注释已把出站 HTTP 的点名写成 "telegram `api.rs`"）。**交给 M7-6 的缺口逐条**：`editMessageText`、`sendMessage` 的 `parse_mode=HTML` 与 UTF-16 分片、429 的"一次重试"包装（上游 `sendMessageWithRetryAfter`）、`sender.rs` / `outbound.rs` / `delivery.rs` / `markdown.rs`。**14:30 cycle 的派发预飞已点名本条** |
+| **D3** | **offset 不落地**：本地**不**存 `getUpdates` 的 offset（没有表、没有文件、没有结构字段） | 上游同：确认消费发生在 **Telegram 服务端**（`getUpdates?offset=N` 一发，`update_id < N` 即出队）。「重启不重复消费、不丢更新」= ① 每次 `connect` 从 **0** 开始（Telegram 重投全部未确认更新 ⇒ **不丢**）+ ② 批内先推进 offset 再逐条投递 + ③ engine 的 `(installation, message_id)` 去重吸收重投 ⇒ **不重复消费**。三条各有一条用例（`tests.rs` 的 `the_polling_loop_dispatches_and_advances_offset_after_each_batch` / `a_restart_replays_pending_updates_from_offset_zero`）；把 offset 落库反而会引入"落库成功但投递失败"的两难 |
+| **D4** | **传输错误丢弃 cause**：`ApiError::Transport { method }` 不带 `reqwest::Error` | Bot API 的请求 URL **带 bot token**（`/bot<token>/<method>`），而 `reqwest` 的 `Display` 会印出整条 URL ⇒ 上游 `TestTransportErrorDoesNotExposeBotToken` 只保住"不回显令牌"那半，`errors.Is(err, transportErr)` 那半**主动放弃**（与 `slack::outbound::SlackApiError::Transport` 同款）。诊断信息改为方法名（`ApiError::method()`） |
+| **D5** | **本地副本**：`Decrypter` / `Sensitive` / `url_encode` / `error_with_code` / `BindingMinter` / `BindingStore` 的端口形状与 slack 面**同名同形但各持一份** | 上游同样是 `slack/config.go` 与 `telegram/config.go` 各自声明 `credentials` / `Decrypter`，且两面的错误前缀（`slack:` / `telegram:`）与字段集不同（Slack 两个密文列、Telegram 一个）。收敛成共享件要动 M7-3 / M7-4 的**已合文件**（不在本片写集）⇒ 本片只新增。**登记为后续收敛项** |
+| **D6** | **会话隔离键的分隔符**：上游 `chat_id:线程根`，本仓的通用策略（`BindingKeyPolicy::ChatIdPlusThreadRoot`）用 `#` | **隔离粒度完全一致**：`inbound_from_update` 只对 `is_topic_message`（= 论坛话题，只存在于超级群）写 `Source.thread_id` ⇒ 私聊 / 普通群聊的键都恰好是 chat id，论坛话题各自成一个会话 —— 与上游 `telegramSessionRouting` 逐条等价（`resolvers/tests.rs` 的 `the_runtime_policy_matches_the_upstream_routing_modulo_the_separator` 钉住"只差分隔符"）。这条是 **M7-3-D1** 已登记的跨片偏离（Slack 面同款） |
+| **D7** | **绑定行的 `config` 列**：上游写 `{"chat_id": …}`，本仓通用实现写 `null` | 真实 chat id 在隔离键的前缀里（见 D6），读得回来；要落到列上需改 M7-2 的 `NewEnsureSession` 传参面（不属本片写集）。**M7-3-D3 同款** |
+| **D8** | **`Channel::send` 是"最小可用"**：纯文本 `sendMessage`（话题 + 引用参数照传），**没有** Markdown→HTML、分片、流式编辑、投递状态机 | 上游这三块在 `sender.go` / `outbound.go` / `delivery.go`（M7-6 的写集）。本片给一条**真能发出去**的路径（判决回复正是走它），而不是交一个自称 `TEXT` 却发不出的半成品；`capabilities()` 仍照上游声明五个位（`MESSAGE_EDIT` 的实现归 M7-6） |
+| **D9** | **三条平台文案落在 `replier.rs`**（`AGENT_OFFLINE_TEXT` / `AGENT_ARCHIVED_TEXT` / `UNSUPPORTED_TYPE_TEXT`；上游在 `sender.go`） | 上游这三个常量在 `sender.go`（M7-6 的文件），但 M7-5 的判决回复器与入站回路**都要**用它们。逐字照抄文案，M7-6 落 `sender.rs` 时**复用本文件的常量**，不要再抄一份 |
+| **D10** | **解析器面的宿主装配仍悬空**：`TelegramResolverSet` 已齐（含出站回复器与打字指示），但 `apps/mc-server/src/channels.rs` 的一次装配调用**不在本片写集**（anchor 冻结） | 与 M7-4 的 D9 同款：本片提供 [`mc_channel::telegram::resolvers::TelegramResolverSet`] + `register` / `register_with` 两个入口，由 INT / 后续锚点调一次。**登记缺口**，不是漏实现 |
+| **D11** | **⑨ 快照再生**：本片把 `crates/mc-conformance/report.json` 重新生成（`pass 5 → 6`、`unmounted 31 → 30`，`by_via.handler` 新增 `pass 1`） | 这是「fixture 从 `unmounted` 转 `pass`」这条 DoD 的**产物**（报告是 stateless 层快照，⑨ 用 `--check` 逐字比对）。**唯一**一条状态变化就是 `workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty@server/internal/handler/telegram_test.go:21#27`（`unmounted → pass`），其余 364 条**逐字未动** |
+| **D12** | **e2e 替身的注册形态**：Bot API 替身用 axum 的 `fallback` 按**方法名**分派，而不是按 `/bot<token>/<method>` 逐路径注册 | 令牌里带 `:`，而 matchit 0.7 的 `:` 是路径参数标记 ⇒ 把令牌写进路径段是不稳的。替身纪律（`docs/60` §4.2 第 1 条"只替平台 wire"）不受影响：断言链仍是"真 HTTP → 真 handler → 真 DB" |
+| **D13** | **`getUpdates` 显式送 `offset`**：上游用 `json:"offset,omitempty"` ⇒ `offset = 0` 时**省略**该字段；本仓恒送 | 两者对 Bot API **同义**（缺省 = "从最早的未确认更新开始返回" = `offset 0`），且显式送让请求体可被替身逐字段断言（`api/tests.rs` 的 `get_updates_sends_the_upstream_wire_shapes`） |
+
+**另有一条不构成偏离的**实现选择（记在这里免得被当漏项）：本片**没有**媒体解析器
+（`TelegramResolverSet::with_media` 保留接口、默认 `None`）。上游 telegram 的媒体取回在
+`outbound.go` / `delivery.go` 一侧（M7-6），入站侧只做**分类**（`classify_message`）与
+"暂不支持"的礼貌告知 —— 与本仓 M7-3 的 slack 面（媒体解析归 M7-3）**不同**，这是上游的
+真实切分，不是本片省事。
+
+### 17.3 门禁读数（本片当轮实测）
+
+```
+①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑦route-parity 0
+· ⑨conformance 0 · ⑩file-size 0                                ⇒ 8/8 PASS / 48s
+①–⑤ 0 · ⑥db 0（migrate=0, e2e=0）· ⑧schema-drift 0 · ⑦ 0 · ⑨ 0 · ⑩ 0  ⇒ 10/10 PASS / 230s
+```
+
+门 ⑦（`route_parity.py`）在**两棵树上各测一次**（本片的 `+4` 与预测逐字一致）：
+
+```
+# ① 本片起手 tree（base f1cd4bbc `+` 本片）
+upstream 456 (commit f41fae6b08fb) | local 432 registered | baseline 406
+  implemented  352 real +   4 placeholder =  356 / 456   known_gap  100   unclaimed 0   regression 0   local_only 9
+  gaps by owner: M9=33  M3+=16  M7=16  M2-A=13  M3=11  M8=6  M10=5
+
+# ② 起手 base 自身（同一个命令；起手时实测 —— 差值恒为 4）
+base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | owners.M7 20 | baseline 406
+```
+
+⇒ 两个 tree 上**本片都是 `+4`**（四条路由：`GET` / `DELETE …/telegram/installations[/…]`、
+`POST …/telegram/install`、`POST /api/telegram/binding/redeem`），且不变式
+`implemented + known_gap == 456`、`regressions == 0`、`unclaimed == 0`、`local_only == 9`
+全部成立；**`scripts/file_size_baseline.tsv` 未动**。门 ⑦ 的第二条（形态）实测
+`0 defect(s)`、exit 0（M7 没有 allowlist 退路）。缺口板里**已无**任何 telegram 路由
+（`owners.M7 20 → 16`，剩下的 16 条 = lark 5 + dingtalk 7 + wecom 4）。
+
+门 ⑨（`--no-db --check`）与快照逐字相符：`pass 6 · mismatch 23 · unmounted 30 · placeholder 0
+· unevaluable 306`（`offline_decidable 6/59`）。本片专属的那一条
+（`workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty`）**已 `pass`**（见 D11）。
+
+用例账（全部实跑）：`cargo test -p mc-channel --lib` = **332 passed / 0 failed**（其中
+`telegram::` **86** 条）；`cargo test -p mc-http --lib` = **352 passed / 0 failed**
+（其中 `routes::channels::telegram::` **11** 条）；门 ⑥ 的
+`cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util
+-- --ignored` = `e2e=0`（本片新增 **8** 条真库 e2e 全绿）。
+
+### 17.4 交接（给 M7-6 / M7-21 INT）
+
+1. **【给 M7-6（`LUM-1771`）· 最重要的一条】`api.rs` 已经存在**：`mc_channel::telegram::api`
+   里有 `TelegramApi` 端口（`get_me` / `get_webhook_info` / `get_updates` / `send_message` /
+   `send_chat_action`）、`JsonBotApi`（两个超时的 `reqwest` 客户端）、`ApiError`
+   （`Conflict` / `retry_after()` / `http_code()`）与**进程内基址接缝**（`api_base` /
+   `set_api_base` / `reset_api_base`）。**你的写集第一条就是"在同一个文件里补出站流式那一半"**
+   （`edit_message_text` + `parse_mode=HTML` + 429 的一次重试包装 + `sender.rs` 的 UTF-16 分片）；
+   `SendMessage` 里 `parse_mode` / `message_thread_id` / `reply_to_message_id` /
+   `allow_sending_without_reply` 四个字段已经就位，wire 形态有逐字段用例（见 D2 / D13）。
+2. **【给 M7-6】`Channel::send` 的替换点**：`telegram/mod.rs` 的 `send` 现在是纯文本
+   `sendMessage`。把出站发送器接进来时**改这一处**，别在 `replier.rs` 与 `mod.rs` 各留一条路径
+   （判决回复应继续走同一条发送器 —— 上游 `replier.go` 就是这么做的）。
+3. **【给 M7-6】文案别抄第二份**：`AGENT_OFFLINE_TEXT` / `AGENT_ARCHIVED_TEXT` /
+   `UNSUPPORTED_TYPE_TEXT` 已在 `replier.rs`（D9）；`ISSUE_DISPATCH_FAILED_TEXT` 与
+   `ISSUE_ERROR_REPLY_TIMEOUT` 在 `mod.rs`。
+4. **【给 M7-21 INT】需要你收口的三件**：① `owners.M7` 从 16 继续往下（本片已把 telegram 4 条清零）；
+   ② ⑦ 基线 `--write-baseline` 406 → 全波落地后的值（本片**未**刷）；③ 在 INT 报告里复述
+   **D1**（未配置分支先于鉴权：lark 面 7 条 fixture 同形，需统一口径）与 **D2**（`api.rs` 的
+   写集边界，M7-6 已按同一文件扩展）。另有两条**本波结束时仍在**的登记项：D5（本地副本的收敛）
+   与 D10（解析器面的宿主装配一次调用）。
+5. **【给后续任何写 `telegram/` 的片】写者表**在 `telegram/mod.rs` 的模块文档里（M7-6 的五个文件
+   已列出）。**不要**再改 `telegram/mod.rs` 的模块表之外的共享件（`routes/channels/mod.rs` /
+   `mount.rs` / `state.rs` / `routes/auth.rs` 全部 anchor 冻结）。
+
+### 17.5 lesson（本片新增）
+
+- **【lesson·⑨ 的 `unmounted → pass` 会逼出"鉴权顺序"这个接口决定】** 上游那批 fixture 是
+  **直接调 handler** 抽出来的（`site: direct_handler`），所以它看到的是 handler 的第一句
+  （`== nil` 检查）；回放到本仓的 **router** 上就会撞 `AuthUser` 提取器的 401。`docs/60` §6.2
+  只写"承诺 8 条 `unmounted → pass`"，没写这条后果。**判据**：凡"未配置语义"fixture，其
+  handler 必须把"部署密钥存在"的判定放在**读身份之前**（`Option<AuthUser>` 就够了）；先全绿再
+  回头改顺序，会发现 8 条里最多只能转成 `mismatch`（比 `unmounted` 更糟 —— 判为"实现错了"）。
+- **【lesson·长轮询回路的用例可以完全"不睡真觉"】** 回路的时延只有三个来源：`retry_delay`
+  （注入为 0）、Telegram 强制的 429 退避（唯一一处 1 秒，是协议下界）、以及"没有新消息"的挂起
+  （用 `std::future::pending()` 表示，外层 `tokio::time::timeout` 收尾）。于是"offset 推进 /
+  重启重投 / 409 致命 / 429 吸收 / 瞬态交给退避"五条判决全都能在**毫秒级**跑完，且**没有**一条
+  依赖 sleep 的时序猜测。
+- **【lesson·把"不落地"写成三条可观测判据，比写一句"重启安全"有用得多】** `offset` 不落地这类
+  决定，容易在评审时被读成"漏实现"。本片把它拆成 ① 每次从 0 开始 ② 先推进后投递 ③ 引擎去重 ——
+  每条各有用例，且第 ③ 条用"两次投递的 `message_id` 相同"证明去重键成立（而不是断言一句注释）。
+- **【lesson·`#[cfg(test)] mod tests;` 的解析路径取决于宿主文件是 `x.rs` 还是 `x/mod.rs`】**
+  `telegram/inbound.rs` 里的 `mod tests;` → `telegram/inbound/tests.rs`；而
+  `telegram/mod.rs` 里的 → `telegram/tests.rs`（**不是** `telegram/mod/tests.rs`）。本片第一次
+  就把它写错到 `mod/` 下，编译器只报"找不到文件"，改个目录名就过了。
