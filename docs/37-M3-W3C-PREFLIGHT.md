@@ -9296,3 +9296,88 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5          （和 = 86 ✓
 > **勘误/补记（本 cycle 自己的提交）· 不含 base 具体值，故意如此**：§105.7 写的 `b76b9b32` 是**合并 #97 之后的代码 base**；本 cycle 的 §105 docs 提交本身也直推 base，**每次 docs 直推都会把 base 再前移一格** ⇒ 在文档里钉一个 base 具体值**必然自我过期**（本行初版就钉了值，随即被自己的提交作废）。
 >
 > **⇒ 纪律（替代「钉值」）**：**下一轮起手一律实测** `git rev-parse origin/feat/multica-rs-initial`，任何文档/描述里的 base 具体值都只当历史刻度、不当起手值。本节其余各项（在飞两片、递补顺序、INT 前置）不受 docs 直推影响。
+
+---
+
+## §106 19:00 cycle（`LUM-1960`，11:00Z 触发）：**起手 0 open PR + 空位 0 + 磁盘健康（15.0G / 68%）⇒ 只读监控轮（第十三次）**；⑦/⑨/⑩ 与 §104/§105 **九个数逐字相同**；两片判活（`LUM-1773` 已提交并进交付门禁但未推；`LUM-1803` 有改动未提交）；零空位不放空 ⇒ 派发预飞复核 **M7-9 / M8-7 / M5-D8** 三片（两片描述 rev 4 落库）；🔴 **新 lesson：看板 `in_progress` 本轮首次失效**
+
+- **本轮性质**：起手 0 PR ⇒ 无合并动作；槽位 3/3 满 ⇒ 零派发。**只读监控 + 预飞更正 + docs 报告**三件。
+- **base 收尾**：**`3797b940`**（见 §106.7 勘误纪律）；GH **0 open PR**。
+
+### §106.1 起手三连与「空位」判定（**第三层：状态字段本身可以过期**）
+
+- **`df -h /`** = **15.0G 可用（68% 已用）** ⇒ 健康（≥12G 阈值），但**比 §105 收尾的 26G 少了 11G**：差额来自在飞 `LUM-1773` 的 `target/` 从 8.0G 涨到 **18G**（§106.5）。
+- **`git ls-remote origin feat/multica-rs-initial`** = **`3797b940`** ⇒ 相对 §105 收尾**零前进**（连续第 13 轮里第 4 次零前进：§103/§104/§106 与 §105 收尾同值）。
+- **认证 GH `pulls?state=open`** = **0**（§105 起手是 1，#97 已合）。
+- **daemon `running_task_count` = 4**（`active_task_count` 4、`resource_wait` 0）⇒ **逐 PID 拆**（`/proc/*/cwd` 命中 workspace 根 + 读 `.managed_env.json.issue_id` 核 `project_id`，§105 lesson 1 的两步判据）：
+
+  | PID | issue | 归属 project | 说明 |
+  | --- | --- | --- | --- |
+  | 44950 | **`LUM-1960`**（本 cycle） | `da4310b1…`（multica-rs） | 计入 3 槽 |
+  | 30512 | **`LUM-1773`**（M7-8） | `da4310b1…` | 计入 3 槽 |
+  | 58418 | **`LUM-1803`**（M8-6） | `da4310b1…` | 计入 3 槽；**`task_id 01a0d511-2031`** |
+  | 48766 | `LUM-1945`（upup集成） | **`0be0eb69…`（别的 project）** | **不计入本项目槽位** |
+
+  ⇒ **本项目空位 = 3 − 1（cycle 自身） − 2（两片） = 0** ⇒ **零派发**（`LUM-1774` / `LUM-1804` / `LUM-1745` / `LUM-1786` 四片就绪但不派）。
+- **🔴 【lesson · 看板 `in_progress` 不等于「在飞」】** 本项目看板当轮实测 `in_progress` **只有 1 条**（`LUM-1773`），而**实际在飞 2 片**：`LUM-1803` 的 run（PID 58418，10:30Z 起跑，已跑 ≈35 分钟、8 文件 `+3433/−79` 未提交、`cargo test` 正在跑）在看板上**仍挂 `todo`**（派发时给的就是 `todo`，子 run 未回写 `in_progress`）。⇒ 判「片在飞」的**唯一可靠判据** = 逐 PID 的 `/proc/*/cwd` + `.managed_env.json.issue_id`；`status` 字段与 `running_task_count` 都只能当**辅助**。（§84 立 cwd 判据是因为别的 workspace 线；§105 补 `project_id` 是因为别的 project；本条是**第三层：同一个项目内、同一个 run 的状态字段本身过期**。）
+- **⑨ 冷编与在飞门禁同跑**（`LUM-1773` 正在 `gates.sh --with-db`）⇒ 本轮 cycle 的 ⑨ 是**并行**跑的，未打断任何片（§106.5 的 df 振荡即由此而来）。
+
+### §106.2 在飞两片判活（皆活；**一片已进交付门禁**）
+
+- **`LUM-1773`（M7-8，0 路由）**：分支 `agent/devbox5/f0eef19aebc6` @ **`55defa49`**（`feat(m7-8): dingtalk 出站/媒体/回复/回执`）、**1 commit ahead / 0 behind**（base = 当轮 base，未 rebase）、`git status --porcelain` **空**、`git diff --shortstat origin/feat..HEAD` = **20 文件 +7809/−75**；**分支未推**（`git ls-remote` 该 ref 为空）、**无 PR**；`target/` = **18G**；进程树 = `pi 30512` → `bash 35138/35140/35142` 正跑 **`gates.sh --with-db`（`timeout 3000`，采样时已 411s）** ⇒ **已进入交付验证阶段**。
+- **`LUM-1803`（M8-6，5 路由）**：分支 `agent/devbox5/079e121411a4` @ `b76b9b32`（= 派发期 base）、**0 commit ahead**、**8 文件改动 `+3433/−79` 未提交**（6 个 `mc-composio/src/{catalog,client,overlay,service,state}.rs` + `mc-repos/src/composio/connection.rs`，其后又涨到 8 文件）、`target/` = **3.9G**（采样两轮 2.6G → 3.0G → 3.9G，**正在构建**）；进程 = `pi 58418` → `cargo test --no-fail-fast`（PID 47457）⇒ 活。⚠️ 该片**90 分钟前就被派发**（10:30Z §105），看板仍 `todo`（见 §106.1 lesson）。
+
+### §106.3 ⑦ / ⑨ / ⑩（base `3797b940` 实测，**九个数与 §104/§105 逐字相同**）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 453 registered | baseline 406
+implemented 367 real +   3 placeholder = 370 / 456   known_gap  86   unclaimed  0   regression  0   local_only  9
+gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5          （Σ = 86 ✓）
+```
+
+- **门 ⑦ 两条命令** `route_parity.py --quiet` / `slash_alias_audit.py --quiet` **exit 0**；门 ⑩ `file_size_check.py --quiet` **exit 0**。
+- **门 ⑨** `env -u MULTICA_TEST_DATABASE_URL cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` = **`report matches crates/mc-conformance/report.json`**（**exit 0**，本 workdir 无 `target` ⇒ 冷编 **1m49s**）。
+- **⑨ totals 逐字**（`crates/mc-conformance/report.json` → `totals`）：`fixtures 365 / pass 6 / mismatch 23 / unmounted 30 / unevaluable 306` —— 与 §105 **逐字相同**（两片在飞均为「0 路由」或未提交，符合预期）。
+- **baseline 仍 406**（唯一刷新权：`LUM-1786` 管 M7 线 / `LUM-1804` 管 M8 线，**两片不得同轮**跑 `--write-baseline`）。
+
+### §106.4 派发预飞（零空位不放空：把下一轮的「起手复核」提前做掉）
+
+三片候选逐条复核，**两片的描述已 rev 4 落库**（槽位一空即可直接派，无需再补）：
+
+- **`LUM-1774`（M7-9，rev 3 → 4）**：`LUM-1773` 终态后的**第一递补**（与 M7-8 争 `dingtalk/mod.rs` 追加段 ⇒ cycle 串行派）。当轮实测**零缺件 / 零错件**：
+  - 五个新文件 `crates/mc-channel/src/dingtalk/{install,binding,client,config,group_identity}.rs` **全不存在** ⇒ 确认新建（与写集一致）。
+  - `dingtalk/mod.rs` = **726** 行 / `pub mod` **6** 行 ⇒ 追加 5 行 = **731**（`LUM-1773` 的 `+2` 先落地 ⇒ **733 ≤ 800**）。
+  - `crates/mc-http/src/routes/channels/dingtalk.rs` = **40** 行（anchor 空 router；`channels/mod.rs:91` 已有 `.merge(dingtalk::router())`）；7 条路由的 `owner` 在 `known_gap` 里**逐条 = `M7`** ✓；「`group-routes` 必须 404」在 **5 处**注释钉死。
+  - **唯一需要更新的是号段**：`docs/32` base 最大已由上一节写的 `## 20.` 前进到 **`## 21.`**（M8-5 已合）⇒ 本轮口径 **`## 22.`**（rev 4 已写入，并保留「起手必须自己 grep 复核」）。
+- **`LUM-1804`（M8-7 INT，rev 2 → 4）**：`LUM-1803` 终态 + `owners.M8 → 0` 之后的递补。当轮实测 `owners.M8 = **5** ≠ 0` ⇒ **硬前置未满足，不许起手**。已更正两处**过期**：
+  - **标题**（看板可见）原写「`baseline 344→454`」⇒ 改为「⑦/⑨/⑩ 收口」（§104/§105 两次登记的遗留，本轮结清）。
+  - **`--write-baseline` 的读数契约**（正文写「344 → 454」、14:30 那份补充也写过绝对数）：`--write-baseline` **片前值 = 当轮 `baseline` 实测**（本轮 406，不是 344）、**片后值 = 当轮 `local` 实测**（`scripts/route_parity.py:35/74`：把基线刷成当前树的 live 集）。
+  - 并补记「片与片读数不同坐标系不可相减」（§104 lesson 2 的纪律第二次引用）。
+- **`LUM-1745`（M5-D8，rev 4）**：§104 已把写集**整条去掉 `state.rs`** ⇒ 零共享文件片、与任意片可并飞；当轮无需再改。
+
+### §106.5 回收与「df 是振荡量」（量只认 `df --output=avail` 前后差）
+
+- **回收**：`lum-1946-b76bf67e7602`（上一轮 cycle 自己，**已终态**）的 `target/` **553M** —— 判据：① run 终态（`in_review`）∧ ② 交付在 base（§105 三个 docs 直推）∧ ③ `/proc` 逐 PID **零命中**（先采到一个 PID 5657，复查时已不存在 ⇒ 是我自己扫描 shell 的瞬时快照，**不是活物**）∧ ④ `git status --porcelain` 空 ⇒ 删除。
+- **🔴 【lesson · 删完之后 `df` 反而更低】** 删前 `df` = 12,793,952 KB、删后 = **12,461,908 KB**（**少了 332M**）—— 差额 = 在飞两片同时在构建（§102 lesson 1 实测 **0.75–1.1G/min**）。⇒ **回收量不能只看「删了多少」，收尾值一律实测**；且判「本轮回收是否为正」必须在**没有在飞构建**的时刻采（或明确标注「本轮 df 差含在飞构建的负项」）。
+- **未回收的活物**：`lum-1773` 的 **18G**（在飞、正在 `--with-db` 门禁）不动；`lum-1803` 的 **3.9G**（在飞构建）不动；`lum-1945` 的 1.9G 属**别的 project**（不碰）。
+- **cycle 自身** ⑨ 冷编 target 收尾整删（见 §106.7 实测收尾值）。
+
+### §106.6 看板、观察项与状态
+
+- **看板**（项目 `da4310b1…`，逐状态分页到 `has_more=false`，共 **244**）：`in_review 205 / backlog 26 / todo 12 / in_progress 1 / blocked 0`
+  - `todo 12` = 积压 cycle **10 条**（`1521 1533 1726 1737 1740 1748 1805 1810 1826 1835`）+ **`LUM-1803`（在飞却挂 `todo`，见 §106.1）** + **本 cycle issue `LUM-1960`**。
+  - `in_progress 1` = `LUM-1773`（**本 cycle issue 交付后才切 `in_review`**）⇒ 与前几轮「`in_progress` = 片 + cycle 自己」不同，本轮 cycle 起手是 `todo`、片有一条漏标 ⇒ **计数既不能加 cycle、也不能信片**。
+- **观察项第 44 轮**：积压 `todo` cycle 10 条**只登记不动状态**；autopilot 护栏（同项目已有未终态 cycle 时不再建新单）**仍未落地** —— 本轮起手**无并发 cycle（连续第 6 轮）**。
+- **状态**：`LUM-1773` 保持 `in_progress`（未推分支、无 PR）；`LUM-1803` **实际在飞但看板 `todo`**（不改它 —— 那是它自己 run 的责任，cycle 不去代写别人的状态）；`LUM-1946`/`LUM-1945`（别的 project）不动；本 cycle issue 交付后 → `in_review`。
+
+### §106.7 收尾值与 next cycle 起点（**含勘误纪律，故意不钉 base 具体值**）
+
+- **起手 base 实测 `3797b940`**；本 cycle 的 docs 提交**又直推一次 base**（§105 勘误节立的纪律：**下一轮起手一律实测**，下面这个值只当历史刻度）。
+- **GH 0 open PR**；daemon 本项目在飞 **2 片**（`LUM-1773` ∥ `LUM-1803`）+ cycle ⇒ **满 3**。
+- **槽位一空即派（描述均已 rev 到位）**：
+  - `LUM-1773` 终 ⇒ **`LUM-1774`（M7-9，rev 4）** —— **只能单独飞**（争 `dingtalk/mod.rs` 追加段）；片后 `owners.M7 = 9 ≠ 0`（余 lark 5 + wecom 4）。
+  - `LUM-1803` 终 ⇒ 先合并其 PR（此时它才会推分支/开 PR），再 **`LUM-1804`（M8-7 INT，rev 4）** —— 必须等 `owners.M8 → 0`，且**唯一一次 `--write-baseline`**（片前 = 当轮 `baseline`、片后 = 当轮 `local`）。
+  - **`LUM-1745`（M5-D8，rev 4）** 零共享文件片 ⇒ 与任意片可并飞。
+  - 两片 INT **不得同轮**跑 `--write-baseline`（同一份 `docs/fixtures/route-parity-baseline.json`）。
+- **回收预告**：`LUM-1773` 的 **18G** 是下一轮最大单块（其 PR 一合即可整删，同 §105 对 `lum-1802` 的四判据）。
+- **起手必验（每轮重取，不照抄本节）**：`df`（连采两次，≥12G 才开 `--with-db`，并注意在飞构建会让它**下降**）/ `git ls-remote` / 认证 GH `pulls?state=open` / daemon **逐 PID + `.managed_env.json.issue_id` 核 `project_id`**；⑦ 前 `git rev-parse HEAD` 必须逐字等于当轮 base。
