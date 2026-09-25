@@ -1,8 +1,11 @@
 //! Feishu / Lark adapter（上游 `internal/integrations/lark`（72 文件 / 37 非测试 / 10,957 上游行））。
 //!
-//! **状态：M7-0 anchor 只落空 `register()`**（`LUM-1765` / `docs/60-M7-PLAN.md` §5）——
-//! 本文件的**唯一**内容是"这个平台在这里注册工厂"的位置声明；实现归 M7-10 … M7-14
-//! （`docs/60` §3.3 的写集表：本目录下的每个子文件都有**一个**写者）。
+//! **状态：子模块已落地到 M7-11；`register()` 仍是 anchor 的空实现**
+//! （`LUM-1765` / `docs/60-M7-PLAN.md` §5）—— 本文件的职责仍是"这个平台在这里注册工厂"
+//! 的位置声明 + 子模块声明；实现归 M7-10 … M7-14（`docs/60` §3.3 的写集表：本目录下的
+//! 每个子文件都有**一个**写者）。落地进度：M7-10 落 `client`/`http_client`/`params`/`types`
+//! （lark HTTP 客户端与类型），M7-11 落 `ws_connector`/`ws_endpoint`/`ws_frame`/
+//! `ws_frame_decoder`（自建 WS 长连接），其余归 M7-12 … M7-14。
 //!
 //! # 这个平台的面（实现者按这三条认领自己的文件）
 //!
@@ -34,6 +37,15 @@ pub mod client;
 pub mod http_client;
 pub mod params;
 pub mod types;
+
+// M7-11（`LUM-1776`）落地的四个子模块（自建 WS 长连接面）：
+// `ws_frame` = 二进制帧信封 + 分片重组；`ws_frame_decoder` = 事件 JSON 解码；
+// `ws_endpoint` = `POST /callback/ws/endpoint` 引导（**我方发往 lark 的地址**，
+// 不是本服务暴露的路由 —— 见 `docs/60` §1.5）；`ws_connector` = 会话与帧循环。
+pub mod ws_connector;
+pub mod ws_endpoint;
+pub mod ws_frame;
+pub mod ws_frame_decoder;
 
 /// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
 ///
