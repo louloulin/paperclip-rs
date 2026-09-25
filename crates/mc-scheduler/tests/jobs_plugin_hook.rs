@@ -423,7 +423,11 @@ async fn real_db_the_loop_delivers_each_schedule_bucket_exactly_once() {
         let latest = db_ops::latest_plan(&repo, hook_job::JOB_NAME, &scope)
             .await
             .expect("latest plan");
-        if latest.found {
+        // ⚠️ 只能等**终态**：`process_plan` 是「先 `try_claim` 写 RUNNING → 跑 handler → 再写终态」，
+        // 所以「行已存在」并不等于「已落终态」—— 观测落在两步之间时会读到 RUNNING，
+        // 下一句 `assert_eq!(Success)` 立刻红（tick 50ms vs 桩 handler 亚毫秒 ⇒ 命中率 ≈ 2%，
+        // 见 `docs/32` §36.7）。强等待条件自己把「未完成」排除掉，超时仍由下面的 deadline 兜底。
+        if latest.found && latest.status != ExecutionStatus::Running {
             assert_eq!(latest.status, ExecutionStatus::Success);
             break;
         }

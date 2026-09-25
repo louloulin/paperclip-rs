@@ -25,7 +25,8 @@
 //! * 只有 `sys_cron_executions` 是**无 workspace 键的全局审计表**（唯一键
 //!   `job_name, scope_kind, scope_id, plan_time`），而两个 job 名是**常量**：本文件在起循环前
 //!   先删掉这两个 job 的旧行，否则「同一 30s 桶已被上一次跑占掉」会让本轮认领不到租约而假红。
-//!   这也意味着它**不能并行跑**（`--test-threads=1`）。
+//!   这也意味着它**不能并行跑**：串行由 [`serial`]（文件内的一把闸）**自己保证**，
+//!   不再依赖“跑到时带上 `--test-threads=1`”（门禁 ⑥ 并不带，`docs/32` §36.6）。
 //! * 进程级证据（真的起 `multica-server` 看租约行）不在本文件：那是 PR 里附的命令输出。
 
 use std::sync::Arc;
@@ -46,6 +47,28 @@ use mc_ws::hub::Hub;
 
 use super::schedule_port::McAutopilotSchedulePort;
 use super::wakeup_port::McWakeupDispatchPort;
+
+// ---------------------------------------------------------------------------
+// 串行闸
+// ---------------------------------------------------------------------------
+
+/// 本文件的**串行闸**：三个用例共用一个测试库，而
+/// [`build_registers_both_jobs_and_the_loop_claims_leases`] 会起**真调度循环** ——
+/// 循环的 tick / 认领作用在**全库**的到点 wakeup 上，会和并行跑的
+/// [`wakeup_port_dispatches_merges_and_consumes`] 抢同一批收据（后者刚 `record` 的收据被提前
+/// 消费 / 被判为过期 revision ⇒ 本应 `Dispatched` 的合并派发落 `Settled`，`docs/32` §36.6）。
+///
+/// 模块文档已经写明本文件**不能并行跑**；本闸把那条口径从「依赖调用方带
+/// `--test-threads=1`」变成**用例自己保证**（门禁 ⑥ 的 `cargo test … -- --ignored` 并不带）。
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 取串行闸 —— 每个用例**整段持有**（从建 fixture 到 `cleanup`）。
+///
+/// ⚠️ 绑到具名变量（`let _serial = serial().await;`）才有意义：`let _ = …` 会立刻把
+/// guard 丢掉 ⇒ 闸形同虚设。
+async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().await
+}
 
 // ---------------------------------------------------------------------------
 // 夹具
@@ -302,6 +325,7 @@ where
 #[tokio::test]
 #[ignore = "needs a real database (MULTICA_TEST_DATABASE_URL)"]
 async fn schedule_port_filters_and_advances() {
+    let _serial = serial().await;
     let pool = pool().await;
     let world = seed_world(&pool).await;
 
@@ -400,6 +424,7 @@ async fn schedule_port_filters_and_advances() {
 #[ignore = "needs a real database (MULTICA_TEST_DATABASE_URL)"]
 #[allow(clippy::too_many_lines)] // 7 步事务 + 两轮派发 + 收尾，拆开就丢了「同一 wakeup 的行」这条线索
 async fn wakeup_port_dispatches_merges_and_consumes() {
+    let _serial = serial().await;
     let pool = pool().await;
     let world = seed_world(&pool).await;
     let instruction = "look at the latest state and report back";
@@ -591,6 +616,7 @@ async fn wakeup_port_dispatches_merges_and_consumes() {
 async fn build_registers_both_jobs_and_the_loop_claims_leases() {
     use mc_scheduler::jobs::{autopilot as autopilot_job, issue_wakeup as wakeup_job};
 
+    let _serial = serial().await;
     let pool = pool().await;
     // 唯一键是 (job_name, scope_kind, scope_id, plan_time)：两个 job 名是常量，同 job 的旧行会
     // 让本轮认领不到租约 ⇒ 先清掉（测试库的全局审计表，见模块文档）。

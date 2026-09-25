@@ -256,7 +256,12 @@ async fn every_plan_returns_to_the_failed_bucket_when_its_backoff_has_burned() {
         }
     });
     let spec = JobSpec::new(name.clone(), Duration::minutes(1), global_scopes(), handler)
-        .with_catch_up(CatchUpMode::EveryPlan, Duration::zero(), 1)
+        // ⚠️ `catch_up_window` 必须是**正窗口**（不能是 `Duration::zero()`）：窗口 ≤ 0 时
+        // `every_plan_plans` 把 `oldest_allowed` 夹到**最新桶**，于是一旦两次 `run_once()` 跨过
+        // 分钟边界，规则 1（还能重试的 FAILED 行必须停在同一个 `plan_time`）就被窗口**盖掉**
+        // ⇒ 本用例变成「时钟依赖的确定红」（约 0.1–1%，`docs/32` §36.8 / `docs/48` §8）。
+        // 正窗口才能把规则 1 单独钉住（这才是用例名要考的那一条）。
+        .with_catch_up(CatchUpMode::EveryPlan, Duration::minutes(5), 1)
         .with_timing(
             StdDuration::from_secs(60),
             StdDuration::from_secs(300),

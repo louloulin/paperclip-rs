@@ -4981,3 +4981,205 @@ lib 用例 902 条全绿。
   与 `crates/mc-http/src/routes/channels/lark.rs`）⇒ **可同飞**。
 * **与 wecom 片不同飞**：`LUM-1784` / `LUM-1785` 会写同一个 `wecom/mod.rs` 追加段 ⇒ 必须等本片终态。
 * **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。
+
+## 36. 门 ⑥ 的测试侧竞态收口（`LUM-1980`）：八条（**0 路由 / 0 产品代码**）
+
+`docs/37` §126 / §127 / §128 连续三轮把**门 ⑥** 判成**概率门**：同一批测试在「当轮新建库 + 单跑」
+下全绿，在「复用库 / 高并行 / CI」下间歇红，而红点与**任何一个片的写集**交集都是 ∅。
+本片把这条线**收口**：issue rev 5 列的五条（①②③④⑤）+ 第 6 条（⑥）+ `docs/37` §128.4 新抓的
+两个**未登记**签名（⑦ 弱等待 / ⑧ 时钟桶跨界），**八条一起改**。
+
+* **交付形态 = 只改测试支撑**。唯一动到 `src/` 的是 `crates/mc-composio/src/state.rs` 的
+  `#[cfg(test)] mod tests` 里那**一行**断言（⑤）；`docs/48` §8 是语义登记，不是代码。
+* 写集 = **8 个文件 + 两处 docs**：`git diff --shortstat` = `8 files changed, 109 insertions(+), 33 deletions(-)`。
+* 与在飞片零交集：`LUM-1784` / `LUM-1785` 写 `crates/mc-channel/src/wecom/**`；本片 8 个文件全在其外。
+  **⑦ 基线 / ⑨ `report.json` / ⑩ 基线三件套一字节未动**（⑦ 当场读数与 §128.5 逐字相同）。
+
+### 36.1 写集（逐字）
+
+| 文件 | ± | 改什么 |
+| --- | ---: | --- |
+| `crates/mc-http/tests/composio/support.rs` | +29 / −15 | 删 `reset_calls()`（进程级粒度，会清掉并行用例已发出还没读回的记录）；新增 `calls_for_user(user, path)`（按 key 里的 user 段认领）；`flow_state` 不再读 `api_keys.last()` |
+| `crates/mc-http/tests/composio/flows.rs` | +2 / −4 | 去掉两处 `reset_calls()` 调用与导入（断言本来就按自己的 key 取） |
+| `crates/mc-http/tests/channels/telegram_round_trip.rs` | +10 / −2 | 绑定等待条件加 `AND last_message_id IS NOT NULL`（②） |
+| `crates/mc-http/tests/channels/telegram.rs` | +19 / −6 | 6 处 `drop(stub_guard); teardown(...)` **换序**（④）+ `teardown` 的 doc |
+| `crates/mc-composio/src/state.rs` | +11 / −3 | `tampered_signature_...` 改翻**首**字符（⑤）+ 注释 |
+| `apps/mc-server/src/scheduler/tests.rs` | +27 / −1 | 文件内串行闸 `SERIAL` + `serial()`，三条用例整段持有（⑥） |
+| `crates/mc-scheduler/tests/jobs_plugin_hook.rs` | +5 / −1 | 循环等待条件从「行存在」收紧为「**行已终态**」（⑦） |
+| `crates/mc-scheduler/tests/lease_db.rs` | +6 / −1 | `catch_up_window` 从 `Duration::zero()` 改 `Duration::minutes(5)`（⑧） |
+| `docs/32` | +本段 | —— |
+| `docs/48` | +§8 | 窗口 0 吞掉可重试 FAILED 桶的**已知语义**登记 |
+
+### 36.2 起手重取的复现率（base `aa6dbd64`；**当轮新建库** `mc_lum1980`，角色带 `CREATEDB`）
+
+rev 4 的「起手补充」要求先按当轮 base 自己量一遍。**六族全部当场量了 before / after 两侧**
+（同一批二进制、同一个库；`--ignored` 直跑编译产物，不经 cargo）：
+
+| # | 落点 | **修前** | **修后** |
+| :-: | --- | ---: | ---: |
+| ①③ | `tests/composio/**`（15 用例/跑） | **5/30 = 16.7%** | **0/30** |
+| ② | `channels/telegram_round_trip.rs:599` | **1/15 = 6.7%** | **0/45** ⟨与 ④ 同一批 45 跑⟩ |
+| ④ | `channels/telegram.rs:156/273` | **2/30 = 6.7%** | **0/45** |
+| ⑤ | `mc-composio/src/state.rs:390`（lib 用例） | **1/60 = 1.7%** | **0/500** |
+| ⑥ | `apps/mc-server` 的 `scheduler::tests` | **0/3（全量）+ 0/25（定向两两并行）** | 0/3 + 0/25（同形） |
+| ⑦ | `mc-scheduler/tests/jobs_plugin_hook.rs:427` | 未复现（CI 1 例；§128 估 ≈2%） | **0/40** |
+| ⑧ | `mc-scheduler/tests/lease_db.rs:273` | **确定红**（见 §36.9 的强制跨界实验） | **0/200** + 同实验绿 |
+
+**修前的失败原文（逐字，本机实测）**：
+
+```text
+①③ support.rs:577:34  panicked at ... `.expect("a link call")`（记录器里找不到本次 init 的 link 调用）
+①③ flows.rs:291:5   assertion `left == right` failed    left: 0 / right: 1        （回调 302 但行写到别人名下）
+①³ flows.rs:289:5   同上（另一处 rows.len()）
+①³ flows.rs:97:5    assertion ... left: 401 / right: 302
+                    {"error":{"code":"composio_state_invalid","message":"invalid composio state"}}
+②  telegram_round_trip.rs:599:5  assertion ... left: None / right: Some("777:41")   "最近一条触发的 message id"
+④  telegram.rs:156:5 / :273:5    left: 409 / right: 200
+                    {"error":{"code":"telegram_bot_owned_by_another_workspace","message":"this Telegram bot is
+                     already connected to a different Multica workspace — disconnect it there before connecting it here"}}
+⑤  state.rs:390:9   assertion `left == right` failed     left: Err(Malformed) / right: Err(Tampered)
+⑧  lease_db.rs:273:5  assertion ... left: 2026-09-25T23:03:00Z / right: 2026-09-25T23:04:00Z
+                     "FAILED 桶还会重试 ⇒ 游标不能跳过它"
+```
+
+⇒ **四条本地实测到的签名（①③②④⑤）与 §109 / §126 / §128 的 CI 名录逐字同形**，
+说明这些不是「CI 环境玄学」，而是**本机也能打中的测试侧竞态**。
+
+### 36.3 ①③：`composio` 的**进程级共享状态**（根因一条，症状四种）
+
+三条机理叠在一起，**全部在测试侧**：
+
+1. `support.rs` 的 `static CALLS` 是**进程级**的，而同一个测试二进制里的用例**并行**跑
+   （`#[tokio::test]` 一条用例一个 runtime，但**共享进程**）；
+2. `flow_state()` 从**全局**记录里取 `api_keys.last()` —— 并行时那是**别人**的 key ⇒ 拿到**别人**的
+   `connected_accounts/link` 调用 ⇒ 返回**别人**那份 signed state；
+3. 每个用例起手 `reset_calls()` 按**进程级**粒度清空 ⇒ 会把并行用例**已发出、还没读回**的记录一起清掉。
+
+于是：拿别人的 state 去自己的回调 ⇒ 行写进**别人**的 user（本用例看到 `rows.len() = 0`，
+→ `flows.rs:289/291`）；自己的 state 被偷走后又被对方**消费**（重放台账是进程级的，`docs/32` §23.2 的 D4，
+**刻意的生产行为**）⇒ 后来者落 `401 composio_state_invalid`（→ `flows.rs:97`）；被清空的记录里找不到
+自己那次 link 调用 ⇒ `.expect("a link call")` panic（→ `support.rs:577`）。
+
+**修法**：判据从「全局最后一条」换成**本用例自己的 key 里带的 user id**
+（`ak_<variant>_<uuid>`，uuid 用一次性的 `seed_user` ⇒ 全进程唯一），`reset_calls()` **整条删掉**
+（有了唯一判据就不需要清场，清场本身反而是害）。一个根因改掉四种症状：**after 0/30**。
+
+⚠️ 归因更正（沿用 §109 的修正）：issue ① 原写「复用同一个库才会假红、换全新库就绿」——**错**。
+`LUM-1804` 在**当轮新建库**上四次 ⑥ 里撞了一次，本轮又在**当轮新建库**上 5/30 打中 ⇒
+**真因全在测试侧的进程级共享状态，与库内容无关**；「换库重跑」这个**动作**仍有效，但它改的是
+**并行调度时序**，不是「库脏」。
+
+### 36.4 ②：`telegram_round_trip` 的**等待条件过弱**
+
+`wait_for(count(*) > 0)` 只等 `channel_chat_session_binding` **行存在**，而 `last_message_id` 是
+**之后**由 `update_session_reply_target`（`crates/mc-repos/src/channel/session/tx.rs` 的 append 路径）
+/ route-start 的收尾 UPDATE 写进去的 ⇒ 全量 ⑥ 的负载下会在「行已插入、游标还没写」的窗口里读到
+`NULL`（本机 after 之前的实测：`left: None / right: Some("777:41")`）。
+
+**修法（三行以内，不改产品代码）**：等待条件从「行存在」收紧为**要断言的那个字段已就绪**
+——`WHERE ... AND last_message_id IS NOT NULL`。断言本身一字未动（`IS NOT NULL` 只排除「还没就绪」，
+不排除「值是别的 message id」）。
+
+### 36.5 ④：安装面共用同一个 `BOT_TOKEN` + 「**锁内写行、锁外清场**」
+
+`tests/channels/telegram.rs` 的**所有**安装用例共用常量 `BOT_TOKEN`，而安装键是**令牌前缀**
+（`config->>'app_id'`，`crates/mc-channel/src/telegram/install.rs`）。`a_bot_owned_by_another_workspace_is_a_conflict`
+会**故意**把该 token 装到另一个 workspace 上以断言 409：它的**行写入在 `STUB_LOCK` 锁内**，
+清场 `teardown(...)` 却在 `drop(stub_guard)` **之后** ⇒ 锁一放开、下一个拿到锁的用例
+（`install_list_revoke_and_reinstall` / `binding_redeem_...` / 两条失败矩阵）在**别人那行还在**时
+`install()` ⇒ **409**。`STUB_LOCK` 串行化的是**替身基址**，不串行化**库里的行**。
+
+**修法（两行 × 6 处）**：`teardown(...)` 挪进锁内（与 `drop(stub_guard)` 换序），并把这个约束写进
+`teardown` 的 doc（免得后人再换回去）。**after 0/45**（修前 2/30，其中 `:156` 与 `:273` 正是 CI 上
+命中过的那两条）。
+
+**残留（如实登记）**：该修法把「清场」与「写行」放进了同一把锁，因此**依赖 `teardown` 一定跑到**；
+若某个用例中途 panic，残留行仍会砸到后面的用例。彻底解是「每条用例各自派生的 bot token」
+（`telegram_round_trip.rs` 的 `fresh_bot_id()` 已是这个手法），但那要动 10 处调用点与 `bot_id` 断言，
+超出「最小修法」——本片按后者登记，留给 M7 后续需要时再做。
+
+### 36.6 ⑤：数据相关的末字符取反（一行）
+
+32 字节 HMAC 的 `base64url_nopad` 恰好 **43** 字符 ⇒ **末字符只承载 4 个有效 bit**（256/6 = 42.67）。
+用例原来翻**末位**：当它原本是 `'A'`（索引 0）时，改成 `'B'`（索引 1）令**尾比特非规范** ⇒ Rust
+`base64` 的**严格**引擎先报 `InvalidLastSymbol` ⇒ `verify` 在常量时间比较**之前**就 `.map_err(|_| Malformed)`
+⇒ 断言 `Tampered` 红（理论 1/16 = 6.25%；本轮实测 1/60 = 1.7%，`docs/32` §24.3 与 §128 的 60 次
+3 红 = 5.0% 是同一量级）。
+
+**修法（一行）**：翻**首个**字符。第 1 个字符承载满 6 bit，任何替换都是**规范**编码 ⇒ 解码必然成功
+⇒ 一定走到常量时间比较那一句 ⇒ 断言变**确定性**（after 0/500，理论红率归零）。
+（`crates/mc-http/tests/composio/callback.rs` 里同形的「翻末位」**不动**：那条用例的期望是
+「四种坏形态都 401」，`Malformed` 与 `Tampered` 在路由层同判 ⇒ 无概率。）
+
+### 36.7 ⑥：`apps/mc-server` 的调度器用例 —— 真循环 vs 派发用例
+
+`apps/mc-server` 的**同一测试二进制**里，`build_registers_both_jobs_and_the_loop_claims_leases`
+会起**真调度循环**（tick 500ms），而循环的 `issue_wakeup_dispatch` job 扫描的是**全库**的到点 wakeup
+—— 它会与并行跑的 `wakeup_port_dispatches_merges_and_consumes` 抢同一批收据：刚 `record` 的收据被
+循环提前消费（或 `revision` 被判过期）⇒ 本应 `Dispatched` 的合并派发落 **`Settled`**。
+
+**修法**：文件内加一把串行闸 `SERIAL`（`tokio::sync::Mutex`，`serial()` 由三条用例**整段持有**：
+从建 fixture 到 `cleanup`），把「本文件不能并行跑」这条**本来就写在模块文档里**的口径，
+从「依赖调用方带 `--test-threads=1`」变成**用例自己保证**（门 ⑥ 的
+`cargo test … -- --ignored` **不带** `--test-threads`）。
+
+**取证现状（如实）**：本轮**两侧都没能复现** —— 修前 0/3（全量）+ 0/25（定向两两并行），修后同形。
+CI 上 §109 记的是 **1/1**。⇒ 本条按「**修法明确（消除唯一的进程内干扰源：同二进制里唯一的 wakeup 移动者
+就是那条真循环）、本地未复现**」交付；`scan` 也确认二进制内另外 12 条 `#[ignore]` 用例
+（`integrations::*` / `webhook_worker::*` / `channels::*`）**不碰** wakeup 两张表。
+
+### 36.8 ⑦：`jobs_plugin_hook.rs:427` —— 弱等待（`docs/37` §128.4(a)）
+
+`process_plan` 是「先 `try_claim` 写 **RUNNING** → 跑 handler → 再写**终态**」，而用例的循环是
+`if latest.found { assert_eq!(latest.status, Success); break; }` ⇒ **只要观测落在两步之间**，
+读到的 RUNNING 就让断言立刻红（tick 50ms vs 桩 handler 亚毫秒 ⇒ 命中率 ≈ 2%）。
+
+**修法**：等待条件从「行存在」收紧为「**行已终态**」
+（`if latest.found && latest.status != ExecutionStatus::Running { assert_eq!(…, Success); break; }`），
+超时仍由原有 deadline 兜底；真失败（落 `Failed`）照样红。
+after **0/40**（修前未复现：CI 1 例 + §128 的读码分析）。
+
+### 36.9 ⑧：`lease_db.rs:273` —— 时钟桶跨界（新类，`docs/37` §128.4(b)）
+
+用例的 job 是 `CatchUpMode::EveryPlan` + `catch_up_window = Duration::zero()` + `cadence = 1min`。
+`every_plan_plans` 先用**规则 1** 取 `start = info.plan_time`（最新行 FAILED 且还能重试 ⇒ 必须停在
+**同一个** `plan_time`，否则那个桶被永久跳过），**随后**被窗口夹一次：窗口 ≤ 0 ⇒ `oldest_allowed = latest`
+（本 tick 的桶）⇒ 一旦两次 `run_once()` **跨过分钟边界**，规则 1 的桶被换成**新桶** ⇒
+`attempts[0].0 ≠ attempts[1].0` ⇒ **必红**（约 0.1–1%/次）。
+
+**修法**：窗口改**正**（`Duration::minutes(5)`）—— 用例名要考的本来就是规则 1，窗口 0 是**附带**设定；
+正窗口下 `start >= now − 5min` 恒成立 ⇒ 夹取branch对该用例**死掉**（结构性，不是抽样）。
+
+**确定性 A/B（本片新做，比抽样强）**：临时把第二个 tick **推到下一个分钟桶**
+（窗口=0 + 跨边界）⇒ **`FAILED`**，现场
+`left: 2026-09-25T23:03:00Z / right: 2026-09-25T23:04:00Z`（"FAILED 桶还会重试 ⇒ 游标不能跳过它"）
+—— 与 CI 名录的签名**逐字同形**；把窗口换回 `minutes(5)`、**同一个**强制跨界 ⇒ **`ok`**。
+（临时实验的代码**已删净**：`diff` 对比确认落盘版本与「只留修法」的版本逐字节相同。）
+未强制的常规抽样：**0/200**。
+
+**语义登记（`docs/48` §8）**：「窗口 ≤ 0 ⇒ 只认最新桶」与本模块自述的规则 1 **冲突**，实现选了**窗口赢**。
+生产**不可达**（三个 job 全是 `CatchUpMode::LatestOnly`，其中两个还带 `PlansHook`）⇒ 不是产品缺陷，
+不拦合并；若将来要反过来（规则 1 压过窗口）需 M5 spec 仲裁，本片**不动产品代码**。
+
+### 36.10 门禁、磁盘事件与纪律
+
+* **门禁（当轮）**：① fmt ✓（`cargo fmt --all` 后 8 个文件之外**零**改动）、⑦ route-parity ✓
+  （`upstream 456 | local 474 | baseline 458 | implemented 391 = 388+3 | known_gap 65 | local_only 9`，
+  与 §128.5 **逐字相同** ⇒ 本片不动 ⑦）、⑩ file-size ✓（`violations 0`）。
+  ⚠️ **`--with-db` 的一次性全量**（②③④⑤⑥⑧）本轮**没能在本机跑完**：见下一条。
+* **🔴 磁盘事件（本波第 2 次，LUM-1779 后）**：起手 `df` **34G 可用**，同轮在飞片 `LUM-1784`
+  （wecom 入站）的 `target/` 从 3.3G 一路长到 **29G**，本片冷建（13G）叠加 ⇒ 一度 **0 字节**
+  （`ld terminated with signal 7 [Bus error]` / `os error 28`，**零条断言失败**）。
+  本片只回收**自己的**产物（删掉一次性已用过的测试可执行文件 ≈11G），**没有**碰在飞片的 `target`
+  （`run` 未终态 ⇒ 按四判据不可回收）。⇒ **两片冷建 + 一次全量 `--with-db`（≈18G）在 49G 盘上
+  同时跑是不可行的**；派发时应当把「在飞片 target 之和 + 本片预算」当槽位维度（沿用 LUM-1779 的教训）。
+* **本轮替代取证（可复核）**：门 ⑥ 的**实质**（变更文件所属的真库 `--ignored` 套件）**已按当轮新建库
+  逐个直跑**——`composio` 30 跑、`channels` 45 跑、`mc-server` 3 跑 + 25 定向、`mc-scheduler`
+  的两条签名 40 跑 / 200 跑 + 1 次强制跨界 A/B，全部绿（§36.2 的表）。缺的是**未受本片影响**的
+  其余 target 与 ②③④⑤⑧ 的**整包**重跑 —— 这一条按 `docs/37` §127 的同一口径记「**环境未允许**」，
+  不当作绿也不当作红。
+* **纪律（连续第 8 轮）**：门 ⑥ 每次**新建当轮库**（`CREATE DATABASE <n> OWNER <role>` +
+  `ALTER ROLE … CREATEDB`）；撞上这八条里任何一条就**换库/重跑**，别当成自己那片的回归。
+  §128 的口径修正 2 同时适用：`gates.sh` 的 ⑥ **没有 `--no-fail-fast`** ⇒ 每次 CI 红只暴露**一个** target 的
+  签名，按 CI 给签名计频会**系统性低估**。
+* **号段**：本段占 `## 36.`（末号为 §35 = M7-18）。`LUM-1784` 若先落 §36，则本段随合入顺序改号。
