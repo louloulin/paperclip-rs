@@ -101,6 +101,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 12 条键（19 个注册点：`/api/issue-views`、`/api/issue-views/:id`、`/api/pins`
         // 三组各带尾斜杠别名）；转尾斜杠形态的判据与实测见 `docs/63-M2A-TAIL-ISSUE-VIEW-PIN.md` §4。
         .merge(mount_slice_issue_view_pin())
+        // ----- M2-A 尾-补（LUM-1793）：`POST /api/issues/:id/squad-evaluated` -----
+        // 1 条键，**只注册无尾斜杠形态**（上游 `router.go:2097` 是 plain `r.Post`）。
+        // 它的 handler 写在 `routes/squad_evaluations.rs`，不改 `issues/` 目录里的任何文件。
+        .merge(mount_slice_squad_evaluation())
 }
 
 /// workspace + member + me 切片。
@@ -446,4 +450,27 @@ fn mount_slice_issue_view_pin() -> Router<Arc<AppState>> {
         .merge(super::issue_views::router())
         .merge(super::issue_view_preferences::router())
         .merge(super::pins::router())
+}
+
+// ---------------------------------------------------------------------------
+// M2-A 尾-补（LUM-1793）
+// ---------------------------------------------------------------------------
+//
+// 上游 `M2-A` 线上剩下的**最后一条**键（`docs/63-M2A-TAIL-ISSUE-VIEW-PIN.md` §6 第 4 条把它
+// 明确留给本片）：`POST /api/issues/:id/squad-evaluated`。
+//
+// 它为什么不能直接塞进 `mount_slice_issue_view_pin()`：那条键与 LUM-1691 的 12 条**不是同一片**，
+// 而且两者当时都要写「`mount.rs` / `routes/mod.rs` 的同一追加段」⇒ 本片串在它**合入之后**跑
+// （`dacad392`，PR #91）。历史约束已解除，这里独立一个 `mount_slice_*` 让两片的追加段
+// 在 diff 里各自成块、互不重叠。
+//
+// ⚠️ 接线纪律（与前几波同款）：
+// 1. 同 path+method 重复注册 ⇒ axum 在**启动时 panic**（docs/15 §9.6.6）；
+// 2. 上游是 plain 注册 ⇒ **只注册无尾斜杠形态**（`EXTRA_ALIAS` / `MISSING_EXACT` 都是硬失败，
+//    本波 `slash-alias-allowlist.tsv` 是 0 数据行，没有豁免退路）；
+// 3. 路径参数写 `:id`（matchit 0.7 把 `{id}` 当字面量：编译通过但恒 404）。
+
+/// squad leader 判决切片：`POST /api/issues/:id/squad-evaluated`（1 条上游键）。
+fn mount_slice_squad_evaluation() -> Router<Arc<AppState>> {
+    super::squad_evaluations::router()
 }

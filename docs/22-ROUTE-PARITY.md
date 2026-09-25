@@ -363,3 +363,87 @@ python3 scripts/route_parity.py --write-baseline   # 有意增删本仓路由后
 - **不判断优先级**：owner 只回答"谁负责"，不回答"何时做"；排期看 `docs/01` §6 与各 issue。
 - **基线只记"注册集合"**：它不知道 handler 是真是占位、是否还在返回 501；那属于占位清偿的看板，
   不在本工具里（本工具只把 `placeholder` 标出来，见 §2.3）。
+
+## 7. M2-A 尾-补：`POST /api/issues/{id}/squad-evaluated`（LUM-1793）
+
+### 7.1 归属：把一条「兜底命中」变成「显式裁决」
+
+这条键是 `known_gap` 里**唯一**没有 issue 承接的一条，而且它的 owner 单元格不是任何切片
+计划做的裁决 —— 它是本文件 §4.2 那张规则表的**兜底行**按 first-match-wins 命中的产物
+（`docs/37-M3-W3C-PREFLIGHT.md` §78 的四路取证：fixture 单元格 → 规则表 → 代码侧
+`grep` + `git log --all -S` → 全项目 issue 文本，四路全部落空）。
+
+本片的处置**不是**改 fixture 的第 3 列，而是给规则表补一条**带理由的显式规则**，
+插在兜底行 `^/api/issues` **之前**：
+
+```
+^/api/issues/[^/]+/squad-evaluated	M2-A	squad leader 判决记录（LUM-1793；handler 在 squad.go，键挂在 /api/issues/{id} 下）
+```
+
+理由（也就是这一行的「显式裁决」内容）：
+
+| 问题 | 答案 |
+| --- | --- |
+| 为什么归 `M2-A` 而不是新 owner | handler 在 `squad.go`，但**注册键**挂在 `/api/issues/{id}` 下，且落库写的是 M2-A 面已经在读的 `activity_log`（`GET /api/assignee-frequency` 的数据源之一）⇒ 与 M2-A 尾片（LUM-1691）同一族 |
+| 为什么补规则而不是改单元格 | `docs/15-M3-PLAN.md` §536 禁的是**为凑数**改 owner；显式规则让「谁负责、凭什么」对**下一次重生成**也成立（fixture 的显式单元格只保护自己那一行，规则还保护同一类键） |
+| 会不会顺手改到别人 | 实测：只对 `squad-evaluated` 生效。`/api/issues/{id}/timeline`(M9)、`/attachments`(M3+)、`/pull-requests`(M8)、`/wakeups`(M5)、`/api/issues/table/*`(M2-D) 与兜底键 `/api/issues/{id}` 的 first-match **逐条不变**（`docs/63` §6 第 4 条留下的那条键就此关闭） |
+| fixture 要重生成吗 | **不需要**。快照只填**空白** owner 单元格，这一格本来就有 `M2-A`（生成时命中的是兜底行，结果相同）⇒ `docs/fixtures/upstream-routes.tsv` 一个字节未动，`gen_upstream_routes.py --check` 的漂移与本事无关 |
+
+### 7.2 路由清单（1 条键 / 1 个注册点）
+
+| 上游键 | `router.go` | handler | 上游注册形态 | 本仓注册点 |
+| --- | --- | --- | --- | --- |
+| `POST /api/issues/{id}/squad-evaluated` | 2097 | `squad.go:976 RecordSquadLeaderEvaluation` | **plain**（`r.Post`，不是 `Route(…)+Post("/")`） | `crates/mc-http/src/routes/squad_evaluations.rs` → `/api/issues/:id/squad-evaluated` |
+
+**只注册一个形态**：上游这一条是 `r.Post("/api/issues/{id}/squad-evaluated", …)`，不走 chi 的
+`Mount` ⇒ 补一条尾斜杠形态是 `EXTRA_ALIAS` 缺陷、漏字面量是 `MISSING_EXACT`，两类都是硬失败，
+而本波 `docs/fixtures/slash-alias-allowlist.tsv` 是 0 数据行、**没有豁免退路**。落地后用
+`python3 scripts/slash_alias_audit.py --no-allowlist` 验过：`shapes OK`、`0 defect(s)`。
+
+**落点纪律**：`mount.rs` 尾部追加 1 行 `.merge(mount_slice_squad_evaluation())` + 1 个
+`mount_slice_*` 函数，`routes/mod.rs` 追加 1 行 `pub mod squad_evaluations;` —— 两边都是
+**纯追加**，`issues/` 目录里的既有文件一个未动（与 `LUM-1691` 的追加段同款边界）。
+
+### 7.3 ⑦ 计数（本片实测，base `dacad392`）
+
+| 读数 | 本片前 | 本片后 | Δ |
+| --- | ---: | ---: | ---: |
+| `local` | 447 | **448** | +1 |
+| `implemented` | 364（360 real + 4 ph） | **365**（361 real + 4 ph） | +1 |
+| `known_gap` | 92 | **91** | −1 |
+| `owners.M2-A` | **1** | **0**（该分组从板子上消失） | −1 |
+| `unclaimed` / `regression` / `local_only` | 0 / 0 / 9 | 0 / 0 / 9 | 0 |
+
+不变式 `implemented + known_gap = 456` 成立；`slash_alias_audit.py` 的上游键字面量 451 → **452**。
+**`local` 只 +1**（1 条键 = 1 个注册点）：这条键不要求双形态，与 §2.1 的「`local` 数注册点」一致。
+
+⚠️ **本片未跑 `--write-baseline`**（`baseline` 保持 406，文件未动）：基线刷新只归
+M7-21 `LUM-1786` / M8-7 `LUM-1804`。
+
+### 7.4 与上游的偏离（逐条可查）
+
+| # | 偏离 | 性质 | 为什么 |
+| --- | --- | --- | --- |
+| D1 | **错误信封**：本仓 `{"error":{code,message}}`（且 message 带 thiserror 前缀，如 `validation error: …`），上游是扁平 `{"error": msg}` | 全仓既有约定 | 状态码与英文文案**逐字**对齐（`outcome must be 'action', 'no_action', or 'failed'` / `task does not belong to issue` / `only the squad leader agent can record evaluations` / `task is not a squad leader task` / `leader task has no squad_id` / `squad not found` / `failed to record evaluation`），只有信封是本地形状 |
+| D2 | **actor 解析只有一条分支**：上游 `resolveActor`（`handler.go:847`）是三条（`X-Actor-Source: task_token` 盖章 / `X-Agent-ID`+`X-Task-ID` 自校验 / 其余 = member），本仓只实现**第二条** | **能力缺口**（见 §7.5） | 本仓 `/api/issues*` 面**没有** task-token 中间件（`AuthUser` 恒人类成员）。第一条分支在上游成立靠的是 Auth/DaemonAuth 中间件「剥掉客户端头再盖章」；本地没有那层，照抄等于给**任何成员**一个自封 agent 的开关 —— 比第二条（会自己查 agent 行 + task 行校验）**更弱** ⇒ 有意不实现 |
+| D3 | **无 realtime 发布**：上游成功后 `h.publish(EventActivityCreated, …)`（`squad.go:1120`；事件常量本地已有：`mc-daemon-proto/src/events.rs:163`） | **能力缺口**（与 `docs/63` §6 第 1 条同款） | M2 面整波没有 realtime 发布通道，本片不单开一条依赖边。**接线点**：落库成功后、201 之前；投递面 = `workspace_id` + `"agent"` + **调用者（= task 的 agent）** id；payload = `{"issue_id", "entry": {type:"activity", id, actor_type:"agent", actor_id, action, details, created_at}}` |
+| D4 | **抑制查询无消费者**：判决行的 `actor_id` 照上游放 **`task.agent_id`**（不是 `squad.leader_id`），但 `HasSquadLeaderNoActionEvaluationForTask`（上游 `activity.sql:35`）对应的 service 面**未移植** ⇒ 「`no_action` 抑制 leader 评论」本地不生效 | **能力缺口** | 上游靠它避免 leader 用评论代替判决；本仓没有那个消费者。**但列的取值不能省**：局部索引 `089_squad_no_action_activity_index`（`(issue_id, actor_id, details->>'task_id')` WHERE `actor_type='agent' AND action='squad_leader_evaluated' AND details->>'outcome'='no_action'`）**已在 head schema 上**，放成 leader id 会让将来的消费者查不到那一行。repo 测试用照抄索引谓词的 `EXISTS` 查询钉住了这一列 |
+| D5 | **task 行投影收窄**：上游 `GetAgentTaskInWorkspace` 是 `SELECT atq.*`（49 列），本仓只取 handler 读的 5 列（`id` / `agent_id` / `issue_id` / `is_leader_task` / `squad_id`） | 等价实现 | 谓词（`atq.id = $1 AND a.workspace_id = $2`）与 `JOIN agent` 逐字相同 —— 那个 join 才是租户闸门，收窄的只是投影宽度 |
+| D6 | **500 不泄漏 DB 文案**：上游写不透明文案，本仓**有意不用** `Error::Database(message)`（后者会把 SQL 细节放进响应体） | **本片收紧**（唯一一处收紧） | 保持 `failed to record evaluation` 这个语义；DB 故障只进日志 |
+| D7 | 时间戳格式：上游 `time.RFC3339`（UTC → `…Z`），本仓 `DateTime::to_rfc3339()`（UTC → `…+00:00`） | 全仓既有约定 | `labels.rs` / `inbox.rs` / `pins.rs` 等全部这样，本片不单开第二种格式 |
+
+**权限粒度**（问题描述点名要登记的一项）：本地这一端是 **dev-mode 语义** ——
+`X-Agent-ID` + `X-Task-ID` 都是**客户端可写**的头，只要调用者是 workspace 成员就能造出
+一对合法的（上游注释自己写明这张回退「**不是**安全边界」：两个 id 都能从
+`GET /api/issues/{id}/task-runs` 读到）。本片**保持闸门 1 / 闸门 2 的判定与顺序**
+（它们决定的是「谁**有资格**写这条判决」，而不是「谁**是**那个 agent」），
+`order` 用例把顺序这条安全判据钉住了：越过闸门 1 之前，任何拒绝都不回显 task 派生的 issue id。
+
+### 7.5 本地做不到的那件事（如实登记，不要读成「已实现」）
+
+**本仓没有密码学意义的 agent 身份边界。** 上游那条端点的安全模型是
+「中间件剥头 + 盖章 + 活体 leader 判定」三层；本地只有第三层，前两层属 M3-7 的
+daemon / agent-run 面（`docs/41-M3-6-TASK-QUEUE.md` 的 originator / task-token 平面）。
+⇒ 这一端在本地与上游的 **dev-mode 回退分支同级**：可测、语义正确、但不是防伪的。
+等 daemon 面的 task-token 中间件落地后，只需把 `resolve_agent_actor` 换成真正实现
+（读服务端盖的章），**handler 里的 13 步判定一行都不用改**。
