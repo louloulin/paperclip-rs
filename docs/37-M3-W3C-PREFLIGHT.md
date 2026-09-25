@@ -7789,3 +7789,63 @@ gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5      （和 = 121 �
 > **第一动作**：三连（`df -h /` → `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 `pulls?state=open`）→ 逐片「run 是否终态 ∧ `/proc` 逐 PID ∧ `merge-base --is-ancestor base head`」→ 终态才进判据链（**先判是否真需重跑门**）。
 > **槽位一空就派**：`LUM-1767` 终 ⇒ **M7-3（`LUM-1768`）**（写集已补 `crates/mc-channel/src/slack/mod.rs`；实测 base 该文件 `pub mod` 数 = 0 ⇒ 5 个新文件不写进去不参与编译）；`LUM-1799` 终 ⇒ **M8-3（`LUM-1800`）**（8 路由，0 缺件）。
 > **⑦ 仍不刷基线**（406）；唯一一次归 M8-7（`LUM-1804`，M7-21 `LUM-1786` 同理）。
+
+## §89 11:30 cycle（`LUM-1847`，02:30Z 触发）：**合并 #86（M7-2）⇒ base `d1c5b797`**；门 ⑥ 首次因 **`ld` Bus error（磁盘耗尽）** 红、单门重跑绿；**起手 7.6G 可用 → 中途 2.8G → 回收 25.2G**；空位 1 ⇒ 派 **M7-3（`LUM-1768`）**
+
+### §89.1 起手三连（当轮实测）
+
+| 项 | 值 |
+| --- | --- |
+| 磁盘 | **7.6G 可用（84%）** —— 起手即低于 12G 阈值（禁抄上一轮 next-cycle 行） |
+| base | `eda0685d`（码树 `4d8a3f32`；自 §88 未前进，§88 收尾写的就是它） |
+| open PR | **1** —— **#86**（M7-2，head `c2d29579`，base `feat/multica-rs-initial`，19 文件 `+7197/−28`） |
+| daemon | `running_task_count = 2` ⇒ 逐 PID 拆 = **cycle 自身 + `LUM-1799`**（M8-2，`cargo check` 进行中）⇒ 空位 **1** |
+
+**ⓘ 并发 cycle 检查**：同秒（`02:30:00Z`）另有 autopilot issue `LUM-1848`「lumosbase移植功能」，但 `project_id = None`、assignee `763a92a6`（zcode 线）⇒ **不在本项目、不争 `docs/37` 号段**。本轮起手**无本项目并发 cycle**。
+
+### §89.2 合并判据链（PR #86，非祖先形态 ⇒ 必须真合 base）
+
+1. **预检**：本地 `git diff --numstat $(git merge-base eda0685d c2d29579) c2d29579` == PR API `files` **逐文件逐字**（19 文件，`671/0`、`704/9`、`26/1` … 全部相等）✓
+2. **形态判定**：`git merge-base --is-ancestor eda0685d c2d29579` ⇒ **非祖先**（merge-base = `4d8a3f32`，M8-1 #85 已越过）⇒ 不得沿用旧第 7 步，走真合。
+3. **base 前进段与片写集交集**：`git diff --name-only 4d8a3f32 eda0685d` = M8-1 的 `routes/github/**` + `mc-repos/src/github/**` + `mc-vcs-github/**` + docs ⇒ 与 M7-2 的 `mc-channel/src/engine/**` + `mc-repos/src/channel/**` **零路径交集**（`grep` 实测 NONE）。
+4. **树预测 == 树实合**：`git merge-tree --write-tree eda0685d c2d29579` = `2ffe8d61691419c51837734b2f0a0a9900e94949`（单哈希，exit 0，无冲突）；rehearsal 真合后 `git rev-parse HEAD^{tree}` = **同一哈希** ✓
+5. **head CI 3/3 绿**（`c2d29579`）：`fast`（fmt/build/clippy/test/file-size）、`db`（postgres:16 + DB e2e）、`contract`（route parity + conformance）全 `success`。
+6. **API 钉 sha 合并**：`PUT /pulls/86/merge`（`sha=c2d29579…`、`merge_method=merge`）⇒ `merged: true`，新 base tip = **`d1c5b797`**（merge 提交，parents = `eda0685d` + `c2d29579`）。
+7. **落地树等式**：`git rev-parse origin/feat/multica-rs-initial^{tree}` = `2ffe8d61…` = 预检树 **且** diff 0 ✓
+
+### §89.3 合并树上的门禁：**10/10**（跨两次调用，树哈希全程未变）
+
+- 第一次 `bash scripts/gates.sh --with-db`（`CARGO_INCREMENTAL=0`）⇒ **9/10**：①②③④⑤ 绿（97s/30s/24s/37s）、⑧⑨⑩ 绿、⑦ 绿，**⑥ db 红（`migrate=0,e2e=101`）**。
+- ⑥ 的根因**不是代码**，是链接器：日志逐字 `collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped` + `error: could not compile 'mc-http' (test "comments")` ⇒ **磁盘耗尽的签名**（与 §87 登记的 `ENOSPC` 死亡同源族；`ld` 在 mmap 输出文件被截断时报 signal 7）。
+- 释放空间后单门重跑 `--only db` ⇒ **PASS（`migrate=0,e2e=0`）/ 162s**；两次调用之间 `git rev-parse HEAD^{tree}` **仍为 `2ffe8d61…`**（未改一字节）⇒ 合并树合规证据完整。
+- ⑦ 逐字不变（0 路由片）：`local 411 / baseline 406 / implemented 335 = 331 real + 4 placeholder / known_gap 121 / unclaimed 0 / regression 0 / local_only 9`；形态门 `declared 24 / 0 defect`；⑩ 0 违规；三个基线文件均未动（`--write-baseline` 未跑）。
+
+### §89.4 磁盘：本轮是**可用性问题**，且中间真的触顶
+
+- 起手 **7.6G（84%）**；两个 target 吃满盘面：`lum-1767-b50b39f5eb9b` **18G**（run 已终态的活物外壳）+ `lum-1799-d5e6f9e7d094` **8.7G**（活物）。
+- 第一步外科回收：1767 的 `target/debug/incremental`（**2.5G**；判据 = run 终态 ∧ 零 `/proc` 命中 ∧ 零 fd 命中）⇒ 9.9G 可用。
+- 第一次门禁跑到 ⑥ 时**触顶**（正是 Bus error 那一刻）。之后 **`LUM-1799` 自己删掉 target（8.7G → 0.57G）并转 `cargo build --workspace` 冷重建** —— 与 ⑥ 重跑**同刻争盘**，实测 9.3G → **2.8G（95%）**。
+- 合并 + 落地树等式完成后，按四判据（run 终态 ∧ 交付已在远端「分支 + PR #86」 ∧ `/proc` 逐 PID 零命中 ∧ `git status` 空）**整删 1767 的 `target/`** ⇒ **2.8G → 28G 可用**。**回收量权威读数 = `df` 前后差 = 25.2G**（`du` 只报 24G；满盘时 `du` 会低报，沿用旧 lesson）。
+
+### §89.5 空位 1 ⇒ 派 **M7-3（`LUM-1768`）**（stage 2 slack 入站，0 路由）
+
+派前三件事（逐条实测，不抄描述）：
+
+1. **硬前置重验**：M7-0（#82）/ M7-1（#84）/ M7-2（#86）三片全在 base —— `engine/{batcher,commands,lease,session}.rs` + `engine/{session,router,resolvers}/` 均落地 ✓
+2. **「第二类漏项」在新 base 上复测**：`crates/mc-channel/src/slack/` 仍只有 `mod.rs`，`pub mod` 声明数 = **0**，`register()` 仍是空壳（`lib.rs:74` 已有 `pub mod slack;`）⇒ 描述里「5 个新文件必须写进 `slack/mod.rs`」的结论在新 base 上**依然成立**（补一个写者 = 该文件）。
+3. **与在飞片文件交集**：本轮在飞只有 M8-2（`1799`：`mc-http/src/routes/vcs/**`、`mc-repos/src/vcs/**`、`mc-vcs/src/**`、`mc-http/tests/vcs/**`）⇒ 与 `mc-channel/src/slack/**` **零交集**。
+4. **描述 rev 2 → 3**：追加「起手补充（11:00 cycle 当轮实测）」= 当轮 base `d1c5b797` + 当轮 ⑦ 读数 + 硬前置重验结论 + 复测的漏项 + 零交集取证 + 磁盘纪律。派发 = `assign --to-id … --no-start` → `status todo` 两步。派后 daemon = **3/3**（cycle + 1799 + 1768）。
+
+### §89.6 lesson（本轮新增四条）
+
+1. **`ld terminated with signal 7 [Bus error]` 是磁盘耗尽的签名，不是代码错** —— 门 ⑥ 红先读链接器错误再决定动作；判定为环境后**只重跑那一个门**（`--only db`），并把「两次调用之间树哈希未变」写进证据，而不是把 10 个门全推倒重跑。
+2. **rehearsal 真合 + `write-tree` 等式是最便宜的落地证明**：`merge-tree --write-tree` 预测 == rehearsal `HEAD^{tree}` == 合并后 `tree(base)`，三者同哈希即可下结论；`--no-ff` 合并提交**不必推**（GitHub 侧 merge 提交树与之逐字相同）。
+3. **并发片的冷建量与「它自己删没删 target」都要现场读**：本轮 1799 的 target 从 8.7G 掉到 0.57G（它删了自建），随后又冷重建 —— 只看上一轮 `du` 会误判盘面；回收决策必须 = 当轮 `df` + daemon + `/proc`。
+4. **扫 `/proc` 的脚本别用 `set -e`**：`[ "$p" != "$$" ] && echo` 这种 AND-list 在条件为假时返回非 0，循环体里会把整个 shell 打死（本轮白跑一次扫描，改用 `if`/`case` 后正常）。
+
+### §89.7 收尾态与下一轮起点
+
+- **base = `d1c5b797`**；GH **0 open PR**；在飞 **2 片** = `LUM-1799`（M8-2，5 路由，冷重建中、9 未提交）∥ `LUM-1768`（M7-3，本轮新派）；daemon **3/3**（含 cycle 自身）。
+- ⑦/⑩ 当轮实测（base `d1c5b797`）：`local 411 / baseline 406 / implemented 335 = 331 real + 4 ph / known_gap 121 / unclaimed 0 / regression 0 / local_only 9`；`gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5`（和 = 121 ✓）。**不刷基线**（唯一一次归 M7-21 `LUM-1786` / M8-7 `LUM-1804`）。
+- **槽位一空就派**：`1799` 终 ⇒ **M8-3（`LUM-1800`，8 路由）**；`1768` 终 ⇒ **M7-4**（slack 出站/注册，写 `slack/mod.rs` 的 `register()` 补齐）。`LUM-1691`/`LUM-1793`（+12/+1 路由，争注册段 + `Cargo.lock`）、`LUM-1745`（M5-D8，争 `state.rs`）仍等。
+- 观察项第 27 轮：积压 `todo` cycle 10 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835`）只登记不动状态；`blocked` = 0。
