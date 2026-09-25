@@ -64,6 +64,9 @@ async fn an_inbox_push_without_a_renderer_is_not_delivered() {
         recipient_type: "member".to_string(),
         recipient_id: Id::new().0.to_string(),
         workspace_id: Id::new().0.to_string(),
+        // M7-19 的 D2：渲染要的标题与正文（`InboxCardRenderer` 的输入）。
+        title: "登录页 500 错误".to_string(),
+        body: "from: todo\nto: in_review".to_string(),
     };
     assert!(!outbound.handle_inbox_new(&push).await);
     let _ = installation;
@@ -81,6 +84,8 @@ async fn a_non_member_recipient_gets_nothing() {
         recipient_type: "agent".to_string(),
         recipient_id: Id::new().0.to_string(),
         workspace_id: Id::new().0.to_string(),
+        title: "hi".to_string(),
+        body: String::new(),
     };
     assert!(!outbound.handle_inbox_new(&push).await);
 }

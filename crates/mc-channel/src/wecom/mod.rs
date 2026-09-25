@@ -73,9 +73,34 @@ pub mod replier;
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;
 
-/// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
+// M7-19（`LUM-1784` / `docs/60-M7-PLAN.md` §3.3）：wecom 的**入站与解析**面 —— 本片是 wecom
+// 子波的**最后一个代码片**，也是这一波的门禁证据（端到端收发回路）的承担者。
+// 追加这 5 行是本片写集的**mod.rs 改动**（issue rev 5 的写集漏项，同一类第 15 次 ——
+// 与 M7-17 的 D12 / M7-18 的 D1 同款：新文件必须先被这里声明才进编译单元，否则连 `dead_code`
+// 都不报）。`register()` 的**填充**也是本片的（anchor 把它留成空实现给"注册工厂与渠道路由的归口片"）。
+pub mod inbox_message;
+pub mod markdown;
+pub mod resolvers;
+pub mod seal;
+pub mod wecom_channel;
+
+// 本片在 `crate::wecom::` 这一层给出的一小撮常用名。
+pub use inbox_message::{build_inbox_markdown, InboxCardRenderer};
+pub use markdown::{break_member_links, MemberLinkBreaker};
+pub use resolvers::{wecom_msg_from_raw, WeComResolverSet, ORIGIN_WECOM_CHAT};
+pub use seal::{classify_seal, fallback_budget, SealVerdict};
+pub use wecom_channel::inbound::WeComInboundMessage;
+pub use wecom_channel::{
+    register_resolvers, register_with, SenderRegistry, WeComChannel, WeComDeps, DEFAULT_WS_URL,
+    SEND_NOT_SUPPORTED, SUBSCRIBE_TIMEOUT,
+};
+
+/// 把本平台的工厂注册进 `registry`（**失败关闭**，与 slack / dingtalk 同款）。
 ///
-/// 签名里的两个实参就是 adapter 能拿到的全部外部世界：一个共享注册表 + 一个 port 袋。
-pub fn register(_registry: &Registry, _deps: &ChannelDeps) {
-    // M7 的 M7-15 … M7-20 在这里 `registry.register(ChannelKind::WeCom, factory)`。
+/// 宿主（`apps/mc-server/src/channels.rs`）只拿得到 [`ChannelDeps`] —— 那里**没有**部署密钥，
+/// 所以这条路径注册的工厂造不出任何 Channel：它每一次 `build` 都以 `channel_invalid_config`
+/// 失败，而不是假装接上了。要真接线，宿主调
+/// [`wecom_channel::register_with`] 并交进一个 [`WeComDeps`]。
+pub fn register(registry: &Registry, deps: &ChannelDeps) {
+    wecom_channel::register(registry, deps);
 }

@@ -44,10 +44,12 @@
 //! 5. **收件箱卡片的渲染是接缝**：上游 `buildInboxMarkdown` 在 `inbox_message.go`（**M7-19**）
 //!    ⇒ 本片落投递路径 + [`InboxRenderer`] 端口；没有渲染器时这条推送**不投递**
 //!    （失败关闭，见 D7）。
-//! 6. **`classifySeal` / `fallbackBudget` 落在本文件**：上游在 `seal_outcome.go`（**M7-19**）落地，
-//!    但那两个函数是**三个收尾器**共用的判据，而本片就有两个收尾器（本地回答 + 中继回答）——
-//!    拆到 M7-19 会让本片自己写第三份读法，正是上游那份文件的头注释要消灭的东西。
-//!    ⇒ 本片落 [`classify_seal`] / [`DeliveryBudget::fallback`]，M7-19 收敛（交接项 H2）。
+//! 6. **`classifySeal` / `fallbackBudget` 曾落在本文件，现已**收敛**到 `seal.rs`**：上游在
+//!    `seal_outcome.go`（**M7-19**）落地，但那两个函数是**三个收尾器**共用的判据，而本片就有
+//!    两个收尾器（本地回答 + 中继回答）—— 拆到 M7-19 会让本片自己写第三份读法，正是上游那份
+//!    文件的头注释要消灭的东西。⇒ 本片先落、**M7-19 收敛**（交接项 H2，已于 `LUM-1784` 执行）：
+//!    判据现在只有一份（[`crate::wecom::seal`]），本文件把两个名字**再导出**，好让下面三处调用点
+//!    （`outbound/pipeline.rs` / `relay/relayed.rs` / 用例）一字未改。
 //!
 //! # 凭据纪律（`docs/60` §2.3）
 //!
@@ -162,43 +164,12 @@ impl OutboundError {
 }
 
 // =====================================================================
-// 收尾的判决（上游 `seal_outcome.go`，落点见 D+H2）
+// 收尾的判决（上游 `seal_outcome.go`；**判据在 `seal.rs`**，见模块文档第 6 条）
 // =====================================================================
-
-/// 一次收尾帧的失败对它所驮的话意味着什么（上游 `sealVerdict`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SealVerdict {
-    /// 帧被接受了：话在气泡里。
-    OnScreen,
-    /// 话**可能**在屏幕上，而这里没法定。再说一遍是**唯一**回不了头的错误 —— `WeCom` 没有撤回，
-    /// 所以重复是永久的，而一个没人确认的投递可以再问一次。调用方记下它并停下。
-    ///
-    /// 这是**级联**那一格，不是例外：同一个 `req_id` 上丢一个 ack 会让此后每一帧都超时，
-    /// 所以在这份证据上退回普通消息，会**每重试一次就重复一遍回答**。
-    Unknown,
-    /// **话不在气泡里**的证明 —— 这是唯一能授权"再说一遍"的东西。
-    /// 两种证明：流已经不可用（`846605` / `846608`：这条流再也不会接受任何帧），
-    /// 以及确定没发出（失败发生在任何字节到达 socket 之前）。
-    NotOnScreen,
-}
-
-/// 上游 `classifySeal`：读一次收尾的错误。
-///
-/// 注意什么**不是**证明：一个永远没回来的 ack，以及一次自己的错误可能已经把字节留给对端的写
-/// （`SenderError::WriteAttempted` 的文档说的正是这件事）。
-///
-/// 陈旧**不是**这里的问题之一：一个回调的 `req_id` 属于那一轮而不是它到达的那把 socket，
-/// 而一条在重连之前开的流在重连之后仍然可写（对活租户实测过，见 `senders_registry.go`）。
-#[must_use]
-pub fn classify_seal(error: Option<&SenderError>) -> SealVerdict {
-    match error {
-        None => SealVerdict::OnScreen,
-        Some(error) if error.stream_unusable() || error.is_not_attempted() => {
-            SealVerdict::NotOnScreen
-        }
-        Some(_) => SealVerdict::Unknown,
-    }
-}
+//
+// 交接 H2 的收敛：M7-17 先把这两个名字落在这里，因为那时只有它有收尾器；M7-19（`LUM-1784`）
+// 把判据搬去它自己的写集 [`crate::wecom::seal`]，这里只再导出 —— 调用点因此一字未改。
+pub use crate::wecom::seal::{classify_seal, fallback_budget, SealVerdict};
 
 // =====================================================================
 // 结论
