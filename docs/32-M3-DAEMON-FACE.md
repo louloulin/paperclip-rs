@@ -3543,10 +3543,10 @@ ticker**：先 `ProcessNext`，`worked == false` 才 `select { ctx.Done / notify
 | `lark/ws_endpoint.rs` + `ws_endpoint/tests.rs` | **M7-11** | `ws_endpoint.go`(202) 的 `POST /callback/ws/endpoint` 引导 + `WSEndpoint` 与 `service_id` 解析 **∪** `connector.go`(38) 的 `EndpointFetcher` 端口 |
 | `lark/ws_connector.rs` + `ws_connector/tests.rs` + `ws_connector/tests/{harness,supervised}.rs` + `ws_connector/tungstenite.rs` | **M7-11** | `ws_connector.go`(582) 的会话与帧循环（引导 → 拨号 → ping/pong → 分片 → 解码 → emit → ACK）+ `connector.go` 的 `EventConnector`/`EventEmitter` 端口 + `gorilla` 拨号器的等价物 |
 
-**Δ 行数**：**10 个新文件**（4 个生产 + 6 个用例/端口拆分），最大 **689**（`ws_frame.rs`）≤ 门 ⑩ 的 800；
-`ws_connector.rs` 612、`ws_connector/tests.rs` 599、`tests/harness.rs` 413、`tests/supervised.rs` 443、
-`ws_endpoint.rs` 432、`ws_frame/tests.rs` 405、`ws_frame_decoder.rs` 381、`ws_endpoint/tests.rs` 365、
-`ws_frame_decoder/tests.rs` 281、`tungstenite.rs` 101。
+**Δ 行数**：**10 个新文件**（4 个生产 + 5 个用例 + 1 个端口拆分），最大 **704**（`ws_frame.rs`）≤ 门 ⑩ 的 800；
+`ws_connector/tests.rs` 643、`ws_connector.rs` 621、`tests/supervised.rs` 444、`ws_endpoint.rs` 436、
+`ws_frame/tests.rs` 427、`tests/harness.rs` 423、`ws_endpoint/tests.rs` 389、`ws_frame_decoder.rs` 379、
+`ws_frame_decoder/tests.rs` 281、`ws_connector/tungstenite.rs` 104。
 `scripts/file_size_baseline.tsv` **一行未动**（仍 10 条）。
 
 **测试账**：`cargo test -p mc-channel lark::` ⇒ **170 passed / 0 failed**（本片新增 **81** 条：
@@ -3641,7 +3641,7 @@ upstream 456 (commit f41fae6b08fb) | local 465 registered | baseline 458
 - **⑨**：`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`
   ⇒ `report matches`；`crates/mc-conformance/report.json` 在 `git status` 里**未出现**
   （lark 的 7 条 `actor=anonymous` fixture 归 **M7-14**，本片不该动一格）。
-- **⑩**：`file_size_check: limit=800 scanned=988 baseline=10 violations=0`；本片 10 个新文件最大 689。
+- **⑩**：`file_size_check: limit=800 scanned=988 baseline=10 violations=0`；本片 10 个新文件最大 704。
 
 ### 28.4 交接给后续片（M7-12 / M7-13 / M7-14 的可用面）
 
