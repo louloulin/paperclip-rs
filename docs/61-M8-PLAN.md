@@ -570,6 +570,28 @@ stage 4  M8-7
 不变式（每片自检）：`implemented + known_gap == 456`、`regressions == 0`、`unclaimed == 0`、`local_only == 9`（M8 不新增 local_only）。
 **只有 M8-1/2/3/4/6 五片会动读数**；M8-0、M8-5、M8-7（除基线）必须**逐字不变**。
 
+#### M8-7（INT）实测回填（**上表的绝对读数是计划期预测，已作废**）
+
+各片自己在**当轮**量到的读数（原始出处 = `docs/32` 对应小节的「门禁读数」，逐字）：
+
+| 时点（实测） | local | implemented | known_gap | owners.M8 | baseline | 出处 |
+|---|---:|---:|---:|---:|---:|---|
+| M8-1 后 | 411 | 335（331 real + 4 ph） | 121 | 19 | 406 | `docs/32` §12.4 |
+| M8-2 后 | 416 | 340（336 + 4） | 116 | 14 | 406 | §14.4 |
+| M8-3 后 | 424 | 348（344 + 4） | 108 | 6 | 406 | §16.4 |
+| M8-4 后 | 453 | 370（**367** + **3**） | 86 | 5 | 406 | §20.4 |
+| M8-5 后 | 453 | 370（367 + 3） | 86 | 5 | 406 | §21.4 |
+| M8-6 后（= 本片起手 base `f0326bce`） | **458** | **375（372 + 3）** | **81** | **0** | 406 | §23.4 |
+| **M8-7（INT）后** | **458** | **375（372 real + 3 ph）** | **81** | **0** | **458** | 本片（§11.2） |
+
+**预测行与实测的差异，逐条说明**：
+
+1. **`344` 这个 baseline 在 M8 起手时早已不存在**。上表的 `344` 是 M6-INT 刷基线**之前**的值；M6-INT（`LUM-1675`）已把它刷到 **406**，此后 M8 六片一律「baseline 406 不动」。⇒ 本片 `--write-baseline` 的**片前值 = 406**、片后值 = 当轮 `local` = **458**（`scripts/route_parity.py:35/74`：基线记的是当前树 live 注册集）。
+2. **`M8-0 后` 那一行（`430 / 354 / 102 / 24`）与实测不符**（实测 M8-1 起手 = `411 / 335 / 121 / 19`，差 −19 −19 +19 −5）。原因是这一行**把「M7 全波 24 条」当成 M8-0 之前就合了**，实测没有：M8-0 anchor 落地时 `local` 是 411、`owners.M7` 仍有 24。⇒ 计划期的**绝对读数**整列作废，**M8 自己的增量**不受影响。
+3. **M8 的增量逐片成立**（这才是本波要交的账）：`owners.M8` 24 →(**−5**) 19 →(**−5**) 14 →(**−8**) 6 →(**−1**) 5 →(**0**) 5 →(**−5**) **0**，与 §4.1 的「5+5+8+1+0+5 = 24 条路由」**逐条相等**（`+1` 那条 = M8-4 新增 `webhooks/github` 注册 + `pull-requests` 占位换真实现，故 `real +2 / placeholder −1`）。
+4. **`implemented` 的 real/placeholder 拆分预测正确**：M8-1 起手 4 ph → M8-4 起 **3 ph**（占位转真实现）→ 收口 372 real + 3 ph。
+5. ⚠️ **片与片之间的读数不同坐标系，不可相减**（`docs/37` §104 lesson 2）：上表 `M8-2 → M8-3` 的 local 差是 +8，而 `M8-4 → M8-5` 是 0，但 `M8-3 → M8-4` 的 local 差是 **+29**（M8-4 自己只 +1）—— 中间落了**非 M8 的** M7 片。拿「后片起手 − 前片交付」当增量会得到假数。
+
 > ⚠️ 上表 M6-INT / M7 两行是**预测**（它们的片还没落地）。M8 各片起手**必须重取当轮 base sha 与实测读数**，
 > 不许直接抄本表（`docs/37` §46 的 lesson：口径类片合入的瞬间，所有引用旧口径的表都变成过期文书）。
 
@@ -580,7 +602,18 @@ $ cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report
 totals: fixtures 365 · pass 5 · mismatch 23 · unmounted 31 · unevaluable 306
 ```
 
-按「路径落在 M8 的 25 条路由上」过滤（复算见 §10 命令 4）：**只有 1 条**。
+**M8-7（INT）实测回填**（base `f0326bce`，`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` = `report matches` ⇒ **快照零字节变化**）：
+
+```
+totals: fixtures 365 · pass 7 · mismatch 23 · unmounted 29 · unevaluable 306 · placeholder 0
+  契约等价率 0.0137 → 0.0192（7/365）· 已接入路由等价率 7/30 = 0.2333 · 离线可判定 7/59
+  by_actor: anonymous {pass 7, mismatch 23, unmounted 29} = 59 / member 293 / agent 13
+```
+
+- `unmounted 31 → 29` 与 `pass 5 → 7` 的两条**逐条归属**：`pass 5 → 6`（`487a8ce0` M4-0b → `57798b75` M7-5）是 **M7 的**（`workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty`）；`6 → 7`（→ `0f9182fe` M8-6）才是**本波的**。⇒ **本波恰好兑现上表的 1 条**，不多不少。
+- `unevaluable` 从 `487a8ce0` 起**逐字 306 未变** ⇒ 本波**没有**把任何 `unevaluable` 改写成 `pass`，也**没有**新造 `unevaluable`（本框架 4 态只对 `actor = anonymous` 的 59 条离线可判 fixture 计算，`unevaluable ≡ member ∪ agent`；复核结论见 §11.6 第 3 项）。
+
+按「路径落在 M8 的 25 条路由上」过滤（复算见 §10 命令 **5**）：**只有 1 条**，且状态是 **`pass`** ⇒ M8 的 25 条路由上**剩余 `unevaluable` = 0 条**。
 
 | fixture | 路由 | 现状 | 期望 | 由哪片转绿 |
 |---|---|---|---|---|
@@ -893,8 +926,165 @@ bash scripts/gates.sh --with-db
 
 ---
 
-## 11. M8-INT 落地记录（占位，由 M8-7 填写）
+## 11. M8-INT 落地记录（`LUM-1804` / M8-7；**0 路由、0 代码改动**）
 
-（待 M8 波次收口后由 `M8-7` 填写：⑦/⑨/⑩ 快照刷新读数、baseline 344→454 的实测、
-本波实际未落地的项（至少含 §9.2 的附件面 9 条尾账与 R-M8-9 的 3 处 enqueue 接线）、
-以及 M8 面剩余 `unevaluable` fixture 的复核结论。）
+**状态**：已落地。`docs/32` 的 `## 26.` 是同一次的 `docs/32` 面记录。
+
+### 11.1 元信息（逐字）
+
+| 项 | 值 |
+|---|---|
+| 片 | `LUM-1804`（M8-7 / INT），父 `LUM-1796`（M8 anchor），stage 4 |
+| 起手 = 落地 base | **`f0326bce`**（`merge(m8): PR #99 —— M8-6 composio`，`git rev-parse HEAD` 实测；`git ls-remote` 当轮同值） |
+| 硬前置 | ⑦ 起手实测 `gaps by owner` 里 **`M8` 键已消失**（`M9=33 M3+=16 M7=16 M3=11 M10=5`）⇒ `owners.M8 = 0`，M8-0…M8-6 全合 |
+| 路由 | **0**（不新增、不删除、不改任何注册键） |
+| 代码改动 | **0**（`git status --porcelain` 全程只有写集里那一个基线文件） |
+| 写集（实际落地） | `docs/fixtures/route-parity-baseline.json`（**改了**：406 → 458）、`docs/61-M8-PLAN.md`（§6.1/§6.2 回填 + 本节）、`docs/32-M3-DAEMON-FACE.md`（`## 26.`） |
+| 写集里**零字节变化**的两项 | `crates/mc-conformance/report.json`（⑨ 重跑 = `report matches` ⇒ 不写）、`scripts/file_size_baseline.tsv`（`--write-baseline` 实测 `added/removed/updated` 全 `(none)` ⇒ 不写） |
+| 同飞裁定 | 与在飞 `LUM-1774`（M7-9）**可同飞**：它的 21 个改动路径里 `Cargo.lock`/`Cargo.toml` = 0 项、三个基线文件 = 0 项，且 `docs/**` = 0 项 ⇒ 与本片写集**交集 ∅** |
+
+### 11.2 ⑦ 快照刷新（`--write-baseline` 406 → 458，实测）
+
+```
+$ python3 scripts/route_parity.py                     # 片前（起手复验）
+upstream 456 (commit f41fae6b08fb) | local 458 registered | baseline 406
+  implemented  372 real +   3 placeholder =  375 / 456   known_gap   81   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5          <-- M8 键不存在
+
+$ python3 scripts/route_parity.py --write-baseline    # 本波唯一一次基线刷新
+⇒ docs/fixtures/route-parity-baseline.json  406 → 458（`git diff --stat` = 1 file, 52 insertions(+)，0 deletions）
+
+$ python3 scripts/route_parity.py --quiet             # 片后（门 ⑦ 绿）
+upstream 456 | local 458 registered | baseline 458
+  implemented  372 real +   3 placeholder =  375 | known_gap   81 | unclaimed    0 | regression   0 | local_only    9
+OK: every upstream route is either implemented or owned            (exit 0)
+$ python3 scripts/slash_alias_audit.py --quiet                    (exit 0)
+```
+
+不变式逐条成立：`implemented + known_gap == 456`（375 + 81 ✓）、`regression 0` ✓、`unclaimed 0` ✓、`local_only 9` ✓（M8 不新增 local_only）。
+**除 `baseline` 外逐字不变**（与 §6.1「M8-7 除基线必须逐字不变」一致）。
+
+### 11.3 ⑩ 快照刷新（**no-op**，实测）
+
+```
+$ python3 scripts/file_size_check.py                  ⇒ OK: 0 violation(s)   (exit 0)
+$ python3 scripts/file_size_check.py --write-baseline
+  baseline written: … (10 entry/entries, limit 800) · added: (none) · removed: (none) · updated: (none)
+  ⇒ 文件**逐字节未变**（diff 空）
+```
+
+M8 的六个代码片都按门 ⑩ 拆过文件（`docs/32` §12.4/§16.4/§20.4/§21.4/§23.4 各有一处），但没有一个把文件**推到** 800 行以上 ⇒ 白名单**不需要新增条目**；「只减不增」在本轮体现为**不减**。
+
+### 11.4 ⑨ 快照刷新（重跑一致 ⇒ 零字节变化）
+
+```
+$ cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
+report matches crates/mc-conformance/report.json                        (exit 0)
+```
+
+读数与逐条归属见 §6.2 的「M8-7 实测回填」。要点：**本波只兑现 1 条 `unmounted → pass`**（composio），`pass 5 → 7` 的另一条归 M7-5，`unevaluable` 306 逐字未变。
+
+### 11.5 门禁读数（10/10，两轮；首轮两条红 = 已知 flake）
+
+**第一轮**（当轮**新建库** `multica_lum1804` + `ALTER ROLE … CREATEDB`，`bash scripts/gates.sh --with-db`，537s）：**8/10**
+
+```
+①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0
+⑤test 101   ← crates/mc-composio/src/state.rs:390  tampered_signature_is_rejected_bit_for_bit
+                （left: Err(Malformed) / right: Err(Tampered)）
+⑥db   1     ← (migrate=0, e2e=101) crates/mc-scheduler/tests/jobs_issue_wakeup.rs:312
+                real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops
+                （left: Running / right: Success）
+```
+
+**第二轮**（**再新建**库 + 同一条命令，209s）：**10/10 PASS**
+
+```
+①fmt 0(2s) · ②build 0(1s) · ③clippy 0(0s) · ④clippy-test-util 0(0s) · ⑤test 0(55s)
+⑥db 0(113s；migrate=0, e2e=0) · ⑧schema-drift 0(32s) · ⑦route-parity 0(0s) · ⑨conformance 0(6s) · ⑩file-size 0(0s)
+⇒ overall: PASS — 10/10 gate(s) green in 209s
+```
+
+⇒ 首轮那两条红**都不是代码问题**，是**已知 flake**（机理、复现率、修法见 §11.6 第 4 项）。纪律沿用本波的既有约定：**门 ⑥ 每轮开一个当轮新建的库**（本片两轮各建一次），红了先按「已知噪声」处置并**在文档里登记**，不许静默重试。
+日志留档在 run workdir：`gates-m8-7.log`（第一轮）、`gates-m8-7-run2.log`（第二轮）。
+
+### 11.6 缺口登记（4 项，逐条 `file:line` / issue 号）
+
+#### 1. 附件面 **9 条**（`§9.2` 的 W8 尾账）—— 建议单独立项，**不塞进 M8 切片**
+
+归属维持 `M3+`（**不改 owner 单元格** ⇒ ⑦ 读数不变）。9 条逐字 = `docs/fixtures/upstream-routes.tsv` 里 `owner=M3+` 且命中 §9.2 那五条正则的行，`router.go` 行号逐字：
+
+| # | METHOD | PATH | `router.go` 行 |
+|---|---|---|---:|
+| 1 | GET | `/uploads/*` | 1435 |
+| 2 | GET | `/api/avatars/{sig}/*` | 1456 |
+| 3 | GET | `/api/attachments/{id}/signed-download` | 1447 |
+| 4 | POST | `/api/upload-file` | 1633 |
+| 5 | GET | `/api/attachments/{id}/download` | 1655 |
+| 6 | GET | `/api/issues/{id}/attachments` | 2001 |
+| 7 | GET | `/api/attachments/{id}` | 2149 |
+| 8 | GET | `/api/attachments/{id}/content` | 2155 |
+| 9 | **DELETE** | **`/api/attachments/{id}`** | **2156** |
+
+文档与 fixture 的不一致逐字：`docs/15-M3-PLAN.md:578-582`（§9.4 的表）把 **5 + 3 = 8 条**判给「W8 / M8（制品与存储）」，而 fixture 的 owner 单元格是显式规则 `^/api/attachments → M3+` 等五条。**第 9 条 `DELETE /api/attachments/{id}`（`router.go:2156`）两节都漏列**。
+⇒ 处理：**不改 owner**（改它会把 `owners.M8` 24→33、`M3+` 16→7，违反本波「读数逐字不变」），附件面登记为 **W8 尾账**、`mc-attachment` 本波不建（§9.2 / §9.5）。
+
+#### 2. R-M8-9 的 enqueue 接线 —— 复核后是「3 个生产点 + 1 个**未登记**的第 4 点」
+
+写侧生产者**不存在**：`crates/mc-repos/src/task/overlay.rs:35` 仍是 `todo!("M8 尾账（R-M8-9）：独立 UPDATE runtime_mcp_overlay（docs/61 §3.2）")`，且全仓 `grep -rn attach_runtime_mcp_overlay` 除该文件自身外**0 个调用者**。
+
+3 处 enqueue INSERT（行号 = 本 base 实测逐字）：
+
+| # | `file:line` | 函数 |
+|---|---|---|
+| 1 | `crates/mc-repos/src/task/store.rs:216` | `TaskRepo::create_task`（通用 `INSERT INTO agent_task_queue AS atq`） |
+| 2 | `crates/mc-repos/src/chat_task/send.rs:136` | `CreateChatTask` |
+| 3 | `crates/mc-repos/src/autopilot/run.rs:575` | autopilot `create_task` |
+
+⚠️ **路径更正**：`docs/32` §23.5 把第 3 条写成 `mc-autopilot/src/autopilot/run.rs:575` —— 该路径**不存在**（`crates/mc-autopilot/src/` 下没有 `autopilot/run.rs`）；正确路径是 `crates/mc-repos/src/autopilot/run.rs:575`（本片已按实测复核）。
+
+**新增复核发现（第 4 点）**：全仓**非测试**的 `INSERT INTO agent_task_queue` 实测有 **5 处**，除上表 3 处外还有：
+
+| # | `file:line` | 函数 | 判定 |
+|---|---|---|---|
+| 4 | `crates/mc-repos/src/task/queries.rs:465` | `create_quick_create_retry` | **不是缺口**：它已显式 `SELECT … p.runtime_mcp_overlay` 搬运源行的 overlay（**传播**点） |
+| 5 | `crates/mc-repos/src/task/queries.rs:612` | `enqueue_rerun_task` | **缺口**：列清单里**没有** `runtime_mcp_overlay` ⇒ 即便把上表 3 个生产者接上，**rerun 出来的 task 仍恒 `NULL`**。这一条**未出现在 M8 任何一片的登记里** |
+
+⇒ 结论：**`runtime_mcp_overlay` 在本波后仍然恒 `NULL`** —— 这是**登记过的缺口，不是遗漏**（`docs/32` §9.10 / §23.5 与 `crates/mc-repos/src/task/overlay.rs` 的文件头三处同口径）。尾账清单 = 上表 3 个生产者 + 第 5 点的 omission。
+
+#### 3. M8 面剩余 `unevaluable` fixture 的复核结论：**0 条**
+
+- 按「路径落在 M8 的 25 条路由上」过滤（§10 命令 5）：**1 条**，四态里只有 `pass` ⇒ 剩余 `unevaluable`、`mismatch`、`unmounted` **都是 0**。
+- 但**语义属 M8、路径归属他片**的 fixture 有 **24 条**，且**全部** `unevaluable`：`issues` 域 16 条（`github_test.go` 的 webhook / PR 自动关联与关闭用例 —— 抽取出的**路由**是 `POST /api/issues`，那是上游测试**布置现场**用的路径，不是被测路由）+ `agents` 域 8 条（`mcp_config` 与 composio allowlist → `PUT|GET /api/agents/{id}`）。逐条见 `crates/mc-conformance/report.json`。
+- 它们 `unevaluable` 是**结构性**的，不是 M8 的欠账：本框架的四态只对 `actor = anonymous` 的 **59** 条离线可判 fixture 计算（`by_actor` 实测 = anonymous 59 / member 293 / agent 13，`unevaluable` **恒等于** `member ∪ agent`）。而 M8 的 25 条路由里 **24 条落在 workspace member / admin 授权层**（§1.1 的六簇表）⇒ 天然落在这 306 条外侧。
+- **本波没有把任何 `unevaluable` 改写成 `pass`，也没有新增 `unevaluable`**（`unevaluable` 从 `487a8ce0` 起逐字 306）。
+
+#### 4. 两条**已复现的测试侧 flake**（不是产品缺陷；本片 0 代码改动 ⇒ **只登记**）
+
+**(a) `crates/mc-composio/src/state.rs:390` `tampered_signature_is_rejected_bit_for_bit`**（M8-6 交付的用例）
+
+- 症状：`assertion left: Err(Malformed) right: Err(Tampered)`。
+- 复现率：**3/60 ≈ 5%**（拿门 ⑤ 编出的测试二进制 `--exact` 连跑 60 次；同一 base、同一 tree、`git status` 空 ⇒ 与代码无关）。
+- 机理：签名是 32 字节 HMAC 的 `base64url_nopad` ⇒ **恰好 43 字符**，末字符只承载最后 **4** 个有效 bit。用例把**末字符**换成 `'A'`（`if last == 'A' { 'B' } else { 'A' }`）⇒ 当原末字符**本来就是 `'A'`** 时，换成 `'B'`（索引 1）会让末字符的低 2 bit 非零 ⇒ base64 判 `InvalidLastSymbol` ⇒ 在**进入常量时间比较之前**就返回 `Malformed`。末字符取值只能是 `{A,E,I,M,Q,U,Y,c,g,k,o,s,w,0,4,8}`（16 选 1）⇒ 期望 1/16 ≈ 6.3%，实测 5% 相符。
+- 修法（1 行，**在本片写集之外**）：改**首个**字符而不是末字符。
+
+**(b) `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:312` `real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops`**（M5-8 交付的用例，**与 M8 无关**）
+
+- 症状：`assertion left: Running right: Success`。
+- 复现率：**1/6 ≈ 17%**（每轮**新建库 + 迁移**、只跑这一条用例 ⇒ 与并发无关）。
+- 机理：该用例在「autopilot 那半边看到审计行」之后**只读一次** wakeup 的 global scope 最新 plan，而 wakeup job 的审计行是**先以 `Running` 落库、完成时才翻 `Success`** ⇒ 读到正在跑的那一瞬就红（窗口 = wakeup handler 时长，tick 50 ms）。
+- 修法：像 autopilot 那半边一样**轮询到 `Success` 或超时**，把那一句 `assert_eq!` 换成有界循环。
+
+⇒ 这两条就是 §11.5 首轮唯一的红；换新库重跑即 10/10。建议与 (a) 一起放进一个**独立的测试修复小片**（改它们必须重跑 ⑤/⑥，与「INT 只刷快照」的定位不同）。
+
+### 11.7 与 §6.1/§6.2 预测的偏差（回填索引）
+
+| 预测项 | 实测 | 结论 |
+|---|---|---|
+| `--write-baseline` **344 → 454** | **406 → 458** | 预测的**两个端点都过期**（344 早被 M6-INT 刷成 406；454 是计划期对 local 的预测）。见 §6.1 回填第 1 条 |
+| `local 454 / implemented 378（375+3）/ known_gap 78 / owners.M8 0` | `458 / 375（372+3）/ 81 / 0` | 绝对读数作废（同一原因）；`owners.M8 → 0` 与 `implemented` 的 real/placeholder 拆分**预测正确** |
+| M8 增量 5+5+8+1+0+5 = 24 条路由 | `owners.M8` 24 → 19 → 14 → 6 → 5 → 5 → **0** | **逐条成立** |
+| ⑨ 承诺 1 条 `unmounted → pass` | 1 条 `pass`（composio）；`unmounted 31 → 29`、`pass 5 → 7` | 兑现（差额那条归 M7-5，不记在 M8 账上） |
+| ⑩「只减不增」 | 10 条白名单**逐字节不变** | 成立（no-op） |
+
+> 纪律重申（`docs/37` §104 lesson 2）：**片与片之间的读数不同坐标系，不可相减**。本节所有「增量」都取自**同一片自己的当轮日志**。
