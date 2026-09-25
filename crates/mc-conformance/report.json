@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 7,
+    "pass": 14,
     "mismatch": 23,
-    "unmounted": 29,
+    "unmounted": 22,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -18,8 +18,8 @@
       },
       "anonymous": {
         "mismatch": 23,
-        "pass": 7,
-        "unmounted": 29
+        "pass": 14,
+        "unmounted": 22
       },
       "member": {
         "unevaluable": 293
@@ -28,9 +28,9 @@
     "by_via": {
       "handler": {
         "mismatch": 23,
-        "pass": 1,
+        "pass": 8,
         "unevaluable": 280,
-        "unmounted": 27
+        "unmounted": 20
       },
       "router": {
         "pass": 6,
@@ -41,17 +41,17 @@
     "tiers": {
       "stateless": {
         "mismatch": 23,
-        "pass": 7,
+        "pass": 14,
         "unevaluable": 306,
-        "unmounted": 29
+        "unmounted": 22
       }
     }
   },
-  "contract_equivalence_rate": 0.019178082191780823,
-  "mounted_equivalence_rate": 0.23333333333333334,
+  "contract_equivalence_rate": 0.038356164383561646,
+  "mounted_equivalence_rate": 0.3783783783783784,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 7
+    "pass": 14
   },
   "fixtures": [
     {
@@ -4543,12 +4543,12 @@
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/lark_test.go:38",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 403"
+      "detail": "status matched"
     },
     {
       "id": "me/TestProtectedRoutesRequireAuth@server/cmd/server/integration_test.go:433#1",
@@ -5343,12 +5343,12 @@
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/lark_test.go:54",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 403; query: agent_id=y"
+      "detail": "status matched; query: agent_id=y"
     },
     {
       "id": "workspaces/TestCreateRuntimeProfile_ForcesWorkspaceVisibility@server/internal/handler/runtime_profile_handler_test.go:359#26",
@@ -5567,12 +5567,12 @@
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/lark_test.go:64",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 403"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestListLarkInstallations_NotConfiguredReturnsEmpty@server/internal/handler/lark_test.go:78#21",
@@ -5583,12 +5583,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/lark_test.go:78",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestListLarkInstallations_NotConfigured_HardCodedInstallSupportedFalse@server/internal/handler/lark_test.go:147#23",
@@ -5599,12 +5599,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/lark_test.go:147",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestListLarkInstallations_StubClientReportsInstallNotSupported@server/internal/handler/lark_test.go:115#22",
@@ -5615,12 +5615,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/lark_test.go:115",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestListTelegramInstallationsNotConfiguredReturnsEmpty@server/internal/handler/telegram_test.go:21#27",
@@ -5695,12 +5695,12 @@
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/lark_test.go:28",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 403"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestUpdateMemberRejectsMalformedMemberID@server/internal/handler/handler_test.go:1725#13",
