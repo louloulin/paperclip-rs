@@ -1,0 +1,46 @@
+[package]
+name = "mc-composio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M8 anchor scaffold 占位 — composio SDK 客户端 / 服务 / state HMAC / toolkit 目录 / per-task overlay 构建"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M8-0 anchor（`LUM-1797` / `docs/61-M8-PLAN.md` §2.2 判据 1 的第二半 / §5）：依赖边
+# **一次接好**，此后 M8-6 的写者**不得**再新增三方依赖。全部是 workspace 既有依赖
+# ⇒ 只多一个成员 crate，**零新外部包**。
+#
+# 依赖方向（无环）：`mc-composio` → `mc-core` / `mc-errors` / `mc-repos` / `mc-telemetry`
+# （+ `reqwest` / `hmac` / `sha2` / `base64` / `url`）。
+#
+# ⚠️ composio 是**独立 crate**（不是塞进 `mc-http`）：它的服务同时被 ① 5 条 HTTP 路由、
+# ② task 派发服务（算 per-task MCP overlay）使用；塞进 `mc-http` 会让依赖方向反向
+# （派发层不该依赖 HTTP 层）。
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+# state HMAC（`COMPOSIO_STATE_SECRET` 签的 callback state）。
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-errors = { path = "../mc-errors" }
+mc-repos = { path = "../mc-repos" }
+mc-telemetry = { path = "../mc-telemetry" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

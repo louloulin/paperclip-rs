@@ -88,6 +88,11 @@ base64 = "0.22"
 hex = "0.4"
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+# M8-0 anchor（LUM-1797 / docs/61-M8-PLAN.md §2.4 R-M8-8）：GitHub App JWT 要 RS256
+# （PKCS#1 v1.5）。本仓**没有** `jsonwebtoken`，但 `ring 0.17.14` 与 `rsa 0.9.10` 都
+# **已在** `Cargo.lock` 里（传递依赖）⇒ 只新增这一条**直连边**，**零新外部包**。
+# 选 `ring`（`RSA_PKCS1_SHA256` 更贴近上游 `golang-jwt` 的 PKCS#1 v1.5）。
+ring = "0.17"
 
 # Object storage / Secrets Manager —— optional，由 mc-storage/`s3`、mc-secrets/`aws` 打开。
 # 注意：`optional` 不能写在 [workspace.dependencies] 里（cargo 报

@@ -7,8 +7,9 @@
 //! 4. 运行迁移（可选；`MULTICA_DB_RUN_MIGRATIONS` 控制）
 //! 5. 装配 axum 路由（mc-http）
 //! 6. 启动渠道长连接宿主（mc-channel：五个 IM 平台的出站长连接，缺部署密钥则不装配）
-//! 7. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
-//! 8. 监听 / graceful shutdown（先停渠道连接，再停调度器，最后停 actor）
+//! 7. 启动代码与制品面后台宿主（mc-vcs-github：GitHub PR 快照刷新；缺 App 凭据则不装配）
+//! 8. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
+//! 9. 监听 / graceful shutdown（先停渠道连接，再停 PR 刷新，再停调度器，最后停 actor）
 
 use std::sync::Arc;
 
@@ -24,6 +25,9 @@ use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 
 mod channels;
+// M8 anchor（LUM-1797 / docs/61-M8-PLAN.md §2.6）：代码与制品面的后台宿主位
+// （ghsnapshot 的 PR 刷新 worker）。与 `channels` / `scheduler` 同造型。
+mod integrations;
 mod scheduler;
 
 #[tokio::main]
@@ -156,6 +160,8 @@ async fn main() -> anyhow::Result<()> {
     // 渠道密钥在这里 clone 一份：下面 `with_state(state)` 会把 `Arc<AppState>` **移进** router，
     // 而第 7 步的渠道宿主仍要读它（`ChannelKeys` 是 `Clone`，内部就是五个 `SecretBox`）。
     let channel_keys = state.channel_keys.clone();
+    // M8 anchor（`LUM-1797`）：GitHub App 的部署密钥也 clone 一份（同一理由）。
+    let github_keys = state.github_keys.clone();
     let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
 
@@ -174,7 +180,20 @@ async fn main() -> anyhow::Result<()> {
         "channel host started"
     );
 
-    // 8. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
+    // 8. 启动代码与制品面的后台宿主（M8 anchor / `LUM-1797`）：GitHub PR 快照刷新的
+    //    worker 池 + TTL sweeper（`mc_vcs_github::ghsnapshot::Manager`）。判据 = **App 凭据
+    //    存在**（缺则整体不装配），装配与停机都在 `integrations.rs`。
+    //    ⚠️ 锚点期 `Manager::start` 仍是 `todo!()`（实现归 M8-5）⇒ 即使配了凭据也**只 warn
+    //    不起 worker**，绝不假装刷新已接上；接线后这里换成真调用，签名不变。
+    let integration_handles = integrations::start(&github_keys);
+    tracing::info!(
+        app_configured = integration_handles.is_app_configured(),
+        wired = integration_handles.is_wired(),
+        pr_refresh = integration_handles.pr_refresh().is_some(),
+        "integration host started"
+    );
+
+    // 9. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
     //    所以「进程起来了但调度器没接」这种静默失效在这里被消灭。失败即启动失败（`register_all`
     //    的错误只可能是规格错误，属于开发者错误，不该带病起服务）。
     //    wakeup 派发的第 7 步要广播 `task.queued` / `task.available`，所以取 `AppState` 里那一个
@@ -201,10 +220,12 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("axum serve")?;
 
-    // 停机顺序固定（`docs/60` §2.4 / R-M7-7）：**先停渠道连接**（挂着不退的长连接会让
-    // graceful shutdown 永远等在那里），**再停调度器**（让在跑的 handler 收尾 —— handle
-    // 内部会等当前 tick 结束），**最后停 actor 池**。
+    // 停机顺序固定（`docs/60` §2.4 / R-M7-7 + `docs/61` §2.6）：**先停渠道连接**（挂着不退
+    // 的长连接会让 graceful shutdown 永远等在那里），**再停 PR 刷新**（在飞的 GraphQL 请求
+    // 先收尾），**再停调度器**（让在跑的 handler 收尾 —— handle 内部会等当前 tick 结束），
+    // **最后停 actor 池**。
     channel_handles.shutdown().await;
+    integration_handles.shutdown().await;
     scheduler_handle.shutdown().await;
     actors.shutdown().context("shutdown actors")?;
     tracing::info!("shutdown complete");

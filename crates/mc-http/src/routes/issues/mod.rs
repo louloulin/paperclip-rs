@@ -190,7 +190,10 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/api/issues/:id/timeline", get(not_implemented))
         .route("/api/issues/:id/attachments", get(not_implemented))
-        .route("/api/issues/:id/pull-requests", get(not_implemented))
+        // M8 anchor（LUM-1797）：`/api/issues/:id/pull-requests` 的 501 占位已**原地搬运**
+        // 到 `crate::routes::github::issue_pr`（handler 名仍是 `not_implemented`）——
+        // 注册键与占位计数**逐字不变**，只是归属从 issue 子路由换到 github 聚合 router。
+        // 这样 M8-4 把占位换成真实现时不再改本文件（docs/61 §3.1）。
         .route(
             "/api/issues/:id/labels",
             get(super::labels::list_issue_labels).post(super::labels::attach_label),

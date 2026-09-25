@@ -10,6 +10,11 @@ use mc_secrets::{SecretBox, Secrets};
 use mc_storage::Storage;
 use serde::Serialize;
 
+// M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §6.3 的 R-M8-7）：github / vcs /
+// composio 三组部署密钥的**读取口**拆到独立文件（`state.rs` 已被两个 anchor 追加过，
+// M7-0 落地后 640 行 > 620 的预设阈值 ⇒ 不再往本文件堆 env 解析）。
+pub mod integrations;
+
 /// 配置快照 —— M3 anchor scaffold（LUM-1406 / docs/15 §7.2 第 6 项）点名的**共享锚点**之一。
 ///
 /// 规则（scaffold 冻结）：新增字段时**只改本文件两处** —— 本 struct 与下面手写的
@@ -419,6 +424,23 @@ pub struct AppState {
     /// 消费方：`apps/mc-server/src/channels.rs` 的装配判据（缺密钥 ⇒ 该平台整体不装配，
     /// `docs/60` §2.6 第 3 条）。详见 [`ChannelKeys`]。
     pub channel_keys: ChannelKeys,
+    /// GitHub App 的四类部署密钥 / 标识（M8 anchor / `LUM-1797`）。
+    ///
+    /// 缺省 = 全部 `None`（**不** panic、**不**用零值兑底）。“能连接”与“能浏览仓库”是
+    /// **两个**独立判据（[`integrations::GithubKeys::is_connectable`] /
+    /// [`integrations::GithubKeys::is_app_configured`]）⇒ 未配置语义**逐端点不同**
+    /// （`docs/61` §2.5）。
+    pub github_keys: integrations::GithubKeys,
+    /// VCS 面的部署密钥与产品边界开关（M8 anchor / `LUM-1797`）。
+    ///
+    /// `MULTICA_VCS_SECRET_KEY` 解出的封装盒是每连接 PAT / webhook secret 的**唯一**加密器
+    /// （`mc_secrets::secretbox`，**M7-0 建、M8 只读**）；缺密钥 ⇒ connect **绝不**落明文。
+    pub vcs_keys: integrations::VcsKeys,
+    /// composio 的三类部署配置（M8 anchor / `LUM-1797`）。
+    ///
+    /// 第四个条件是 feature flag（`mc-feature-flags`）；四者缺一 ⇒ 4 条会话路由 503
+    /// （`docs/61` §2.5 的 composio 行）。
+    pub composio_keys: integrations::ComposioKeys,
 }
 
 impl AppState {
@@ -447,6 +469,9 @@ impl AppState {
             plugin_key: PluginSecretKey::from_env(),
             plugin_surface_origin: plugin_surface_origin_from_env(),
             channel_keys: ChannelKeys::from_env(),
+            github_keys: integrations::GithubKeys::from_env(),
+            vcs_keys: integrations::VcsKeys::from_env(),
+            composio_keys: integrations::ComposioKeys::from_env(),
         }
     }
 }

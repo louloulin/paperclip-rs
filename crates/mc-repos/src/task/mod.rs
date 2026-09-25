@@ -58,6 +58,12 @@ use mc_core::Id;
 use mc_db::Db;
 
 pub(crate) mod builder;
+// M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.3）：per-task MCP overlay 的**写入原语**。
+// 走**独立** `UPDATE`（不改 `NewTask` 字面量，否则会连锁改所有调用点，R-M8-9）；
+// 本文件由 M8-0 建桩（签名 + `todo!()`），实现归 M8-INT 之后的尾账。
+// ⚠️ 上游 `service/task.go` 那样的**中心 enqueue 函数**在本仓没有对应物 ⇒ 「3 处 enqueue
+// 接线」**不在本波写集内**，由 M8-7 登记为明确尾账。
+pub mod overlay;
 pub(crate) mod queries;
 pub(crate) mod row;
 pub(crate) mod store;

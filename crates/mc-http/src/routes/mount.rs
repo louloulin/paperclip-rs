@@ -92,6 +92,11 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // ⚠️ 五个平台文件 anchor 期都是空 `Router::new()` ⇒ 本行**不加任何注册键**
         // （⑦ 读数与基线逐字不变，`docs/60` §6.1 的 M7-0 行）。
         .merge(mount_slice_channel())
+        // ----- M8 切片占位（anchor scaffold 已接好，切片只需填自己的 router） -----
+        // ⚠️ 四个子 router anchor 期：三个空（vcs/mcp/composio）+ github 里只有一条
+        // **搬运**过来的 501 占位（`/api/issues/:id/pull-requests`）⇒ 合并后**注册键集合
+        // 逐字不变**（`docs/61` §6.1 的 M8-0 行：`local 406` 不动，这是第二个不刷 ⑦ 基线的 anchor）。
+        .merge(mount_slice_code_artifacts())
 }
 
 /// workspace + member + me 切片。
@@ -372,4 +377,40 @@ fn mount_slice_v1() -> Router<Arc<AppState>> {
 /// 五个写者**都不改本文件**。anchor 期五个子 router 全空 ⇒ 零注册键。
 fn mount_slice_channel() -> Router<Arc<AppState>> {
     super::channels::router()
+}
+
+// ---------------------------------------------------------------------------
+// M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.1 / §5）
+// ---------------------------------------------------------------------------
+//
+// **四个**面（github 7 条 / vcs 5 条 / mcp 8 条 / composio 5 条 = 25 条）一次性接好，
+// M8-1..M8-6 六个实现切片各自只实作自己的子文件，**都不再改本文件**（与 M4-0 / M5-0 /
+// M6-0 / M7-0 同一手法）。
+//
+// ⚠️ 本函数是把**四个独立子系统**放在一个挂载点上（与 M7 的渠道面同形）：四个聚合
+// `mod.rs` 各自合并自己的子文件，所以任一子文件的写者都不改本文件。
+//
+// ⚠️ 合并后**注册键集合逐字不变**的原因：vcs / mcp / composio 的子 router 全是空
+// `Router::new()`；github 侧只有 `issue_pr::router()` 一条 —— 而它是从
+// `issues::router()` **原地搬运**过来的 501 占位（handler 名仍是 `not_implemented`）。
+// ⇒ ⑦ 的 `local` 与 `implemented_placeholder` 都不变（`docs/61` §6.1 的 M8-0 行）。
+//
+// ⚠️ 三条接线纪律（与 M5-0 / M6-0 / M7-0 同款）：
+// 1. 同 path+method 重复注册 ⇒ axum 在**启动时 panic**（docs/15 §9.6.6）；
+// 2. M8 的 25 条**只按上游字面量注册那一形态**（`dual-form required: 0`，docs/61 §1.4）：
+//    补尾斜杠形态 = `EXTRA_ALIAS` 缺陷；漏字面量 = `MISSING_EXACT`（两类都是硬失败，
+//    M8 **没有** allowlist 退路）；
+// 3. 路径参数写 `:name`（matchit 0.7 把 `{{name}}` 当字面量：编译通过但恒 404）。
+
+/// 代码与制品面切片：`github`（M8-1 + M8-4）/ `vcs`（M8-2）/ `mcp`（M8-3）/
+/// `composio`（M8-6）。
+///
+/// anchor 期四个聚合 router 合并后**不加任何新注册键**：vcs/mcp/composio 空，github 里
+/// 只有搬运过来的 `pull-requests` 占位。
+fn mount_slice_code_artifacts() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::github::router())
+        .merge(super::vcs::router())
+        .merge(super::mcp::router())
+        .merge(super::composio::router())
 }

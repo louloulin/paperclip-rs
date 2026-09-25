@@ -98,6 +98,25 @@ pub mod properties;
 //    或按表里的位置注册（docs/60 §1.6）。
 pub mod channels;
 
+// M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.1 / §5）：**四个**面一次性声明，
+// 让 M8-1..M8-6 六个切片不再同时编辑本文件。四个都是**目录切片**（各自的 `mod.rs` 自己
+// 聚合子 router，子文件 anchor 期为空或只有一条占位搬运）：
+// - `github`（7 条路由：M8-1 的 5 条 + M8-4 的 webhook 与 `issue_pr`）；
+// - `vcs`（5 条：M8-2）；`mcp`（8 条：M8-3）；`composio`（5 条：M8-6）。
+// `mount.rs` 已接好 `mount_slice_code_artifacts()`。
+//
+// ⚠️ 本 anchor 的 **1 条占位搬运**：`GET /api/issues/:id/pull-requests` 从
+// `routes/issues/mod.rs` 搬到 `routes/github/issue_pr.rs`（handler 名仍是 `not_implemented`）
+// ⇒ **注册键集合逐字不变**、`implemented_placeholder` 计数不变（这是 M8-0 不刷 ⑦ 基线的机制，
+// `docs/61` §9.7 第 2 条）。
+// 形态纪律（docs/61 §1.4 实测 `dual-form required: 0`）：M8 的 25 条**只按上游字面量注册
+// 那一形态** —— 补尾斜杠 = `EXTRA_ALIAS` 缺陷，漏字面量 = `MISSING_EXACT` —— 本波**没有**
+// allowlist 退路。路径参数必须写 `:name`（matchit 0.7 把 `{name}` 当字面量 ⇒ 编译通过且恒 404）。
+pub mod composio;
+pub mod github;
+pub mod mcp;
+pub mod vcs;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

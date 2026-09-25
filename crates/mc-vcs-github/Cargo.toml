@@ -1,0 +1,46 @@
+[package]
+name = "mc-vcs-github"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M8 anchor scaffold 占位 — GitHub App（RS256 App JWT / installation token 缓存 / REST / webhook / PR 镜像 / ghsnapshot 管道）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M8-0 anchor（`LUM-1797` / `docs/61-M8-PLAN.md` §2.2 / §2.4 / §5）：依赖边**一次接好**，
+# 此后 M8-1/4/5 的写者**不得**再新增三方依赖。全部是 workspace 既有依赖；**唯一新增的
+# 外部直连边是 `ring`**（R-M8-8，见下），它本来就在 `Cargo.lock` 里（传递依赖）⇒ 零新包。
+#
+# 依赖方向（无环，见 `docs/61` §2.2）：`mc-vcs-github` → `mc-core` / `mc-errors` /
+# `mc-repos` / `mc-telemetry`（+ `reqwest` / `hmac` / `sha2` / `hex` / `base64` / `ring`）。
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true }
+http = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+# R-M8-8：GitHub App JWT 要 RS256（PKCS#1 v1.5）。本仓**没有** `jsonwebtoken`，但
+# `ring 0.17.14` 与 `rsa 0.9.10` 都已在 `Cargo.lock` 里（传递依赖）⇒ anchor 一次性选定
+# **`ring`**（`RSA_PKCS1_SHA256` 更贴近上游 `golang-jwt` 的 PKCS#1 v1.5），**不新增外部包**，
+# 只加一条直连边。选择理由与实测（签发→验证往返）落 `docs/32` §9.12。
+ring = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-errors = { path = "../mc-errors" }
+mc-repos = { path = "../mc-repos" }
+mc-telemetry = { path = "../mc-telemetry" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
