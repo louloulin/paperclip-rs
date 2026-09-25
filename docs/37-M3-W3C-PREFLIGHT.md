@@ -9293,4 +9293,6 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5          （和 = 86 ✓
 - **两片 INT 不得同轮**跑 `--write-baseline`（同一份 `docs/fixtures/route-parity-baseline.json`）：`LUM-1786`（M7-21）等 `owners.M7 → 0`，`LUM-1804`（M8-7）等 `owners.M8 → 0`。
 - **起手必验（每轮重取，不照抄本节）**：`df -h /`（连采两次，≥12G 才开 `--with-db`）/ `git ls-remote` / 认证 GH `pulls?state=open` / daemon **逐 PID + `.managed_env.json.issue_id` 核 `project_id`**；⑦ 前 `git rev-parse HEAD` 必须逐字等于当轮 base。
 
-> **勘误/补记（本 cycle 自己的提交）**：§105.7 写的 `b76b9b32` 是**合并 #97 之后的代码 base**；本 cycle 的 §105 docs 提交本身也直推 base ⇒ **下一轮起手实测 base = `a75f81a5`**（= `b76b9b32` + 本 §105，docs-only、与两片零交集）。起手一律 `git rev-parse` 实测，不照抄本行。
+> **勘误/补记（本 cycle 自己的提交）· 不含 base 具体值，故意如此**：§105.7 写的 `b76b9b32` 是**合并 #97 之后的代码 base**；本 cycle 的 §105 docs 提交本身也直推 base，**每次 docs 直推都会把 base 再前移一格** ⇒ 在文档里钉一个 base 具体值**必然自我过期**（本行初版就钉了值，随即被自己的提交作废）。
+>
+> **⇒ 纪律（替代「钉值」）**：**下一轮起手一律实测** `git rev-parse origin/feat/multica-rs-initial`，任何文档/描述里的 base 具体值都只当历史刻度、不当起手值。本节其余各项（在飞两片、递补顺序、INT 前置）不受 docs 直推影响。
