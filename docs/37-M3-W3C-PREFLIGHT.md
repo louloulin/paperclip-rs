@@ -10418,3 +10418,117 @@ upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458
 1. **「在飞工作树的读数」≠「合并后的读数」—— 预算只能写下限。** §117.6 给 `LUM-1778` 写的 `lark/mod.rs` 预算是「44 → **53**（M7-11 落完，实测 **+9** = 4 行 `pub mod` + 4 行注释 + 1 行空行）」，而 M7-11（`LUM-1776`）真落地后实测是 **56 行（+12）**。当时那个「+9」读的是**在飞工作树**，而片在合并前还会继续加注释/空行。⇒ ① 预算**只写「≥下限」**；② 「`+N` vs `M` 个 `pub mod`」的规律本轮**第 4 次**被验证（M7-11 **+12 vs 4**、M7-15 **+12 vs 7**、`wecom/mod.rs` 37→49）⇒ **永远别按 `pub mod` 条数推**。
 2. **第四类预飞检查（硬前置行 vs 只读清单）在第二轮就命中「真环」。** 单边不一致（§117.6）只需在描述里钉一条「起手先判断」；**双边环必须当场裁决归属**，否则派发顺序无解（stage 表说并行、前置列说串行、只读清单说互为前置 —— 三份声明两两冲突）。⇒ 预飞时把「硬前置行 / 只读清单 / stage 表」**三份一起**对账，冲突时以**只读清单（真实数据依赖）+ 前置列**为准。
 3. **「零回收」也是一个结论，且必须逐目录扫完才敢写。** 本轮 `df` 在轮内降了 6G，看着像泄漏；逐 workdir 扫完 16 个目录才发现有 `target/` 的只有 2 个、且都是活物 ⇒ 6G 全是两片自建。**别把「没找到」当「没做」，也别把「在飞消耗」当「该删的东西」。**
+
+## §119 02:00 cycle（`LUM-2032`，18:00Z 触发）：🔴 **磁盘打到 0 字节（起手 425M → 12 分钟内归零）**，当场逮到「磁盘耗尽 ⇒ 门 ⑨ 假红」的新形态（`cargo` 建临时 `rmeta` 失败 exit 101，不是 `ld Bus error`）；回收 **2.2G**（**首次非 `target` 回收**：`bun install` 缓存 + `npm _cacache`）；0 open PR + 空位 0 ⇒ 零派发；⑦/⑩ 在 base `76a244b6` 当场重跑 **2/2 绿（0.5s）**、⑨ 用「门输入逐 blob 恒等」主动不冷编；计划文档 `docs/60` §4.3 的 `stage 8 ∥` 当场收口
+
+### §119.1 起手三连与空位判定
+
+| 项 | 当轮实测 |
+| --- | --- |
+| `df -h /` | 起手 **425M / 100%**（49G 盘，46G 已用）→ 本轮内 **0 字节**（18:0xZ）→ 回收后 **2.0G → 2.5G → 3.6G → 5.9G**（末值与在飞片自身清理同步回升） |
+| `git ls-remote origin feat/multica-rs-initial` | **`76a244b6`**（= §118 收尾值，**未前进**） |
+| 认证 GH `pulls?state=open` | **0 条**（起手与轮内各查一次，均为 0） |
+| daemon `running_task_count` | **3** = cycle 自身（pid **32391**）∥ `LUM-1777`（pid **724**）∥ `LUM-1781`（pid **13616**） |
+
+- **空位 = 3 − 1（cycle 自身） − 2（在飞片）= 0** ⇒ 本轮**零派发**（与 §118 同）。
+- 逐 PID 拆用「先读 `/proc/<pid>/cmdline` 是不是 `pi` 再看 `cwd`」的顺序：三个 `cwd` 分别落在 `lum-2032-*` / `lum-1777-*` / `lum-1781-*`，无第四个 `pi`、无并发 cycle（**连续第 13 轮**）。
+- 看板（项目内口径，**259**）：`in_review 226 / todo 12 / in_progress 2 / backlog 19 / blocked 0`。**`in_progress 2` 与 daemon 逐 PID 拆分逐字吻合**（`LUM-1777` + `LUM-1781`；cycle 自身当时仍是 `todo`）—— §110 记的「看板 `in_progress` 失效」**连续第 3 轮未复现**。`todo 12` = 积压 cycle 11 条（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`）+ 本轮 `LUM-2032`。
+
+### §119.2 🔴 在飞两片体检 + 「磁盘耗尽 ⇒ 门 ⑨ 假红」当场取证
+
+| 片 | pid / etime | 分支 HEAD | 未提交 | target | 判活依据 |
+| --- | --- | --- | --- | --- | --- |
+| `LUM-1777`（M7-12 lark 入站回路，0 路由） | 724 / **1h23m** | `5c947922`（起手点，**0 提交**） | **11 项**（`lark/mod.rs` `M` + 10 个新路径） | **29.3G** | pid 活 + `cargo run -q -p mc-conformance …`（pid 36998）在跑 ⇒ 正在**重跑门 ⑨** |
+| `LUM-1781`（M7-16 wecom WS 帧与发送，0 路由） | 13616 / **44m** | `c08f36db`（**0 提交**） | **7 项**（`wecom/mod.rs` `M` + 6 个新路径） | **3.2G** | pid 活 + `cargo test -p mc-channel --lib wecom::` 在跑 ⇒ 自测段 |
+
+- 🔴 **`LUM-1777` 的门 ⑨ 红是「磁盘耗尽」造成的假红，不是代码红 —— 证据是门自己打出来的 errno 28**：
+
+```
+=== [⑨] gate conformance ===
+$ env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
+error: couldn't create a temp dir: No space left on device (os error 28) at path
+  "…/paperclip-rs/target/debug/deps/rmetaRazf44"
+error: could not compile `mc-conformance` (lib) due to 1 previous error
+GATE_CONFORMANCE_EXIT=101
+```
+
+  同一批门里 **④ ⑤ ⑥ ⑧ 全绿**（`⑤ test` 43s、`⑥ db` 317s `migrate=0,e2e=0`、`⑧ schema-drift` 48s）⇒ **整体 FAIL 的唯一来源就是这一条 ENOSPC**。
+- **回收后片自己纠正了**：18:04:39Z `LUM-1777` 起了 `/tmp/gate9.log`，只重跑 ⑨（`cargo run -q -p mc-conformance …`）—— 与 `gates.sh` 自己的提示（`rerun the red gate(s) with --only`）一致 ⇒ **本 cycle 的回收直接解了它的阻塞**，无需任何跨 workdir 写入（**不得**替在飞片跑门禁）。⇒ 本轮仍**不会有 PR 可合**（未提交面 11 项 + 0 提交）。
+
+### §119.3 ⑦/⑩ 当场重跑 + ⑨ 的省法论证（**第二十一次只读轮**）
+
+```
+$ bash scripts/gates.sh --only route-parity,file-size        # base 76a244b6, 0.5s
+upstream 456 | local 469 registered | baseline 458
+  implemented  383 real +   3 placeholder =  386 / 456   known_gap   70   unclaimed    0   regression   0   local_only    9
+  ⑦  route-parity   0   1s  PASS
+  ⑩  file-size      0   0s  PASS
+  overall: PASS — 2/2 gate(s) green in 1s
+```
+
+- **九个数与 §118 逐字相同**（base 自 §118 起未前进 ⇒ 预期如此，但读数只取当轮日志）。
+- `owners`（`--json` 的 `owners` 键）：`M9=33 M3+=16 M3=11 M10=5 M7=5`，**和 = 70 == `known_gap` 70** ✓。
+- ⑨ **主动不冷编**（第 5 次用「门输入逐 blob 恒等」）：`crates/mc-conformance/report.json` blob **`fa53d084`** / `docs/fixtures` tree **`5e44cecd`** / `crates/mc-conformance` tree **`9f6af67c`** —— 与 §118 的 ⑨ 验证树**三个输入逐一恒等** ⇒ 读数继承 `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / unevaluable 306`。
+  - **当轮这条不是省事而是必需**：3.6G 可用空间下冷建 `mc-conformance` 正是 §119.2 那个假红的来源。
+
+### §119.4 🔴 回收 **2.2G**：**首次非 `target` 回收** + 磁盘结构性量化（本轮核心）
+
+**回收动作（两步，都用工具自带 API，零构建影响）**
+
+| 目标 | 大小 | 动作 | 依据 |
+| --- | --- | --- | --- |
+| `~/.bun/install/cache` | **1.9G** | `cd ~/.pi/agent/npm && bun pm cache rm`（cwd 必须**有 `package.json`**，在 `/tmp` 跑会 `error: No package.json was found`） | 纯下载缓存（1740 个 `.npm` tarball），无 bun/npm 进程占用，删后按需重新下载 |
+| `~/.npm/_cacache` | **0.33G** | `npm cache clean --force` | 同上（npm 自己的缓存 API） |
+
+⇒ `df` **0 → 2.0G**（起手那一轮 −1.9G 就是这两项）。
+
+**为什么必须回收：`target/` 这次全都是活物（零可删）**
+
+- 逐 workdir 扫 `lumos-659117e3ca3d/` 下**全部 16 个目录**：有 `target/` 的只有 **2 个**，**都是活物**（`LUM-1777` 29.3G / `LUM-1781` 3.2G）⇒ 四判据下**无可删项**；其余 14 个上几轮已清干净。
+- 所以这笔账**只能从「非 `target` 的下载缓存」里找** —— 这是「两个 `target` 都是活物」时唯一的杠杆，记入 reclaim 池。
+
+**磁盘结构性量化（本轮新增，供给后续派发决策）**
+
+| 口径 | 实测 | 说明 |
+| --- | --- | --- |
+| `lum-1777` 的 `target/` | **29.3G** | 单片 `--all-targets` 全量 |
+| ├ `target/debug/deps` | **29.2G** | 几乎全部体积在这里 |
+| │ ├ **测试/示例可执行文件** | **203 个 / 24.6G** | 单个 ≈250M；例：`mc_conformance` **3 份共 765M**、`channels` 2 份共 505M |
+| │ ├ workspace `libmc_*.rlib` | 2.0G | 只有 1/12 |
+| │ └ 三方 `lib*.rlib` | 1.0G | |
+| └ `target/debug/build` | 157M | |
+
+- **根因**：`Cargo.toml:149` 的 `[profile.dev] debug = 1` 被 test profile 继承 ⇒ **调试信息随每个测试二进制走**，`--all-targets` 下同一 crate 的多份变体各自几百 M。
+- ⇒ **「两片同飞」在本机单盘（49G）上结构性不可行**：一片 29G，两片 ≈58G > 49G。§118 的 `df 28G → 22G` 只是「一片快结束了」的相位差，不是余量。
+
+**给派发者的硬约束（建议固化进每轮预飞）**
+
+1. **`df` 硬下限 12G**：低于它不派建重型片（`--with-db` 红线 ≈8G 是老口径，只够**跑**门、不够**建**门）。
+2. **片终态即回收**：不等到下一轮（§117.11 的 28G 先例；本轮若 1777 已终态，直接就是 +29G）。
+3. **不许两片同时冷建**：同轮最多一片处于「全量冷建」相位；另一片要么已过冷建、要么等（**或**由 planner 决定引入共享 `CARGO_TARGET_DIR`，但那要先量「跨分支复用三方依赖」的真实收益）。
+4. **待验提案（无需改仓配置即可量）**：用 `CARGO_PROFILE_TEST_DEBUG=line-tables-only`（保留 panic 行号）或 `=0`（更小、丢行号）跑一次 ⑤/⑨，比体积；若能把 24.6G 压到个位 G，再决定是否落 `[profile.test]` —— 改的是**共享 build 配置**，须 owner/planner 决策，cycle 不擅动。
+
+### §119.5 计划文档收口：`docs/60` §4.3 的 `stage 8 ∥` 改为串行（append-only 注记）
+
+- §118.5 已把「`M7-19 ∥ M7-20` 是错的」裁决逐字写进 `LUM-1784` / `LUM-1785` 的描述，但**计划文档本身仍自相矛盾**（`docs/60-M7-PLAN.md:438` 写 `stage 8  M7-19 ∥ M7-20`，而 `:398` 的前置列给 M7-20 的硬前置就是 **M7-19**、`:444` 的串行链写 `M7-16 → M7-17 → M7-19`）。⇒ 本轮在 §4.3 就地补一条注记（**不改动原代码块**，只加引用），让后续预飞只读一份权威。
+- 顺带复核本轮 base 的实测：`crates/mc-channel/src/lark/mod.rs` = **56 行 / 8 个 `pub mod`**、`crates/mc-channel/src/wecom/mod.rs` = **49 行 / 7 个 `pub mod`** ⇒ 印证 §115.4 / §118.8 的规律（**别按 `pub mod` 条数推预算**，`lark/mod.rs` 是 44 → 56 而非 53）。
+
+### §119.6 号段与递补（rev 状态本轮**全部就绪、零改动**）
+
+- `docs/32` 当轮 base 实测末号 = **`## 31.`**（M7-15）。按**派发顺序**已预定 `## 32.`…`## 37.`（M7-13 / M7-16 / M7-17 / M7-18 / M7-19 / M7-20）⇒ **下一个空号 = `## 38.`**。
+- 排队片 rev：`LUM-1778` **rev 3** / `LUM-1782` **rev 2** / `LUM-1783` **rev 2** / `LUM-1784` **rev 2** / `LUM-1785` **rev 2** / `LUM-1786`（M7-21 INT）**rev 3** —— **本轮零空位，一个都没派，也没必要改**（六片正文/补充都已是当轮口径；预飞四类检查本轮**零新增命中**）。
+- **槽位一空即派（前置：`df` ≥ 12G）**：`LUM-1777` 终 ⇒ **`LUM-1778`**（M7-13，rev 3；它写死「不得与任何 lark 片同飞」⇒ 必须等）；`LUM-1781` 终 ⇒ **`LUM-1782`**（M7-17，rev 2；与 lark 片零交集）。
+- 递补链：`1782` ⇒ `1783`（M7-18）⇒ `1784`（M7-19）⇒ `1785`（M7-20）⇒ M7-21 INT（`LUM-1786`，须等 `owners.M7 → 0`）。**wecom 树内不得两片同飞**（§118.5 裁决），**两片 INT 不得同轮刷基线**。
+- **不派**：`LUM-1980`（门 ⑥ 的 5 条测试侧竞态，空位 0）；`LUM-1745`（M5-D8）已在评审。
+
+### §119.7 观察项（第 57 轮）
+
+- **无并发 cycle（连续第 13 轮）**。
+- 积压 `todo` cycle **11 条**（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`）**只登记不动状态**；autopilot 建单护栏**仍未落地**。
+- `blocked` = **0**；看板 `in_progress` 与 daemon 逐 PID **连续第 3 轮逐字吻合**。
+
+### §119.8 lesson
+
+1. **「磁盘耗尽 ⇒ 门红」有第二种形态，比第一种更隐蔽。** 老形态是「`.fingerprint` 建不出 / `ld … Bus error` / 探针库建不出」；本轮是 **`cargo` 建临时 `rmeta*` 失败 → 编 lib 失败 → `GATE_*_EXIT=101`**，门汇总只写 `FAIL`，**errno 28 藏在 ⑨ 段落里**。⇒ 判「假红」的固定两步：**① `df -h /`；② `grep -a 'No space left on device'` 门日志**。**永远不要用 exit 101 就当代码红去改代码**。
+2. **`reclaim` 池不止 `target/`。** 当两个 `target` 都是活物、`df` 又归零时，worker 本机的**下载缓存**（`~/.bun/install/cache` 1.9G、`~/.npm/_cacache` 0.33G）是唯一杠杆，且能安全回收 —— 用工具自带 API（`bun pm cache rm` / `npm cache clean --force`），不是 `rm -rf`。⚠️ `bun pm cache rm` **要求 cwd 有 `package.json`**。
+3. **磁盘预算要按「测试二进制体积」算，不能按 `target` 总量拍脑袋。** 单片 `--all-targets` 的 29.2G `deps` 里 **24.6G 是 203 个测试/示例可执行文件**（workspace rlib 才 2.0G）⇒ 「并发 3 片」在单盘 49G 上**结构性不可行**；派发前必须把「是否处于冷建相位」当成一等约束，而不是事后救火。
