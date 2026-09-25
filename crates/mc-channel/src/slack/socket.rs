@@ -18,10 +18,15 @@
 //! 2. handler 返回非 `Ok` ⇒ 基础设施失败 ⇒ 退出循环，让 supervisor 退避重连；
 //! 3. `disconnect` 帧 / 流结束 ⇒ 退出循环（同一个出口）。
 //!
-//! # 出站**不在**本文件
+//! # 出站的**接线点**在本文件（实现不在）
 //!
-//! `Channel::send` 的实现归 **M7-4**；本片把它**失败关闭**（明说未接线），而不是交一个发不出去
-//! 却自称 `TEXT` 的半成品。
+//! `Channel::send` 的实现归 **M7-4**：M7-3 把它**失败关闭**（明说未接线），而不是交一个
+//! 发不出去却自称 `TEXT` 的半成品。本片按 `docs/32` §13.5 第 1 条的 **(b) 路**把这个
+//! 失败关闭的口换成对 [`crate::slack::outbound::Sender`] 的委托 —— 于是 `send` 真的发得出去，
+//! 而 mrkdwn / 分片 / 线程化的**实现**仍然只有一份（在 `outbound.rs`）。
+//!
+//! 未注入 `Sender` 时（工厂的旧形态 / 用例只测入站）仍**失败关闭**：宁可明确报"未接线"，
+//! 也不假装发成功。
 
 use async_trait::async_trait;
 use mc_core::channel::message::{InboundMessage, OutboundMessage, SendResult};
@@ -35,9 +40,12 @@ use crate::slack::config::{
     decrypt_token, Decrypter, InstallConfig, Sensitive, SlackDeps, FIELD_APP_TOKEN, FIELD_BOT_TOKEN,
 };
 use crate::slack::inbound::{inbound_from_event, parse_events_api, TYPE_SLACK};
+use crate::slack::outbound::Sender;
 
-/// Slack `apps.connections.open` 的端点（Socket Mode 的引导接口）。
-const CONNECTIONS_OPEN_URL: &str = "https://slack.com/api/apps.connections.open";
+/// Socket Mode 的引导方法名（端点由 [`crate::slack::outbound::api_base`] 给出 ——
+/// 单一实现点是 [`crate::slack::outbound::HttpSlackApi::call`]；测试的本地替身靠它换基址，
+/// 与 M8-1 的 `GITHUB_API_BASE` 同款）。
+const CONNECTIONS_OPEN_METHOD: &str = "apps.connections.open";
 
 // =====================================================================
 // Socket Mode 信封
@@ -221,28 +229,22 @@ impl SocketTransport for TungsteniteTransport {
 }
 
 /// `apps.connections.open`：拿一条 `wss://` 引导 URL。
+///
+/// 走 [`HttpSlackApi::call`] 这一个公共解析点（错误文案只带 Slack 自己的错误码，
+/// **绝不**带令牌，也不带那个自带票据的 `url`）。
 async fn open_connection(app_token: &str) -> ChannelResult<String> {
-    let response = reqwest::Client::new()
-        .post(CONNECTIONS_OPEN_URL)
-        .bearer_auth(app_token)
-        .send()
+    use crate::slack::outbound::{HttpSlackApi, SlackApiError};
+
+    let body = HttpSlackApi::call(CONNECTIONS_OPEN_METHOD, app_token, serde_json::json!({}))
         .await
-        .map_err(|_| ChannelError::Transport {
-            message: "slack: apps.connections.open request failed".to_string(),
+        .map_err(|error| match error {
+            SlackApiError::Refused { code, .. } => ChannelError::Auth {
+                message: format!("slack: apps.connections.open refused ({code})"),
+            },
+            other => ChannelError::Transport {
+                message: format!("slack: apps.connections.open {other}"),
+            },
         })?;
-    let body: Value = response.json().await.map_err(|_| ChannelError::Transport {
-        message: "slack: apps.connections.open returned a non-JSON body".to_string(),
-    })?;
-    if body.get("ok").and_then(Value::as_bool) != Some(true) {
-        // 只带 Slack 自己的错误码（`invalid_auth` 一类），**绝不**带令牌。
-        let code = body
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown_error");
-        return Err(ChannelError::Auth {
-            message: format!("slack: apps.connections.open refused ({code})"),
-        });
-    }
     body.get("url")
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -315,6 +317,8 @@ pub struct SlackChannel {
     bot_token: Sensitive,
     handler: Option<SharedInboundHandler>,
     transport: std::sync::Arc<dyn SocketTransport>,
+    /// 出站发送器（M7-4 接上；`None` ⇒ `send` 失败关闭，见模块文档）。
+    outbound: Option<std::sync::Arc<Sender>>,
 }
 
 impl std::fmt::Debug for SlackChannel {
@@ -327,6 +331,7 @@ impl std::fmt::Debug for SlackChannel {
             .field("app_token", &self.app_token)
             .field("bot_token", &self.bot_token)
             .field("has_handler", &self.handler.is_some())
+            .field("has_outbound", &self.outbound.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -349,7 +354,21 @@ impl SlackChannel {
             bot_token: Sensitive::new(bot_token),
             handler,
             transport,
+            outbound: None,
         }
+    }
+
+    /// 接上出站发送器（M7-4；`docs/32` §13.5 第 1 条的 (b) 路）。
+    #[must_use]
+    pub fn with_outbound(mut self, sender: std::sync::Arc<Sender>) -> Self {
+        self.outbound = Some(sender);
+        self
+    }
+
+    /// 本安装的 bot token（出站要用它；唯一出口，调用点因此总是显式可见的）。
+    #[must_use]
+    pub fn bot_token(&self) -> &str {
+        self.bot_token.expose()
     }
 
     /// 本安装的 Slack app id（路由键）。
@@ -437,18 +456,28 @@ impl Channel for SlackChannel {
         Ok(())
     }
 
-    /// 出站归 **M7-4**（`slack/{outbound.rs,replier.rs}`）。
+    /// 出站：委托给 [`Sender`]（M7-4 接上；未接上时**失败关闭**）。
     ///
-    /// 本片**失败关闭**：明说未接线，而不是假装发成功。选 `Transport` 是因为它表达的正是
-    /// "这条出站链路还不存在"（`send` 不在 supervisor 的退避路径上，不会被误重试）。
-    async fn send(&self, _out: OutboundMessage) -> ChannelResult<SendResult> {
-        Err(ChannelError::Transport {
-            message: "slack: outbound (chat.postMessage) is not wired yet — lands in M7-4"
-                .to_string(),
-        })
+    /// 选 `Transport` 表达"这条出站链路还不存在"（`send` 不在 supervisor 的退避路径上，
+    /// 不会被误重试）。
+    async fn send(&self, out: OutboundMessage) -> ChannelResult<SendResult> {
+        let Some(sender) = &self.outbound else {
+            return Err(ChannelError::Transport {
+                message: "slack: outbound (chat.postMessage) is not wired for this installation"
+                    .to_string(),
+            });
+        };
+        sender
+            .send(self.bot_token.expose(), &out)
+            .await
+            .map(|frame| frame.to_send_result())
+            .map_err(|error| ChannelError::Transport {
+                message: error.to_string(),
+            })
     }
 
-    /// 上游 `CapText | CapThreadReply`（出站面归 M7-4，位图先照上游声明）。
+    /// 上游 `CapText | CapThreadReply`。M7-4 接上出站后，这两个位**真的**都有实现支撑
+    /// （文本发送 + `thread_ts` 线程化）；位图本身自 M7-3 起就照上游声明，未变。
     fn capabilities(&self) -> Capability {
         Capability::TEXT.union(Capability::THREAD_REPLY)
     }
@@ -488,14 +517,18 @@ pub fn factory(deps: &SlackDeps) -> Factory {
                 kind: TYPE_SLACK.as_str().to_string(),
                 reason: error.to_string(),
             })?;
-        Ok(std::sync::Arc::new(SlackChannel::new(
-            cfg.app_id,
-            cfg.bot_user_id,
-            app_token,
-            bot_token,
-            config.handler,
-            std::sync::Arc::new(TungsteniteTransport),
-        )) as std::sync::Arc<dyn Channel>)
+        Ok(std::sync::Arc::new(
+            SlackChannel::new(
+                cfg.app_id,
+                cfg.bot_user_id,
+                app_token,
+                bot_token,
+                config.handler,
+                std::sync::Arc::new(TungsteniteTransport),
+            )
+            // M7-4 的接线：出站走真 `chat.postMessage`（基址可被用例的替身覆盖）。
+            .with_outbound(std::sync::Arc::new(Sender::http())),
+        ) as std::sync::Arc<dyn Channel>)
     })
 }
 

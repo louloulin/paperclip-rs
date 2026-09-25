@@ -1,14 +1,18 @@
 //! Slack adapter（上游 `internal/integrations/slack`（32 文件 / 16 非测试 / 4,490 上游行））。
 //!
-//! **状态：M7-3 落「入站回路」（`LUM-1768`）；出站面（Block Kit / 回复投递 / 命令历史 / 安装与
-//! 绑定）归 M7-4**（`docs/60-M7-PLAN.md` §3.3 的写集表：本目录下每个子文件都有**一个**写者）。
+//! **状态：M7-4 已落「出站 / 回复 / 命令历史 / 安装与绑定面」**（`LUM-1769`）——
+//! M7-3 落的是入站回路（`LUM-1768`）。两片合起来构成 Slack 这一渠道的**完整收发回路**
+//! （`docs/60-M7-PLAN.md` §4.2 的表：收来自 M7-3、发来自 M7-4、替身是本地 WS 服务端）。
 //!
 //! # 这个平台的面
 //!
 //! - `socket_mode`：**每个安装一条**连接（BYO 模型下每个安装带自己的 `xapp-` app token），
 //!   接收循环在 [`inbound::SlackChannel::connect`] 里阻塞跑；
-//! - BYO 安装（4 条 workspace 路由 + `/api/slack/binding/redeem`）—— **M7-4**；
-//! - Block Kit 出站与回复投递（`chat.postMessage` / Markdown→`mrkdwn` / 线程化）—— **M7-4**。
+//! - BYO 安装（4 条 workspace 路由 + `/api/slack/binding/redeem`）—— [`install`] / [`binding`]；
+//! - Block Kit 出站与回复投递（`chat.postMessage` / Markdown→`mrkdwn` / 线程化）——
+//!   [`outbound`]（发送器）+ [`replier`]（判决 → 文案）；
+//! - 斜杠命令（`/issue` / `/new` / `/clear`，从**同一条** Socket Mode 连接到达）—— [`slash`]；
+//! - 「处理中」反应指示器 —— [`typing`]；会话历史读面 —— [`history`]。
 //!
 //! # 本目录的写者表（M7-3 / M7-4）
 //!
@@ -16,21 +20,32 @@
 //! | --- | :-: | --- |
 //! | `config.rs` | **M7-3** | `config.go`（安装配置 + 凭据解密） |
 //! | `inbound.rs` + `inbound/tests.rs` | **M7-3** | `inbound.go`（事件归一化 + 帧 → 信封） |
-//! | `socket.rs` + `socket/tests.rs` | **M7-3** | `slack_channel.go`（Socket Mode 接收循环 + 工厂） |
+//! | `socket.rs` + `socket/tests.rs` | **M7-3**（M7-4 只改 `send` 的接线，见下） | `slack_channel.go`（接收循环 + 工厂） |
 //! | `media.rs` + `media/tests.rs` | **M7-3** | `media_ingest.go`（下载 / 上传 / 意图账本） |
 //! | `mrkdwn.rs` | **M7-3** | `mrkdwn.go`（标准 Markdown → Slack `mrkdwn`） |
 //! | `resolvers.rs` + `resolvers/tests.rs` | **M7-3** | `resolvers.go`（安装 / 身份 / 去重 / 会话 / 审计） |
-//! | `outbound.rs` `replier.rs` `typing.rs` `history.rs` `slash.rs` `install.rs` `binding.rs` | M7-4 | 其余 11 个上游文件 |
+//! | `outbound.rs` + `outbound/tests.rs` | **M7-4** | `outbound.go` + `channel.go` 的 sender 那一半 |
+//! | `replier.rs` + `replier/tests.rs` | **M7-4** | `replier.go` |
+//! | `typing.rs` | **M7-4** | `typing_indicator.go` |
+//! | `history.rs` + `history/{reader,text,flatten,tests}.rs` | **M7-4** | `history.go` |
+//! | `slash.rs` + `slash/tests.rs` | **M7-4** | `slash_command.go` + `slash_control.go` |
+//! | `install.rs` + `install/tests.rs` | **M7-4** | `install.go` + `byo_install.go` |
+//! | `binding.rs` + `binding/tests.rs` | **M7-4** | `binding.go` |
+//! | `mod.rs` + `tests.rs` | **M7-4**（模块表与注册面） | —— |
 //!
-//! ## 写集勘误（**逐条登记**，照 M7-2 先例：`engine/{commands,session}/tests.rs`）
+//! ## 写集勘误（**逐条登记**，照 M7-2 / M7-3 先例）
 //!
-//! `docs/60` §3.3 给 M7-3 的五格是 `slack/{inbound,resolvers,media,mrkdwn,config}.rs`。本片
-//! **追加**的路径只有四个，理由都是**门 ⑩ 的 800 行硬限**（不是拆凑数字）：
+//! `docs/60` §3.3 给 M7-4 的格子是 `slack/{outbound,replier,typing,history,slash,install,`
+//! `binding}.rs` 与 `routes/channels/slack.rs`。起手补充已追加 `slack/mod.rs`（本片要可见新模块、
+//! 要接上出站面）与条件性的 `slack/socket.rs`。本片**再追加**的路径只有一类：用例文件与
+//! `history` 的子文件。理由全是**门 ⑩ 的 800 行硬限**（不是拆凑数字），与 M7-3 对
+//! `{inbound,media,resolvers,socket}/tests.rs` 的处理逐字同款：
 //!
-//! - `slack/socket.rs`：`inbound.rs` 的代码面（不含用例）就已经 ~940 行 ⇒ 按"归一化 / 传输"
-//!   拆开，切点正好是上游 `inbound.go` 与 `slack_channel.go` 的边界；
-//! - `slack/{inbound,media,resolvers,socket}/tests.rs`：四个文件的用例内联后都会越 800 行
-//!   （`media` 1242 / `resolvers` 1121 / `inbound` 1516 / `socket` 835）⇒ 用例外置为子模块。
+//! - `slack/{outbound,replier,slash,install,binding}/tests.rs`：用例内联后
+//!   `outbound`（444 行 + 用例）/ `slash`（≈700 行 + 用例）都越 800；
+//! - `slack/history/{reader,text,flatten,tests}.rs`：上游 `history.go` 一个文件 737 行，
+//!   移植后 1,374 行，**必须**先拆（切点是上游自身的"读面 / 窗口与过滤 / 摊平与命名"三段）；
+//! - `slack/tests.rs`：`mod.rs` 原有的三条注册用例搬出来，给下面的模块表腾位置。
 //!
 //! 拆完每个文件都 ≤ 800 行，且**未动** `scripts/file_size_baseline.tsv`（只减不增）。
 //! 依赖方向与边界契约一条未变（engine 仍不认得本目录；本目录仍不直接写 DB）。
@@ -45,31 +60,64 @@
 //!   （`docs/60` §2.3）；
 //! - adapter **不得**直接写 DB：只走 [`crate::engine::ChannelDeps`] 里注入的 port。
 //!
-//! # 解密器的接线（**交接项**，见 PR 描述与 `docs/32` §10）
+//! # 解密器的接线（**交接项**，见 PR 描述与 `docs/32` §10 / §13.5）
 //!
 //! [`register`] 的签名（`&Registry` + `&ChannelDeps`）里**没有**部署密钥的位置 ——
 //! `ChannelDeps` 是 M7-1 定死的形态，而密钥的**唯一读取口**是
 //! `mc_http::state::ChannelKeys`（`mc-channel` 不得自己 `std::env::var`）。所以：
 //!
 //! - [`register`]（宿主当前调用的那个）用**失败关闭**的解密器注册工厂：配置里带密文令牌时，
-//!   工厂**拒装配**并明说"没接线"，而不是把密文当明文用（与 anchor 的"密钥配了但端口没接线"
-//!   同一条纪律）；同时打一条 `warn`；
+//!   工厂**拒装配**并明说"没接线"，而不是把密文当明文用；同时打一条 `warn`；
 //! - [`register_with`] 是**接线好的**入口：宿主把 `ChannelKeys::get(Slack)` 交给它即可
-//!   （`SlackDeps::with_secret_box`）。宿主装配点 `apps/mc-server/src/channels.rs` 属 anchor 写集，
-//!   所以这一步的落地归**引入它的那个片**（M7-4 的安装面 / M7 的 INT）。
+//!   （`SlackDeps::with_secret_box`）。
+//!
+//! ## M7-4 的状态：**工厂侧已闭环，解析器面仍悬空**
+//!
+//! | 面 | 状态 |
+//! | --- | --- |
+//! | `Channel::send`（出站） | **已闭环**：工厂交出带 [`outbound::Sender`] 的 channel（`socket.rs`） |
+//! | 4 条路由（安装 / 绑定） | **已闭环**：`routes/channels/slack.rs` 自带 PG 实现与测试 |
+//! | 解析器面（出站回复器 / 打字指示 / 斜杠命令） | **悬空**：装配点是 `apps/mc-server/src/channels.rs`（**anchor 写集**）⇒ 本片**不擅自扩写集**，改为提供 [`SlackResolverWiring`] + [`register_resolvers`] 这一个入口，由 INT / 后续锚点调一次 |
+//!
+//! 这张表就是"缺口登记"的形式：**哪一半闭环、哪一半等谁**，一眼可查（同 §13.5 的手法）。
 
+pub mod binding;
 pub mod config;
+pub mod history;
 pub mod inbound;
+pub mod install;
 pub mod media;
 pub mod mrkdwn;
+pub mod outbound;
+pub mod replier;
 pub mod resolvers;
+pub mod slash;
 pub mod socket;
+pub mod typing;
+
+use std::sync::Arc;
 
 use mc_core::channel::ChannelKind;
+use mc_repos::channel::binding::ChannelBindingRepo;
+use mc_repos::channel::dedup::ChannelInboundDedupRepo;
+use mc_repos::channel::inbound_audit::ChannelInboundAuditRepo;
+use mc_repos::channel::installation::ChannelInstallationRepo;
+use mc_repos::channel::session::ChannelChatSessionRepo;
+use mc_repos::member::MemberRepo;
 
-use crate::engine::ChannelDeps;
+use crate::engine::{ChannelDeps, Router};
 use crate::registry::Registry;
-use config::SlackDeps;
+use config::{Decrypter, SlackDeps};
+use replier::{BindingMinter, OutboundLedger, SlackOutboundReplier};
+use resolvers::SlackResolverSet;
+use typing::TypingIndicatorManager;
+
+/// 密钥盒缺失时用的**失败关闭**解密器（见模块文档的接线一节）。
+///
+/// 单独抽出来是为了让下面两个注册函数共用同一条纪律，而不是各写一份 `warn`。
+fn fail_closed_decrypter() -> Decrypter {
+    Decrypter::fail_closed()
+}
 
 /// 把本平台的工厂注册进 `registry`（**失败关闭**的解密器，见模块文档的接线一节）。
 ///
@@ -88,162 +136,136 @@ pub fn register_with(registry: &Registry, deps: &SlackDeps) {
     registry.register(ChannelKind::Slack, socket::factory(deps));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::channel::ChannelConfig;
-    use crate::engine::resolvers::{
-        CommandClassifier, EngineResult, IssueCreator, NoCommands, RunTriggerer, SessionReader,
-    };
-    use crate::engine::supervisor::{
-        AcquireLeaseParams, InstallationStore, LeaseStore, ReleaseLeaseParams,
-    };
-    use crate::engine::{ChannelDeps, Router, RouterConfig};
-    use async_trait::async_trait;
-    use base64::Engine as _;
-    use mc_core::id::Id;
-    use std::collections::HashSet;
-    use std::sync::Arc;
-
-    struct NoInstallations;
-
-    #[async_trait]
-    impl InstallationStore for NoInstallations {
-        async fn list_active(&self) -> EngineResult<Vec<crate::engine::supervisor::Installation>> {
-            Ok(Vec::new())
-        }
-    }
-
-    struct NoLeases;
-
-    #[async_trait]
-    impl LeaseStore for NoLeases {
-        async fn list_held(&self, _ids: &[Id]) -> EngineResult<HashSet<Id>> {
-            Ok(HashSet::new())
-        }
-        async fn try_acquire(&self, _params: AcquireLeaseParams) -> EngineResult<()> {
-            Ok(())
-        }
-        async fn renew(&self, _params: AcquireLeaseParams) -> EngineResult<()> {
-            Ok(())
-        }
-        async fn release(&self, _params: ReleaseLeaseParams) -> EngineResult<()> {
-            Ok(())
-        }
-    }
-
-    struct NoTrigger;
-
-    #[async_trait]
-    impl RunTriggerer for NoTrigger {
-        async fn schedule_chat_run(
-            &self,
-            _params: crate::engine::resolvers::ChatRunParams,
-        ) -> EngineResult<()> {
-            Ok(())
-        }
-        async fn drain(&self) -> EngineResult<()> {
-            Ok(())
-        }
-    }
-
-    struct NoReader;
-
-    #[async_trait]
-    impl SessionReader for NoReader {
-        async fn workspace_identity(
-            &self,
-            _workspace_id: Id,
-        ) -> EngineResult<crate::engine::resolvers::WorkspaceIdentity> {
-            Ok(crate::engine::resolvers::WorkspaceIdentity::default())
-        }
-    }
-
-    struct NoIssues;
-
-    #[async_trait]
-    impl IssueCreator for NoIssues {
-        async fn create_issue(
-            &self,
-            _params: crate::engine::resolvers::ChannelIssueParams,
-        ) -> EngineResult<crate::engine::resolvers::ChannelIssueOutcome> {
-            Err(crate::engine::resolvers::EngineError::infra("unused"))
-        }
-    }
-
-    fn deps() -> ChannelDeps {
-        let router = Arc::new(Router::new(
-            Arc::new(NoCommands) as Arc<dyn CommandClassifier>,
-            Arc::new(NoTrigger),
-            Arc::new(NoReader),
-            Arc::new(NoIssues),
-            RouterConfig::default(),
-        ));
-        ChannelDeps::new(
-            Arc::clone(&router),
-            Arc::new(NoInstallations),
-            Arc::new(NoLeases),
-        )
-    }
-
-    fn config(raw: serde_json::Value) -> ChannelConfig {
-        ChannelConfig {
-            kind: ChannelKind::Slack,
-            raw,
-            installation_id: None,
-            handler: None,
-        }
-    }
-
-    /// `register` 真的把工厂放进表里（起手补充动作 2：不留空壳），且**失败关闭**：
-    /// 没接线时带密文的配置被拒，而不是把密文当明文。
-    #[test]
-    fn register_installs_a_fail_closed_factory() {
-        let registry = Registry::new();
-        assert!(registry.is_empty());
-        register(&registry, &deps());
-        assert_eq!(registry.kinds(), vec![ChannelKind::Slack]);
-        let Err(error) = registry.build(config(serde_json::json!({
-            "app_id": "A1",
-            "app_token_encrypted": "QUJD",
-            "bot_token_encrypted": "QUJD",
-        }))) else {
-            panic!("失败关闭的解密器必须拒掉带密文的配置")
-        };
-        assert_eq!(error.code(), "channel_invalid_config");
-        // 错误文案不回显密文（凭据纪律）。
-        assert!(!error.to_string().contains("QUJD"));
-    }
-
-    /// 接线好的入口：带上部署密钥就能造出真 Channel。
-    #[test]
-    fn register_with_secret_box_builds_a_channel() {
-        let boxed = mc_secrets::secretbox::SecretBox::new(&[7u8; 32]).expect("key");
-        let app = boxed.seal(b"xapp-real").expect("seal");
-        let bot = boxed.seal(b"xoxb-real").expect("seal");
-        let registry = Registry::new();
-        register_with(&registry, &config::SlackDeps::with_secret_box(boxed));
-        let channel = registry
-            .build(config(serde_json::json!({
-                "app_id": "A1",
-                "bot_user_id": "UBOT",
-                "app_token_encrypted": base64::engine::general_purpose::STANDARD.encode(app),
-                "bot_token_encrypted": base64::engine::general_purpose::STANDARD.encode(bot),
-            })))
-            .expect("接线好就能造");
-        assert_eq!(channel.kind(), ChannelKind::Slack);
-        assert!(channel
-            .capabilities()
-            .has(crate::capability::Capability::TEXT));
-    }
-
-    /// 注册表上一旦有 Slack 工厂，`ChannelDeps` 的共享 handler 仍是同一个 `Router`。
-    #[test]
-    fn assembly_keeps_the_shared_handler() {
-        let deps = deps();
-        assert!(Arc::ptr_eq(
-            &deps.handler(),
-            &(Arc::clone(&deps.router) as crate::message::SharedInboundHandler)
-        ));
+/// 注册表工厂的**失败关闭**形态（显式给出，便于测试与自检断言"就是它"）。
+#[must_use]
+pub fn fail_closed_deps() -> SlackDeps {
+    SlackDeps {
+        decrypt: fail_closed_decrypter(),
     }
 }
+
+// =====================================================================
+// 解析器面的装配（模块文档「登记缺口」那一段的落地形态）
+// =====================================================================
+
+/// 解析器面的装配袋（M7-4）。
+///
+/// 六个**泛化渠道仓储** + 解密器是必需项；出站回复器要的绑定服务 / 记账口是可选
+/// （缺任一个 ⇒ 绑定卡与出站记账那一支关掉，状态告知照发 —— 上游同）。
+pub struct SlackResolverWiring {
+    pub installations: ChannelInstallationRepo,
+    pub bindings: ChannelBindingRepo,
+    pub members: MemberRepo,
+    pub dedup: ChannelInboundDedupRepo,
+    pub sessions: Arc<ChannelChatSessionRepo>,
+    pub audits: ChannelInboundAuditRepo,
+    pub decrypt: Decrypter,
+    /// web app 主机（绑定链接要它；空串 ⇒ 绑定卡被跳过）。
+    pub app_url: String,
+    /// 绑定令牌服务（缺 ⇒ 跳过绑定卡）。
+    pub binding_minter: Option<Arc<dyn BindingMinter>>,
+    /// 出站记账口（缺 ⇒ 不记 `channel_outbound_message`，历史过滤随之变弱）。
+    pub ledger: Option<Arc<dyn OutboundLedger>>,
+}
+
+impl std::fmt::Debug for SlackResolverWiring {
+    /// 手写：只有仓储与解密器（后者自己脱敏），**没有**任何凭据字段。
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SlackResolverWiring")
+            .field("decrypt", &self.decrypt)
+            .field("app_url", &self.app_url)
+            .field("binding_minter", &self.binding_minter.is_some())
+            .field("ledger", &self.ledger.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SlackResolverWiring {
+    /// 装配（不含绑定服务 / 记账口）。
+    ///
+    /// `too_many_arguments`：这八个实参就是上游 `SlackResolverWiring` 的字段本身
+    /// （六个泛化仓储 + 解密器 + app 主机），收进一个结构只是把同一组字段挪一层。
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        installations: ChannelInstallationRepo,
+        bindings: ChannelBindingRepo,
+        members: MemberRepo,
+        dedup: ChannelInboundDedupRepo,
+        sessions: Arc<ChannelChatSessionRepo>,
+        audits: ChannelInboundAuditRepo,
+        decrypt: Decrypter,
+        app_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            installations,
+            bindings,
+            members,
+            dedup,
+            sessions,
+            audits,
+            decrypt,
+            app_url: app_url.into(),
+            binding_minter: None,
+            ledger: None,
+        }
+    }
+
+    /// 挂上绑定令牌服务（出站回复器的绑定卡要用它）。
+    #[must_use]
+    pub fn with_binding_minter(mut self, minter: Arc<dyn BindingMinter>) -> Self {
+        self.binding_minter = Some(minter);
+        self
+    }
+
+    /// 挂上出站记账口。
+    #[must_use]
+    pub fn with_ledger(mut self, ledger: Arc<dyn OutboundLedger>) -> Self {
+        self.ledger = Some(ledger);
+        self
+    }
+
+    /// 组装出本片的三件套（出站回复器 + 打字指示 + M7-3 的五个必填端口）。
+    #[must_use]
+    pub fn into_resolver_set(self) -> SlackResolverSet {
+        let sender = Arc::new(outbound::Sender::http());
+        let replier = Arc::new(SlackOutboundReplier::new(
+            Arc::clone(&sender),
+            self.decrypt.clone(),
+            self.binding_minter.clone(),
+            self.ledger.clone(),
+            self.app_url.clone(),
+            None,
+        ));
+        let typing = Arc::new(TypingIndicatorManager::http(
+            Some(Arc::new(typing::RepoInstallationConfigs::new(
+                self.installations.clone(),
+            ))),
+            self.decrypt.clone(),
+        ));
+        SlackResolverSet::from_repos(
+            self.installations,
+            self.bindings,
+            self.members,
+            self.dedup,
+            self.sessions,
+            self.audits,
+        )
+        .with_replier(replier)
+        .with_typing(typing)
+    }
+}
+
+/// 把 Slack 的解析器面注册进 `router`（宿主 / INT 片调**一次**）。
+///
+/// `Router::register` 是 last-writer-wins，所以重复调用是安全的（但没必要）。
+pub fn register_resolvers(router: &Router, wiring: SlackResolverWiring) {
+    router.register(
+        ChannelKind::Slack,
+        wiring.into_resolver_set().into_engine_set(),
+    );
+}
+
+#[cfg(test)]
+mod tests;
