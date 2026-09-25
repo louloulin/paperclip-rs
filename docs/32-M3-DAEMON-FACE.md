@@ -4430,3 +4430,185 @@ lib 用例 902 条全绿。
 * **同轮在飞**：`LUM-1777`（M7-12 lark 入站回路，`in_progress`）∥ 本片。逐字路径交集 = **∅**
   （本片只写 `crates/mc-channel/src/wecom/**` 与 `docs/32`；lark 片只写 `crates/mc-channel/src/lark/**`）。
 * **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
+
+## 34. M7-17（`LUM-1782`）：wecom 中继与出站回复（**0 路由**）
+
+> **号段说明**：base `9b97f824` 实测 `docs/32` 末号 = **`## 33.`**（M7-16）；`30` / `32` / `34` / `35`
+> 均空，按**派发顺序**占号：`## 30.` = M7-14（`LUM-1779`）/ `## 32.` = M7-13（`LUM-1778` 本轮在飞）/
+> **`## 34.` = 本片** / `## 35.` = M7-18（`LUM-1783`）。`docs/32` 是本片与其他在飞片**唯一共写**的文件
+> （各自往末尾追加；冲突时按 §91/§102/§107/§108/§31/§33 的先例「先到者保号」）。
+
+### 34.0 这一片补的是哪条掉棒
+
+上游 `internal/integrations/wecom/{relay_outbound,outbound,outbound_outcome,replier}.go`（**3,202 行**）
+—— 智能机器人**出站**的整条链：agent 的回答怎么回到 `WeCom`（气泡就地替换 / 普通消息两条路）、
+离租约产出的回答怎么**到达握着 socket 的那个副本**（跨副本中继 + 重投递链 + 至多一次的 claim）、
+"该到而没到 / 本来就不会送 / 结局未知"三个单位怎么记账，以及引擎判决（绑定 / 离线 / 归档 / `/issue`）
+怎么变成一条用户看得见的消息。
+
+本片是 wecom 的**第三片**，也是 M7-19（入站与解析）之前的最后一片代码片。它交出的输入是：
+`relay.rs` 给 M7-19 的宿主接线（`start` / `attach` / `deliver_outbound`）、`outbound.rs` 的判决链
+给 M7-20 的打字指示复用（`task_address` 与 `RoundTaker` 是**同一个**寻址规则）、
+`outcome.rs` 的原因集给 M7-20/M7-21 的看板。
+
+### 34.1 写集（逐字；**24 个新代码文件 +8443/−0**，`wecom/mod.rs` **+10**，`docs/32` **+本段**）
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/wecom/relay.rs` | **新增 308** | `relay_outbound.go`（1,578）的**配置面 + 链**：`RelayConfig` / `retryPlan` / `dedupeTTLFor` / `RelayOutbound` 的字段 |
+| `.../wecom/relay/chain.rs` | **新增 512** | §6.3 的「**重投递链**」半：`Hold` / 安装线的顺序 / `offer`·`step`·`advance`·`fireDue` / `perform` / `settleClaim` / `drainRemaining` |
+| `.../wecom/relay/queue.rs` | **新增 279** | §6.3 的「**优先级队列**」半：`SeenEvents` / `ShardQueue` / 每片的 `work` / 准入与削减 |
+| `.../wecom/relay/frame.rs` | **新增 187** | `relayFrame` / 三个 `relayKind` / `relayEventID` / `relayInboxEventID` / `dedupeKey` |
+| `.../wecom/relay/claims.rs` | **新增 267** | `DedupeStore`（Redis）→ `InProcessDedupe`（**R-M7-1 的落点**，见 D2） |
+| `.../wecom/relay/dispatch.rs` | **新增 705** | 三个接缝 + `perform` 的结论 + `RelayOutbound` 的全部方法 + `watchOutcomes` / `settle` + `RelayHandle` |
+| `.../wecom/relay/relayed.rs` | **新增 351** | `deliverRelayed` / `sealRelayedRound` / `ownsSocket` / `provablyNotSent` |
+| `.../wecom/relay/tests.rs` + `tests/{contract,idempotency,ordering}.rs` | **新增 213 / 327 / 158 / 233** | 25 条用例（含 **幂等**与**顺序**两条专属验收） |
+| `.../wecom/outbound.rs` | **新增 552** | `outbound.go`（887）的判决链骨架：错误词表 / `Recorded`·`Verdict`·`Processed` / `Outbound` 装配 / `handle_chat_done` |
+| `.../wecom/outbound/pipeline.rs` | **新增 472** | `processEvent` / `deliverAnswer` / `sendAsMessage` / `taskAddress` / `routeFrame` / `relaySeal` / `finishStream` |
+| `.../wecom/outbound/events.rs` | **新增 348** | `chat:done` 与 `inbox:new` 两个信封 + 收件箱推送路径 + 出站预算（`context` 那一半） |
+| `.../wecom/outbound/ports.rs` | **新增 215** | `outboundQueries` / `deliveryLookup` 的端口化 |
+| `.../wecom/outbound/attachments.rs` | **新增 239** | `Outbound` 的两个准入计数器 + 逐文件投递的接缝（**工作归 M7-18**） |
+| `.../wecom/outbound/senders.rs` | **新增 89** | `sendersRegistry` 的消费面端口（**实现归 M7-20**）+ 脱离任务 |
+| `.../wecom/outbound/tests.rs` + `tests/{pipeline,attachments}.rs` | **新增 408 / 393 / 210** | 24 条用例（判决链、记账、附件准入、收件箱、纯函数） |
+| `.../wecom/outcome.rs` | **新增 497** | `outbound_outcome.go`（439）：封闭原因集 + 分类器 + 记账（`impl Outbound`） |
+| `.../wecom/outcome/tests.rs` | **新增 384** | 9 条用例（原因集稳定性、分类表、优先级、一次发送一个计数器） |
+| `.../wecom/replier.rs` | **新增 497** | `replier.go`（298）：判决 → 文案 + **绑定链接只走私聊** |
+| `.../wecom/replier/tests.rs` | **新增 589** | 20 条用例 |
+| `crates/mc-channel/src/wecom/mod.rs` | **+10/−0** | 追加 4 行 `pub mod`（本片写集勘误见 D12；`register()` **未动**） |
+
+**新增用例 78 条**（`outbound` 24 / `outcome` 9 / `relay` 25 / `replier` 20）；
+`mc-channel` 整 crate 的 lib 用例 **1118 passed / 0 failed**（本片起手 1040 ⇒ +78）。
+
+### 34.2 偏离（D1…D13；每条要么有落点，要么有用例）
+
+* **D1（R-M7-1 的落点是"进程内中继"，不是 Redis）**：本仓**没有 Redis 依赖**（`docs/60` §2.5 的四处
+  用途全有"无 Redis 时"的降级路径）⇒ 跨副本中继落成**进程内**队列 + `RelayPublisher` 端口
+  （本片**不**给生产实现：单副本部署里中继本来就**不需要**，`publish` 返回 `false` ⇒ 走本地直连路径）。
+  🔴 **生产部署契约 = 单副本**，或者"渠道连接只在一个副本上开"；多副本下同一 installation 可能被两个
+  副本同时连接。登记为 R1。
+* **D2（claim 存储 = `InProcessDedupe`）**：语义逐条照上游（取 / 重取同一 token / 比较并删除 /
+  比较并结算 / **读且围栏**），差的只有**范围**：它活在本进程里。**但它刻意不省** —— 幂等靠的正是
+  这条 claim（键从"那一轮"派生），所以"同一份完成被发布两次"在**一个**进程里仍然只送一次（有用例）。
+  上游对 `absent` **不设围栏**的行为照抄（见 R2）。
+* **D3（`actionable()` 恒真照抄）**：上游 `dropReason.actionable` 在两个寻常结局搬去 `skipReason`
+  之后已经是**恒真**，`dropped` 里的 DEBUG 分支因此不可达。本仓照抄（含那条注释留下的理由），
+  收敛或删死分支不在本片写集内。
+* **D4（同步接缝 + 脱离任务）**：engine 的 `OutboundReplier::reply` 是**同步**方法，本仓只推一个
+  脱离任务（`spawn_detached`），真正的工作在 `reply_now` 里 —— 与 M7-4 / M7-5 / M7-8 同款。
+  `WeComOutboundReplier::handle()` 克隆端口给那个任务（不复制任何凭据）。
+* **D5（令牌类型端口化）**：上游直接依赖 `*BindingTokenService` 的 `pgtype.UUID` 形参；本仓用
+  `Binder` 端口 + `Id`，且只取**明文**那一半。上游"只在非 nil 时赋进接口"那条坑由 `Option` 从类型上消灭。
+* **D6（成员文本的破坏闸是端口，只落了行内邻接那一段）**：上游 `wecom/markdown.go`（**M7-19**）的
+  `breakMemberLinks` 有两段（行内邻接 + **引用定义**）。本片落 `MemberLinks` 端口，并给出现成实现
+  `AdjacencyBreaker`（复用 M7-1 的 `break_markdown_link_adjacency`）；**没有**配置闸时，
+  `/issue` 确认里的标题**整个省掉**（失败关闭）。🔴 在 M7-19 落地前，引用定义形态的标题是**降级**
+  而不是等价 ⇒ 登记 R3 + 交接 H2。
+* **D7（收件箱卡片的渲染是接缝）**：上游 `buildInboxMarkdown` 在 `inbox_message.go`（**M7-19**）⇒
+  本片落投递路径 + `InboxRenderer` 端口；没有渲染器时这条推送**不投递**（失败关闭，也不动回复计数器）。
+* **D8（附件投递只落骨架）**：上游 `outbound_media.go`（**M7-18**）⇒ 本片落**准入与记账骨架**
+  （两个计数器本来就是 `Outbound` 的字段）+ `AttachmentDelivery` 端口。逐文件查表 / 上传 / `tellUser`
+  是 M7-18 的事（交接 H3）。
+* **D9（`relay_outbound.go` 按 §6.3 拆成五个文件）**：上游 1,578 行 ⇒ 「重投递链」（`chain.rs`）/
+  「优先级队列」（`queue.rs`）/ 帧（`frame.rs`）/ claim（`claims.rs`）/ 调度与执行（`dispatch.rs` +
+  `relayed.rs`）。`RelayOutbound` 的**结构体本体**留在 `relay.rs`：它的私有字段要被
+  `chain`/`queue`/`relayed` 读到，而那些模块是 `relay`（不是 `relay::dispatch`）的后代。
+* **D10（一次投递的"记录"是值，不是闭包）**：上游把闭包装进 `relayResult.record`（Go 的闭包携带接收者）；
+  本仓 `deliver_relayed` 拿的是 `&self`，借用 `self` 的闭包活不到结算 claim 的那一刻 ⇒
+  落成 `RelayRecord`（值）+ `RelayHandler::record`，由调度器在 **claim 结算之后**施加。语义一字未变。
+* **D11（`outbound_decision` 的判决是 `Processed`，权威仍是计数器）**：上游把"已经记过账"藏在不透明的
+  `errOutcomeRecorded` 里；本仓把那一笔**带出来**（`Processed` / `OutcomeRecorded { recorded }`），
+  好让 `Verdict` 对调用方诚实。计数器仍是权威（用例同时断言两者）。
+* **D12（写集勘误，同一类第 13 次）**：`wecom/mod.rs` **不在** issue rev 3 的写集里，但本片的 4 个新文件
+  必须先被它声明才进编译单元（否则连 `dead_code` 都不报）。本片**追加式**改它：+4 行 `pub mod` + 一段注释
+  （52 → 62 行）。`register()` 与别人刚加的行**未动**。
+* **D13（几个上游 `ctx` 语义的落法）**：`handleEvent` 的 10s / `handleInboxNew` 的 5s 预算落成
+  `EVENT_BUDGET` / `INBOX_BUDGET`；`fallbackBudget` 落成 `DeliveryBudget::fallback(now)`
+  （判据与上游逐字相同：剩余 < `ACK_TIMEOUT` 时换一份 `FALLBACK_SEND_TIMEOUT`）；
+  `settleBudgetSpent` 落成 `settle_budget_spent(deadline, now)`（裸取消**不算**界）。
+
+### 34.3 门禁证据（当轮实测，base `9b97f824` + 本片）
+
+* **`bash scripts/gates.sh` = 8/8 PASS，272s**（① 2s ② 71s ③ 50s ④ 38s ⑤ 42s ⑦ 0s ⑨ 69s ⑩ 0s）。
+* **`bash scripts/gates.sh --with-db`（当轮新建库 `multica_lum1782`，角色 `mc_lum1782` 带 `CREATEDB`）
+  = 10/10 PASS，335s**（⑥ 256s / `migrate=0,e2e=0`；⑧ 27s）。追加这两道门的理由：本片虽然**零 DB 直写**
+  （端口不落地），但 `OutboundQueries` / `DeliveryLookup` 的形状是**照着真表**定的
+  （`channel_task_delivery` / `channel_installation` / `channel_user_binding`）⇒ ⑥ 的真库 e2e 覆盖了
+  这些表在迁移后的形态，⑧ 覆盖 schema 未漂。**新库每轮新建**（避免跨轮残留）。
+* **⑦ 读数（片后，逐字，`python3 scripts/route_parity.py`）**：
+  `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
+  `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33 M3+=16 M3=11 M10=5 **M7=5**`（和 = 70 ✓）。
+  **九个数与片前逐字相同** —— 0 路由片该有的形态证据。**`--write-baseline` 未跑**（归 M7-21 INT）。
+* **形态门**：`0 defect(s)`（`MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` 三类全 0；
+  `slash_alias_audit.py` 报 `0 warning(s)`，`469` 个字面量与片前一致 ⇒ 本片**未注册任何路由**）。
+* **⑨**：`report matches crates/mc-conformance/report.json`（快照**未动**，blob `fa53d084`）。
+  **wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**，也**不把它当战绩**（阴性对照组）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **未改**。
+  本片 24 个新文件最长 **705 行**（`relay/dispatch.rs`），全部 ≤ 800。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`）。本片踩到并修掉的具体 lint：
+  `cast_possible_truncation`（`offers as u32` → `u32::try_from(..).unwrap_or(u32::MAX)`）、
+  `match_same_arms`（分类表里语义相同的两臂合并 + 保留注释）、`unused_self`（`advance` 成了纯函数）、
+  `zero_sized_map_values`（`HashMap<String, ()>` → `HashSet<String>`）、`too_many_lines`（`deliverRelayed`
+  104 行 ⇒ 抽出 `seal_relayed_bubble`）、`format_push_string`、`trivially_copy_pass_by_ref`
+  （serde 的 `skip_serializing_if` 只收 `fn(&T) -> bool` ⇒ 保留签名 + `allow` + 理由）、
+  `field_reassign_with_default`、`bool_assert_comparison`、`similar_names`、`unreadable_literal`、
+  `doc_markdown`、`empty_line_after_doc_comments`。
+* **⑤**：`mc-channel` lib 用例 **1118 passed / 0 failed**；其中本片新增 **78** 条。
+* **合并期复核**：见 **34.6**。
+
+### 34.4 交接（H1…H5；都写在代码的模块文档里，这里只列指针）
+
+* **H1（M7-19 `LUM-1784`）**：`RelayOutbound::start` / `attach` / `deliver_outbound` 是宿主接缝；
+  `Outbound::handle_chat_done` / `handle_inbox_new` 是**显式调用**入口（本仓没有进程内事件总线）。
+  入站侧只需把 `ChatDone` / `InboxPush` 投影出来即可。
+* **H2（M7-19）**：`classify_seal` / `SealVerdict` / `DeliveryBudget::fallback` 暂住 `outbound.rs` /
+  `outbound/events.rs`（上游在 `seal_outcome.go`）。M7-19 落地那两个函数时**收敛**（一个片自己写第三份
+  读法，正是上游那份文件要消灭的东西）。同一片收敛：`MemberLinks` 的**引用定义**那一段（D6）。
+* **H3（M7-18 `LUM-1783`）**：实现 `AttachmentDelivery`（上游 `sendAttachments` / `tellUser` /
+  `readObject`）；两个准入计数器已在 `AttachmentGates`，`claim_pending` / `release_pending` 就是
+  上游那两个 `claimAttachmentSlot` / `releaseAttachmentSlot`。
+* **H4（M7-20 `LUM-1785`）**：实现 `SenderLookup`（`get` + `stream_sender`）—— 它是本片与
+  M7-16 的 `WsSender` / `StreamSender` 之间**唯一**的连接点；`sender.send_text` 的每一段直接走
+  `WsSender::send_text`（配额与重试归 M7-20 的 `rate_limit.rs`，见 M7-16 的 D4）。
+  同一片还要实现 `DedupeStore` 的生产实现（Redis）与 `RootResolver`。
+* **H5（M7-21 `LUM-1786` INT）**：⑦ 基线 / ⑨ 报告 / ⑩ 基线三件套的刷新**全归 INT**；
+  `outcome.rs` 的原因集就是看板 label 的**封闭**定义（加一个原因要同时改 `ALL` 与 `as_str`）。
+
+### 34.5 风险（R1…R4）
+
+* **R1（单副本部署契约，R-M7-1 的正面那一半）**：进程内中继 ⇒ 多副本部署下同一 installation 可能被
+  两个副本同时连接；生产部署契约因此是**单副本**，或"渠道连接只在一个副本上开"。本片**不引 Redis**
+  （与 M5/M6 的选型纪律一致），`RelayPublisher` 端口留给将来接真中继。
+* **R2（上游两处自身不闭合，照抄并标出）**：① `errStreamAckTimeout` 在 `provablyNotSent` 里被判成
+  "可能已上 socket"，却**不在** `unconfirmedReason` 的表里 ⇒ 落进 default 被读成**确定失败**、
+  进而记成 `transport_error`；② `Resolve` 对 `absent` **不设围栏** ⇒ 同一条事件 id 被**发布两次**
+  时，第二趟的 `settle` 会**再记一次** `no_live_connection`。两条都**照抄**（一个片顺手改分类会让别的片
+  的读数漂），并各有用例逐字钉住现状（`contract.rs` / `idempotency.rs`）。
+* **R3（`/issue` 确认的标题在 M7-19 落地前只过邻接闸）**：`AdjacencyBreaker` 不覆盖**引用定义**形态
+  （`[标签]: https://…`）。一个只配了它的部署对那种标题是**降级**（不是等价）。失败关闭的取值
+  （没有闸就省掉标题）已经落地，所以最坏情况是"少一个标题"，不是"多一条能点的链接"。
+* **R4（`relay.rs` 的 worker 只有一条端到端用例）**：`work` / `watch_outcomes` / 停机排空是**异步**
+  循环，本片的 25 条用例里只有一条（`a_frame_survives_the_shard_worker_and_the_shutdown`）真的把它们
+  跑起来；其余走的是同一批函数（`offer` / `step` / `fire_due` / `drain_remaining` / `perform` / `settle`）
+  的**直接调用**。判定：函数级覆盖是完整的，循环级的调度细节（计时器竞态、`Notify` 许可）只由那一条
+  用例覆盖 ⇒ M7-19 接线时如发现循环行为可疑，先补一条"两个安装竞争同一片"的用例。
+
+### 34.6 合并期复核（当轮实做）
+
+* **base**：本片起手 base = **`9b97f8240ce124667231d3c66d19a2095b2ccefc`**（`feat/multica-rs-initial`
+  当轮 `git fetch` 实测；`9b97f824` = PR **#107**（M7-12 lark）合并提交，叠在 `0bb943f2`（PR **#106** M7-16）之上）。
+  计划期写的 `2394bfcc` / `8104740d` **一律作废**。
+  交片前 base 又前进两格（`33d476e5` / `ffa6622c`，两条 cycle docs）⇒ 本 PR 的 base = **`ffa6622c`**。
+  **delta 逐文件 = 只有 `docs/37`（+242）** ⇒ 与本片写集**零交集**（`git diff --name-only 9b97f824..ffa6622c`
+  里没有任何 `crates/**`）；本片 rebase 到 `ffa6622c` 后**当场重跑 8/8 绿**，读数逐字不变。
+  （旁证：`ffa6622c` 那条 cycle 报告自己记了「wecom/mod.rs 实测 62/14」，正是本片工作树里的读数 ⇒ 与本片 D12 一致。）
+* **硬前置的可观测判据当场成立**：`git cat-file -e origin/feat/multica-rs-initial:crates/mc-channel/src/wecom/{ws_sender.rs,stream_store.rs}`
+  与 `.../{credentials.rs,types.rs}` **四条全 EXISTS** ⇒ M7-15（PR #105）与 M7-16（PR #106）**都已合入 base**。
+* **本片是 `wecom/mod.rs` 在 M7-17 时段的唯一写者**：base 实测 `mod.rs` = **52 行 / 10 个 `pub mod`**；
+  本片**追加** 4 行 + 一段注释 ⇒ **62 行**，`register()` 仍是 M7-0 的空实现（**未被顺手填充**）。
+* **同轮在飞**：`LUM-1778`（M7-13 lark 出站/回复/会话桥）与本片同轮派发。逐字路径交集 = **∅**
+  （本片只写 `crates/mc-channel/src/wecom/{relay*,outbound*,outcome*,replier*}` 与 `wecom/mod.rs` 的追加段、
+  `docs/32`；lark 片只写 `crates/mc-channel/src/lark/**`）⇒ **可同飞**。
+* **与 wecom 片不同飞**：`LUM-1783` / `LUM-1784` / `LUM-1785` 都会写在同一个 `wecom/mod.rs` 追加段上
+  ⇒ 后合者 rebase + 重跑门禁。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
