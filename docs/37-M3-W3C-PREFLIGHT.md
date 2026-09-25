@@ -7909,3 +7909,67 @@ gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5      （和 = 121 �
 - 在飞 **2/3**：`LUM-1799`（M8-2，5 路由；⑥ 已绿、⑧ 进行中，**逼近交 PR**）∥ `LUM-1768`（M7-3，0 路由；5 新文件 + `mod.rs`，正在 `cargo test -p mc-channel`）；daemon **3/3**（含 cycle 自身）。
 - **槽位一空就派**（预飞已做完，措辞见 §90.4）：`1799` 终 ⇒ **M8-3（`LUM-1800`，8 路由，0 缺件）**，派前只需重取当轮 ⑦ 并追加「起手补充」；`1768` 终 ⇒ **M7-4（`LUM-1769`，4 路由）**，派前**必须**把 `crates/mc-channel/src/slack/mod.rs` 补进写集。`LUM-1691`/`LUM-1793`（+12/+1 路由，争注册段 + `Cargo.lock`）、`LUM-1745`（M5-D8，争 `state.rs`）仍等。
 - 待办计数（当轮）：`in_progress` **2**、`backlog` **37**、`todo` **11**（全为 cycle 登记）、`blocked` **0**。
+
+---
+
+## §91 12:30 cycle（`LUM-1851`，03:30Z 触发）：**起手 2 open PR ⇒ 两片全合并（#88 / M7-3 + #87 / M8-2）⇒ base `b21cf928`**；唯一冲突是 `docs/32` 尾节双占 `## 13.`（按「两侧都保留」在 **PR 分支内**解：M7-3 留 §13、M8-2 顺延 §14）；合并树 `--with-db` **10/10 PASS / 240s**（首轮 ⑥ 红 = 共享库是 W0-B2 前的旧形态，换新建库即绿）；空位 2 ⇒ 派 **M7-4（`LUM-1769`）+ M8-3（`LUM-1800`）**
+
+### §91.1 起手三连（当轮实测，03:30Z）
+
+| 项 | 值 |
+| --- | --- |
+| 磁盘 | **19G 可用（61%）** —— 高于 12G 阈值（当轮实测，未抄 §90 的 next-cycle 行） |
+| base | **`8b8cd5a2`**（= §90 收尾值） |
+| open PR | **2** —— `#88`（M7-3，head `7caa6d1b`，`mergeable/clean`）、`#87`（M8-2，head `a7c70c9e`，`mergeable/clean`） |
+| daemon | `running_task_count = 1` ⇒ **本项目在飞 0 片**（cycle 自身即全部）⇒ **空位 = 3 − 1 = 2** |
+
+**ⓘ 并发 cycle 检查**：`todo` 里 cycle 类 issue **11** 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835` + 本 issue），全部只登记、不改状态；**本轮起手无本项目并发 cycle 在场**（第 29 轮观察；`blocked` = 0）。
+
+### §91.2 合并判据链（两片都走 GitHub merge API；唯一冲突在 PR 分支内解）
+
+- **写集交集**：代码面**零交集** —— #88 全在 `crates/mc-channel/src/slack/**`（11 文件），#87 全在 `crates/mc-vcs/**` + `crates/mc-repos/src/vcs/**` + `crates/mc-http/src/routes/vcs/**` + `crates/mc-http/tests/vcs/**`（12 文件）。**唯一共享文件 = `docs/32-M3-DAEMON-FACE.md`**，且两片都是**在同一尾行锚点追加** ⇒ 都取了 `## 13.`（本轮冲突的唯一根因）。
+- **预检一**（分支自身 `--numstat` vs PR API）：`git diff --numstat <merge-base→head>` 与 PR 侧读数逐字一致（#88 对 `6b7795b4` = 11 文件 `+5599/−14`；#87 对 `ca05edbd` = 12 文件 `+5862/−91`），合并前 API `mergeable: clean`。
+- **合并方式**（照 §88/§89 先例：`PUT /pulls/{n}/merge`，`merge_method=merge`，`commit_title = merge(<波>): PR #<n> —— <PR 标题去 feat(x): 前缀>`，`commit_message` 带 `Co-authored-by: multica-agent`）：
+  1. **#88 先合**（`head 7caa6d1b` 对当轮 base 无冲突）⇒ base **`54135942`**；
+  2. **#87 后合必红**（`docs/32` 双占）⇒ **不把 base 手工合进 base**，而是**「取回 base」进 PR 分支**（先例 `tmp-1673`）：`git merge origin/feat/multica-rs-initial`（唯一冲突 `docs/32`）→ 解为「**两侧都保留**」（M7-3 留 `## 13.`；M8-2 整段顺延 `## 14.`，段内 9 处自指同步改号：`### 13.1…13.5`、`§13（本节）`、`见 §13.2`、`（§13.2 末）`，并在其号段说明里记下「cycle `LUM-1851` 按两侧都保留解、顺延 §14」）→ 推回 `agent/devbox5/d5e6f9e7d094`（`a7c70c9e..eae1e794`）⇒ PR 重回 `mergeable: true` ⇒ API 合并 ⇒ base **`b21cf928`**。
+- **合并后复核**：`docs/32` 冲突标记数 **0**、章节序 `## 11.`/`## 12.`/`## 13.`/`## 14.` 连续；两片新文件都在 base 树上（`slack/{socket,media}.rs`、`routes/vcs/webhook.rs` 等）。两片 PR 均 `merged: true`（#88 → `54135942`、#87 → `b21cf928`）⇒ GH 现 **0 open PR**。
+
+### §91.3 合并树门禁（当场重跑，`--with-db` 全 10 门）
+
+- **第一轮 9/10**：唯一红 = ⑥ db（`migrate=1`）—— **环境性、非代码**。逐字诊断：`Error: invalid migration manifest: schema_migrations is not the upstream ledger (version column: bigint; expected TEXT) … That shape cannot be upgraded in place … Rebuild the database instead`。即我起手用的共享库 `multica_test`（docs 里那条 URL）是 **pre-W0-B2 runner 迁出来的旧形态**；`mc-migrate` 的守卫**故意**拒绝原地升级。⇒ 新建 `multica_lum1851`（`OWNER multica`）后重跑。
+- **第二轮（同一棵树 `b21cf928`）10/10 PASS / 240s**，逐门：① 2s ② 115s（第二轮 0s，已建）③ 1s ④ 0s ⑤ 35s ⑥ **170s（`migrate=0,e2e=0`）** ⑧ 26s ⑦ 1s ⑨ 5s ⑩ 0s。⑤ `cargo test --workspace` = **2112 passed**；⑥ 的 ignored e2e 面 = **604 passed**。
+- **⑦ 逐字（合并树实测）**：`upstream 456 (commit f41fae6b08fb) | local 416 registered | baseline 406`；`implemented 336 real + 4 placeholder = 340 / 456`、`known_gap 116`、`unclaimed 0`、`regression 0`、`local_only 9`；`gaps by owner: M9=33 M7=24 M3+=16 M8=14 M2-A=13 M3=11 M10=5`（和 = 116 ✓）。
+  ⇒ 相对 §90 的 base `6b7795b4`（`local 411 / implemented 335 / known_gap 121 / owners.M8 19`）：**全由 #87 的 5 条真实路由推动**（`local +5 / implemented +5 / known_gap −5 / owners.M8 19→14`），#88 贡献 **0**（0 路由）—— 且与 #87 分支文档自记的「片后 `local 416 / implemented 340 / known_gap 116 / owners.M8 14`」**逐字一致** ⇒ 该片自报读数在合并树上**独立复现**。
+- 三个基线文件（`route-parity-baseline.json` 406 / `file_size_baseline.tsv` / `slash-alias-allowlist.tsv`）**一个字节都没动**（`--write-baseline` 仍归 INT）；⑨ 0 违规、⑩ 0 违规。日志留档：本 run workdir 的 `gates-lum1851-merged.log`（首轮 9/10）与 `gates-lum1851-merged2.log`（10/10）。
+
+### §91.4 派发（空位 2 ⇒ 派 2 片，3/3 满）
+
+预检**当场重做**（不抄 §90 结论），两片各得一条实测结论：
+
+| 片 | 写集复核（当轮 base `b21cf928`） | 号段 |
+| --- | --- | --- |
+| **M7-4（`LUM-1769`，4 路由）** | **逮到「第二类漏项」并已修描述**：7 个写集文件**全部不存在**（纯新文件）✓；但 `crates/mc-channel/src/slack/mod.rs`（6 个 `pub mod` + `register` 空壳 @L77 + `register_with` @L87）**既不在写集、也不在只读清单** ⇒ 7 个新文件要可见、`register()` 要接出面，**必须**改它 ⇒ 已**补进写集**。另列**条件项** `slack/socket.rs`：`SlackChannel::send` 目前**失败关闭**（M7-3-D6），§13.5 给了「在 `outbound.rs` 给 sender」或「直接改 `socket.rs`」两条路 ⇒ 走后者（或设计需要动它）时须把它写进写集（M7-3 已终态 ⇒ 单写者安全）。**路由侧 0 缺件**：`routes/channels/mod.rs` 已 `pub mod slack;`（L75）+ `router()` 已 `.merge(slack::router())`（L89）⇒ 原描述标它「只读」**正确**。 | `§15` |
+| **M8-3（`LUM-1800`，8 路由）** | **0 缺件**（逐条重验）：`mc-core/src/mcp.rs` 已 `pub mod overlay;`（L26）、`mc-repos/src/mcp/mod.rs` 已 `pub mod {agent_binding,workspace_server};`（L26–27）、`routes/mcp/mod.rs` 已 `pub mod {agent,workspace};`（L23–24）、`mc-core/src/lib.rs` 已 `pub mod mcp;`（L46）；5 个目标文件在 base 树上**全部存在**（anchor 桩）⇒ 原地填充。 | `§16` |
+
+- **互斥**：两片**零文件交集**（`mc-channel/src/slack/**` + `routes/channels/slack.rs` ∥ `mc-{core,repos}/src/mcp/**` + `routes/mcp/**`）；共享文件仅根 `Cargo.toml`/`Cargo.lock`，已把「能不加依赖就不加」写进两片描述。
+- 两片描述各追加「**起手补充**」（当轮 base `b21cf928` + **当轮 ⑦ 逐字** + delta 平移预期：M7-4 ⇒ `local 420 / implemented 344 / known_gap 112 / owners.M7 20`；M8-3 ⇒ `local 424 / implemented 348 / known_gap 108 / owners.M8 6`；+ `--write-baseline` 禁跑 + **号段固定不许临场取**）。
+- 派发验证：两片均已 `assign` 给本 agent 且 run 已起（新 workdir `lum-1769-3269a2c6ff4a`、`lum-1800-176ceae18a06`）；daemon `running_task_count = 3`（cycle 自身 + 2 片）⇒ **3/3 满、零空位**。
+
+### §91.5 磁盘
+
+- 起手 19G（61%）→ 合并树门禁建满 `target/` 时 **4.4G（91%）**（`--with-db` 的 ignored e2e 604 例 + workspace 全量构建；`CARGO_INCREMENTAL=0` 下**仍 14G**，其中 `target/debug/incremental` 1.2G）→ 门禁跑完、本 run 无待建 ⇒ **本 run 的 `target/` 整删** ⇒ 回到 **19G（62%）**。回收量只认 `df` 前后差（14G 由 `du` 读，两值一致）。
+- 本轮**无别的死物可回收**（上一轮已清完；两片新 run 的 target 还没长起来）。
+
+### §91.6 lesson（本轮新增四条）
+
+1. **「两片都在 `docs/<xx>` 尾行锚点追加同一节号」= 合并必红，而且能在派发期零成本消掉**：本轮撞号根因不是代码，而是**并行片各自按「文件末尾号 + 1」临场取号**（#88 与 #87 都取到 `## 13.`）。可复用两步：(a) **合并期**用「取回 base 进 PR 分支」解（改号落在 PR 分支内，PR 仍走 API merge ⇒ GitHub 侧仍是 `merged`），而不是把 base 手工合进 base；(b) **派发期**给并发片**预分配不同号段**（本轮 M7-4 = `§15` / M8-3 = `§16`，并在描述里写明「固定号、不要按末尾 +1 临场取」）—— 成本为零，直接消灭这类冲突。
+2. **门 ⑥ 红，先分辨「代码」还是「库的形态」**：逐字读到 `schema_migrations is not the upstream ledger … Rebuild the database instead` ⇒ 是共享库 `multica_test` 属 **W0-B2 之前的旧形态**（`mc-migrate` 的守卫**故意**拒原地升级），与两片代码无关。**纪律：门禁起手一律用「本轮新建的库名」**（本轮 `multica_lum1851`）；docs 里那条 `multica_test` URL 已过期，别直接抄 —— 谁抄谁 ⑥ 红。
+3. **`--with-db` 的构建面在 `CARGO_INCREMENTAL=0` 下仍要 ~14G**（`incremental` 1.2G + ignored e2e 的 dev-deps 是大头）⇒ **门禁跑完立即删本 run 的 `target/`**（本轮 4.4G → 19G），否则 2 片并发一建就顶到 91%。
+4. **「第二类漏项」形态再次复现（§87 / §90 之后）**：M7-4 的 `slack/mod.rs` **缺**、M8-3 的 4 个父文件 `pub mod` **齐** —— 判定只花两分钟（`git cat-file -e` + `git show | grep 'pub mod'`），仍应作为**每片派发前的固定动作**；且「原描述把某父文件标为只读」**不等于**它真的不需要改（本轮路由侧恰好真不需要，但必须实测）。
+
+### §91.7 收尾态与下一轮起点
+
+- **base = `b21cf928`**；GH **0 open PR**；三个基线文件未动；⑦ = `local 416 / baseline 406 / implemented 340 / known_gap 116 / unclaimed 0 / regression 0 / local_only 9`。
+- 在飞 **2/3**：`LUM-1769`（M7-4，4 路由，`in_progress`）∥ `LUM-1800`（M8-3，8 路由，已派）。daemon **3/3**（含 cycle 自身）。
+- **槽位一空就派**：`LUM-1793`（M2-A 第 13 条键，+1 路由）与 `LUM-1691`（M2-A 收尾，+12 路由）—— 两者都争注册段与 `Cargo.lock` ⇒ **须串行**；`LUM-1745`（M5-D8，webhook 投递 worker）争 `state.rs`。M7 面 `LUM-1770…1786`、M8 面 `LUM-1801…1804`、M9 面 `LUM-1815…1825` 仍在 `backlog`（按 stage 前置逐片晋升）。
+- 待办计数（当轮）：`in_progress` **1**（`LUM-1769`；`LUM-1800` 派发后待转）、`backlog` **35**、`todo` **12**（11 条 cycle 登记 + `LUM-1800`）、`blocked` **0**。
