@@ -4598,7 +4598,11 @@ lib 用例 902 条全绿。
 3. **同项目另一片（`LUM-1779` M7-14）正在飞、占 16G**：`/proc` 逐 PID 扫到它的 `pi` 与
    `rustc` 都活着 ⇒ **不碰**它的 `target/`（四判据里第一条就是"run 终态"）。
 
-### 35.7 合并期复核（当轮实做）
+### 35.7 交付与合并期复核（当轮实做）
+
+* **PR**：[#110](https://github.com/louloulin/paperclip-rs/pull/110)，head `agent/devbox5/d467ad8eca04`
+  （`570c94c2`），base **`bb4e726a`**。**预检逐字对上**：`git diff --numstat bb4e726a...HEAD`
+  按文件名排序 = PR API 的 files 列表（同样按文件名排序）⇒ **22 文件 / +8096 / −10** 两侧逐字相等。
 
 * **base**：本片起手 `git fetch` 后实测 `feat/multica-rs-initial` = **`bb4e726aa9b8b3d7f8b27c83b6a9483a480577a8`**
   （issue rev 5 的交接值 `bb4e726a` 逐字命中；正文里计划期的 `2394bfcc` / `8104740d` / `6af3fb3d` /
