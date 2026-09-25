@@ -7973,3 +7973,92 @@ gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5      （和 = 121 �
 - 在飞 **2/3**：`LUM-1769`（M7-4，4 路由，`in_progress`）∥ `LUM-1800`（M8-3，8 路由，已派）。daemon **3/3**（含 cycle 自身）。
 - **槽位一空就派**：`LUM-1793`（M2-A 第 13 条键，+1 路由）与 `LUM-1691`（M2-A 收尾，+12 路由）—— 两者都争注册段与 `Cargo.lock` ⇒ **须串行**；`LUM-1745`（M5-D8，webhook 投递 worker）争 `state.rs`。M7 面 `LUM-1770…1786`、M8 面 `LUM-1801…1804`、M9 面 `LUM-1815…1825` 仍在 `backlog`（按 stage 前置逐片晋升）。
 - 待办计数（当轮）：`in_progress` **1**（`LUM-1769`；`LUM-1800` 派发后待转）、`backlog` **35**、`todo` **12**（11 条 cycle 登记 + `LUM-1800`）、`blocked` **0**。
+
+## §92 13:00 cycle（`LUM-1853`，04:00Z 触发）：**0 open PR + 空位 0 ⇒ 只读监控轮（第六次）+ 外科回收 16.3G**；在飞 M7-4（`LUM-1769`）∥ M8-3（`LUM-1800`）双双健康、**写集交集 ∅（逐文件实测）**；零空位不放空 —— 转「下一片派发预飞」，对 `LUM-1691` / `LUM-1793` / `LUM-1745` 三个候选各得一条实测结论；**新发现：`slash_alias_audit.py --declared` 是「预测器」不是门，其 exit code 不能当门禁判据**
+
+### §92.1 起手三连（当轮实测，04:01Z）
+
+| 项 | 值 |
+| --- | --- |
+| 磁盘 | **12G 可用（75% 已用）** —— 高于 8G 外科回收阈值、低于「新片冷建 7–16G」的安全线（当轮 `df` 实测，未抄 §91 的 next-cycle 行） |
+| base | **`7d1ed90e`**（= §91 收尾值；`git ls-remote` 与 `git log -1` 双读一致） |
+| open PR | **0**（认证 API `pulls?state=open`，`rate_limit.used = 2 / 5000`） |
+| daemon | `running_task_count = 3`，逐 PID 拆 = cycle 自身（`35341`）∥ `LUM-1769`（`14196`，cwd 命中其 workdir）∥ `LUM-1800`（`14176`，cwd 命中其 workdir）⇒ **本项目在飞 2 片、空位 = 3 − 1 − 2 = 0** |
+
+- **非本项目 pi 进程 `140`**（cwd `/home/devbox`，`lstart` 2026-09-24 22:30:44，`etime` 5h30m）**未被 daemon 计入**（全局 3 == 本项目 3）⇒ 本轮不需要做 §84 那种「全局数减 1」的修正，但**逐 PID `readlink /proc/*/cwd` 仍是唯一合法拆法**（同一命令两种结论都见过）。
+- **并发 cycle 检查（第 30 轮观察）**：`todo` 里 cycle 类 issue **12** 条（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835/1849` + 本 issue），全部只登记、不改状态；**本轮起手无本项目并发 cycle 在场**；autopilot 护栏仍未落地；`blocked` = **0**。
+
+### §92.2 在飞两片健康复核（判活三件套取三 + 写集逐文件实测）
+
+| 片 | 判活证据（当轮生成） | 未提交产物 | 与 base 的关系 | `target/` |
+| --- | --- | --- | --- | --- |
+| **M7-4（`LUM-1769`）** | `/proc/14196/cwd` 命中其 workdir；`etime` 14:39；分支 `agent/devbox5/3269a2c6ff4a` | **10 条路径未提交、0 commit**：新增 `slack/{binding,history/history,install,outbound,replier,slash,typing}.rs` + 改动 `slack/{mod,socket}.rs` | `origin/feat/multica-rs-initial..HEAD` **空**（未推分支） | 2.0G |
+| **M8-3（`LUM-1800`）** | `/proc/14176/cwd` 命中其 workdir；`etime` 14:40；分支 `agent/devbox5/176ceae18a06` | **5 项改动、0 commit**：`mc-core/src/mcp/overlay.rs`、`mc-http/src/routes/mcp/{agent,workspace}.rs`、`mc-repos/src/mcp/{agent_binding,workspace_server}.rs` | 同上（未推分支） | 3.5G |
+
+- **写集交集 = ∅（不是抄描述，是逐文件 `git status --porcelain` 实测）**：`1769 = crates/mc-channel/src/slack/**` ∥ `1800 = crates/mc-{core,repos}/src/mcp/** + crates/mc-http/src/routes/mcp/**` ⇒ 无共享文件。
+- **M7-4 的「条件项」已按预期触发**：§91.4 列的 `slack/socket.rs` 条件项**正在被改**（`M`），`slack/mod.rs`（写集补项）也在改 ⇒ 两条预判都命中，无需 cycle 干预。
+- **M8-3 零「第二类漏项」复现**：5 项改动**全是既有文件**（无新增模块）⇒ 不需要动任何父 `mod.rs`（与 §91.4 的预飞结论一致）。
+- **`state.rs` 本轮无人触碰**（两片 `git status` 里 `state.rs` 命中数 = 0）⇒ `LUM-1745` 的单写者前提**当前成立**（见 §92.4）。
+
+### §92.3 磁盘：外科回收 16.3G（三个死物，四判据逐条实测）
+
+先跑 `df`、再判死物 —— **回收量只认 `df` 前后差**（`du` 在同一分钟会抖动）：
+
+| 死物 workdir | 判据① PR 已合 | 判据② run 终态 | 判据③ `/proc/*/cwd` 逐 PID | 判据④ 内容已在 base | 删掉的 `target/` |
+| --- | --- | --- | --- | --- | --- |
+| `lum-1799-d5e6f9e7d094`（M8-2） | ✓ PR **#87** 已合（`b21cf928` 的第二父） | ✓ 无进程、workdir mtime 03:09（约 55 min 前） | ✓ **0 命中** | ✓ `git status` 空 + `base..HEAD` **空**（`a7c70c9e` 已是 base 祖先） | **15G** |
+| `lum-1768-fa1f533002ea`（M7-3） | ✓ PR **#88** 已合（`54135942`） | ✓ 无进程、mtime 03:25 | ✓ **0 命中** | ✓ 分支 `fa1f533002ea` `base..HEAD` **空** | 718M |
+| `lum-1851-b659b8fe404c`（上一轮 cycle 自身） | —（docs-only，无 PR） | ✓ 无进程、mtime 03:49 | ✓ **0 命中** | ✓ §91 已在 base 树上（`7d1ed90e`） | 605M |
+
+- **读数**：起手 **12G（75%）** → 回收后 **28G（42%）**，一次放掉 **16.3G**。三个 workdir 的**工作树、提交、分支全部保留**，只删 `target/`（照旧规则）。
+- **为什么这轮值得先回收再谈派发**：`LUM-1769`/`LUM-1800` 正在冷建，历史反例（§89：起手 7.6G → 中途 2.8G；`LUM-1835` 死于 `ENOSPC`）说明「两片 + cycle 同跑」在 49G overlay 上必须留 ≥12G 余量。
+
+### §92.4 零空位 ⇒ 转「下一片派发预飞」：三候选各一条实测结论
+
+空位 0 不等于零产出（§90 先例）。下一轮槽位一空就要派，**派发决策必须建在当轮 base 的实测上**，本轮把三个候选的写集逐条落到 `7d1ed90e` 上核：
+
+| 候选 | 当轮实测（base `7d1ed90e`） | 结论 |
+| --- | --- | --- |
+| **`LUM-1691`**（M2-A 尾，**12 路由**，`backlog`） | ① 12 条键在 ⑦ 缺口板上**逐条命中**（`/api/assignee-frequency` 1 + `/api/issue-view-preferences` 2 + `/api/issue-views/` 5 + `/api/pins*` 4 = 12，owner 全 `M2-A`）✓；② 代码侧无注册（`grep -rn -E "issue-views\|/pins\|assignee-frequency" crates/mc-http/src` **空**）✓；③ 三张表**已在上游迁移链**：`pinned_item`←`038`、`issue_view`←`265`、`issue_view_preference`←`268` ⇒ **0 迁移**成立 ✓；④ **「或并入既有 stats 模块」是死选项** —— `crates/mc-repos/src/` 下**没有** `stats.rs`/`stats/`（全量 `ls` 实读）⇒ `stats.rs` 必为**新文件**，且必须进 `mc-repos/src/lib.rs` 的 `pub mod` 段；⑤ 门 ⑩ 余量充足：`routes/mod.rs` 122、`mount.rs` 416、`mc-repos/src/lib.rs` 138（**均不在** `file_size_baseline.tsv`）⇒ 尾部追加 1 行安全 | **可派（M2-A 串行对里的第一片）**。描述的「与 `LUM-1370` 争 `labels.rs`/`lib.rs`」条款**已过期**（M2-E 已合、`routes/labels.rs` 在树上）⇒ 派发时应在描述里就地更正，避免误让路 |
+| **`LUM-1793`**（M2-A 尾-补，**1 路由**，`backlog`） | ① `POST /api/issues/{id}/squad-evaluated` 在缺口板里 ✓（owner `M2-A`）；② `scripts/route-owners.tsv` **无** `squad` 规则、命中它的是**第 67 行兜底行 `^/api/issues	M2-A`** ⇒ 描述要求「在兜底行之前插入显式规则」的插入点**实测存在且唯一**（文件共 90 行）✓；③ 与 `LUM-1691` 写同一追加段（`mount.rs` / `routes/mod.rs` / `mc-repos/src/lib.rs`）⇒ **必须第二片跑**（描述里的仲裁条款本轮实测成立） | **可派但必须串在 `LUM-1691` 之后** |
+| **`LUM-1745`**（M5-D8 webhook 投递 worker，0 路由，`backlog`） | ① 描述的**硬前置已满足**：⑦ `owners` 直方图**无 `M6` 键** ⇒ M6 波已收口（描述要求「M6 收口后 `backlog → todo`」）✓；② 依赖边**无需新增**：`apps/mc-server/Cargo.toml` 已含 `mc-autopilot`（M5-9 那条）✓ ⇒ 「不动依赖边」成立；③ **描述里的条件项是死项**：`apps/mc-server/src/lib.rs` **不存在**（`ls` 实读：只有 `channels.rs`/`integrations.rs`/`main.rs`/`scheduler/`）⇒ 声明 `mod webhook_worker;` 落在 `main.rs`（已在写集），**不需要新增文件**；④ `state.rs` = **665 / 800**，余量 135 行、且不在 ⑩ 基线；本轮在飞片零触碰 ⇒ **单写者前提当下成立** | **可派**；与两个 M2-A 片**零交集**（`apps/mc-server` + `mc-http/src/state.rs` ∥ `mc-repos`/`routes` 追加段）⇒**可与 M2-A 片同轮**，但要防 `state.rs` 与未来 M6 追加热点冲突 |
+
+- **派发序建议（下一轮槽位一空即用）**：`LUM-1691`（12 路由，收益最大）→ 再空一槽派 `LUM-1745`（可用性缺口、与 1691 零交集）→ `LUM-1691` 合入后派 `LUM-1793`（1 路由，消掉 M2-A 最后一条无主键）。
+- **观测口径（下一轮复核用）**：两片在飞全合后 ⑦ 应为 `local 428 / implemented 352 / known_gap 104 / owners.M7 20 / owners.M8 6`（= 当轮 `416/340/116` + M7-4 的 4 条 + M8-3 的 8 条），逐项与§91.4 的单片 delta 平移一致。
+
+### §92.5 当轮门禁读数（树未变 ⇒ ⑦/⑩ 免跑论证 + 当场重跑）
+
+- **树等价论证**：`7d1ed90e` = `b21cf928`（§91 的合并树）+ **一条 docs-only 提交**（§91 正文），`git diff --stat b21cf928..7d1ed90e` 只含 `docs/37-M3-W3C-PREFLIGHT.md` ⇒ §91.3 的代码面门禁读数在本轮 base 上**仍然有效**。为免「免跑」变「空口」，⑦/⑦b/⑩ 三条**当场重跑**：
+- **⑦ 逐字（当轮 base）**：`upstream 456`、`local 416`、`baseline 406`；`implemented 340 = 336 real + 4 placeholder`、`known_gap 116`、`unclaimed 0`、`regressions 0`、`local_only 9`（占位 2）、`slash_aliases 67`、`duplicates 2`；`gaps by owner: M9=33 M7=24 M3+=16 M8=14 M2-A=13 M3=11 M10=5`（和 = 116 ✓）⇒ **与 §91 逐字相同**（合并后无代码片进 base，符合预期）。
+- **⑦b（门形）**：`python3 scripts/slash_alias_audit.py --quiet` **exit 0**（`slash-alias-allowlist.tsv` 现为 **0 行欠账**，仅表头）。
+- **⑩**：`python3 scripts/file_size_check.py --quiet` **exit 0**。
+- **⑥/⑤/⑨ 未跑**（无代码面变化；真库门需要 14G 冷建，本轮磁盘预算优先留给两片在飞）。
+
+**🔴 本轮新发现（口径类，值得下一轮复核）**：`slash_alias_audit.py --declared <fixture>` **不是门禁命令、其退出码不能当判据**。当轮实测七份 fixture：
+
+| fixture | `--declared` 读数 | exit |
+| --- | --- | --- |
+| `m3-6-declared-routes.tsv`（15 键） | 2 defect | 1 |
+| `m4-declared-routes.tsv`（45 键） | 15 defect | 1 |
+| `m5-declared-routes.tsv`（29 键） | 7 defect | 1 |
+| `m6-declared-routes.tsv`（57 键） | **5 defect** | 1 |
+| `m7-declared-routes.tsv`（在飞波次） | — | **0** |
+| `m8-declared-routes.tsv`（在飞波次） | — | **0** |
+| `m9-declared-routes.tsv`（34 键，未来波） | 3 defect | 1 |
+
+- 脚本自述（`--help` / 源码 L48–49）把该模式定义为 **「predict from an issue's declared route table, before any code exists」** ⇒ 它是**派发前的形态预测器**，判据本是「declared 表 vs 上游形态」；而门 ⑦ 的第二条命令逐字是 `python3 scripts/slash_alias_audit.py --quiet`（**不带 `--declared`**，见 `scripts/gates.sh` L293）⇒ 两回事。
+- **推论（对未来的纪律）**：① 引用「形态门读数」时必须写清**哪条命令**（`--quiet` 门形 vs `--declared` 预测形），否则 exit code 无法复现 —— §80/§91 记录里的「5 defect **非回归、exit 0**」在当轮只能复现出 **exit 1**（`docs/32` §9.5 只写了「3 → 5 defect」这一半，没写退出码）；② **`m6` 的 5 defect 至今未闭合**（`owners.M6` 已 = 0、allowlist 已空、无 issue 承接）⇒ 这是 M6 波收口后留下的一条**静默欠账**：`/api/skills`（GET/POST）与 `/api/skills/{id}`（GET/PUT/DELETE）的**双形态**（无尾斜杠别名）从未注册。它不影响门 ⑦（门形判据下 pass），但会影响任何拿 `m6-declared` 表做取证的下游文书 ⇒ 建议由下一个 M6 尾-补片（或 M6-INT 的补记）处理，或在 allowlist 里补回 5 行并写明 owner。
+- **对照**：**在飞两片所属波次的 `--declared` 读数都是 exit 0（`m7` / `m8` 全绿）** ⇒ 当前波的尾斜杠形态纪律**没有退化**，本轮无回归。
+
+### §92.6 lesson（本轮新增三条）
+
+1. **`--declared` 形态审计 ≠ 门禁**：门 ⑦ 第二条逐字是 `slash_alias_audit.py --quiet`（`gates.sh:293`），而 `--declared` 是**预测器**（脚本自述「before any code exists」）。**引用读数必须带命令形**；历史上记成「5 defect、exit 0」的口径不可复现（当轮为 exit 1）。连带发现 M6 波留有 5 条无人承接的形态欠账（见 §92.5）。
+2. **零空位的正确产出是「派发预飞」**，而且要在**当轮 base**上重测三件事：写集文件是否存在（「第二类漏项」）、父文件 `pub mod` 是否齐、以及**描述里的条件项是否已经死了**（本轮三条：`LUM-1691` 的「或并入既有 stats 模块」、`LUM-1745` 的 `apps/mc-server/src/lib.rs` 条件项、`LUM-1691` 与 `LUM-1370` 的争用条款全部过期）。**描述是历史文书，不重测就会照着过期约束做决策**。
+3. **回收窗口是「片终态 + PR 已合」之后立即执行**，而不是等到磁盘告急：本轮三个死物合计 16.3G，`df` 12G → 28G，直接把两片冷建的余量补回安全区；`du` 只用来定位，回收量只认 `df` 前后差。
+
+### §92.7 收尾态与下一轮起点
+
+- **base = `7d1ed90e`**（本轮 docs-only §92 推入后前进，码树不变）；GH **0 open PR**；三个基线文件（`route-parity-baseline.json` 406 / `file_size_baseline.tsv` / `slash-alias-allowlist.tsv` 0 行）**未动一个字节**。
+- **在飞 2/3**：`LUM-1769`（M7-4，4 路由，`in_progress`，10 条未提交路径）∥ `LUM-1800`（M8-3，8 路由，run 活、看板仍 `todo`）—— 两片均未推分支、均无 PR；daemon **3/3**（含 cycle 自身）⇒ **空位 0**。
+- **下一轮第一动作**：`df -h /`（本轮收尾 28G，但两片正在冷建）→ `git ls-remote` → 认证 GH open PR → **逐 PID `/proc/*/cwd`** 判空位；槽位一空按 §92.4 的序派 `LUM-1691` → `LUM-1745` →（1691 合后）`LUM-1793`。
+- **待办计数（当轮）**：`in_progress` **1**（`LUM-1769`）、`backlog` **35**、`todo` **12**（11 条 cycle 登记 + `LUM-1800`）、`in_review` **182**、`blocked` **0**。
