@@ -1,6 +1,6 @@
 //! `inbox_message.rs` 的用例（上游 `inbox_message_test.go`，**424 行**）。
 //!
-//! 与上游的**形态**差异两处（与 `markdown/tests.rs` 同源，登记 `docs/32` §36）：
+//! 与上游的**形态**差异两处（与 `markdown/tests.rs` 同源，登记 `docs/32` §37）：
 //!
 //! 1. app URL 是**参数**（本片 D4），所以上游那些 `t.Setenv` 变成直接传值 —— 用例不再依赖进程
 //!    环境，也不再需要为清理环境写 `t.Cleanup`；

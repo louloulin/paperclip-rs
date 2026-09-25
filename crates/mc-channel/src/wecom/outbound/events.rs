@@ -75,7 +75,7 @@ impl DeliveryBudget {
 
 /// 一条 `inbox:new` 的归一化投影（上游 `events.Event` 的 payload 那两层的 map 形态）。
 ///
-/// # `title` / `body` 是 M7-19 补进来的（端口形状勘误，`docs/32` §36 的 D2）
+/// # `title` / `body` 是 M7-19 补进来的（端口形状勘误，`docs/32` §37 的 D2）
 ///
 /// M7-17 的这一份投影只抽了路由需要的字段，而**渲染**要的那张卡（上游 `buildInboxMarkdown`）
 /// 是「标题 + 正文 + 深链」 —— 少了这两个字段，卡片会缺标题与正文，那是**降级**而不是等价。

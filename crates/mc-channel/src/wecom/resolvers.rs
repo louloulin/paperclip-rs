@@ -16,7 +16,7 @@
 //! | `auditor`（`RecordChannelInboundDrop`） | [`crate::engine::ChannelAuditor::generalized`] |
 //!
 //! 本片**不**再写第二份（写第二份 = 把"丢弃审计长什么样"这件事切成两半）。**登记为差异**
-//! （`docs/32` §36 的 D7）：上游的 `auditor.RecordDrop` 把 `event_type` 填成**平台事件名**
+//! （`docs/32` §37 的 D7）：上游的 `auditor.RecordDrop` 把 `event_type` 填成**平台事件名**
 //! （`wm.MsgType`，即 `"image"` / `"mixed"`…），而 [`ChannelAuditor`] 填的是**归一化后的**
 //! `MessageKind`。M7-2 已经登记过这条口径（`engine/session/audit.rs` 的 `drop_from_message` 文档），
 //! 本片照抄、不另起一份。

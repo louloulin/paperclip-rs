@@ -27,7 +27,7 @@
 //! 只经 [`PlaintextSecret`] 出现，且它的唯一出口是 `subscribe_body` 的 `into_value`。任何
 //! `tracing::*` 都不插值它。
 //!
-//! # 与上游的两处**形态**差异（登记 `docs/32` §36）
+//! # 与上游的两处**形态**差异（登记 `docs/32` §37）
 //!
 //! 1. **拨号器是端口**（D1）：上游的 `Dialer` 是 `func(...) (*gorilla.Conn, ...)`；本仓是
 //!    [`WsDialer`] trait，生产实现 [`TungsteniteDialer`]，用例注入内存替身（本仓**没有**
