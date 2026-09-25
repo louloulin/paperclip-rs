@@ -37,6 +37,14 @@ pub mod resolvers;
 pub mod router;
 pub mod supervisor;
 
+// M7-2（`LUM-1767`）落自己的四个文件，并**由它**在这里追加下面四行
+// （anchor 的写集不含那四个文件 ⇒ 这里不预声明；M7-1 与 M7-2 同 stage，先起跑的追加、
+// 另一片 rebase —— 本片与 M7-1 的约定逐字一致）。
+pub mod batcher;
+pub mod commands;
+pub mod lease;
+pub mod session;
+
 use std::sync::Arc;
 
 use crate::message::SharedInboundHandler;
@@ -57,6 +65,23 @@ pub use supervisor::{
     AcquireLeaseParams, Backoff, Config, Installation, InstallationStore, LeaseStore, NowFn,
     ReleaseLeaseParams, Supervisor, SupervisorHandle, DEFAULT_LEASE_TTL, DEFAULT_POLL_INTERVAL,
     DEFAULT_SHUTDOWN_TIMEOUT,
+};
+
+// —— M7-2 的四份交付：去抖触发、命令/标题、进程内租约、会话状态机与三个端口适配 ——
+pub use batcher::{
+    RunBatcher, TimerHandle, TimerScheduler, TokioTimers, DEFAULT_CHAT_RUN_BATCH_WINDOW,
+};
+pub use commands::{
+    chat_title_source, derive_chat_title, derive_first_message_title, media_type_title,
+    parse_control_command, parse_fresh_session_command, parse_issue_command,
+    parse_new_chat_command, task_input_is_channel_ingested, ChannelCommandClassifier,
+    ControlCommand, ControlCommandKind, DETERMINISTIC_TITLE_LIMIT,
+};
+pub use lease::{InProcessLeaseStore, LeaseMetrics, LeaseMetricsSnapshot};
+pub use session::{
+    drop_from_message, plan_pending_contexts, AuditStore, BindingKeyPolicy, ChannelAuditor,
+    ChannelDeduper, ChannelSessionBinder, ContextWindow, DedupStore, PendingContextPlan,
+    SessionBinderConfig,
 };
 
 /// engine 装配时需要的**全部**外部依赖（端口 + 共享入站入口）。
@@ -206,7 +231,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(files, 4, "engine 目录应当正好四个 M7-1 的文件");
+        assert_eq!(files, 8, "engine 目录 = M7-1 的四个文件 + M7-2 的四个文件");
     }
 
     /// `ChannelDeps::handler()` 与 `deps.router` 是同一个 handler（一次 `Arc::clone`）。
