@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use mc_core::id::Id;
 
 use crate::wecom::stream_store::RoundAddress;
@@ -33,9 +34,30 @@ pub struct AttachmentTarget {
 ///
 /// 本片**不实现**它：准入与记账骨架在 [`AttachmentGates`]（上游那两个计数器本来就是
 /// `Outbound` 的字段），而查表 / 上传 / 逐文件计数是 M7-18 的事。
+///
+/// # 🔴 写集勘误（`docs/32` §35 的 D12）：这一个接缝的形状本片必须改两处
+///
+/// 1. **同步方法 → `async`**：准入名额本来由 `deliver_attachments_by_id` 持有到投递结束，
+///    而一个同步方法在它返回的那一刻就把名额交回去了 ⇒ `MAX_ADMITTED_ATTACHMENT_DELIVERIES`
+///    不再约束**它本来要约束的那个东西**（那次查表）。改成 `async` 之后名额活到 `await` 结束，
+///    语义与上游的 `goroutine` 逐字相同。
+/// 2. **多带两个 id**：上游的 `sendAttachments(ctx, messageID, workspaceID, to, carries)` 靠
+///    `ListAttachmentsByChatMessage(messageID, workspaceID)` 查表，而原来的 `deliver(target, …)`
+///    把两个 id **丢掉**了 ⇒ 端口实现拿不到它为哪条消息投递。中继那条路径（`relay/relayed.rs`）
+///    本来就是按 id 调的，所以两个调用点各多传两个引用。
+#[async_trait]
 pub trait AttachmentDelivery: Send + Sync {
-    /// 把一条回答产出的文件送到 `target`。在**脱离任务**里跑（本片已经把准入拿到手）。
-    fn deliver(&self, target: AttachmentTarget, carries_the_reply: bool);
+    /// 把一条回答产出的文件送到 `target`。在**脱离任务**里跑（准入已经由调用方拿到手）。
+    ///
+    /// `message_id` / `workspace_id` 是这条回答的助手消息与它所属的 workspace
+    /// （上游 `deliverAttachmentsByID` 的两个参数）。
+    async fn deliver(
+        &self,
+        message_id: &str,
+        workspace_id: &str,
+        target: AttachmentTarget,
+        carries_the_reply: bool,
+    );
 }
 
 /// 上游 `Outbound` 的两个准入计数器（`admittedAttachments` / `pendingAttachments`）。
@@ -229,11 +251,15 @@ impl Outbound {
             return;
         };
         let target = target.clone();
+        let message_id = message_id.to_owned();
+        let workspace_id = workspace_id.to_owned();
         let port = Arc::clone(port);
         spawn_detached(async move {
-            // admission 随这个任务活到结束（含它那次查表，含一次根本没带文件的轮次）。
+            // admission 随这个任务活到结束（含它那次查表，含一次根本没带文件的轮次）——
+            // 这正是本片把 `deliver` 改成 async 的原因（写集勘误 D12）。
             let _admission = admission;
-            port.deliver(target, carries_the_reply);
+            port.deliver(&message_id, &workspace_id, target, carries_the_reply)
+                .await;
         });
     }
 }

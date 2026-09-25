@@ -46,10 +46,29 @@ pub mod ws_sender;
 // 上游 `internal/integrations/wecom/{relay_outbound,outbound,outbound_outcome,replier}.go`
 // 的本地落点。`relay.rs` 上游 1,578 行 ⇒ 按 §6.3 拆出 `relay/` 子目录（同 `ws_frame/`、
 // `ws_sender/` 的先例），`outbound.rs` / `replier.rs` 各带一个 `tests.rs`。
+pub mod media_crypt;
+pub mod media_download;
+pub mod media_guard;
+pub mod media_ingest;
+pub mod media_stream;
+pub mod media_upload;
 pub mod outbound;
+pub mod outbound_media;
 pub mod outcome;
 pub mod relay;
 pub mod replier;
+
+// M7-18（`LUM-1783` / `docs/60-M7-PLAN.md` §3.3）：wecom 的**媒体面**（下载 / 上传 / 地址闸 /
+// 加解密 / 摄入解析器 / 出站附件投递）。上面同一段里的 7 行就是它：
+// `media_crypt` / `media_download` / `media_guard` / `media_ingest` / `media_stream` /
+// `media_upload` / `outbound_media`（`rustfmt` 把它们与 M7-17 那 4 行并成一个按字母序的连续段）。
+//
+// 🔴 写集勘误（`docs/32` §35 的 D1，同一类第 14 次）：issue rev 5 的写集只列了 **6** 个文件，
+// 而派生表 `docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-18 行里有第 7 个
+// （`internal/integrations/wecom/media_stream.go`，上游 171 行，流式解密那条路）⇒ 本片一并落地。
+// 另按 §6.3 的门 ⑩ 拆分：`media_download.rs` / `media_stream.rs` / `media_ingest.rs` 各带一个
+// 子目录（子模块 + `tests.rs`），`media_upload.rs` / `media_guard.rs` / `media_crypt.rs` /
+// `outbound_media.rs` 各带一个 `tests.rs`。
 
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;

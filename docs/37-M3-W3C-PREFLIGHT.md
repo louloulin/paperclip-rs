@@ -10855,3 +10855,277 @@ upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458
 - **递补**：`1784` 终 ⇒ `1785`（M7-20，rev 2）⇒ `1786`（M7-21 INT，rev 3，须 `owners.M7 → 0`，**与任何 `--write-baseline` 片不同轮**）。
 - **禁同飞**：lark 树 ∥ wecom 树可同飞；**同树内也不得两片同飞**。
 - ⑦ 当轮 = `local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`、`owners M9=33 M3+=16 M3=11 M10=5 M7=5`；⑨ totals `365/7/23/29/0/306`（`report.json` blob `fa53d084…`）。
+
+## §124 04:30 cycle（`LUM-2057`，20:30Z 触发）：**起手 1 open PR + 空位 1 + 磁盘 13G / 73% ⇒ 非只读轮** —— 判据链合并 **PR #109（M7-13 lark 出站/回复/会话桥，0 路由）**，base `7acc2d84` → **`06d2f4bf`**（落地树 `2dd22b37…` 逐字命中）；空位 1 ⇒ 派 **`LUM-1779`（M7-14 lark 安装与绑定面，5 路由，rev 7）**；回收 **≈19G（`du` 20G）**；🔴 **CI 门 ⑥ 瞬时红第 2 次取证**（红点在**写集之外**）
+
+### §124.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` = **13G 可用（73%，used 34G）** —— 高于「< 12G 先回收」红线但已不宽裕（在飞片冷建会吃）。本轮**不需要**为了腾空间而提前动作，但**合并后的回收仍是第一步**。
+- `git ls-remote origin feat/multica-rs-initial` = **`7acc2d84`**（= §123 的收尾值，未被推进）。
+- 认证 GH `pulls?state=open` = **1**：**#109**（`feat(m7-13)`，head `agent/devbox5/9d0e47bdfd84` / `0e896fd6`，base `feat/multica-rs-initial` / `7acc2d84`，`mergeable: true`，`mergeable_state: unstable`）。
+- 逐 PID 扫 `/proc/*/cwd`：**本 cycle 自身**（`lum-2057-770bbebf88df`）∥ **36545** = `LUM-1783`（`lum-1783-d467ad8eca04`）⇒ **`LUM-1778` 的 pi 进程（§123 记 pid 59135）已消失**；daemon `running_task_count = 2` ⇒ 与「3 − 1(cycle) − 1(在飞) = **1 个空位**」逐字吻合。
+- 看板 `in_progress` 当轮 = `LUM-1783` + `LUM-2057` ⇒ 与 daemon **逐字吻合（连续第 4 轮）**。
+
+### §124.2 判据链 —— PR #109（M7-13，0 路由）：五步全绿、**零门禁重跑**
+
+| 步 | 判据 | 实测 |
+| --- | --- | --- |
+| ① | 预检 `merge-base..head` numstat == PR API **逐字** | **25 文件 / +10654 / −2**，两处按 filename 排序后**逐字相等**（⚠️ 片自报评论写 `+10646` ⇒ §124.7 lesson 3） |
+| ② | base 前进段非 docs = 0 **且 head 尾提交 docs-only** | `merge-base == base == 7acc2d84` ⇒ 前半**平凡成立**；尾提交 `0e896fd6` = `docs/32` 的 **+14 / −6（纯 docs）** ⇒ **「跑门禁的那棵代码树」==「head 代码树」** |
+| ③ | 三哈希等式 | `merge-tree --write-tree 7acc2d84 0e896fd6` = **`2dd22b3764874e3665a14e9e2b67d411269d58d8`** == head `^{tree}` == **落地 `^{tree}`** |
+| ④ | 证据（两路任一） | 片自报 `bash scripts/gates.sh --with-db` **10/10**（`③45s ⑤43s ⑥82s ⑨57s`）+ `cargo test -p mc-channel lark::` = **463 passed**；**CI：`fast` 绿 / `contract` 绿 / `db` 红** —— 红点在**写集之外**，判为瞬时红（§124.3） |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | 合并前**重取** head sha = `0e896fd6…`（未动）⇒ merge commit **`06d2f4bf`**（父 = `7acc2d84` + `0e896fd6`） |
+
+- **形态判定**：`merge-base --is-ancestor 7acc2d84 0e896fd6` = **YES** ⇒ 合并树 ≡ head 树 ⇒ §113 的「零门禁重跑」路径适用。**这次形态②是「片自己制造」的**：它分支上的 `57dad584` = `Merge origin/feat/multica-rs-initial into agent/devbox5/9d0e47bdfd84` ⇒ 合并期 base 已被它先合进自己的树。
+- 落地核对：`tree(06d2f4bf)` == `tree(0e896fd6)` == `2dd22b37…` **逐字**；GH `merged: True`；`pulls?state=open` 事后 = **0**。
+- commit title 惯例：`merge(m7): PR #109 —— M7-13 lark 出站/回复/会话桥（LUM-1778，0 路由）`。
+- ⑦ 片前片后**九个数逐字不变**（0 路由片的正面控制组）：`local 469 | baseline 458 | implemented 383 real + 3 ph = 386 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`。
+
+### §124.3 🔴 CI 门 ⑥ 瞬时红（第 2 次取证）：第一判据 = **红点是否落在写集里**
+
+- **base `7acc2d84` 的 CI `db` job 红在** `crates/mc-http/tests/channels/telegram_round_trip.rs:599`（`left: None / right: Some("777:41")`；该次跑里 `mc-scheduler` 的用例是**绿**的）。
+- **PR #109 head `0e896fd6` 的 CI `db` job 红在** `crates/mc-scheduler/tests/jobs_issue_wakeup.rs:329`（`left: Running / right: Success`）。
+- **判定为瞬时红（不是代码红）的三条实测**：
+  1. PR #109 的写集只有 `crates/mc-channel/src/lark/**` + `docs/32`（① 的逐字 numstat）⇒ **`mc-scheduler` / `mc-http` 的这两处文件在两个 commit 之间逐字节相同**（同一个 diff 里根本没有它们）。
+  2. **同一个 `jobs_issue_wakeup` 在 base 那次跑是绿的**（同字节、异结果 ⇒ 竞态/负载相关）。
+  3. 片自报在**与合并树同一棵树**上的 `--with-db` **10/10** 绿（含 ⑥ 82s）。
+- ⇒ **纪律**：CI 红先做「红点落在写集里吗」这一条；**不在**就 `--only db` 单跑复验 + **换新库**重跑，**不要为 CI 红停轮**，也**不要**把 CI 当门禁证据（门禁证据 = 在与合并树同一棵树上当场跑的 `10/10`）。这与 M7-13 自己登记的 `docs/32` §32.3（瞬时红未取证）**同源**，本轮把它**取到证了**。
+- 相对地：`⑥ 不可并发`（抢同一 PG ⇒ `mc-http` 真库用例**成片红**，看着像代码红）是**另一条**，已由 M7-13 写进 `docs/32` §32.5。
+
+### §124.4 回收 **≈19G**（四判据整删）
+
+- 目标 = `lum-1778-9d0e47bdfd84/workdir/paperclip-rs/target`（`du -sh` 报 **20G**）。四判据全满足：
+  ① run **终态**（pi 进程消失，`LUM-1778` = `in_review`）② **交付已进 base**（#109 合并、落地树逐字命中）③ `/proc/*/cwd` **与** `/proc/*/fd` **逐 PID 零命中** ④ `git status --porcelain` **空**（HEAD 恰为 `0e896fd6`）。
+- **回收量读数 = `df` 前后差**：used **34G → 15G**、available **13G → 32G（73% → 32%）** ⇒ **Δ ≈ 19G**，落在 `du` 报的「20G ± 0.5G」取整区间内（两次 `-h` 读数各含 ≤0.5G 取整）。
+- **顺序仍是「合并 → 回收 → 派发 → 写文档」**（§123.6 lesson 1）：回收在读秒级完成（本次 `rm -rf` 20G 无卡顿），但它是**派发的前置**——新片的冷建会在几分钟内吃掉数 G。
+
+### §124.5 派发 —— `LUM-1779`（M7-14 lark 安装与绑定面，**5 路由**，rev 6 → **7**）
+
+- **空位 = 3 − 1(cycle) − 1(`LUM-1783`) = 1** ⇒ 派 `LUM-1779`（§123.8 预告的「槽位一空即派」正是它）。
+- 三条资格（当轮实测）：
+  ① **前置 `LUM-1778` 已终态且已入 base** ⇒ 「不得与任何 lark 片同飞」解除（`lark/mod.rs` 的追加段不再有第二个写者）；
+  ② **硬前置 M7-10/11/12 的 13 个文件在 base `06d2f4bf` 上逐个 `git cat-file -e` = 13/13 EXISTS**；
+  ③ 与在飞 `LUM-1783`（wecom 树）**逐字零交集 ⇒ 可同飞**。
+- 描述 rev 6 → 7 新增「起手补充」节：base `06d2f4bf` / 前置解除 / **M7-13 落地值实测 `lark/mod.rs` = 82 行 / 19 个 `pub mod`（rev 6 的预测「M7-13 落完即 82 行 / 19 个 `pub mod`」**逐字命中**）** / 预算修正为「**82 → ≥86**」/ 号段 `## 30.` 复验（`32` 已被 M7-13 占掉）/ 当轮 ⑦/⑩/⑨ 读数 / **CI 门 ⑥ 瞬时红的判据**（把本轮 §124.3 的取证直接交接给片）/ `owners.M7 5 → 0` 的因果。
+- **派发实测**：`--description-file` → `assign --to-id … --no-start` → `status todo`；**25s 后** daemon `running_task_count` **2 → 3**、新 workdir **`lum-1779-b0f1f3fb04ea`** ⇒ **满位 3/3**。
+
+### §124.6 ⑦ / ⑩ / ⑨ 当轮读数（⚠️ 本轮 ⑨ 是**真跑**，不是继承）
+
+- 在落地 base `06d2f4bf` 上**当场重跑** `bash scripts/gates.sh --only route-parity,file-size,conformance` ⇒ **3/3 绿 / 111s**（其中 ⑨ 111s）。
+  `upstream 456 (commit f41fae6b08fb)` | `local 469 registered` | `baseline 458` | `implemented 383 real + 3 placeholder = 386` | `known_gap 70` | `unclaimed 0` | `regression 0` | `local_only 9`；`gaps by owner: M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = **70** ✓）。
+  ⇒ 与 M7-13 片自报在 `7acc2d84` 上的读数**逐字相同**（0 路由片 ⇒ 正面控制组成立）。
+- ⑩：`file_size_check: limit=800 scanned=**1096** baseline=10 violations=0`（`scanned` 由 §123 的 **1071** 涨到 **1096** = M7-13 新落 24 个文件 + 本轮前后的 docs；`baseline` 未动）。
+- ⑨：`report matches crates/mc-conformance/report.json` —— **本轮没有走「门输入逐 blob 恒等」的免跑路径**（我直接跑了 ⑨，因为它同时是 `LUM-1779` 的交接证据）。totals = `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`（`report.json` blob **`fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980`**，未动）。
+  - 路径含 `lark` 的 fixture **恰好 7 条**、**全部 `actor=anonymous` + `outcome=unmounted`** ⇒ 这 7 条正是 `LUM-1779` 的专属验收（转 `pass` 后**必须**刷新快照）。
+- 🚫 **本轮不刷基线**（`--write-baseline` 仍归 M7-21 INT `LUM-1786`）⇒ `baseline` 保持 **458**。
+
+### §124.7 lesson
+
+1. ✅ **「片自己把 base 合进分支」会把形态②**（base 是 head 祖先）**制造出来** —— PR #109 的分支上有 `57dad584 Merge origin/feat/multica-rs-initial into agent/devbox5/9d0e47bdfd84`，于是 `merge-base == base`，② 的前半**平凡成立**。但**不能就此收工**：形态② 只保证「base 是祖先」，**不**保证「head 的代码树 == 跑门禁的那棵树」——**尾提交**（`0e896fd6` = `docs/32` 的 +14/−6）才是可能把两棵树拆开的地方。⇒ **② 必须写成两半**：`merge-base == base`（前半）+ **尾提交 docs-only**（后半，用 `git diff --numstat <尾提交>^ <尾提交>` 一条命令）。本轮两半都成立，才允许继承片自报的 `10/10`。
+2. 🔴 **CI 的门 ⑥ 会瞬时红，且红点常在写集之外 ⇒ 第一判据是「红点落在写集里吗」**。本轮 base 红在 `mc-http/telegram_round_trip`、head 红在 `mc-scheduler/jobs_issue_wakeup`，两者**逐字节相同**（不在 #109 的写集里）且其中一个在 base 那次跑是**绿**的 ⇒ 瞬时红。**取到证了**：M7-13 的 `docs/32` §32.3 当时只能写「瞬时红**未取证**」。⇒ 这条现在是**可判据化**的（写集比对 + 同字节异结果），下一轮不必再从零推理。
+3. 🟠 **片自报评论里的「行数」可能有 ±8 的滞后，别把它当判据**：`LUM-1778` 的交付评论写 **`+10646 −2`**，而 PR API 与本地 `merge-base..head` 都是 **`+10654 −2`** —— 差额 8 = 它自己 `docs/32` 节定稿时的 **+14 / −6 净 +8**。**判据链的 ① 比的是「PR API vs 本地」**（两者都是终态，逐字相等 ⇒ 通过），**不是**「片自报评论 vs 本地」。⇒ 引用片自报的**绝对行数**前先核终态；引用「门禁读数」则必须先过 lesson 1 的两半。
+4. ✅ **「从在飞片工作树实测预算」第 3 次证实**：rev 6 给 `lark/mod.rs` 写的「M7-13 落完即 **82** 行 / 19 个 `pub mod`」在合并后实测 **82 行 / 19 个 `pub mod`** —— **逐字命中**（第 1 次 §122 `lark/mod.rs`、第 2 次 §123 `wecom/mod.rs` 62/14、第 3 次本轮）。⇒ 预算来源顺序可继续当纪律：**① 在飞工作树实测 > ② base 实测 + `pub mod` 条数推算（必偏小）> ③ 计划期预测**。
+5. 🟢 **`du` 与 `df` 在整 G 粒度上会差 1G，别写成「低报」**：本轮 `du` 报 20G、`df` 前后差 ≈19G。§123 那次两者恰好一致（18G / 18.4G），本轮不一致 —— 差异来自两次 `-h` 读数各 ≤0.5G 的取整，**不是**硬链接或稀疏文件的特例。⇒ 回收量**主读数用 `df` 前后差**，`du` 只作旁证。
+
+### §124.8 观察项（第 61 轮）
+
+- **无并发 cycle（连续第 17 轮）** —— 逐 PID 只看到 cycle 自身 + 两个切片 run。
+- 积压 `todo` cycle **11 条**（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`，**标题仍停留在 `multica-rs`** —— 它们死在改名之前）**只登记不动状态**；autopilot 建单护栏**仍未落地**。🔴 §123 的磁盘告急（80%）与 §119 的打到 0 字节，都是**同一护栏缺失**的可用性后果：并发 cycle 会同时吃盘。
+- `blocked` = **0**、`done` = 0。
+- ✅ **看板 `in_progress` 连续第 4 轮与 daemon 逐字吻合**：`in_progress 3` = `LUM-2057`(cycle 自身) + `LUM-1779`(本轮新派即入账) + `LUM-1783`。看板（项目内 264）：`in_review 235 / todo 11 / in_progress 3 / backlog 15 / blocked 0`。
+- 号段：`docs/32` 已占 `14–29, 31, 32, 33, 34`（M7-13 本轮占掉 `32`）⇒ 空号 **`30` = `LUM-1779`(本轮已派)** / **`35` = `LUM-1783`(在飞)**。
+
+### §124.9 next cycle 起点（05:00 / 21:00Z）
+
+- base **`7acc2d84 → 06d2f4bf`**（本 run §124 docs-only 直推后另加一个 commit，**起手一律 `git rev-parse` 实测**）；GH **0 open PR**；**在飞 3/3** = cycle ∥ `LUM-1779`（M7-14 lark **5 路由**，workdir `lum-1779-b0f1f3fb04ea`，起手点 `06d2f4bf`，刚起手）∥ `LUM-1783`（M7-18 wecom，0 路由，workdir `lum-1783-d467ad8eca04`，pid 36545，起手点 **`bb4e726a`**，`porcelain` 10 项、0 提交，target **3.4G** 活物）。收尾 df **32G 可用 / 32%**。
+- **第一动作**：`df -h /` **连采两次** → `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）→ 逐片「run 终态（`porcelain` 空 + pi 进程消失）∧ 形态判定」。
+- **判据链铁律**：① 预检 `merge-base..head` numstat == PR API 逐字 ② **`merge-base == base`（前半）∧ 尾提交 docs-only（后半）** ③ **三哈希等式**（`merge-tree --write-tree` == head `^{tree}` == 落地 `^{tree}`）④ 证据两条路任一：**在与合并树同一棵树上**当场 `--with-db` 10/10 **或** CI 3/3 绿（CI `db` 红先按 §124.3 判「红点在不在写集里」）⑤ API 钉 40 位 sha + `merge_method=merge`。
+- 🔴 **`LUM-1783` 起手于 `bb4e726a`，base 已前进到 `06d2f4bf`，前进段含非 docs 路径**（#109 的 25 个 `mc-channel/src/lark/**` + `docs/32`）⇒ **若 base 不是它 head 的祖先就必须真合 + 在它自己的热 target 上重跑 `--with-db` 10/10**（热 target 在 `lum-1783-d467ad8eca04`，**勿清**；三前置 = run 终态 ∧ `porcelain` 空 ∧ `/proc` 零 PID）。`LUM-1779` 起手于 `06d2f4bf` ⇒ 只要中间不再合代码片就是**祖先形态**（零门禁重跑）。
+- **槽位一空即派**：`LUM-1779` 终 ⇒ **lark 树空，但 M7 已无后继 lark 片**（M7-14 是最后一片）⇒ 该空位**本轮（下一轮）不放空**：递补顺序 = `LUM-1783` 终 ⇒ **`LUM-1784`（M7-19 wecom 入站与解析，0 路由，rev 2）**（**同 wecom 树 ⇒ 必须等 1783 终**）⇒ `1784` 终 ⇒ **`LUM-1785`（M7-20 wecom 打字/限流/去重/追踪，0 路由，rev 2）**。
+- **`LUM-1786`（M7-21 INT，rev 3）**：前置 = `owners.M7 → 0` —— **正是 `LUM-1779` 合入时发生**；但 INT 会**刷快照/基线** ⇒ 必须**与任何 `--write-baseline` 片不同轮**，且等 wecom 线（`1784`/`1785`）收口后再派更稳。
+- **禁同飞**：lark 树 ∥ wecom 树可同飞；**同树内不得两片同飞**。
+- ⑦ 当轮 = `local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`、`owners M9=33 M3+=16 M3=11 M10=5 M7=5`；⑩ `scanned 1096 / baseline 10 / violations 0`；⑨ totals `365/7/23/29/0/306`（`report.json` blob `fa53d084…`）。
+
+---
+
+## §125 05:00 cycle（`LUM-2062`，21:00Z 触发）：**起手 0 open PR + 空位 0（3/3 满位）+ 磁盘 22G / 54% ⇒ 只读监控轮（第二十三次）** —— ⑦/⑩ 在 base 当场重跑 **2/2 绿（0.5s）**、⑨ 用「门输入逐 blob 恒等」**主动不冷编**（第 **7** 次生效）；零空位不放空 ⇒ 三片递补 **rev bump**（`LUM-1784` 2→3、`LUM-1785` 2→3、`LUM-1786` 3→4），并**首次**在「下一槽派谁」上取到一条**硬约束**（`wecom/mod.rs` 的写者链）；回收 **≈3G**（死物四判据整删）
+
+### §125.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` = **22G 可用（54%，used 25G）** —— 高于「< 12G 先回收」红线；但**本轮中途**在飞两片同时冷建/编译，21:1xZ 实测已跌到 **15G / 68%**（`LUM-1783` 的 target 7.3G → **12G**）⇒ **起手读数不代表轮内安全余量**，回收（§125.4）不得推迟到收尾。
+- `git ls-remote origin feat/multica-rs-initial` = **`cd5bc6178cd36d1ef58dcd36906cd1e52ef7b09a`** —— 与 §124 的收尾值**逐字相同**（本 run 起手时 base 未被任何片推进）。
+- 认证 GH `pulls?state=open` = **0** ⇒ 本轮**无判据链可走**（在飞两片都还没推分支）。
+- 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**，`docs/37` §79 老坑）：
+  - **27428** = `pi` ⇒ `lum-1779-b0f1f3fb04ea`（`LUM-1779` / M7-14）；
+  - **36545** = `pi` ⇒ `lum-1783-d467ad8eca04`（`LUM-1783` / M7-18）；
+  - **49645** = `pi` ⇒ `lum-2062-cddea0c3eae3`（**本 cycle 自身**）；
+  - 两个在飞片各自的 cargo/rustc 子进程（1779 侧 `timeout 900 cargo test -p mc-channel lark::`；1783 侧 3 个 `rustc`）。
+- daemon `running_task_count` = **3**（`active_task_count` = 3）⇒ **空位 = 3 − 1(cycle) − 2(在飞) = 0** ⇒ **零派发**（与 §124 收尾时的 3/3 逐字吻合）。
+- `project_id` 核验（§105 的判据）：两个在飞 workdir 的 `.multica/daemon_task_context.json` 的 `issue_id` 分别落在 `01a0d4a4…`（= `LUM-1779` / `LUM-1783`）与 `01a0da5e…`（= `LUM-2062`）⇒ **三个槽位全属本项目**，无 `LUM-1945` 那类跨项目占槽。
+- 看板 `in_progress` 当轮 = `LUM-1779` + `LUM-1783` + `LUM-2062` ⇒ 与 daemon **逐字吻合（连续第 5 轮）**；项目内 265：`in_review 236 / todo 11 / in_progress 3 / backlog 15 / blocked 0`（`todo 11` 全是积压 cycle issue，**没有**可派的 `todo` 片）。
+
+### §125.2 在飞两片体检（皆活、皆 0 提交、皆未推）
+
+| 片 | workdir | HEAD | 提交 | `porcelain` | target | 当轮动作 |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| `LUM-1779`（M7-14 lark，**5 路由**） | `lum-1779-b0f1f3fb04ea` | `06d2f4bf`（== 起手 base） | 0 | **9** | 3.5G → 4.5G | `timeout 900 cargo test -p mc-channel lark::` ⇒ **自测段** |
+| `LUM-1783`（M7-18 wecom 媒体面，0 路由） | `lum-1783-d467ad8eca04` | `bb4e726a` | 0 | **17** | 7.3G → **12G** | 3 个 `rustc` ⇒ **编译/测试段** |
+
+- `LUM-1779` 的未提交面 = ` M crates/mc-channel/src/lark/mod.rs` + 4 个新模块（`backfill` / `binding` / `installation` / `registration`，各含 `.rs` + 同名目录）⇒ 与 rev 7 描述的写集（5 路由 + ⑨ 7 条 lark fixture）**方向一致**，无越界迹象。
+- `LUM-1783` 的未提交面 = ` M wecom/{mod.rs,outbound/attachments.rs,outbound/tests.rs}` + 7 个新模块（`media_crypt` / `media_download` / `media_guard` / `media_ingest` / `media_stream` / `media_upload` / `outbound_media`）⇒ 与 rev 5 的「wecom 媒体面」写集一致。
+- 两片都**没有** PR、**没有**推送分支 ⇒ 本轮没有「判据链 vs 片是否还在写」的竞态需要处理（§123 的那条时效纪律本轮未被触发）。
+
+### §125.3 ⑦ / ⑩ 当场重跑 + ⑨ 的「门输入逐 blob 恒等」免跑（第 7 次生效）
+
+- 在 base `cd5bc617` 上当场 `bash scripts/gates.sh --only route-parity,file-size` ⇒ **2/2 绿 / 0.5s**：
+  `upstream 456 (commit f41fae6b08fb)` | `local 469 registered` | `baseline 458` | `implemented 383 real + 3 placeholder = 386` | `known_gap 70` | `unclaimed 0` | `regression 0` | `local_only 9`；`gaps by owner: M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = **70** ✓）。⇒ 与 §124 的九个数**逐字相同**。
+- ⑩：`file_size_check: limit=800 scanned=1096 baseline=10 violations=0`（与 §124 逐字相同）。
+- ⑨ **主动不冷编**：`git diff --name-only 06d2f4bf cd5bc617 -- crates/mc-conformance/report.json docs/fixtures crates/mc-conformance` = **空**（`06d2f4bf..cd5bc617` 的全部改动只有 `docs/37` 一个文件）⇒ 三个门输入的 blob/tree 与 §124 的验证树**逐一恒等** ⇒ 读数继承。
+  直接读文件复核（0s，不需 target）：totals = `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`；`report.json` blob = **`fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980`**（未动）。含 `lark` 的 fixture **恰好 7 条**，**全部 `offline: unmounted`**（`via: handler`、`actor: anonymous`）⇒ 仍是 `LUM-1779` 的专属验收。
+- 🚫 **本轮不刷基线**（`--write-baseline` 归 M7-21 INT `LUM-1786`）⇒ `baseline` 保持 **458**。
+
+### §125.4 回收 **≈3G**（死物四判据整删）
+
+- 目标 = `lum-2057-770bbebf88df/workdir/paperclip-rs/target`（`du` **3.1G**）—— 那是**上一个 cycle（`LUM-2057`）自己跑 ⑨ 时冷建出来的**（§124.6 记的 111s 真跑），交付只有 docs ⇒ 它一交付就是死物。
+- 四判据全满足：① run **终态**（该 workdir 无任何 `pi` 进程；`LUM-2057` = `in_review`）② **交付已进 base**（该 workdir `HEAD` == `cd5bc617` == base tip，`merge-base --is-ancestor` = YES）③ `/proc/*/cwd` **与** `/proc/*/fd` **逐 PID 零命中** ④ `git status --porcelain` **空**。
+- 回收量读数 = **`df` 前后差**：used **32G → 29G**、available **15G → 18G（68% → 62%）** ⇒ **Δ ≈ 3G**。⚠️ 同刻在飞两片仍在增长，故这 3G 是「回收后的净空位」，不是「磁盘总量回收量」的完整刻画 —— 这也是本轮 `du`（3.1G）与 `df` Δ（≈3G）**恰好一致**的一次（§124.7 lesson 5 的反例侧）。
+- 其余 26 个 workdir 当轮 `du` 实测**只有这两个在飞 target**（`lum-1779` 4.5G、`lum-1783` 12G）⇒ **无第二个死物可回收**（活物的 `incremental` 不动：两片都在活跃编译）。
+
+### §125.5 零空位不放空：三片递补 **rev bump**（本轮的实质产出）
+
+本轮**没有**可合并的 PR、**没有**空位 ⇒ 唯一的实质动作是把「下一个空位要派的片」的读数刷新到**当轮实测**。三条修订（`--description-file` 追加「起手补充」，全部 `backlog` 不动状态）：
+
+1. **`LUM-1784`（M7-19 wecom 入站与解析，0 路由）rev 2 → 3**：追加 base `cd5bc617` + 当轮 ⑦ + 同飞约束 + 一条**新事实**（见下 ②）。
+2. **`LUM-1785`（M7-20 wecom 打字/限流/去重/追踪，0 路由）rev 2 → 3**：追加 base + 当轮 ⑦ + `wecom/mod.rs` 写者排队链。
+3. **`LUM-1786`（M7-21 INT）rev 3 → 4**：追加 base + 当轮 ⑦ + **硬前置点名订正**（见下 ③）+ ⑨ 的 `report.json` 义务 + 号段。
+
+**两条新事实（都是「读数过期」的第 N 次实例，且这次落在两个不同的成因上）**：
+
+- **② 预算读数过期（第三类漏项的又一次命中）**：`crates/mc-channel/src/wecom/mod.rs` 当轮实测 = **62 行 / 14 个 `pub mod`**，而 `LUM-1784`/`LUM-1785` 的 rev 2 写的是「**49 行 / 7 个 `pub mod`**」。成因不是时间流逝，而是 **rev 2 写于 2026-09-25 17:30Z（base `c08f36db`）之后，M7-16（`LUM-1781`）与 M7-17（`LUM-1782`）两片才先后合入**，各追加了一批 `pub mod`。⇒ 连 rev 2 写的那个「**下限 49**」本身也过期了 ⇒ 两片新节的口径改为「起手从工作树 `wc -l` 自取，**不从本文任何数字推算**」。
+- **③ `LUM-1784` 的硬前置首次满足**：rev 2 的六条可观测判据当轮**全真** —— `wecom/{ws_frame,ws_sender,stream_store}.rs`（M7-16 产物）+ `wecom/{relay,outbound,replier}.rs`（M7-17 产物）**全部 EXISTS**（上两版写的都是「当轮全部 MISSING」）。⇒ 该片现在**只差一个空位**，是 M7 线上第一个真正就绪的代码片。
+- **④ `LUM-1786`（INT）的硬前置点名过期两轮**：rev 3（2026-09-25 22:00Z，base `4cdd897e`）写「`owners.M7 = 9`，lark 5（→ M7-14）+ **wecom 4（→ M7-15）**」；当轮实测 **`owners.M7 = 5`** ⇒ **wecom 那 4 条已随 M7-15（`LUM-1780`）合入消失**，「最后 9 条」实为「**最后 5 条，全部归 lark / `LUM-1779`**」。片前基线当轮 = **458**（344 / 406 / 430 全部作废）。
+
+### §125.6 🔴 「下一槽派谁」上的**第一条硬约束**：`wecom/mod.rs` 的写者排队链
+
+- 上一轮（§124.9）的 next-cycle 行写「`1779` 终 ⇒ lark 树空 ⇒ **递补 wecom 线 ⇒ `LUM-1785`**」。**当轮取证判为错误**：`LUM-1785` 的硬前置就是 `LUM-1784`（M7-19），而 `LUM-1784` 当轮**才**首次满足前置 —— 两者都还没落地。
+- 真正的约束在**同一个文件**上：当轮实测三片**都要追加 `crates/mc-channel/src/wecom/mod.rs` 的 `pub mod` 段** —— `LUM-1783`（在飞，其未提交面里**含 ` M crates/mc-channel/src/wecom/mod.rs`**）→ `LUM-1784` → `LUM-1785`。而 `docs/60` §4.3 的 stage 表把 `stage 7` 写成 `M7-16 ∥ M7-17 ∥ M7-18`（可并行）、`stage 8` 写成 `M7-19 ∥ M7-20`（已由 §118.5/§119.5 裁为串行）—— 事实上 **stage 7 的三片也共用 `mod.rs`**，`∥` 只成立于「业务文件」层面，**不**成立于 `mod.rs` 的追加段。
+- ⇒ **订正后的派发顺序**：**`1783` 终 ⇒ `1784` ⇒ `1785` ⇒ `1786`(INT)**；`LUM-1779`（lark）终态**只解 lark 树**，对 wecom 树**无影响** ⇒ 那一刻若没有别的合法候选，**空位刻意留空**（先例 §109 / §117），**不要**为了填槽塞进 `1784`（同抢 `mod.rs` ⇒ 后合者 rebase + 白跑一次 `--with-db`）。
+- 若 1779 终态那一槽要填，当轮唯一**合法且零交集**的候选是 **`LUM-1980`（门 ⑥ 的测试侧竞态，5 条）**：写集全在测试支撑（`crates/mc-http/tests/{composio,channels}/**`、`crates/mc-composio/src/state.rs` 等），与 `mc-channel/**`、`routes/{mod,mount}.rs`、`Cargo.lock` **逐字零交集**，且它修的正是本轮之前两度把 CI 判成假红的那几条竞态（§124.3）。⚠️ 它 rev 3 的正文读数需在起手那刻重取（同一条纪律）。**M9-0（`LUM-1815`）不可填**：`docs/62` §7.1 的硬前置 #1 就是「M7 全合（`LUM-1786` 落地）」。
+
+### §125.7 lesson
+
+1. 🔴 **「下一槽派谁」不能从上一轮的 next-cycle 行抄，必须当场查「下一片要动的**共享文件**此刻有没有写者」**。上一轮的行按**波次/渠道线**推（1779 终 ⇒ wecom 线），漏掉了 `wecom/mod.rs` 的**文件级**写者链（`1783 → 1784 → 1785`）。⇒ 派发判据里那条「与在飞片的**逐字文件交集**」不仅要查**已派**的片，还要查**在飞片当前未提交面**里的共享文件（当轮就是这样看到 1783 的 ` M wecom/mod.rs`）。
+2. 🔴 **「预算读数过期」有三个成因，本轮一天内见全**：① 时间流逝（计划期 vs 当轮）；② **同一波里另一片的合法副作用**（§124 的基线 406 → 458）；③ **本轮的：另一片在修订**写完之后**才合入**（`wecom/mod.rs` 49 → 62 行，因为 rev 2 写完之后 M7-16/M7-17 才合）。⇒ 凡引用「行数 / 基线 / `owners` 计数」这类会被别人的**合入**改写的读数，都必须在**派发那一刻**重取；**本文里的数字只对本文那一刻负责**。
+3. ✅ **「门输入逐 blob 恒等」第 7 次生效**：一次 `git diff --name-only <上轮验证树> <base> -- <三个输入路径>`（0s）就把整个 ⑨ 门（冷建 ~14G / 111s）省掉，并直接给出可继承的三个数值。**只读轮的真正成本是「确认什么都没变」，不是「重跑一遍」。**
+4. 🟢 **起手的 `df` 不代表轮内安全余量**：本轮起手 22G / 54%，**20 分钟内**被两片在飞的冷建吃到 **15G / 68%**（1783 的 target 7.3G → 12G）。⇒ 「< 12G 先回收」这条红线应当按**起手读数 − 在飞增长速率**来判（在飞 `--with-db` 实测 ≈1.2G/min），而不是只看起手那一个数。
+5. 🟢 **cycle 自己跑 ⑨ 长出来的 `target/` 是「下一个 cycle 的第一块死物」**（本轮 §125.4 就是这样一块 3.1G）：它的四判据（run 终态 ∧ 交付在 base ∧ `/proc` 零命中 ∧ porcelain 空）在**本轮交付的同一刻**就全部满足。⇒ 下一轮起手先扫**上一轮 cycle 的 workdir**，而不是只扫切片 workdir。
+
+### §125.8 观察项（第 62 轮）
+
+- **无并发 cycle（连续第 18 轮）** —— 逐 PID 只看到 cycle 自身 + 两个切片 run。
+- 积压 `todo` cycle **11 条**（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`，标题仍停在 `multica-rs`）**只登记不动状态**；自动建单护栏**仍未落地**（连续第 62 轮登记）。
+- `blocked` = **0**；`done` = 0（`done` 归人工）。
+- `LUM-1745`（M5-D8）与 `LUM-1804`（M8-7 INT）当轮均为 `in_review`（= 已交付，等人工验收）⇒ 它们**不再是**可派候选。
+- 号段：`docs/32` 当轮已占到 **`## 34.`**（M7-17），空号 **`## 30.`**（预留 M7-14 / `LUM-1779`）与 **`## 35.`**（预留 M7-18 / `LUM-1783`）⇒ M7-19 / M7-20 / M7-21 若开新节，**号由派发顺序占**，起手那刻实测。
+
+### §125.9 next cycle 起点（05:30 / 21:30Z）
+
+- base **`cd5bc617`**（本 run §125 docs-only 直推后另加一个 commit，**起手一律 `git rev-parse` 实测**）；GH **0 open PR**；**在飞 3/3** = cycle ∥ `LUM-1779`（M7-14 lark 5 路由，workdir `lum-1779-b0f1f3fb04ea`，起手点 `06d2f4bf`，9 项未提交、自测段）∥ `LUM-1783`（M7-18 wecom 媒体面，workdir `lum-1783-d467ad8eca04`，起手点 `bb4e726a`，17 项未提交、target 12G 活物）。收尾 df **18G 可用 / 62%**（已回收 3G；在飞两片仍在增长）。
+- **第一动作**：`df -h /` 连采两次（并按 §125.7 lesson 4 扣掉在飞增长）→ `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）→ 逐片「run 终态（`porcelain` 空 + pi 进程消失 + 提交数/是否已推）∧ 形态判定」→ 终态才进判据链。
+- **判据链铁律**：① 预检 `merge-base..head` numstat == PR API **逐字** ② base 前进段非 docs = 0 **且尾提交 docs-only**（§124.7 lesson 1 的**两半**）③ 三哈希等式（`merge-tree --write-tree` == rehearsal `write-tree` == 落地 `^{tree}`）④ 证据两条路任一：head CI 3/3 绿 **或** 在**与合并树同一棵树**上当场 `--with-db` 10/10（真库当轮新建、角色带 `CREATEDB`）；CI `db` 红先查「**红点在不在写集里**」⑤ API 钉 40 位 sha + `merge_method=merge`。
+- **槽位一空即派（按 §125.6 的订正链）**：`1783` 终 ⇒ **`LUM-1784`**（M7-19，rev 3，六条前置当轮全真）；`1784` 终 ⇒ **`LUM-1785`**（M7-20，rev 3）；`1785` 终 ⇒ **`LUM-1786`**（M7-21 INT，rev 4，须 `owners.M7 → 0`，与任何 `--write-baseline` 片不同轮）；`1779` 终 ⇒ 若那一槽要填，唯一合法候选 = **`LUM-1980`**（测试侧竞态，零交集；起手先重取读数），否则**刻意留空**。
+- **⑦ 当轮全量**：`local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`、`owners M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = 70 ✓）；⑩ `scanned 1096 / baseline 10 / violations 0`；⑨ `365/7/23/29/0/306`（blob `fa53d084`）。
+
+---
+
+## §126 05:30 cycle（`LUM-2067`，21:30Z 触发）：**起手 1 open PR + 空位 1（1783 于 21:32:41Z 终态）+ 🔴 磁盘 19 分钟内从 6.8G 掉到 209M / 100% ⇒ 非只读轮** —— 判据链合并 **PR #110（M7-18 wecom 媒体面，0 路由）**，base `8c42f28b` → **`b232f7e4`**（落地树 `e92b3ce3` 逐字命中）；**新证据路**：GitHub 的 `refs/pull/110/merge` 的 tree 也 == 预测 == rehearsal ⇒ **三哈希升为四读数**；空位 1 ⇒ 派 **`LUM-1784`（M7-19 wecom 入站与解析，0 路由，rev 4）**；回收 **≈24G**（**814M 手工 + ≈23G 由在飞片 `LUM-1779` 自己回收**）；🔴 **门 ⑥ 两次红，两次逐字命中 `LUM-1980` 名录（③ ④），且 base 自身 CI 同形** ⇒ 门 ⑥ 判据化为**概率门**
+
+### §126.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` 连采两次 = **6.8G / 86% → 6.5G / 87%**（⚠️ 见 §126.4：40 分钟后同一台机器到过 **209M / 100%**）。
+- `git ls-remote origin feat/multica-rs-initial` = **`8c42f28b34c259711bfb64e00b1d65f775c95997`** —— 与 §125.9 预写的**收尾值逐字相同**（起手时 base 未被任何片推进）。
+- 认证 GH `pulls?state=open` = **1** ⇒ 判据链有活干：**PR #110**（`agent/devbox5/d467ad8eca04`，head `3d59b622`，base `feat/multica-rs-initial`，`mergeable=True`，22 文件 / +8106 / −10 / 3 提交）。
+- 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**，`docs/37` §79 老坑）：**27428** = `pi` ⇒ `lum-1779-b0f1f3fb04ea`（`LUM-1779` / M7-14）；**36545** = `pi` ⇒ `lum-1783-d467ad8eca04`（`LUM-1783` / M7-18）；**59825** = `pi` ⇒ `lum-2067-38ad90d5331a`（**本 cycle 自身**）；1779 侧的 `gates.sh --with-db` + `cargo`/`rustc` 子进程。
+- daemon `running_task_count` = **3**（`active_task_count` = 3）⇒ 起手**空位 = 3 − 1(cycle) − 2(在飞) = 0**。**21:32:41Z** `LUM-1783` 的 run 终态（`.gc_meta.json` 的 `completed_at`；其 `pi` 于 21:37 前后消失）⇒ **空位 1**。
+- 看板当轮 = `LUM-1779`（`in_progress`）+ `LUM-1783`（已于 **21:30:37Z** 置 `in_review`）；本 cycle 于 21:35 置 `in_progress` 后 = 3 片，**与 daemon 逐字吻合（连续第 6 轮）**。
+
+### §126.2 在飞两片体检（一片活、一片终态）
+
+| 片 | workdir | HEAD | 提交 | `porcelain` | target | 当轮动作 |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| `LUM-1779`（M7-14 lark，**5 路由**） | `lum-1779-b0f1f3fb04ea` | `06d2f4bf`（== 其起手点） | **0** | **12** | 6.6G → 13G | 门禁段：`--with-db`（ENOSPC 红一次）→ `--only db,schema-drift`（绿）→ 又一次 `--with-db` |
+| `LUM-1783`（M7-18 wecom 媒体面，0 路由） | `lum-1783-d467ad8eca04` | `3d59b622`（== 远端分支 == PR head） | **3** | **0** | 23G → **被回收** | **run 终态**（21:32:41Z）；`in_review`；已推分支 + 已开 PR #110 |
+
+- `LUM-1779` 的未提交面 = ` M crates/mc-channel/src/lark/mod.rs` + ` M crates/mc-http/src/routes/channels/lark.rs` + ` M crates/mc-conformance/report.json` + 4 个新模块（`backfill` / `binding` / `installation` / `registration`，各含 `.rs` + 同名目录）+ 新目录 `crates/mc-http/src/routes/channels/lark/` ⇒ 与 rev 7 的「5 路由 + lark 安装/绑定面」写集**方向一致**，无越界迹象（当轮**未推分支、无 PR**）。
+- `LUM-1783`：**porcelain 空 + 提交 3 + 已推 + `in_review`** = 终态四判据全满足 ⇒ 进判据链。其最后两个提交是**片自己补的 docs**（`bd5b4985` §35.7 / `3d59b622` §35.6），**都已推**（远端分支 tip == 本地 HEAD == PR head，逐字相等）⇒ **无孤儿提交需要抢救**。
+- 🔴 **注意**：`/proc/36545` 在 21:31 还活着、21:37 已消失（`utime` 采样 3 ticks/8s = 闲置）—— 判「终态」**不能只看 PR 是否已开**，要看 **pi 进程消失 + `porcelain` 空 + `.gc_meta.json` 的 `completed_at`**。
+
+### §126.3 判据链 —— PR #110（M7-18，0 路由）：五步全绿
+
+| 步 | 判据 | 实测 |
+| --- | --- | --- |
+| ① | 预检 `merge-base..head` numstat == PR API **逐字** | `git diff --numstat bb4e726a..3d59b622`（按 filename 排序）== PR API `files?per_page=100`（同样排序）：**22 文件 / +8106 / −10 两侧逐字相等** ✓ |
+| ② | 形态判定（**两半**） | merge-base = **`bb4e726a`** = 片的**起手点**（≠ base）⇒ 第一半**不成立**；base 前进段 `bb4e726a..8c42f28b` 的**非 docs = 24 个文件**（全是 `crates/mc-channel/src/lark/**`，来自 **PR #109 / M7-13**）⇒ 尾提交 `8c42f28b` 逐字 **docs-only**（`docs/37` 一个文件）⇒ **形态③（base 不是 head 的祖先）** ⇒ **必须真合 + 重跑**，**不得**引用片自报读数 |
+| ③ | **四读数**树等式 | `git merge-tree --write-tree 8c42f28b 3d59b622` = **`e92b3ce366b283116c6e31c83614703b31590f71`** == rehearsal（1783 的 workdir 里 `git merge --no-ff`，提交 `0c9db159`）`^{tree}` == **`refs/pull/110/merge^{tree}`** == **落地 `b232f7e4^{tree}`** —— 四项**逐字相等**（`merge-ref` 的两个 parent 也逐字 = (`8c42f28b`, `3d59b622`)）✓ |
+| ④ | 证据 | 同树 CI 画像 = `fast` ✓（①fmt ②build ③clippy ④clippy-test-util ⑤test ⑩file-size）/ `contract` ✓（⑦ route parity ⑨ conformance）/ `db` ✗ **两次**（见 §126.5）；红点文件（`crates/mc-http/tests/{channels,composio}/**`）与写集**交集 ∅**，且 **base 自身 CI 同形** ⇒ 判为**基线级概率红**。⚠️ **本地同树 `--with-db` 10/10 本轮未跑** —— 见 §126.4/§126.8 lesson 3，**本轮唯一证据缺口，逐字登记**（不粉饰） |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | `PUT /pulls/110/merge` body `{"sha":"3d59b6228c45afee0928b84f0963a88a2757c683","merge_method":"merge"}` ⇒ **`b232f7e4593498d5b0325c9cc7e96498aa3d70a9`**，parents = (`8c42f28b`, `3d59b622`) ✓ |
+
+- 写集（22 文件）= 21 个 `crates/mc-channel/src/wecom/**` + `docs/32-M3-DAEMON-FACE.md`；与 base 前进段（`lark/**`）的逐字交集**只有 `docs/32`**，`git merge-tree` 判**无冲突**（`Auto-merging docs/32-M3-DAEMON-FACE.md`，exit 0）。
+- `LUM-1783` 的 `docs/32` 段号 = **`## 35.`**；起手实测末号 `## 34.`（M7-17）⇒ 号段纪律成立。
+
+### §126.4 🔴 磁盘：19 分钟从 6.8G 掉到 209M / 100%，回收 **≈24G**（其中 23G 由**在飞片自己**完成）
+
+- 读数序列（`df -h /`，used/avail）：21:30Z **40G / 6.8G** → 21:34 **42G / 4.7G** → 21:36 **44G / 3.3G** → 21:37 **47G / 209M（100%）**。**增长 ≈0.5–0.6G/min**，全部来自在飞片的冷建/门禁（`LUM-1779` 的 target 6.6G → 13G；`LUM-1783` 在 21:37 前还占 23G）。
+- **手工回收 814M**（读数 = `df --output=avail` 前后差：**23348M → 24163M**）：**3 个已合片的 workdir**（`lum-1778` = PR #109 / `lum-1781` = PR #106 / `lum-1782` = PR #108）+ **16 个已终态 cycle workdir**（`lum-1987…lum-2062`）**整删**。四判据全满足（run 终态 ∧ 交付已在 base ∧ `/proc/*/cwd` 逐 PID 零命中 ∧ `git status --porcelain` 空）；**按四判据跳过了 1 个**（`lum-2007` `porcelain=1`）。
+- **≈23G 由 `LUM-1779` 自己回收**（本轮最重要的运维事实）：它的门 ⑥ 在 ENOSPC 下红了一次 ⇒ 它**先判 `df`**（不是先怀疑代码）⇒ 按 `lum-1783/.gc_meta.json` 的 `completed_at=21:32:41` 判定 sibling 已终态（其会话原话：「PID 36545 (the wecom slice) is **dead**, holding 23G」）⇒ `rm -rf /home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-1783-d467ad8eca04/workdir/paperclip-rs/target && df -h /` ⇒ 再 `--only db,schema-drift` 重跑**转绿**。证据两条：pi session `20260925T203706.625662155.jsonl` 的 `rm -rf …` 一行；`~/.multica/daemon.log` 21:36:59 的文本流。
+- ⇒ `df` used **47G → 23G（Δ ≈ 24G）**；收尾（三片在飞）**19–20G 可用 / 59–60%**。⚠️ 同刻三片仍在增长，故这是「回收后的净空位」，不是「回收量」的完整刻画（§124.7 lesson 5 的口径）。
+- 本轮**还确认**：`LUM-1783` 的 `target/`（23G）在它终态后**被回收是安全且必要的** —— 但**它同时是合并证据的物质前提**（见 §126.8 lesson 3）。
+
+### §126.5 🔴 门 ⑥ 是**概率门**：CI 两次红、两次逐字命中 `LUM-1980` 名录，且 **base 自身 CI 同形**（第 3 次取证）
+
+- **attempt 1**（`push` 于 21:33:02，红于 21:36:14）：step 6「⑥ db — mc-migrate run + cargo test …」红，用例 **`crates/mc-http/tests/channels/telegram.rs:273`**：`left: 409 / right: 200`、体 `telegram_bot_owned_by_another_workspace` ⇒ **逐字命中 `LUM-1980` ④**（查明者 = 21:30 cycle / `LUM-1987`；机理 = `STUB_LOCK` 只串行化替身基址、不串行化库里的行）。
+- **attempt 2**（`rerun-failed-jobs`，21:37:05 → 21:40:03）：红在**另一个**用例 —— **`crates/mc-http/tests/composio/flows.rs:28:29`**：`.expect("the stub must have seen a link call")` ⇒ **逐字命中 `LUM-1980` ③**（进程级 `static CALLS` 互踩，复现率 3/30）。
+- **base 同形（本轮新增的归因工具）**：base **`8c42f28b` 自身**的 `push` CI（run 36189705660）= `fast` ✓ / `contract` ✓ / `db` ✗（失败步同样是「⑥ db …」）；再往前两条 base 提交 **`cd5bc617`（36187028216）/ `06d2f4bf`（36186465768）** 的画像**完全同形**。⇒ **⑥ 红不是 PR #110 的性质**，而是**基线级**。
+- ⇒ **判据定型（三条齐即判「基线级概率门红」）**：① 用例名 + 行号**在 `LUM-1980` 名录里**；② 红点文件与**片写集交集 ∅**（且 base↔head 该文件逐字节相同）；③ **base 自身的 CI 画像同形**。三条齐 ⇒ **不为 ⑥ 停轮、不判片红**，并把三条**逐字**登记进 PR/cycle 报告。
+- ⚠️ **反面纪律不变**：`fast`（不含 DB）/ `contract`（不含 build）绿**只是 8/10 门**，**不等于**合并证据；形态③的片仍需**同树复跑**（本轮该步缺失，见 §126.8 lesson 3）。
+- 📌 副产品：两次红**落在两个不同用例**上 —— 这是「概率门」最强的单一signture（同一棵树、同一代码、不同红点）。`LUM-1980`（`backlog`，rev 3）因此成为下一槽唯一**合法零交集**候选（§126.10）。
+
+### §126.6 ⑦ / ⑩ / ⑨（base `b232f7e4` 当场）；⑨「门输入逐 blob 恒等」第 **8** 次免跑
+
+- ⑦ `bash scripts/gates.sh --only route-parity,file-size` = **2/2 绿 / 1s**：`upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；`implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；`gaps by owner: M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = **70** ✓）⇒ 与 §125 **九个数逐字相同**（1783 = 0 路由）。
+- ⑩ `python3 scripts/file_size_check.py` = **`limit=800 scanned=1114 baseline=10 violations=0`**（§125 的 1096 → **1114**：M7-18 落进 base 的 18 个新文件进了扫描面）；`scripts/file_size_baseline.tsv` **未动**。
+- ⑨ **主动不冷编**：`git diff --name-only 8c42f28b b232f7e4 -- crates/mc-conformance/report.json docs/fixtures crates/mc-conformance` = **空** ⇒ 三个门输入的 blob/tree 与 §124 的验证树**逐一恒等** ⇒ 读数继承：totals = `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`；`report.json` blob = **`fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980`**。🚫 **本轮不刷基线**（`--write-baseline` 归 M7-21 INT `LUM-1786`）。
+- 当轮实测 **`crates/mc-channel/src/wecom/mod.rs` = 81 行 / 21 个 `pub mod`**（§125 记 62/14）—— M7-18 的 `pub mod` 与 media 追加段落进 base 后的**合并后实测值**。
+
+### §126.7 派发 `LUM-1784`（M7-19 wecom 入站与解析，0 路由）：rev 3 → **4** → 起 run
+
+- **空位账**：起手 0（3/3）⇒ 21:32:41Z `LUM-1783` 终态 ⇒ **1**（= 3 − cycle 自身 − `LUM-1779`）⇒ 派 `LUM-1784` ⇒ **3/3 满位**（1784 的 workdir `lum-1784-80429b9e50ef` 已起、`in_progress`）。
+- **派发顺序链（§125.6 的订正链，当轮复核仍成立）**：`LUM-1783`（**本轮已合入 base**）⇒ **`LUM-1784`（本轮派）** ⇒ `LUM-1785`（M7-20，**须 1784 合入** —— 三者共用 `wecom/mod.rs` 的追加段，同一时刻只允许一个写者）⇒ `LUM-1786`（M7-21 INT，**须 `owners.M7 → 0`**，且与任何 `--write-baseline` 片不同轮）。
+- **`description` 追加「起手补充 · rev 4」**（`--description-file`，rev 3 → 4，`backlog` → `todo` = **起 run**；`--assignee-id 3c6087f9-…`）：base 当轮实测 `b232f7e4` + **写者链已清空**（1783 已合）+ `wecom/mod.rs` 当轮实测 **81 / 21**（rev 3 的 62/14、rev 2 的 49/7 全部**作废**）+ **六条硬前置当轮全真** + **门 ⑥ 概率门纪律**（含 `LUM-1980` ③④ 的用例名与行号）+ **磁盘纪律**（起手 `df` 两采、门禁一红先看 `df`、别在别的片跑 ⑥ 时冷建）+ 号段 **`## 36.`**（当轮实测末号 `## 35.`）+ 当轮 ⑦/⑩/⑨ 全量。
+- 当轮复核：`wecom/{wecom_channel,resolvers,inbox_message,markdown,seal}.rs` **五条全 MISSING**（写集一字未动）⇒ 「只差一个空位」成立。
+
+### §126.8 lesson
+
+1. 🔴 **回收职责会由在飞片自己执行 —— cycle 的回收口径必须写成「手工 + 由谁代劳」**：本轮 **814M 是本 run 的**，**≈23G 是 `LUM-1779` 的**。它的门 ⑥ 一红**先判 `df`**（M7-18 那条 lesson 的**独立复现**），再按 `.gc_meta.json` 判定 sibling 已终态 ⇒ **自助回收 ⇒ 重跑转绿**。⇒「ENOSPC 伪装成代码红」在第 **3** 个 run 上成立，而且是**自愈**的。
+2. 🔴 **新证据路：`refs/pull/N/merge` 的 tree == `merge-tree --write-tree` 预测 == rehearsal `write-tree` == 落地 `^{tree}`**（本轮**四项逐字相等**）⇒ GitHub 的 `pull_request` CI **天然跑在「与合并树同一棵树」上**；判据链 ③ 由**三哈希**升为**四读数**（取法：`git fetch origin 'refs/pull/N/merge:refs/remotes/prNmerge'`），且规则 ④ 的「两条路」**不是互斥的** —— `fast` / `contract` 本身就是**同树证据**（缺的是 ⑥/⑧）。
+3. 🔴 **回收与「合并证据」互相冲突 —— 本轮出现唯一证据缺口**：`LUM-1783` 的 `target/`（23G）正是「同树 `--with-db` 10/10」的**物质前提**；它被回收后，冷建（≈14G）又会与在飞片的门 ⑥ **相撞**（§32.5 R2：并发 ⑥ 会让 `mc-http` 真库用例**成片假红**）⇒ 本地同树复跑**不可行**。⇒ 顺序纪律细化：**证据先于回收** —— 形态③的片，**先在同树取到 10/10（至少 ⑥+⑧），再回收它的 `target/`**；「合并 → 回收 → 派发 → 写文档」应写成「**证据 → 合并 → 回收 → 派发 → 写文档**」。
+4. 🟢 **「起手 `df` 不代表轮内余量」第 5 轮**（6.8G / 86% → **209M / 100%**，19 分钟）。且**回收目标的选择要按「谁已终态」，不是按「谁最大」**：本轮最大的一块（23G）是**另一个 run 代劳**的，而手工那 814M 是**小而多**（19 个死 workdir）。
+5. 🟢 **base 自身的 CI 画像是新的归因工具**：把「⑥ 红是否由本 PR 引入」从**猜测**变成**可判定** —— 三条相邻 base 提交（`8c42f28b` / `cd5bc617` / `06d2f4bf`）的画像全是 `fast` ✓ / `contract` ✓ / `db` ✗。
+6. 🟢 **⑨「门输入逐 blob 恒等」第 8 次生效**（0s 省掉整个冷建）；**第 9 次**用在「`docs/32` 号段复核」上（末号 `## 34.` → 交片后 `## 35.`）。
+
+### §126.9 观察项（第 63 轮）
+
+- **无并发 cycle（连续第 19 轮）** —— 逐 PID 只看到 cycle 自身 + 两个切片 run。
+- 积压 `todo` cycle **11 条**（`1521 / 1533 / 1726 / 1737 / 1740 / 1748 / 1805 / 1810 / 1826 / 1835 / 2012`，标题仍停在 `multica-rs`）**只登记不动状态**；自动建单护栏**仍未落地**（连续第 **63** 轮登记）。
+- 项目内看板（当轮实测）：`in_review 238 / todo 12 / in_progress 3 / backlog 14 / blocked 0`；`in_progress` 3 条 = `LUM-1779` + `LUM-1784` + `LUM-2067`（cycle 自身）⇒ 与 daemon `running_task_count = 3` **逐字吻合（连续第 6 轮）**。
+- 号段：`docs/32` 末号 = **`## 35.`**（M7-18 已合）⇒ 空 **`## 36.`** 已按派发顺序给 `LUM-1784`；`docs/37` 本 cycle 取 **§126**。
+- `blocked` = **0**；`done` = 0（`done` 归人工）。
+
+### §126.10 next cycle 起点（06:00 / 22:00Z）
+
+- base = 本 run §126 **docs-only 直推**后**实测**（预期 = `b232f7e4` + 一个 docs 提交，**起手一律 `git rev-parse`**）；GH **0 open PR**（#110 已合、1779 未推）；**在飞 3/3** = cycle ∥ `LUM-1779`（M7-14 lark 5 路由，起手点 `06d2f4bf`，workdir `lum-1779-b0f1f3fb04ea`，12 项未提交、门禁段、target 13G **活物勿清**）∥ `LUM-1784`（M7-19 wecom 0 路由 rev 4，起手点 `b232f7e4`，workdir `lum-1784-80429b9e50ef`）。收尾 df **19–20G 可用 / 59–60%**。
+- **第一动作**：`df -h /` **连采两次**（按 §126.8 lesson 4 扣掉在飞增长；在飞冷建 ≈1.2G/min）→ `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）→ 逐片「run 终态（`porcelain` 空 + pi 进程消失 + 提交数/是否已推 + `.gc_meta.json` 的 `completed_at`）∧ 形态判定」→ 终态才进判据链。
+- **判据链铁律（本轮升级）**：① 预检 `merge-base..head` numstat == PR API **逐字** ② 形态判定（**形态②** = `merge-base == base` **且**尾提交 docs-only ⇒ 可引用片自报；**形态③** ⇒ 必真合 + 重跑）③ **四读数**树等式（`merge-tree --write-tree` == rehearsal `write-tree` == `refs/pull/N/merge^{tree}` == 落地 `^{tree}`）④ 证据：形态③ **先在同树跑 `--with-db`（至少 ⑥+⑧）**、**再谈回收**（§126.8 lesson 3）；CI 的 `fast`/`contract` 绿 = 同树 8/10 门，`db` 红先按 §126.5 三条判据（`LUM-1980` 名录 ∧ 写集交集 ∅ ∧ base 同形）⑤ API 钉 40 位 sha + `merge_method=merge`。
+- **槽位一空即派**：`LUM-1779` 终 ⇒ 若那一槽要填，唯一**合法零交集**候选 = **`LUM-1980`**（门 ⑥ 测试侧竞态，写集全在 `crates/mc-http/tests/{composio,channels}/**` + `crates/mc-composio/src/state.rs`，与 `mc-channel/**`、`routes/{mod,mount}.rs`、`Cargo.lock` 零交集；**本轮第 3 次取证**；起手先重取读数），否则**刻意留空**（先例 §109 / §117 / §125）；`LUM-1784` 终 ⇒ **`LUM-1785`**（M7-20 wecom 打字/限流/去重/追踪 rev 3，**须 1784 已合入** —— 同一 `wecom/mod.rs` 追加段）⇒ `LUM-1786`（M7-21 INT，须 `owners.M7 → 0`，与任何 `--write-baseline` 片不同轮）。🚫 `LUM-1815`（M9-0）**不可填**（`docs/62` §7.1 硬前置 #1 = M7 全合）。
+- **⑦ / ⑩ / ⑨ 当轮全量**：⑦ `local 469 / baseline 458 / implemented 383 real + 3 ph = 386 / known_gap 70 / unclaimed 0 / regression 0 / local_only 9`、`owners M9=33 M3+=16 M3=11 M10=5 M7=5`（和 = 70 ✓）；⑩ `scanned 1114 / baseline 10 / violations 0`；⑨ `365/7/23/29/0/306`（blob `fa53d084`）。
+- 🔴 **磁盘红线（本轮新口径）**：起手 < 12G 就先回收；在飞片冷建时按 **≈1.2G/min** 扣；**别在别的片跑门 ⑥ 时冷建**（§32.5 R2）。

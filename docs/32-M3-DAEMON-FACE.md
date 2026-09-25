@@ -3950,6 +3950,155 @@ cycle 的 docs-only）⇒ 零冲突。新 base 的变动面 = `crates/mc-channel
 > global plan，而审计行先以 `Running` 落库），且本片 diff 只在 `crates/mc-channel/src/lark/**`
 > 与 `docs/32` 的 §29 ⇒ 与 `mc-composio` / `mc-scheduler` **零交集**。
 
+## 30. M7-14（`LUM-1779`）：lark 安装与绑定面（**5 路由**）
+
+> **号段说明**：base `06d2f4bf` 实测 `docs/32` 已占号 = `9–29, 31, 32, 33, 34`（末号为
+> **`## 34.`** = M7-17）⇒ 空号里最小的是 **`30`**，本片取 **`## 30.`**。派发补充 rev 7 的
+> 号段裁定（`30` = M7-14）与实测一致，**没有让号、没有改号**。
+> `docs/32` 是本片唯一与别的片共写的文件（各片往末尾追加自己的节；冲突时按
+> §91/§102/§107/§108 的先例「先到者保号 + 后到者让号」）。
+
+### 30.0 这一片补的是哪条掉棒，以及上游单元的**口径复核**
+
+上游 `internal/integrations/lark/{installation.go,registration.go,registration_service.go,
+install_session_store.go,install_session_redis_store.go,binding_token.go,union_id_backfill.go,
+region_backfill.go}` + `internal/handler/lark.go` 的**安装 / 设备流注册 / 绑定令牌**那一面。
+`M7-10…M7-13` 已把客户端 / WS / 入站 / 出站四棵子树铺好（只读依赖），M7-14 是**lark 树的最后
+一片代码片**：交付 5 条管理路由 + 注册工厂，并把 `owners.M7` 打到 **0**。
+
+**口径复核（本片实测，`f41fae6b08fb` 的只读副本）**：8 个非测试文件 + handler 实测
+**2,818 行**（`installation 159 + registration 501 + registration_service 858 +
+install_session_store 170 + install_session_redis_store 187 + binding_token 304 +
+union_id_backfill 131 + region_backfill 70 + handler/lark 438 = 2,818`）—— 与
+`docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-14 行**逐字相符**（本片是 M7 里少数
+**没有**行数偏差的片）。
+
+### 30.1 写集（逐字；17 个新文件 + 3 个已存在文件的改动）
+
+描述写集 = 4 个 lark 子模块 + 1 个 HTTP 文件；落地时按**门 ⑩**（单文件 800 行硬限）与
+「wire / SQL / handler / 用例」四个切点拆成同一批文件（**D10**）。
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/lark/installation.rs` | **579** | `installation.go`（159）：`Installation` 行 / `InstallationParams` / `InstallError` / `InstallationService` / `LarkInstallationStore` 端口 |
+| `crates/mc-channel/src/lark/installation/tests.rs` | **488** | 端口替身用例（门 ⑤） |
+| `crates/mc-channel/src/lark/registration.rs` | **649** | `registration.go`（501）：协议常量 / `SessionStatus` / `reason` / `RegistrationError` / `BeginResult` / `PollResult` / `FormPoster` / `RegistrationClient` / QR 与表单小件 |
+| `crates/mc-channel/src/lark/registration/session.rs` | **192** | `install_session_store.go`（170）：`InstallSessionState` / `InstallSessionOutcome` / `InstallSessionStore` / `MemoryInstallSessionStore` |
+| `crates/mc-channel/src/lark/registration/service.rs` | **522** | `registration_service.go`（858）的**服务那一半**：`CommitInstall` / `RegistrationStore` / `RegistrationService`（开会话 → 轮询 → 终态落库） |
+| `crates/mc-channel/src/lark/registration/tests.rs` | **395** | 装置（假传输 / 假客户端 / 假落库口 / 假时钟） |
+| `crates/mc-channel/src/lark/registration/tests/state_machine.rs` | **583** | 协议 / 会话表 / **三态**用例 |
+| `crates/mc-channel/src/lark/binding.rs` | **271** | `binding_token.go`（304）：`BindingError` / `RedeemOutcome` / `BindingStore` / `BindingTokenService` / 哈希与小件 |
+| `crates/mc-channel/src/lark/binding/tests.rs` | **319** | 内存令牌表用例 |
+| `crates/mc-channel/src/lark/backfill.rs` | **235** | `union_id_backfill.go`（131）+ `region_backfill.go`（70） |
+| `crates/mc-channel/src/lark/backfill/tests.rs` | **236** | 两条回填的 gating / 幂等 / 尽力而为用例 |
+| `crates/mc-http/src/routes/channels/lark.rs` | **586** | `handler/lark.go`（438）：5 条路由 + 鉴权层 + 三条错误矩阵 |
+| `crates/mc-http/src/routes/channels/lark/dto.rs` | **251** | wire 形状与未配置语义（见 **D10**） |
+| `crates/mc-http/src/routes/channels/lark/store.rs` | **624** | 三个端口的 PG 实现（见 **D6**） |
+| `crates/mc-http/src/routes/channels/lark/tests.rs` | **589** | 不依赖库的用例（门 ⑤）：**七条 golden fixture 的逐条复刻** + wire 形状 + 错误矩阵 |
+| `crates/mc-http/src/routes/channels/lark/tests/db.rs` | **602** | 真库用例（门 ⑥）：五条路由 + 三个端口的 SQL |
+| `crates/mc-http/src/routes/channels/lark/tests/support.rs` | **171** | 真库装置（连接 / `AppState` 字面量 / 种子） |
+| `crates/mc-channel/src/lark/mod.rs` | **+44/−2** | **描述写集漏项**：追加 4 行 `pub mod` + 填 `register()` + 新增 `register_with`（见 **D13**） |
+| `crates/mc-conformance/report.json` | **39 行改动** | ⑨ 快照刷新：**7 条 lark fixture 逐条 `unmounted → pass`**（见 30.4） |
+| `docs/32-M3-DAEMON-FACE.md` | **+本节** | 偏离登记与门禁读数 |
+
+合计 **+7,359 / −47**（19 个文件）。**零新迁移、零新依赖**。
+
+### 30.2 偏离登记（**不是**静默略过；`docs/60` §6.5 第 7 条）
+
+| # | 偏离 | 理由 / 后果 |
+| --- | --- | --- |
+| **D1** | 端口读写**遗留** `lark_installation` / `lark_binding_token` / `lark_user_binding`；上游 `lark/channel_store.go` 把 `GetLarkInstallation…` / `UpsertLarkInstallation` **全部转发**到泛化 `channel_*`（`NewChannelStore` 注释：*"lark_* calls resolve to channel_* rows (MUL-3515)"*） | 合并树的硬约束（`crates/mc-repos/src/channel/installation.rs`，M7-1 **W**；§32 已登记同一事实的 B 面）：`lark_*` 与 `channel_*` 上游**同时在用**（`docs/60` §6.4 / R-M7-5）⇒ 本仓按遗留表落。**要改这条口径得先改 `mc-repos` 的硬约束。** |
+| **D2** | `install_session_redis_store.go`（187 行）**不落地**：只留 `InstallSessionStore` trait + 单进程 `MemoryInstallSessionStore` | 本仓无 Redis 依赖（`docs/60` §2.5 表第 3 行：上游**本身**就有"无 Redis ⇒ 会话按进程"的降级分支与明文 `slog.Warn`）⇒ 换部署形态，不是伪造行为。**后果说清**：多副本部署下 `GET …/install/:sessionId/status` 可能落到没有该会话的副本 ⇒ 本仓部署契约 = 单副本。 |
+| **D3** | `db.Queries` / `TxStarter` / `events.Bus` → 端口 `RegistrationStore` / `LarkInstallationStore` / `BindingStore`；`finishSuccess` 的三步事务（回收死主 → upsert → 绑安装者）落成 `RegistrationStore::commit_install`；上游独立的 `BindInstallerTx` 折进同一个端口方法 | 层次铁律：`mc-channel` **不写 SQL**（`docs/60` §2.6 第 1 条）⇒ 串行化在实现里、**判决**（`classify_live_owner` 那张表）留在 `mc-channel` 可测。`BindInstallerTx` 必须与安装行插入**同一个**事务 ⇒ 同一个事实只有一个归属。 |
+| **D4** | `InstallationService::new` / `NewRegistrationService` 的 **nil 检查整条消失** | 本仓是值类型：`SecretBox` / `Arc<dyn …>` 都没有"半成品"状态 ⇒ 上游那几条 `… is required` 哨兵没有对应物（与 §31 的 D3 同款）。 |
+| **D5** | `Now func() time.Time`（Go 的函数字段）→ `Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>` | 同一个 seam：过期边界要确定性，测试注入假时钟而不是睡觉（§31 的同款是 `Clock`）。 |
+| **D6** | `lark_installation` 的 upsert 与两条回填列写**没有** `mc-repos` 对应物 ⇒ 以**端口实现**落在 `crates/mc-http/.../lark/store.rs` | 本片写集**不含** `crates/mc-repos/src/channel/**`（`docs/60` §3.3 的只读面）⇒ 与 M7-4/5/9/15 的 `{slack,telegram,dingtalk,wecom}/store.rs` 同一手法。 |
+| **D7** | 上游 `if invalidator, ok := s.api.(TokenCacheInvalidator)` 的**类型断言** → `RegistrationService::new` 多一个 `Option<Arc<dyn TokenCacheInvalidator + Send + Sync>>` 参数 | Rust 的 `dyn` 没有类型断言，而 `ApiClient` trait（M7-10 已合、**冻结**）不该为它加一个方法 ⇒ 把那个**可选能力**显式化。生产装配把同一个 `HttpApiClient` 作为两个 `Arc` 递进去。 |
+| **D8** | `log *slog.Logger` 参数**消失** | 本仓用全局 `tracing`；递一个 logger 进纯逻辑层只会给它一个可选的全局后门（与 §31 的同名项同款）。 |
+| **D9** | `MULTICA_LARK_HTTP_BASE_URL` / `…_CALLBACK_BASE_URL` 两个**部署级 override 不落地** | 本仓的 region 解析早已在 `lark_installation.region` 列上（M7-10…13 都按列走）⇒ 重建那两个 override 会与"每安装 region"抢同一职责。回填的**判据**保留成公开入参（`is_lark_international_host` + 两个 `&str`），调用点按自己的装配填。 |
+| **D10** | 描述写集之外的 **12 个新文件**（4 个 `…/lark/tests.rs` 一族 + `dto.rs` / `store.rs` / `registration/{session,service}.rs` / `registration/tests/state_machine.rs`） | **门 ⑩**（单文件 800 行硬限）+ 上游同款切分。⚠️ 本片实测**触发过**这条：`registration.rs` 一次写到 **1,314 行**、`registration/tests.rs` 到 **943 行** ⇒ 拆成 「协议 / 会话表 / 服务」与「装置 / 断言」。**教训见 30.5 第 1 条。** |
+| **D11** | 上游 `begin` / `status` 的注释写 *"Returns 503 when the integration is not wired"*，而两个 handler 的**第一句都是 `writeFeatureDisabled`（403）** ⇒ 本仓按**代码**落（403） | ⑨ 的 7 条 fixture 的 `status_expected` 也是 403（`lark_test.go:44` / `:60`）⇒ 注释与 fixture 冲突时**以 fixture 为准**。这条口径与 §31 的 D4 是同一类（"注释不是代码"）。 |
+| **D12** | `InstallError::NotFound` 那一格走本仓标准的 `Error::NotFound` 信封（wire 码 `not_found`），其余**九**格逐字是 adapter 的稳定码 | 全仓的 404 信封只有一个形状（`routes/agents.rs` 的 `not_found`）；为 lark 单开一个 `lark_installation_not_found` 会让同一个语义在两种码之间漂。用例已钉住这条差异（`the_install_error_mapping_matches_the_upstream_matrix`）。 |
+| **D13** | `crates/mc-channel/src/lark/mod.rs`：追加 4 行 `pub mod` + **填 `register()`** + 新增 `register_with(registry, FeishuChannelDeps)` | 描述写集**漏了这个文件**（rev 2/3/5/6/7 逐版都点名了它，本片按补充落）；`register()` 的调用点由 M7-12 的 `feishu_channel::factory` 文档明确交接给 M7-14（§29 的 H 项）。`register()` 是**失败关闭**形态（未接线的连接器 + `Decrypter::fail_closed`），与 slack/telegram/dingtalk 同手法。 |
+
+### 30.3 落点决策（写清"为什么在这里"）
+
+1. **5 条路由全路径注册、不 `nest`**：`mount_slice_channel()` 在顶层 merge（`channels/mod.rs`
+   的结构决策第 1 条已定死）；路径参数写 `:name`（matchit 0.7 把 `{name}` 当**字面量**）。
+2. **授权按上游逐条复刻**（`MUL-4213`）：list 只要成员；revoke / begin 认**绑定 agent 的
+   owner 或 workspace owner/admin**；status 认**会话发起人或 workspace owner/admin**，
+   其余成员回 **404**（不泄露会话存在性）；agent 被硬删的**孤儿** revoke 回落到 workspace
+   owner/admin（清理入口不能因为 agent 没了就失效）。
+3. **`install_supported` 的判据是两段与**：`configured`（部署密钥）**且** `ApiClient`
+   `is_configured()`（真 HTTP 客户端在位）—— 上游 `TestListLarkInstallations_StubClient
+   ReportsInstallNotSupported` 钉的就是"只有替身时这一位必须是 `false`"。
+4. **终态落库是首次写入胜 + 指数退避重试**：一次成功的终态落库发生时安装行与安装者绑定
+   **已经在 Postgres 里提交了** ⇒ 把这次写入在第一个错误上丢掉，会让"已经绑好了"的用户盯着
+   对话框停在 `pending` 直到 QR 过期（上游 `terminalWriteAttempts = 10`）。
+
+### 30.4 门禁读数（本片当轮实测，**两条一次重跑**）
+
+- **门禁 10/10 绿**（`bash scripts/gates.sh --with-db --db-url …`，**422s**；库
+  `multica_lum1779`，角色建时带 `CREATEDB`）。
+  ⚠️ **第一次跑是 8/10**：⑥ 与 ⑧ 红在 **ENOSPC**（`ld terminated with signal 7 [Bus error]`、
+  `could not create directory "base/…": No space left on device`）—— **零条测试断言失败**
+  （`grep -c '^failures:' = 0`）。回收 23G（见 30.5 第 2 条）后单独重跑 ⑥/⑧ **2/2 绿**，
+  再整轮重跑 **10/10 绿**。⇒ **红点不在写集里、且是资源性失败时，先看证据再停轮。**
+- **⑦**（`python3 scripts/route_parity.py`）：
+  `upstream 456 | local 474 | baseline 458 | implemented 388 real + 3 ph = 391 | known_gap 65 |
+  unclaimed 0 | regression 0 | local_only 9`；`owners M9=33 M3+=16 M3=11 M10=5` ⇒ **`owners.M7 = 0`**。
+  `local 469 → 474`（+5 注册点，**无双形态** ⇒ 不是回归）。
+  **与 rev 5/6/7 的预测逐字相符**（`implemented 386 → 391`、`known_gap 70 → 65`）。
+  ✅ **`owners.M7 → 0` ⇒ M7-21 INT（`LUM-1786`）的前置满足**（其后 `LUM-1783/1784/1785` 全是
+  0 路由，不阻塞 `owners`）。形态门 0 defect（`slash_alias_audit` 与 ⑦ 同绿）。
+- **⑨**：`crates/mc-conformance/report.json` 刷新后 **7 条 lark fixture 逐条 `unmounted → pass`**，
+  **其余 358 条一字未动**（差异集 = 恰好那 7 条，脚本逐条比对过）；
+  `totals: fixtures 365 | pass 7 → 14 | mismatch 23 | unmounted 29 → 22 | placeholder 0 |
+  unevaluable 306`。`--check` 复跑绿。
+- **⑩**：`0 violation(s)`（limit 800）。🔴 **读法提醒**：本片第一次取 ⑩ 读数时新文件还**未
+  `git add`**，`file_size_check.py` 只看 `git ls-files` ⇒ 报了假的"0 violations"；`git add -A`
+  之后立刻抓出 **2 个 800+ 文件**（D10）。**§29.5 的 R1 再成立（第 4 次）。**
+- **⑨ 的"不要动"项复核**：`GET /users/me` 那条
+  （`users/TestGoogleLoginSuccessfulExistingUser@…:311#1`）仍 **不在** upstream 456 里、
+  仍是 `unevaluable` —— 本片**没有**碰它。
+
+### 30.5 三条 lesson
+
+1. 🔴 **`git add` 之前取门 ⑩ 读数 = 白取**（§29.5 的 R1，本片第 4 次）：新文件不在
+   `git ls-files` 里，检查器**看不见**它们，于是"0 violations"是**假绿**。本片因此第一次
+   把 `registration.rs` 写到 1,314 行。**纪律：写完 → `cargo fmt` → `git add -A` →
+   `file_size_check.py` → 再写文档。**
+2. 🔴 **本机的磁盘是这一波最硬的约束，而且"一次 `cargo clean`"救不了一场双任务并飞**：
+   起手 `df` 只有 **39%**，但同轮的 wecom 片（`LUM-1783`，已静默死亡、workdir 被
+   `rehearsal-2067` 复用）**一个人占着 23G**；我这边 `target` 长到 16G 后整盘 100%，
+   于是出现了两次 `ld … Bus error` + PG 建不出 scratch 库。
+   回收判据（四条全绿才删，**只删 `target/`，源码一字不动**）：① run 终态 ∧ ② `/proc/*/cwd`
+   **与** `/proc/*/fd` 逐 PID 零命中 ∧ ③ `git status --porcelain` 空 ∧ ④ 有已提交的 sha
+   （`0c9db159` 在 `rehearsal-2067` 上）。量取：**+23G**（`41G → 24G` 已用）。
+   ⇒ **派发前应把"磁盘可用量"当成第 4 个槽位维度**：`在飞片 target 之和 + 本片预算(≈20G)`
+   必须小于可用量，否则新片注定 ENOSPC 死（`LUM-1835` 已死过一次）。
+3. ✅ **「`unmounted → pass` 的差异集 = 恰好本片的 fixture 集」是一条可执行的验收判据**：
+   本片把 `report.json` 的 `--json` 输出与已提交快照**逐条比对**，差异**恰好 7 条**、全部
+   是 lark、全部 `unmounted → pass` ⇒ 这同时证明了"5 条路由挂上了"与"没有踩到别人的
+   fixture"。比"看 totals 变了多少"强得多（totals 会掩盖同增同减）。
+
+### 30.6 与上游的**遗留**差异（登记为缺口，不在本片写集）
+
+1. **扫码设备流没有"跨进程可读"的会话表**（**D2**）⇒ 单副本假设；
+2. **两个部署级 base-URL override 不落地**（**D9**）⇒ 用它们的自建部署需要改走
+   `lark_installation.region`；
+3. **`ReclaimDeadInstallationByAppID` 的依赖行清扫**：泛化 `channel_*` 那一段
+   （`ClearChannelInstallationBotScopedRows`）在 §31 已登记为缺口；lark 的遗留表**没有**
+   对应的依赖面（`lark_user_binding` / `lark_binding_token` 都带 `ON DELETE CASCADE`）⇒
+   **不需要**额外清扫。
+
+### 30.7 交接：M7 代码面**收口**
+
+`owners.M7 = 0` ⇒ 本片是 M7 线上的**最后一片代码片**。后续顺序：
+`LUM-1786`（M7-21 INT：快照三件套刷新 + `--write-baseline`，**0 路由 / 0 代码改动**）
+必须在 `owners.M7 = 0` 之后、且**不与 `LUM-1804`（M8-7 INT）同轮**刷基线。
+`LUM-1783/1784/1785`（wecom 0 路由片）与本片**零交集**，可继续并行。
+
 ## 31. M7-15（`LUM-1780`）：wecom 契约 / 凭据 / 安装与绑定面（**4 路由**）
 
 > **号段说明**：base `83761edb` 实测 `docs/32` 末号 = **`## 27.`**（M5-D8）；28/29/30 已按**派发顺序**
@@ -4623,151 +4772,212 @@ lib 用例 902 条全绿。
 
 ---
 
-## 30. M7-14（`LUM-1779`）：lark 安装与绑定面（**5 路由**）
+## 35. M7-18（`LUM-1783`）：wecom 媒体面（**0 路由**）
 
-> **号段说明**：base `06d2f4bf` 实测 `docs/32` 已占号 = `9–29, 31, 32, 33, 34`（末号为
-> **`## 34.`** = M7-17）⇒ 空号里最小的是 **`30`**，本片取 **`## 30.`**。派发补充 rev 7 的
-> 号段裁定（`30` = M7-14）与实测一致，**没有让号、没有改号**。
-> `docs/32` 是本片唯一与别的片共写的文件（各片往末尾追加自己的节；冲突时按
-> §91/§102/§107/§108 的先例「先到者保号 + 后到者让号」）。
+`docs/60-M7-PLAN.md` §4.1 的 **stage 7 第三片**（上游
+`wecom/{outbound_media,media_ingest,media_download,media_upload,media_guard,media_stream,media_crypt}.go`
+= **2,614 + 171 = 2,785** 行）。它是 wecom 子波在 `wecom/mod.rs` 追加段上的**最后一个写者**：
+之后的 `LUM-1784`（M7-19 入站）/ `LUM-1785`（M7-20 打字/限流）都要等它终态。
 
-### 30.0 这一片补的是哪条掉棒，以及上游单元的**口径复核**
-
-上游 `internal/integrations/lark/{installation.go,registration.go,registration_service.go,
-install_session_store.go,install_session_redis_store.go,binding_token.go,union_id_backfill.go,
-region_backfill.go}` + `internal/handler/lark.go` 的**安装 / 设备流注册 / 绑定令牌**那一面。
-`M7-10…M7-13` 已把客户端 / WS / 入站 / 出站四棵子树铺好（只读依赖），M7-14 是**lark 树的最后
-一片代码片**：交付 5 条管理路由 + 注册工厂，并把 `owners.M7` 打到 **0**。
-
-**口径复核（本片实测，`f41fae6b08fb` 的只读副本）**：8 个非测试文件 + handler 实测
-**2,818 行**（`installation 159 + registration 501 + registration_service 858 +
-install_session_store 170 + install_session_redis_store 187 + binding_token 304 +
-union_id_backfill 131 + region_backfill 70 + handler/lark 438 = 2,818`）—— 与
-`docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-14 行**逐字相符**（本片是 M7 里少数
-**没有**行数偏差的片）。
-
-### 30.1 写集（逐字；17 个新文件 + 3 个已存在文件的改动）
-
-描述写集 = 4 个 lark 子模块 + 1 个 HTTP 文件；落地时按**门 ⑩**（单文件 800 行硬限）与
-「wire / SQL / handler / 用例」四个切点拆成同一批文件（**D10**）。
+### 35.1 写集（逐字；**17 个新文件**，`wecom/mod.rs` **+7 行**，`docs/32` **+本段**）
 
 | 文件 | 行数 | 上游对应 |
 | --- | ---: | --- |
-| `crates/mc-channel/src/lark/installation.rs` | **579** | `installation.go`（159）：`Installation` 行 / `InstallationParams` / `InstallError` / `InstallationService` / `LarkInstallationStore` 端口 |
-| `crates/mc-channel/src/lark/installation/tests.rs` | **488** | 端口替身用例（门 ⑤） |
-| `crates/mc-channel/src/lark/registration.rs` | **649** | `registration.go`（501）：协议常量 / `SessionStatus` / `reason` / `RegistrationError` / `BeginResult` / `PollResult` / `FormPoster` / `RegistrationClient` / QR 与表单小件 |
-| `crates/mc-channel/src/lark/registration/session.rs` | **192** | `install_session_store.go`（170）：`InstallSessionState` / `InstallSessionOutcome` / `InstallSessionStore` / `MemoryInstallSessionStore` |
-| `crates/mc-channel/src/lark/registration/service.rs` | **522** | `registration_service.go`（858）的**服务那一半**：`CommitInstall` / `RegistrationStore` / `RegistrationService`（开会话 → 轮询 → 终态落库） |
-| `crates/mc-channel/src/lark/registration/tests.rs` | **395** | 装置（假传输 / 假客户端 / 假落库口 / 假时钟） |
-| `crates/mc-channel/src/lark/registration/tests/state_machine.rs` | **583** | 协议 / 会话表 / **三态**用例 |
-| `crates/mc-channel/src/lark/binding.rs` | **271** | `binding_token.go`（304）：`BindingError` / `RedeemOutcome` / `BindingStore` / `BindingTokenService` / 哈希与小件 |
-| `crates/mc-channel/src/lark/binding/tests.rs` | **319** | 内存令牌表用例 |
-| `crates/mc-channel/src/lark/backfill.rs` | **235** | `union_id_backfill.go`（131）+ `region_backfill.go`（70） |
-| `crates/mc-channel/src/lark/backfill/tests.rs` | **236** | 两条回填的 gating / 幂等 / 尽力而为用例 |
-| `crates/mc-http/src/routes/channels/lark.rs` | **586** | `handler/lark.go`（438）：5 条路由 + 鉴权层 + 三条错误矩阵 |
-| `crates/mc-http/src/routes/channels/lark/dto.rs` | **251** | wire 形状与未配置语义（见 **D10**） |
-| `crates/mc-http/src/routes/channels/lark/store.rs` | **624** | 三个端口的 PG 实现（见 **D6**） |
-| `crates/mc-http/src/routes/channels/lark/tests.rs` | **589** | 不依赖库的用例（门 ⑤）：**七条 golden fixture 的逐条复刻** + wire 形状 + 错误矩阵 |
-| `crates/mc-http/src/routes/channels/lark/tests/db.rs` | **602** | 真库用例（门 ⑥）：五条路由 + 三个端口的 SQL |
-| `crates/mc-http/src/routes/channels/lark/tests/support.rs` | **171** | 真库装置（连接 / `AppState` 字面量 / 种子） |
-| `crates/mc-channel/src/lark/mod.rs` | **+44/−2** | **描述写集漏项**：追加 4 行 `pub mod` + 填 `register()` + 新增 `register_with`（见 **D13**） |
-| `crates/mc-conformance/report.json` | **39 行改动** | ⑨ 快照刷新：**7 条 lark fixture 逐条 `unmounted → pass`**（见 30.4） |
-| `docs/32-M3-DAEMON-FACE.md` | **+本节** | 偏离登记与门禁读数 |
+| `crates/mc-channel/src/wecom/media_crypt.rs` + `media_crypt/tests.rs` | 547 / 421 | `media_crypt.go`（102）：AES-256-CBC + PKCS#7(32) + 密钥解码（见 D2） |
+| `.../wecom/media_guard.rs` + `media_guard/tests.rs` | 644 / 616 | `media_guard.go`（306）：地址闸、两张前缀表、白名单（R-M7-9 的 SSRF 面） |
+| `.../wecom/media_download.rs` + `media_download/tests.rs` | 383 / 302 | `media_download.go`（459）的**取回**一半：两条路径 + 上限 + 头 |
+| `.../wecom/media_download/filename.rs` + `filename/tests.rs` | 375 / 195 | `media_download.go` 的**文件名**一半（`mime.ParseMediaType` 的手写替代，见 D8） |
+| `.../wecom/media_stream.rs` + `media_stream/tests.rs` | 234 / 316 | `media_stream.go`（171）：流式解密到 unlink 的临时文件（**写集漏项**，见 D1） |
+| `.../wecom/media_upload.rs` + `media_upload/tests.rs` | 552 / 493 | `media_upload.go`（420）：三步上传 + 发送 + 种类帽 |
+| `.../wecom/media_ingest.rs` + `media_ingest/tests/{mod,support}.rs` | 671 / 520 / 79 | `media_ingest.go`（480）：`MediaResolver` + 端口 + 通知 + 日志 |
+| `.../wecom/media_ingest/describe.rs` | 255 | 上游的**命名与描述**面（§6.3 拆出的子模块，见 D1） |
+| `.../wecom/outbound_media.rs` + `outbound_media/tests.rs` | 784 / 440 | `outbound_media.go`（676）：出站附件投递（M7-17 的**交接 H3**） |
+| `crates/mc-channel/src/wecom/mod.rs` | **+7 / −0** | 追加 7 行 `pub mod`（6 行是 issue 列的 + `media_stream`；`register()` **未动**） |
 
-合计 **+7,359 / −47**（19 个文件）。**零新迁移、零新依赖**。
+**新增用例 84 条**（`media_crypt` 21 / `media_guard` 21 / `media_download` 12 / `media_stream` 10 /
+`media_upload` 7 / `media_ingest` 8 / `outbound_media` 9 —— 逐文件见各自的 `tests.rs`）；
+`mc-channel` 整 crate 的 lib 用例 **1202 passed / 0 failed**（本片起手 1118 ⇒ **+84**）。
+最长新文件 **784 行**（`outbound_media.rs`），全部 ≤ 门 ⑩ 的 800。
 
-### 30.2 偏离登记（**不是**静默略过；`docs/60` §6.5 第 7 条）
+### 35.2 偏离（D1…D13；每条要么有落点，要么有用例）
 
-| # | 偏离 | 理由 / 后果 |
-| --- | --- | --- |
-| **D1** | 端口读写**遗留** `lark_installation` / `lark_binding_token` / `lark_user_binding`；上游 `lark/channel_store.go` 把 `GetLarkInstallation…` / `UpsertLarkInstallation` **全部转发**到泛化 `channel_*`（`NewChannelStore` 注释：*"lark_* calls resolve to channel_* rows (MUL-3515)"*） | 合并树的硬约束（`crates/mc-repos/src/channel/installation.rs`，M7-1 **W**；§32 已登记同一事实的 B 面）：`lark_*` 与 `channel_*` 上游**同时在用**（`docs/60` §6.4 / R-M7-5）⇒ 本仓按遗留表落。**要改这条口径得先改 `mc-repos` 的硬约束。** |
-| **D2** | `install_session_redis_store.go`（187 行）**不落地**：只留 `InstallSessionStore` trait + 单进程 `MemoryInstallSessionStore` | 本仓无 Redis 依赖（`docs/60` §2.5 表第 3 行：上游**本身**就有"无 Redis ⇒ 会话按进程"的降级分支与明文 `slog.Warn`）⇒ 换部署形态，不是伪造行为。**后果说清**：多副本部署下 `GET …/install/:sessionId/status` 可能落到没有该会话的副本 ⇒ 本仓部署契约 = 单副本。 |
-| **D3** | `db.Queries` / `TxStarter` / `events.Bus` → 端口 `RegistrationStore` / `LarkInstallationStore` / `BindingStore`；`finishSuccess` 的三步事务（回收死主 → upsert → 绑安装者）落成 `RegistrationStore::commit_install`；上游独立的 `BindInstallerTx` 折进同一个端口方法 | 层次铁律：`mc-channel` **不写 SQL**（`docs/60` §2.6 第 1 条）⇒ 串行化在实现里、**判决**（`classify_live_owner` 那张表）留在 `mc-channel` 可测。`BindInstallerTx` 必须与安装行插入**同一个**事务 ⇒ 同一个事实只有一个归属。 |
-| **D4** | `InstallationService::new` / `NewRegistrationService` 的 **nil 检查整条消失** | 本仓是值类型：`SecretBox` / `Arc<dyn …>` 都没有"半成品"状态 ⇒ 上游那几条 `… is required` 哨兵没有对应物（与 §31 的 D3 同款）。 |
-| **D5** | `Now func() time.Time`（Go 的函数字段）→ `Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>` | 同一个 seam：过期边界要确定性，测试注入假时钟而不是睡觉（§31 的同款是 `Clock`）。 |
-| **D6** | `lark_installation` 的 upsert 与两条回填列写**没有** `mc-repos` 对应物 ⇒ 以**端口实现**落在 `crates/mc-http/.../lark/store.rs` | 本片写集**不含** `crates/mc-repos/src/channel/**`（`docs/60` §3.3 的只读面）⇒ 与 M7-4/5/9/15 的 `{slack,telegram,dingtalk,wecom}/store.rs` 同一手法。 |
-| **D7** | 上游 `if invalidator, ok := s.api.(TokenCacheInvalidator)` 的**类型断言** → `RegistrationService::new` 多一个 `Option<Arc<dyn TokenCacheInvalidator + Send + Sync>>` 参数 | Rust 的 `dyn` 没有类型断言，而 `ApiClient` trait（M7-10 已合、**冻结**）不该为它加一个方法 ⇒ 把那个**可选能力**显式化。生产装配把同一个 `HttpApiClient` 作为两个 `Arc` 递进去。 |
-| **D8** | `log *slog.Logger` 参数**消失** | 本仓用全局 `tracing`；递一个 logger 进纯逻辑层只会给它一个可选的全局后门（与 §31 的同名项同款）。 |
-| **D9** | `MULTICA_LARK_HTTP_BASE_URL` / `…_CALLBACK_BASE_URL` 两个**部署级 override 不落地** | 本仓的 region 解析早已在 `lark_installation.region` 列上（M7-10…13 都按列走）⇒ 重建那两个 override 会与"每安装 region"抢同一职责。回填的**判据**保留成公开入参（`is_lark_international_host` + 两个 `&str`），调用点按自己的装配填。 |
-| **D10** | 描述写集之外的 **12 个新文件**（4 个 `…/lark/tests.rs` 一族 + `dto.rs` / `store.rs` / `registration/{session,service}.rs` / `registration/tests/state_machine.rs`） | **门 ⑩**（单文件 800 行硬限）+ 上游同款切分。⚠️ 本片实测**触发过**这条：`registration.rs` 一次写到 **1,314 行**、`registration/tests.rs` 到 **943 行** ⇒ 拆成 「协议 / 会话表 / 服务」与「装置 / 断言」。**教训见 30.5 第 1 条。** |
-| **D11** | 上游 `begin` / `status` 的注释写 *"Returns 503 when the integration is not wired"*，而两个 handler 的**第一句都是 `writeFeatureDisabled`（403）** ⇒ 本仓按**代码**落（403） | ⑨ 的 7 条 fixture 的 `status_expected` 也是 403（`lark_test.go:44` / `:60`）⇒ 注释与 fixture 冲突时**以 fixture 为准**。这条口径与 §31 的 D4 是同一类（"注释不是代码"）。 |
-| **D12** | `InstallError::NotFound` 那一格走本仓标准的 `Error::NotFound` 信封（wire 码 `not_found`），其余**九**格逐字是 adapter 的稳定码 | 全仓的 404 信封只有一个形状（`routes/agents.rs` 的 `not_found`）；为 lark 单开一个 `lark_installation_not_found` 会让同一个语义在两种码之间漂。用例已钉住这条差异（`the_install_error_mapping_matches_the_upstream_matrix`）。 |
-| **D13** | `crates/mc-channel/src/lark/mod.rs`：追加 4 行 `pub mod` + **填 `register()`** + 新增 `register_with(registry, FeishuChannelDeps)` | 描述写集**漏了这个文件**（rev 2/3/5/6/7 逐版都点名了它，本片按补充落）；`register()` 的调用点由 M7-12 的 `feishu_channel::factory` 文档明确交接给 M7-14（§29 的 H 项）。`register()` 是**失败关闭**形态（未接线的连接器 + `Decrypter::fail_closed`），与 slack/telegram/dingtalk 同手法。 |
+* **D1（写集勘误，同一类第 14 次）**：issue rev 5 的写集只列 **6** 个新文件，而派生表
+  `docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-18 行有**第 7 个** ——
+  `media_stream.go`（上游 171 行）⇒ 本片一并落地（流式解密那条路本来就要求它）。
+  另按 §6.3 的门 ⑩ 拆分：`media_download.rs` / `media_stream.rs` / `media_ingest.rs` 各带子目录
+  （`filename.rs` / `describe.rs` + 各自的 `tests.rs`），拆点取上游那几段的**面**边界。
+  `wecom/mod.rs` 追加 7 行（`register()` 与 M7-17 刚加的行**未动**；`rustfmt` 的
+  `reorder_modules` 把它们与那 4 行并成一个按字母序的连续段 —— M7-17 四行的**相对顺序未变**）。
+* **D2（🔴 自带 AES-256，零新依赖）**：`crates/mc-channel/Cargo.toml` 的依赖面在 M7-0 冻结
+  （逐字「此后 M7 各切片**不得**再新增三方依赖」）。本片要的两个 crate 都在那条线之外 ——
+  `aes` 0.8.4 **在** `Cargo.lock` 里（`aes-gcm` 的传递依赖）但与本 crate **没有直连边**，
+  `cbc` **根本不在** lock 里。⇒ 按本仓既有判例（`docs/32` 的 **M8-2-D7**「手写公历算法」、
+  **M7-15-D5**「没有 `rand` ⇒ 两个 v4 UUID」、§? 「没有 `regex` ⇒ 手写扫描器」），
+  `media_crypt.rs` 自带 AES-256（密钥扩展 + 正/逆轮函数）+ CBC。**正确性不靠嘴说**：
+  S 盒由 GF(2⁸) 逆元 + 仿射在 `const fn` 里**算出来**（没有抄错一格的余地），
+  FIPS-197 附录 C.3 与 NIST SP 800-38A §F.2.5 的向量逐字比字节。
+  **收缩**：表驱动 ⇒ 非常量时间（密钥是一次性的、被解密的字节来自平台、唯一攻击者可控输入是
+  受地址闸把守的 URL）；加密方向**只为用例**存在（上游没有加密方向），生产路径不调用它。
+* **D3（闸的接缝：`DialContext` → `reqwest` 的 `dns_resolver`）**：上游在拨号器上拦
+  （"闸在**连接**上，不在 URL 上"）。本仓没有 `DialContext`，落在三处：`dns_resolver`
+  （解析阶段过滤：混着公私答案的主机只拨通过的那些，与上游"每个地址先查、只拨通过的字面量"
+  同语义）、`no_proxy()`（代理会重新解析 ⇒ 绕过这条保证）、重定向回调（scheme + 跳数）。
+  `reqwest` 对 **IP 字面量** host 根本不调解析器 ⇒ 那一步由 `check_media_url` 自己兜
+  （与 `dingtalk::media` 的 D5 同一条判例）。
+  **实测到的第二层**：`file:///…` 这类 `http::Uri` 表示不了的重定向连 `tower-http` 的
+  `resolve_uri` 都过不去 ⇒ **响应原样交回**（302，不跟随），而 `gopher://` 那类能被表示的会
+  走到我们自己的回调并被拒（`Err`）。两条路都不跟随，只是层次不同，有用例同时钉住。
+* **D4（`MULTICA_WECOM_MEDIA_ALLOW_CIDRS` 的读法）**：上游 `SetMediaAllowedPrefixes(cidrs []string)`
+  的唯一调用点在仓库外 ⇒ **env 的切分形态在代码里观察不到**。本仓定：逗号分隔、两头空白吃掉、
+  空条目跳过（不是错误）、解析不了的一律**报告并跳过**（不静默加宽/收窄）。env 本身**不在
+  `mc-channel` 读** —— 唯一读取口是 `mc_http::state::ChannelKeys`（`docs/60` §2.3 判据 4）。
+* **D5（比上游**更严**的一格：`::/96`）**：IPv4-compatible 的已废弃段上游那两张表都没覆盖、
+  `netip` 的判据也不报它，而它正是"穿 IPv6 外衣的 IPv4"那道闸要防的拼法之一
+  （`dingtalk::media::guard` 的 `NON_PUBLIC_PREFIXES` 同样有它）。没有任何 COS 对象住在那儿。
+* **D6（`media_stream` 的三处形态差异）**：① `io.Reader` → 异步分块来源（本仓的下载体是
+  `reqwest` 的，而 `mc-channel` 的 `reqwest` **没开 `stream` feature** ⇒ 用
+  `Response::chunk()` 拉；接缝是 `MediaChunkSource`）；② `os.CreateTemp` → 自己造（`tempfile`
+  不在依赖边里）：`uuid` + pid + 进程内计数器，语义逐条对齐（建、`0600`、**立刻 unlink**，
+  用例断言 `nlink == 0` 且 `mode & 0o777 == 0o600`）；③ `defer out.Close()` 不需要（`Err` 里
+  没有句柄）。**`TempFile` 是"退回缓冲路径"的判据**（上游按错误**字符串**判，本仓按**类型**）。
+* **D7（凭据面比上游更紧）**：上游的 `stripURL` 是**事后**把 `*url.Error` 剥成它的 `Err`；
+  本仓在**类型层面**就进不来 —— `reqwest::Error` 的 `Display` 同样带着那条预签名 URL，所以
+  `MediaDownloadError` 的变体**没有一个**带载荷。HTTP 状态那条**刻意不带响应体片段**
+  （上游带 512 字节用于诊断：COS 的 XML 错误体会回显它收到的 URL）。`MediaBody` 的 `Debug`
+  手写（`reqwest::Response` 的 `Debug` 会打出请求 URL）。4 条用例钉住 4 条错误路径。
+* **D8（`mime` / `http.DetectContentType` 的手写替代）**：`mime` crate 不在依赖边里 ⇒
+  `Content-Disposition` 参数解析、`filename*` 的 RFC 5987 解码、表单编码的**往返判据**、
+  `TypeByExtension` / `ExtensionsByType` 的两张表、按魔数的类型嗅探全部手写。**收缩**：
+  ① **不支持 RFC 2231 的参数续行**（`filename*0*=`…）⇒ 那种名字只走朴素形态；
+  ② `charset` 不是 `utf-8` / `us-ascii` 时**跳过那一个参数**而不是让整条头失败（比 Go 宽一格，
+  而名字随后要过 `clean_media_filename`）；③ 两张表比 Go 的 mime 库小 ⇒ 表外一律空串（不猜）。
+  **顺序即安全**：扩展形态无条件优先（与出现顺序无关）→ 表单解码 → 取基名 → 剥控制字符，
+  四条都有用例（`..%2F..%2Fetc%2Fpasswd` 必须在解码**之后**才被压成一个段）。
+* **D9（`media_upload` 的两处形态差异）**：① `errgroup.SetLimit(n)` → `buffer_unordered(n)`
+  （并发阶梯逐字照抄 SDK：`≤4 ⇒ n` / `≤10 ⇒ 3` / 否则 `2`；差别只在收尾时机 —— 上游**主动取消**
+  已在飞的块，本仓让它们跑完才丢弃，而一次失败上传之后那些结果没人读）；② `sendMsgFrame`
+  （配额 + 一次重试）是 **M7-20** 的 `rate_limit.rs` ⇒ 本片按 M7-16 对 `send_text` 的同一判例
+  （§33 的 D4）**直接走 `request`**，而**每聊一把锁**照旧由本文件持有（上游明确把它放在这里、
+  不放在配额那一层）。重发纪律逐字：**只有"判决没回来"值得再问一次**，一次拒绝当场结束。
+* **D10（同步端口 → 一次桥）**：本仓的 `MediaResolver::resolve_media` 是**同步**签名（M7-1 的契约）
+  而下载与意图账本都是 `async` ⇒ 独立线程 + current-thread 运行时跑**整条消息**的摄入
+  （与 `dingtalk::media::block_on_engine` 同款，`thread::scope` 让那段 future 可以借用解析器）。
+  对象存储与通知是**同步**端口（与 `dingtalk::media::MediaStorage` 同款）。
+* **D11（逐文件记账落在本片）**：`Outbound` 的记账方法是 `pub` 的，但它们要一个 `&Outbound`，
+  而这段工作在**脱离任务**里跑 ⇒ `outbound_media.rs` 的 `AttachmentAccounting` 用**同一份**
+  `Metrics` 与**同样的字面量**重述那几条（label 与日志消息逐字取自 `outcome.rs`）。
+  收敛路径见交接 H4。
+* **D12（端口形状勘误，同一类第 15 次）**：`crates/mc-channel/src/wecom/outbound/attachments.rs`
+  （**M7-17 的文件**）的 `AttachmentDelivery` 有两处让交接 H3 **不可实现**：
+  ① 同步方法 ⇒ 准入名额在它返回的瞬间就还回去了，`MAX_ADMITTED_ATTACHMENT_DELIVERIES` 不再约束
+  它本来要约束的那次查表；② 它**丢掉**了上游 `sendAttachments(ctx, messageID, workspaceID, …)`
+  的两个 id ⇒ 端口实现拿不到"为哪条消息投递"。两处都改（`async` + 多两个 `&str`），
+  `relay/relayed.rs` 那条调用**不用改**（它本来就是按 id 调的），M7-17 的替身
+  （`outbound/tests.rs` 的 `FakeAttachments`）跟着新形状走并多记两个 id。
+* **D13（两处接缝暂住本片，M7-19/M7-20 收敛）**：① 平台信封的解码
+  （`decode_wecom_inbound`，上游 `wecom_resolvers.go` 的 `wecomMsgFromRaw`，那个文件属 **M7-19**）——
+  按 `ws_frame.go` 的 JSON tag 字面量解，**形态不对就失败关闭**（Go 的 `json.Unmarshal` 在那一格报错）；
+  ② `trace_media_headers` 的最小版（上游在 `trace.go`，属 **M7-20**，带开关与截断）。
 
-### 30.3 落点决策（写清"为什么在这里"）
+### 35.3 门禁证据（当轮实测，base `bb4e726a` + 本片）
 
-1. **5 条路由全路径注册、不 `nest`**：`mount_slice_channel()` 在顶层 merge（`channels/mod.rs`
-   的结构决策第 1 条已定死）；路径参数写 `:name`（matchit 0.7 把 `{name}` 当**字面量**）。
-2. **授权按上游逐条复刻**（`MUL-4213`）：list 只要成员；revoke / begin 认**绑定 agent 的
-   owner 或 workspace owner/admin**；status 认**会话发起人或 workspace owner/admin**，
-   其余成员回 **404**（不泄露会话存在性）；agent 被硬删的**孤儿** revoke 回落到 workspace
-   owner/admin（清理入口不能因为 agent 没了就失效）。
-3. **`install_supported` 的判据是两段与**：`configured`（部署密钥）**且** `ApiClient`
-   `is_configured()`（真 HTTP 客户端在位）—— 上游 `TestListLarkInstallations_StubClient
-   ReportsInstallNotSupported` 钉的就是"只有替身时这一位必须是 `false`"。
-4. **终态落库是首次写入胜 + 指数退避重试**：一次成功的终态落库发生时安装行与安装者绑定
-   **已经在 Postgres 里提交了** ⇒ 把这次写入在第一个错误上丢掉，会让"已经绑好了"的用户盯着
-   对话框停在 `pending` 直到 QR 过期（上游 `terminalWriteAttempts = 10`）。
+* **`bash scripts/gates.sh --with-db` = 10/10 PASS，654s**（① 2s ② 157s ③ 45s ④ 36s ⑤ 65s
+  ⑥ 250s / `migrate=0,e2e=0` ⑧ 28s ⑦ 0s ⑨ 71s ⑩ 0s）。
+  追加 ⑥/⑧ 的理由：本片虽然**零 DB 直写**（两个存储端口与通知端口都只有替身），
+  `AttachmentQueries` 的形状是照着真表定的，而 ⑥ 覆盖了那些表在迁移后的形态、⑧ 覆盖 schema 未漂。
+  **当轮新建库** `multica_lum1783` / 角色 `mc_lum1783`（带 `CREATEDB`）。
+  最前一次 run 的 ②/③ 红是**环境**的（工作树正在被我重构）+ ③/④/⑤/⑥/⑧ 红是 **`/` 写到 98%**
+  导致的 `ENOSPC`（诊断依据逐条见 35.6）。
+* **⑦ 读数（片后，逐字，`bash scripts/gates.sh --only route-parity,file-size`）**：
+  `upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458`；
+  `implemented 383 real + 3 placeholder = 386 / 456 | known_gap 70 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33 M3+=16 M3=11 M10=5 **M7=5**`（和 = 70 ✓）。
+  **九个（含 `owners`）与片前逐字相同** —— 0 路由片该有的形态证据。**`--write-baseline` 未跑**。
+* **形态门**：`route_parity.py` 的 defect 输出为空；`slash_alias_audit.py` 报
+  `0 defect(s) / 0 warning(s)`，`469` 个上游键字面量与片前一致 ⇒ 本片**未注册任何路由**。
+* **⑨**：`report matches crates/mc-conformance/report.json`（快照**未动**）；
+  blob 实测 `fa53d0842e9af4cc42e6f0eb1b73d85dc21a3980` = 交接值逐字 ⇒ 读数继承
+  `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / unevaluable 306`。
+  **wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**，也**不把它当战绩**（阴性对照组）。
+* **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` **未改**。
+  本片 17 个新文件最长 **784 行**（`outbound_media.rs`），全部 ≤ 800。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`），`--all-targets` 与 test-util 两种形态都过。
+  本片踩到并修掉的具体 lint：`needless_raw_string_hashes`、`similar_names`、
+  `needless_pass_by_value`（`drop_transport_error` 改收引用）、`manual_range_contains`、
+  `cast_possible_truncation`（`pad as u8` → `u8::try_from`）、`large_stack_arrays`
+  （64 KiB 栈数组 → `Vec`）、`needless_borrow`、`items_after_statements`（用例里的辅助函数移到模块级）、
+  `format_push_string`（两处脚本替身改用 `write_fmt`）、`redundant_redefinition`、
+  `assigning_clones`、`unused_async`（`tell_the_sender` 没有 await ⇒ 去掉 `async`）、
+  `too_many_lines`（`send_attachments` 106 行 ⇒ `allow` + 理由）、`unused_self`（`log_failure`
+  改成自由函数）。
+  另有一条**编译器**级别的事：`buffer_unordered` 收 `chunks.iter().copied()` 的闭包会撞
+  `implementation of FnOnce is not general enough`（借用生命周期的 HRTB 推断）⇒ 先 `collect`
+  成一个 `Vec` 再进 `stream::iter`。
+* **⑤**：`mc-channel` lib 用例 **1202 passed / 0 failed**；其中本片新增 **84** 条。
+* **合并期复核**：见 **35.7**。
 
-### 30.4 门禁读数（本片当轮实测，**两条一次重跑**）
+### 35.4 交接（H1…H4；都写在代码的模块文档里，这里只列指针）
 
-- **门禁 10/10 绿**（`bash scripts/gates.sh --with-db --db-url …`，**422s**；库
-  `multica_lum1779`，角色建时带 `CREATEDB`）。
-  ⚠️ **第一次跑是 8/10**：⑥ 与 ⑧ 红在 **ENOSPC**（`ld terminated with signal 7 [Bus error]`、
-  `could not create directory "base/…": No space left on device`）—— **零条测试断言失败**
-  （`grep -c '^failures:' = 0`）。回收 23G（见 30.5 第 2 条）后单独重跑 ⑥/⑧ **2/2 绿**，
-  再整轮重跑 **10/10 绿**。⇒ **红点不在写集里、且是资源性失败时，先看证据再停轮。**
-- **⑦**（`python3 scripts/route_parity.py`）：
-  `upstream 456 | local 474 | baseline 458 | implemented 388 real + 3 ph = 391 | known_gap 65 |
-  unclaimed 0 | regression 0 | local_only 9`；`owners M9=33 M3+=16 M3=11 M10=5` ⇒ **`owners.M7 = 0`**。
-  `local 469 → 474`（+5 注册点，**无双形态** ⇒ 不是回归）。
-  **与 rev 5/6/7 的预测逐字相符**（`implemented 386 → 391`、`known_gap 70 → 65`）。
-  ✅ **`owners.M7 → 0` ⇒ M7-21 INT（`LUM-1786`）的前置满足**（其后 `LUM-1783/1784/1785` 全是
-  0 路由，不阻塞 `owners`）。形态门 0 defect（`slash_alias_audit` 与 ⑦ 同绿）。
-- **⑨**：`crates/mc-conformance/report.json` 刷新后 **7 条 lark fixture 逐条 `unmounted → pass`**，
-  **其余 358 条一字未动**（差异集 = 恰好那 7 条，脚本逐条比对过）；
-  `totals: fixtures 365 | pass 7 → 14 | mismatch 23 | unmounted 29 → 22 | placeholder 0 |
-  unevaluable 306`。`--check` 复跑绿。
-- **⑩**：`0 violation(s)`（limit 800）。🔴 **读法提醒**：本片第一次取 ⑩ 读数时新文件还**未
-  `git add`**，`file_size_check.py` 只看 `git ls-files` ⇒ 报了假的"0 violations"；`git add -A`
-  之后立刻抓出 **2 个 800+ 文件**（D10）。**§29.5 的 R1 再成立（第 4 次）。**
-- **⑨ 的"不要动"项复核**：`GET /users/me` 那条
-  （`users/TestGoogleLoginSuccessfulExistingUser@…:311#1`）仍 **不在** upstream 456 里、
-  仍是 `unevaluable` —— 本片**没有**碰它。
+* **H1（M7-19 `LUM-1784`）**：`decode_wecom_inbound`（D13）与 `wecomMsgFromRaw` **收敛成一份**；
+  `media_ingest` 的 `WecomInbound` / `InboundMedia` 与 M7-19 落地的 `InboundMessage` 取同一个形态。
+* **H2（M7-20 `LUM-1785`）**：① `MediaNotifier` 的实现（`senders_registry.go` 属 M7-20）——
+  它把"附件没送到"那句话交给那条活 socket；② `trace_media_headers` 收敛到带开关的实现；
+  ③ `MediaSenderLookup::live_sender` 与 `sendersRegistry.get` 是**同一次装配**；
+  ④ `sendMsgFrame` 落地之后，`media_upload` 那条直接 `request` 的路要换成它（D9）。
+* **H3（M7-21 `LUM-1786` INT）**：`⑦` 基线 / `⑨` 报告 / `⑩` 基线三件套的刷新**全归 INT**；
+  本片是 wecom 子波**最后一个**写 `wecom/mod.rs` 的片。
+* **H4（收敛可选项）**：`AttachmentAccounting`（D11）要搬回 `Outbound` 的话，前置是把 `Outbound`
+  放进 `Arc` 并让投递从 `Weak` 取 —— 那是一次结构调整，不在本片写集内。
 
-### 30.5 三条 lesson
+### 35.5 风险（R1…R3）
 
-1. 🔴 **`git add` 之前取门 ⑩ 读数 = 白取**（§29.5 的 R1，本片第 4 次）：新文件不在
-   `git ls-files` 里，检查器**看不见**它们，于是"0 violations"是**假绿**。本片因此第一次
-   把 `registration.rs` 写到 1,314 行。**纪律：写完 → `cargo fmt` → `git add -A` →
-   `file_size_check.py` → 再写文档。**
-2. 🔴 **本机的磁盘是这一波最硬的约束，而且"一次 `cargo clean`"救不了一场双任务并飞**：
-   起手 `df` 只有 **39%**，但同轮的 wecom 片（`LUM-1783`，已静默死亡、workdir 被
-   `rehearsal-2067` 复用）**一个人占着 23G**；我这边 `target` 长到 16G 后整盘 100%，
-   于是出现了两次 `ld … Bus error` + PG 建不出 scratch 库。
-   回收判据（四条全绿才删，**只删 `target/`，源码一字不动**）：① run 终态 ∧ ② `/proc/*/cwd`
-   **与** `/proc/*/fd` 逐 PID 零命中 ∧ ③ `git status --porcelain` 空 ∧ ④ 有已提交的 sha
-   （`0c9db159` 在 `rehearsal-2067` 上）。量取：**+23G**（`41G → 24G` 已用）。
-   ⇒ **派发前应把"磁盘可用量"当成第 4 个槽位维度**：`在飞片 target 之和 + 本片预算(≈20G)`
-   必须小于可用量，否则新片注定 ENOSPC 死（`LUM-1835` 已死过一次）。
-3. ✅ **「`unmounted → pass` 的差异集 = 恰好本片的 fixture 集」是一条可执行的验收判据**：
-   本片把 `report.json` 的 `--json` 输出与已提交快照**逐条比对**，差异**恰好 7 条**、全部
-   是 lark、全部 `unmounted → pass` ⇒ 这同时证明了"5 条路由挂上了"与"没有踩到别人的
-   fixture"。比"看 totals 变了多少"强得多（totals 会掩盖同增同减）。
+* **R1（AES 是手写的）**：见 D2。缓解是 NIST 已知答案向量 + S 盒由定义算出；**未缓解**的是
+  常量时间性质（表驱动），而那条的暴露面已在 D2 里逐条说明。
+* **R2（地址闸有两层，只测到一层半）**：`dns_resolver` 那一条用**假解析器**测（重绑定、混合答案、
+  全内网都覆盖），真 socket 那一条用本机回环服务端测（`localhost` 走解析器、`file://` 的重定向
+  原样交回）。**没有**在真网络上打过一个非公网地址的用例 —— 那需要一台真的内网目标。
+* **R3（流式那条路的端到端只有一条用例）**：`decrypt_to_file` 的跨块/尾部/临时文件属性各有用例，
+  但"`open_media` → 流式解密 → `upload_stream`"整条链只在 `media_ingest` 的**缓冲**路径上有端到端
+  用例（流式那条需要一个实现了 `MediaStreamStorage` 的替身，而本片的两个存储端口都只有缓冲替身）。
+  ⇒ M7-19 接线时若发现流式那条可疑，先补一个"临时文件建不出来 ⇒ 退回缓冲"的端到端用例。
 
-### 30.6 与上游的**遗留**差异（登记为缺口，不在本片写集）
+### 35.6 本轮两个**环境**级红旗（不是代码红，逐条留证）
 
-1. **扫码设备流没有"跨进程可读"的会话表**（**D2**）⇒ 单副本假设；
-2. **两个部署级 base-URL override 不落地**（**D9**）⇒ 用它们的自建部署需要改走
-   `lark_installation.region`；
-3. **`ReclaimDeadInstallationByAppID` 的依赖行清扫**：泛化 `channel_*` 那一段
-   （`ClearChannelInstallationBotScopedRows`）在 §31 已登记为缺口；lark 的遗留表**没有**
-   对应的依赖面（`lark_user_binding` / `lark_binding_token` 都带 `ON DELETE CASCADE`）⇒
-   **不需要**额外清扫。
+1. **`/` 写到 98%**：第一次 `--with-db` run 里 ③/④/⑤/⑥/⑧ 红，而 ⑤ 的失败是
+   `media_stream` 的一条用例（`decrypt_to_file` 报 `TempFile`）—— 那台机器当时只剩 **1015 MB**。
+   回收 **12G**（本 workdir 的 `target/debug/incremental`，一个纯缓存目录）之后同一批门禁
+   10/10 绿。⇒ **在 98% 满的盘上，`ENOSPC` 会伪装成"代码红"**（症状恰好落在第一个需要新文件的用例上）。
+2. **门禁与改文件不能同飞**：最先那次 8/8 里的 ②/③ 红，是因为我在它跑 ②/③ 的同时改了工作树
+   （把 `media_ingest.rs` 拆出 `describe.rs`）。**门禁的判据是"冻结的树"** —— 它跑的时候
+   任何一次 `cargo fmt` / 文件移动都会让那一格作废。⇒ 起手前先确认树是停的（本片已按此重跑全量）。
+3. **同项目另一片（`LUM-1779` M7-14）正在飞、占 16G**：`/proc` 逐 PID 扫到它的 `pi` 与
+   `rustc` 都活着 ⇒ **不碰**它的 `target/`（四判据里第一条就是"run 终态"）。
+4. **🔴 门禁的退出码会被 `| tail -N` 吃掉**：本片第一轮是在后台跑
+   `bash scripts/gates.sh … | tail -40`，管道退出码是 `tail` 的 ⇒ 那个 run 在任务列表里显示
+   **`completed exit=0`**，而它的 SUMMARY 行写的是 **`overall: FAIL — 6/8`**。
+   ⇒ **读门禁只认 SUMMARY 块**（`overall:` 那一行 + 逐格 result），**不要**把任务/CI 的退出码
+   当成门禁结论；带 `| tail` 的后台门禁要显式去看 SUMMARY（`set -o pipefail` 或去掉管道）。
+   本片最终判据取自**前台、无管道**的那次 10/10。
 
-### 30.7 交接：M7 代码面**收口**
+### 35.7 交付与合并期复核（当轮实做）
 
-`owners.M7 = 0` ⇒ 本片是 M7 线上的**最后一片代码片**。后续顺序：
-`LUM-1786`（M7-21 INT：快照三件套刷新 + `--write-baseline`，**0 路由 / 0 代码改动**）
-必须在 `owners.M7 = 0` 之后、且**不与 `LUM-1804`（M8-7 INT）同轮**刷基线。
-`LUM-1783/1784/1785`（wecom 0 路由片）与本片**零交集**，可继续并行。
+* **PR**：[#110](https://github.com/louloulin/paperclip-rs/pull/110)，head `agent/devbox5/d467ad8eca04`
+  （`570c94c2`），base **`bb4e726a`**。**预检逐字对上**：`git diff --numstat bb4e726a...HEAD`
+  按文件名排序 = PR API 的 files 列表（同样按文件名排序）⇒ **22 文件 / +8096 / −10** 两侧逐字相等。
+
+* **base**：本片起手 `git fetch` 后实测 `feat/multica-rs-initial` = **`bb4e726aa9b8b3d7f8b27c83b6a9483a480577a8`**
+  （issue rev 5 的交接值 `bb4e726a` 逐字命中；正文里计划期的 `2394bfcc` / `8104740d` / `6af3fb3d` /
+  `33d476e5` 一律作废）。
+* **硬前置的可观测判据当场成立**：`ws_sender.rs` + `credentials.rs` 在 base 上 `git cat-file -e` **两个
+  EXISTS** ⇒ 正文「硬前置 M7-15」与 rev 2 记的条件式 M7-16 两条都满足；`LUM-1782`（M7-17）**已终态**
+  （它的 4 个文件与本片 7 个文件的 `pub mod` 追加段已在 base 上，见 `git log --oneline -1` 的
+  `bb4e726a`）。
+* **本片是 `wecom/mod.rs` 在 M7-18 时段的唯一写者**：base 实测 `mod.rs` = **62 行 / 14 个 `pub mod`**
+  （与 rev 5 的预测逐字命中）；本片**追加** 7 行 + 一段注释 ⇒ **69 行 / 21 个 `pub mod`**，
+  `register()` 仍是 M7-0 的空实现（**未被顺手填充**）。
+* **同轮在飞**：`LUM-1779`（M7-14 lark 出站/回复/会话桥）与本片同轮。逐字路径交集 = **∅**
+  （本片只写 `crates/mc-channel/src/wecom/media*` + `outbound_media*` + `wecom/mod.rs` 的追加段 +
+  `outbound/attachments.rs` 的端口形状勘误 + `docs/32`；lark 片只写 `crates/mc-channel/src/lark/**`
+  与 `crates/mc-http/src/routes/channels/lark.rs`）⇒ **可同飞**。
+* **与 wecom 片不同飞**：`LUM-1784` / `LUM-1785` 会写同一个 `wecom/mod.rs` 追加段 ⇒ 必须等本片终态。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。

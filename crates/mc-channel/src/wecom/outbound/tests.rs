@@ -311,17 +311,29 @@ impl NoticeRouter for FakeRelay {
 }
 
 /// 一个记下附件投递的端口。
+///
+/// 🔴 写集勘误（`docs/32` §35 的 D12）：这个替身跟着 `AttachmentDelivery` 的新形状走 ——
+/// `async`，而且多记两个 id（投递是**为哪条消息**做的）。
 #[derive(Default)]
 struct FakeAttachments {
-    delivered: Mutex<Vec<(AttachmentTarget, bool)>>,
+    delivered: Mutex<Vec<(String, String, AttachmentTarget, bool)>>,
 }
 
+#[async_trait::async_trait]
 impl AttachmentDelivery for FakeAttachments {
-    fn deliver(&self, target: AttachmentTarget, carries_the_reply: bool) {
-        self.delivered
-            .lock()
-            .expect("lock")
-            .push((target, carries_the_reply));
+    async fn deliver(
+        &self,
+        message_id: &str,
+        workspace_id: &str,
+        target: AttachmentTarget,
+        carries_the_reply: bool,
+    ) {
+        self.delivered.lock().expect("lock").push((
+            message_id.to_owned(),
+            workspace_id.to_owned(),
+            target,
+            carries_the_reply,
+        ));
     }
 }
 
