@@ -1,15 +1,18 @@
 //! multica-server：Multica 后端服务器二进制入口。
 //!
-//! 启动序列：
+//! 启动序列（编号与 `main` 里的步骤注释一一对应）：
 //! 1. 加载配置（mc-config）
 //! 2. 初始化遥测（mc-telemetry）
-//! 3. 连接数据库（mc-db）
-//! 4. 运行迁移（可选；`MULTICA_DB_RUN_MIGRATIONS` 控制）
-//! 5. 装配 axum 路由（mc-http）
-//! 6. 启动渠道长连接宿主（mc-channel：五个 IM 平台的出站长连接，缺部署密钥则不装配）
-//! 7. 启动代码与制品面后台宿主（mc-vcs-github：GitHub PR 快照刷新；缺 App 凭据则不装配）
-//! 8. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
-//! 9. 监听 / graceful shutdown（先停渠道连接，再停 PR 刷新，再停调度器，最后停 actor）
+//! 3. 启动横幅
+//! 4. 连接数据库（mc-db）
+//! 5. 运行迁移（可选；`MULTICA_DB_RUN_MIGRATIONS` 控制）
+//! 6. 装配 axum 路由（mc-http）
+//! 7. 启动渠道长连接宿主（mc-channel：五个 IM 平台的出站长连接，缺部署密钥则不装配）
+//! 8. 启动代码与制品面后台宿主（mc-vcs-github：GitHub PR 快照刷新；缺 App 凭据则不装配）
+//! 9. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
+//! 10. 启动 webhook 投递 worker 池（mc-autopilot：`1s` ticker + `Notify` + 4 并发）
+//! 11. 监听 / graceful shutdown（先停渠道连接，再停 PR 刷新，再停投递 worker，再停调度器，
+//!     最后停 actor）
 
 use std::sync::Arc;
 
@@ -29,6 +32,10 @@ mod channels;
 // （ghsnapshot 的 PR 刷新 worker）。与 `channels` / `scheduler` 同造型。
 mod integrations;
 mod scheduler;
+// M5-D8（LUM-1745 / docs/54-M5-5-WEBHOOK-INGRESS.md 的 D8 行）：webhook 投递 worker 的
+// 轮询循环宿主。此前 `process_next_delivery*` 在**生产路径上零调用点** ⇒ 入站落下的 `queued`
+// 行除测试外永远不被消费。与 `channels` / `integrations` / `scheduler` 同造型。
+mod webhook_worker;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)] // 启动流程按 1..N 步骤线性展开（配置→迁移→路由→监听）。
@@ -162,6 +169,9 @@ async fn main() -> anyhow::Result<()> {
     let channel_keys = state.channel_keys.clone();
     // M8 anchor（`LUM-1797`）：GitHub App 的部署密钥也 clone 一份（同一理由）。
     let github_keys = state.github_keys.clone();
+    // M5-D8（`LUM-1745`）：第 9 步的投递 worker 池要 `realtime` 出口（与入站面共用同一条
+    // 事件总线 —— B 段派发 `dispatch_run` 会广播 `task.queued` / `task.available`，不能另建）。
+    let realtime = state.realtime.clone();
     let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
 
@@ -200,6 +210,14 @@ async fn main() -> anyhow::Result<()> {
     //    hub —— 和 HTTP 面 / daemon 面共用同一条广播总线，不能另建。
     let scheduler_handle = scheduler::start(&db, daemon_hub).context("start scheduler")?;
 
+    // 10. 启动 webhook 投递 worker 池（M5-D8 / `LUM-1745`）：`/api/webhooks/**` 的入站把投递落成
+    //     `queued`，本池是**唯一**把它推到终态的消费者（`process_next_delivery`；上游
+    //     `cmd/server/main.go:744` 的 `go h.WebhookDeliveryWorker.Run(sweepCtx)`）。无装配
+    //     判据（队列/租约都在 Postgres，worker 无条件起）。池同时把自己的提示口注进 `mc-http`
+    //     的进程级槽（`routes/webhooks/autopilots.rs::set_webhook_notify_port`）⇒ 入站那一头
+    //     才能「多快被消费」而不只是「一拍 ticker 内被消费」。
+    let webhook_handles = webhook_worker::start(&db, realtime);
+
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,
         cfg.server.port,
@@ -220,12 +238,15 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("axum serve")?;
 
-    // 停机顺序固定（`docs/60` §2.4 / R-M7-7 + `docs/61` §2.6）：**先停渠道连接**（挂着不退
-    // 的长连接会让 graceful shutdown 永远等在那里），**再停 PR 刷新**（在飞的 GraphQL 请求
-    // 先收尾），**再停调度器**（让在跑的 handler 收尾 —— handle 内部会等当前 tick 结束），
+    // 停机顺序固定（`docs/60` §2.4 / R-M7-7 + `docs/61` §2.6 + `docs/32` §27）：**先停渠道连接**
+    // （挂着不退的长连接会让 graceful shutdown 永远等在那里），**再停 PR 刷新**（在飞的
+    // GraphQL 请求先收尾），**再停投递 worker**（它自己等 5s，让正在收口的那条投递跑完 ——
+    // 停机面的**最后一段消费者**必须先于调度器停，否则调度器收尾时新冒出来的投递没人接），
+    // **再停调度器**（让在跑的 handler 收尾 —— handle 内部会等当前 tick 结束），
     // **最后停 actor 池**。
     channel_handles.shutdown().await;
     integration_handles.shutdown().await;
+    webhook_handles.shutdown().await;
     scheduler_handle.shutdown().await;
     actors.shutdown().context("shutdown actors")?;
     tracing::info!("shutdown complete");

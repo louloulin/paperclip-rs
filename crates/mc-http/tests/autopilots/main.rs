@@ -47,5 +47,6 @@ mod trigger_crud;
 mod triggers;
 mod usage;
 mod webhook;
+mod webhook_notify;
 mod webhook_support;
 mod webhook_worker;

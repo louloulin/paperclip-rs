@@ -30,6 +30,14 @@
 //! 3. **不泄漏存在性**：未知 token / 空 token / 父 autopilot 行缺失 / workspace 交叉校验失败
 //!    全部折成同一个 404 `{"error":"webhook not found"}`（上游逐字）。
 //!
+//! # 投递 worker 的唤醒口（M5-D8 / `LUM-1745`，登记 `docs/32` §27）
+//!
+//! 入站面三处「投递留在 `queued`」的时刻要提示投递 worker（上游 `autopilot_webhook.go` 的
+//! `h.WebhookDeliveryWorker.Notify()`）：构造 `WebhookIngress` 时就地挂上
+//! [`webhook_notify_port()`]，实现由宿主 `apps/mc-server/src/webhook_worker.rs` 注入。
+//! 拿不到端口 ⇒ [`DisabledNotify`]（**诚实退化**：不假装 worker 被唤醒，投递仍由 worker 自己的
+//! `1s` ticker 消费）。槽的形状与纪律逐条复刻 M8-2 的 `routes/github/webhook.rs::PR_REFRESH_SLOT`。
+//!
 //! # 响应形状：**扁平** `{"error":"…"}` + 尾随换行（不是本仓标准错误体）
 //!
 //! 本仓标准错误体是嵌套的 `{"error":{"code":…,"message":…}}`（`crate::error`），但上游 webhook
@@ -57,7 +65,7 @@
 //! （上游 `MULTICA_TRUSTED_PROXIES`）：转发头一律不读，见 `docs/54` D2。
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, FailedToBufferBody};
@@ -69,7 +77,10 @@ use axum::Router;
 use serde_json::{json, Value};
 
 use mc_autopilot::webhook::provider::WebhookHeaders;
-use mc_autopilot::webhook::{InboundRequest, WebhookError, WebhookIngress, MAX_WEBHOOK_BODY_BYTES};
+use mc_autopilot::webhook::{
+    disabled_notify, InboundRequest, SharedWebhookNotify, WebhookError, WebhookIngress,
+    MAX_WEBHOOK_BODY_BYTES,
+};
 
 use crate::state::AppState;
 
@@ -124,7 +135,9 @@ async fn handle_autopilot_webhook(
         None
     };
 
-    let ingress = WebhookIngress::new(state.db.pool().clone()).with_events(state.realtime.clone());
+    let ingress = WebhookIngress::new(state.db.pool().clone())
+        .with_events(state.realtime.clone())
+        .with_notify(webhook_notify_port());
     let outcome = ingress
         .handle_inbound(&InboundRequest {
             token: &token,
@@ -200,4 +213,54 @@ fn write_json(status: u16, body: &Value, retry_after_secs: Option<u64>) -> Respo
 
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, out, payload).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// 投递 worker 的唤醒端口（M5-D8 / `LUM-1745`，登记 `docs/32` §27）
+// ---------------------------------------------------------------------------
+
+/// 进程级注入槽：`None` ⇒ [`disabled_notify`]（**诚实退化**：不假装 worker 被唤醒，投递仍由
+/// worker 自己的 `1s` ticker 消费）。
+///
+/// # 为什么不挂 `AppState`（与 M8-2 同一条处置）
+///
+/// 上游把投递 worker 挂在 `Handler` 上（`handler.go`），本仓 `AppState` **没有**对应字段
+/// （`crates/mc-http/src/state.rs` 是各波的共享锚点）。写法与纪律逐条复刻 M8-2 的
+/// `routes/github/webhook.rs::PR_REFRESH_SLOT`：包级槽 + 「读用缺省 / 写是生产装配点 / 清是
+/// 测试收尾」三件；生产装配点在 `apps/mc-server/src/webhook_worker.rs::start()` 里。
+static WEBHOOK_NOTIFY_SLOT: Mutex<Option<SharedWebhookNotify>> = Mutex::new(None);
+
+/// 当前生效的唤醒端口（未注入 ⇒ 未配置的空实现）。
+///
+/// 每个入站请求都会读一次（[`handle_autopilot_webhook`] 在构造 `WebhookIngress` 时）⇒
+/// 装配顺序无关紧要：`main.rs` 先建 router、后起 worker 也照样生效。
+pub fn webhook_notify_port() -> SharedWebhookNotify {
+    WEBHOOK_NOTIFY_SLOT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+        .unwrap_or_else(disabled_notify)
+}
+
+/// 注入端口（**生产装配点**：`apps/mc-server` 的 `webhook_worker::start()`）。
+pub fn set_webhook_notify_port(port: SharedWebhookNotify) {
+    *WEBHOOK_NOTIFY_SLOT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(port);
+}
+
+/// 清掉注入（测试收尾）。
+pub fn reset_webhook_notify_port() {
+    *WEBHOOK_NOTIFY_SLOT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = None;
+}
+
+/// 叫醒投递 worker（**入站面之外**的调用点：`routes/autopilots/delivery.rs` 的 replay
+/// 新建了一条 `queued` 行 ⇒ 上游 `webhook_delivery.go:344` 的 `Notify()`）。
+///
+/// 把 trait 关在本文件里：调用方只需一行，不必为了 `.notify()` 把
+/// `mc_autopilot::webhook::WebhookNotify` 导进自己的 `use` 表。
+pub(crate) fn notify_webhook_worker() {
+    webhook_notify_port().notify();
 }

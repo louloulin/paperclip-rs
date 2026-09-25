@@ -3360,3 +3360,146 @@ bash scripts/gates.sh --only db,schema-drift,route-parity,conformance,file-size
 4. **派发补充里的「换库就绿」这类因果句要当成假设去证，不是当成事实去用**：
    本片对着**全新库**重现了那条「复用库才有」的假红 ⇒ 真实的两个参数是**并行调度的时序**与**进程级共享状态**，
    把「换库」当理由会在下一次遇到它时归错因（本片把它写进了缺口登记与归因更正）。
+
+---
+
+## 27. M5-D8（`LUM-1745`）：webhook 投递 worker 的轮询循环（**0 路由**）
+
+> **号段说明**：§26 起手时 base 末号 = `## 26.`（M8-7），而在飞的 `LUM-1774` 预留 `## 24.`、
+> parked 的 `LUM-1775` 预留 `## 25.`（三段并集 ⇒ 末号仍是 26）⇒ 本节取 **`## 27.`**。
+> `docs/32` 是本片与 `LUM-1774` **唯一共写**的文件（各自往末尾追加自己的节；若合并冲突，
+> 按 §91/§102/§107/§108 的先例「先到者保号 + 后到者让号」）。
+
+### 27.0 这一片补的是哪条掉棒
+
+上游 `internal/handler/webhook_delivery_worker.go`（**301 行** @ `f41fae6b08fb`）的
+`WebhookDeliveryWorker`：`webhookWorkerPollInterval = time.Second` / `webhookWorkerMaxAttempts = 5` /
+`webhookWorkerConcurrency = 4`，`Run(ctx)` 起 4 个 goroutine 各跑 `runLoop`（**每个 loop 自带
+ticker**：先 `ProcessNext`，`worked == false` 才 `select { ctx.Done / notify / ticker }`），
+`WaitWithTimeout(5s)` 供优雅停机。
+
+本地那一半（**认领一条 + 推到终态**）M5-5 早已合入，但把它与入站连起来的**轮询循环**从未被任何
+切片接收 ⇒ **生产路径上 `process_next_delivery*` 一个调用点都没有**，入站落下的 `queued` 行除测试
+外永远不被消费。本片就是补这一环；`docs/44-M5-PLAN.md:750` 那条「裁定归 `LUM-1659`」落空
+（`LUM-1659` 只接了 scheduler，描述里没有这一面；备选 `M6-9` 的落点在 `mc-daemon/**`，前提不成立）。
+
+**生产调用点：0 → 2 个文件**（`grep -rn "process_next_delivery" crates apps --include=*.rs`）：
+
+| 位置 | 性质 |
+|---|---|
+| `apps/mc-server/src/webhook_worker.rs` | **新增**：本片唯一的调用点（`process_once` 里的 4 个 loop） |
+| `apps/mc-server/src/main.rs` | **改**：`mod webhook_worker;` + `webhook_worker::start(&db, realtime)` 起停接线 |
+
+### 27.1 写集（逐字；11 文件 +1420/−17）
+
+| 文件 | 改动 | 说明 |
+|---|---|---|
+| `apps/mc-server/src/webhook_worker.rs` | **新增 387 行** | 池 + 提示口 + 停机句柄 + `start` / `start_with` |
+| `apps/mc-server/src/webhook_worker/tests.rs` | **新增 549 行** | 3 条非真库用例（门 ⑤）+ 5 条真库用例（门 ⑥） |
+| `apps/mc-server/src/main.rs` | +21/−2 | `mod` 声明、`realtime` 克隆、起池、**五段停机链** |
+| `crates/mc-autopilot/src/webhook/mod.rs` | +72 | `WebhookNotify` 端口 + `SharedWebhookNotify` + `DisabledNotify` + `WebhookIngress::with_notify` |
+| `crates/mc-autopilot/src/webhook/admission.rs` | +26/−4 | 入站侧 3 处 `notify_worker()`（上游 `:499` / `:592` / `:627`） |
+| `crates/mc-http/src/routes/webhooks/autopilots.rs` | +69/−2 | 进程级注入槽三件 + 构造点 `.with_notify(...)` + `notify_webhook_worker()` |
+| `crates/mc-http/src/routes/autopilots/delivery.rs` | +16/−5 | replay 新建行那条出口补上游 `:344` 的唤醒 + 模块头偏离第 2 条更正 |
+| `crates/mc-http/tests/autopilots/webhook_notify.rs` | **新增 143 行** | 唤醒口 e2e（入站 2 处 + replay 1 处） |
+| `crates/mc-http/tests/autopilots/main.rs` | +1 | `mod webhook_notify;` |
+| `docs/32-M3-DAEMON-FACE.md` | **+143** | 本节 |
+
+**与描述里那份写集的三处差异**（都是当轮实测逼出来的，不是选择）：
+
+1. ❌ **`apps/mc-server/src/lib.rs` 不存在**（本 crate 只有一个 `[[bin]]`）⇒ 落点是在
+   `main.rs` 加一行 `mod webhook_worker;`（与 §97/§98 的起手补充结论一致，第 2 次复核）。
+2. ❌ **`crates/mc-http/src/state.rs` 整条删掉**：描述把「挂 `AppState`」当成唯一出路，并由此
+   派生「必须等 M6 波次收口」；当轮实测本仓已有**两处**「进程级注入槽 + 诚实退化」先例
+   （`routes/github/install.rs::GITHUB_API_BASE`、`routes/github/webhook.rs::PR_REFRESH_SLOT`，
+   后者在 `apps/mc-server/src/integrations.rs:205` 有**真装配**）⇒ 照抄机制即可，`state.rs`
+   一个字节不动。
+3. ➕ **拆分出 4 个描述没写的文件**：`webhook_worker/tests.rs`（门 ⑩ 800 行硬上限；
+   `integrations.rs` + `integrations/tests.rs` 同款）、`webhook_notify.rs` + 测试 `main.rs` 一行、
+   `deliveries_replay.rs`（一条已经过期的文档句，见 27.2 的 **D6**）。
+
+### 27.2 偏离登记（M5-D8-D1 … M5-D8-D6）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **D1** | 唤醒口用**进程级注入槽**（`Mutex<Option<SharedWebhookNotify>>` + 读/写/清三件），而不是 `AppState` 字段 | `routes/webhooks/autopilots.rs` | 与 M8-2 的 `PR_REFRESH_SLOT` **逐条同款**（上游挂在 `Handler` 上，本仓 `AppState` 是各波共享锚点）。槽是**按请求读**的 ⇒ `main.rs` 先建 router、后起 worker 也生效。**代价**：包级可变状态（测试要记得 `reset_webhook_notify_port()`） |
+| **D2** | 提示槽 = **每个 loop 一条 cap-1 通道**（`try_send` 满即丢）；上游是**一条** cap-4 chan | `webhook_worker.rs::NotifyPort` | 总容量仍是并发数、`try_send` 不阻塞不 panic（上游 `select { case …: default: }` 的两条性质逐条对得上），且一次提示**扇到全部 loop**（上游只唤醒一个 —— 只是延迟更好，正确性不变）。⚠️ **不能**把上游那条 chan 直接搬来：`mpsc::Receiver` 要独占，共享必须加锁，而加了锁就**没法同时等自己那拍 ticker** ⇒ 直接违反 `DoD` 2 |
+| **D3** | `process_next_delivery` 的 `Err` **统一**按 `worked = false`（等下一拍）处理 | `webhook_worker.rs::process_once` | 上游把「认领失败」（`false`）与「已认领但收口中出错」（`true`）分开；本地那个 `Err` 面把两类合成同一个 `WebhookError::Worker` 变体 ⇒ 保守取 `false`：宁可慢一拍，也绝不在库故障时紧循环自旋 |
+| **D4** | 停机**不可中断**正在收口的那一条（本地 `process_next_delivery()` 没有 `ctx` 参数），超 [`SHUTDOWN_TIMEOUT`] 后 `abort_all` | `webhook_worker.rs::shutdown` | 上游 `ctx` 取消会让在飞的 pgx 查询立刻报错。改签名不归本片（那是 M5-5 的写集）⇒ 5s 上限 + 中止兜住；留下的最多是「已认领、未收口」的一条，租约 2 分钟后由下一个进程 reclaim（**既有语义**，见 `claim_queued` 的文档） |
+| **D5** | 新增 2 个 mc-server 文件（`webhook_worker.rs` + `webhook_worker/tests.rs`） | 见 27.1 | 门 ⑩ 的 800 行硬上限；`integrations.rs` / `scheduler/` 同款（父模块 `#[cfg(test)] mod tests;` + 同名目录） |
+| **D6** | **补上** replay 的唤醒口，并改掉 `deliveries_replay.rs` 里那句「replay **不唤醒** worker（本切片登记的 `known_gap`）」 | `routes/autopilots/delivery.rs` / `tests/autopilots/deliveries_replay.rs` | 那是上游 4 处 `Notify()` 的第 1 处（`webhook_delivery.go:344`），而 M5-4 当年把它登记成 `known_gap` 的理由正是「本地没有 worker」（`docs/42` §4.3 同判例）。worker 一存在，那条登记的口径就不成立了 ⇒ 一行补上、文档同步更正。**只在新建行那条出口提示**（上游的幂等命中出口提前 `return` 了） |
+
+### 27.3 `DoD` 逐条证据（真库 = `mc_lum1745` / 角色 `mc_lum1745` 带 `CREATEDB`，`cargo test -p mc-server -- --ignored --nocapture`）
+
+| `DoD` | 证据（测试输出逐字） |
+| --- | --- |
+| **1 无人干预即可消费**（≤2s 到终态） | `ticker_alone_drives_a_queued_delivery_to_terminal`：`status queued -> ignored in 414ms (empty_polls=9, processed=1)` —— 落行放在池静下来**之后**，量到的正是「1s ticker 的下一拍」（相位余量 ~0.4s）。`SELECT status` 前后对比 = `queued` → `ignored` + `error = autopilot_paused`（夹具刻意造 `paused` autopilot：`DoD` 1 明确接受 `ignored`，且不需要 agent runtime 在线） |
+| **2 ticker 单独可推** | 同上：**全程不碰提示口**（该用例只 `start_with`，不调用任何 `notify`）；提示面另有正/负对照（下一条） |
+| **3 并发 = 4** | `in_flight_never_exceeds_the_pool_size`：一次落 **8** 条 ⇒ `同时在飞峰值 = 4（池 = 4）`，全部终态（观测点 = 池自己的原子计数，比 `pg_stat_activity` 采样稳；断言 `peak <= 4` 且 `peak >= 2` 证明确实并行） |
+| **4 优雅停机 ≤5s** | `shutdown_stops_the_loops_within_the_timeout`：`shutdown 在 108µs 内返回`（多轮 108–148µs）；行为判据 = 停机后再落一条 `queued`，2s（≥1 拍 ticker）后**仍是 `queued`** ⇒ 4 个 loop 真的退了 |
+| **5 `Notify` 非阻塞** | `notify_drops_when_the_slot_is_full_and_never_blocks`（**不需要库**，门 ⑤）：10 万次提示 < 1s 返回；每条槽**只留 `NOTIFY_SLOT_CAPACITY`=1 枚**，多余的被丢掉（不是排队等空位）。对照上游 `select { case w.notify <- struct{}{}: default: }` |
+| **6 门禁 10/10 + 基线禁刷** | 见 27.4；⑦ 的**片前/片后逐字相同**（`git stash -u` 前后各跑一次，两行读数完全一致） |
+| **7 偏离登记** | 本节 27.2（**D1** 就是那条「唤醒口走进程级注意槽」的登记，措辞已从「跨片写入 `state.rs`」改成实际形态） |
+
+**唤醒口的因果证据**（`DoD` 1/2 之外的独立一条，因为「提示」与「消费」是两件事）：
+
+- `apps/mc-server/src/webhook_worker/tests.rs::notify_drives_a_queued_delivery_long_before_the_next_tick`
+  —— ticker 间隔拉到 **60s**，分两段：**负对照**（落一条、不提示 ⇒ 2s 后仍是 `queued`，证明
+  拉长生效）→ **正对照**（从 `mc-http` 进程级槽取端口提示一声 ⇒ `52.6ms` 内 `queued -> ignored`）。
+  两条合起来才证明「是提示把它叫起来的」，而不是 ticker 的功劳。
+- `apps/mc-server/src/webhook_worker/tests.rs::start_wires_the_worker_and_the_mc_http_notify_slot`
+  —— 走**生产装配路径** `start(&db, realtime)`（`main.rs` 调的就是它），断言槽里取出的端口叫得动池。
+- `crates/mc-http/tests/autopilots/webhook_notify.rs` —— 入站面 2 处 + replay 1 处（上游 4 处里的
+  3 处；第 3 处「同步准入失败」要人为造库错，本片不覆盖）**都真的调了端口**：
+  ① 已接受/已跳过；② 去重命中且行仍是 `queued`；③ replay 新建了一行。
+
+### 27.4 门禁读数（最终提交 tree 上 `bash scripts/gates.sh --with-db` = **10/10 PASS**，225s）
+
+```
+①fmt 0(3s) ②build 0(1s) ③clippy 0(0s) ④clippy-test-util 0(1s) ⑤test 0(68s)
+⑥db   0(105s, migrate=0/e2e=0) ⑧schema-drift 0(41s) ⑦route-parity 0(1s)
+⑨conformance 0(5s, report matches) ⑩file-size 0(0s)
+```
+
+**⑦ 片前/片后逐字相同**（本片 **0 路由** ⇒ `--write-baseline` **禁跑**，也确实没跑）：
+
+| | local | implemented | known_gap | unclaimed | regression | local_only | owners |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 片前（干净树 @ `0cb9ff6a`） | 458 | 375（372 + 3 ph） | 81 | 0 | 0 | 9 | M9=33 M3+=16 M7=16 M3=11 M10=5 |
+| 片后（同一棵树 + 本片） | **458** | **375（372 + 3 ph）** | **81** | **0** | **0** | **9** | 同上 |
+
+`baseline 458` 未动（`docs/fixtures/route-parity-baseline.json` 零字节变化）。
+
+**期间两次红，都不是本片代码**（判据一律是「红点文件 ∩ 本片写集 = ∅」+「同一个 binary 单跑复现率」）：
+
+1. **⑤ 首轮红（exit 101，11s）**：`cargo test` 默认 **fail-fast** ⇒ 11s 正落在第 6 个 target
+   （`mc-composio` 的 `--lib`）附近；该 binary 里唯一已知的不稳定用例是
+   `tampered_signature_is_rejected_bit_for_bit`（`state.rs:390` 翻签名**末**字符，43 字符里末字符只承载
+   4 个有效 bit ⇒ 1/16 命中 `InvalidLastSymbol` → `Malformed` ≠ 断言的 `Tampered`）。
+   **单跑实测 2/60 失败**（约 3.3%）；随后 `cargo test --workspace` **4/4 绿**。
+   ⚠️ 这一轮的红**没抓到失败名**（当轮输出被 `tail` 掉）⇒ 归因靠「时间点 + 该 binary 唯一已知 flake + 复现率」，不是直接证据。
+2. **⑥ 首轮红（e2e=101）**：抓到名字了 ——
+   `flows::disconnect_is_idempotent_and_hides_foreign_connections` @
+   `crates/mc-http/tests/composio/flows.rs:289`：`OAuth callback` 回 **401** 而断言 **302**
+   （`state` 校验失败）。这正是 backlog 单 `LUM-1980` 的第 3 条（`crates/mc-http/tests/composio/**`
+   跨用例互踩：进程级 `CALLS` + `flow_state()` 的 `api_keys.last()` 全局反查 + 进程级重放台账）；
+   **3 次同命令单跑 = 1/3 命中**，另两次 exit 0。红点文件与本片写集 **∅**（本片不碰 `tests/composio/**`）。
+
+### 27.5 本片的 lesson
+
+1. **「无调用点」的缺口要用 `grep` 的前后对比来钉**，而不是靠计划书里的归属裁定：本片的起点是
+   `process_next_delivery` 在生产面 **0 命中**，终点是 `apps/mc-server` 里的 2 个文件 —— 一条裁定写在
+   文档里但没写进被裁定那一片的**描述**，就等于没派（`docs/44:750` 那次）。
+2. **「唯一出路」往往是没找先例**：描述把「挂 `AppState` ⇒ 必须等 M6 收口 ⇒ 要登记跨片写入」
+   写成硬约束，而当轮**已在同一棵树里**找到两处同机制先例（其中一处还有真装配）。
+   代价对比：动 `state.rs`（共享锚点、要等一波）+ 一条跨片登记 vs **一个字节都不动**。
+3. **同一进程里两个测试用例共享一个进程级槽 = 必须合成一个用例或加锁**：本片的
+   `webhook_notify.rs` 最初写成两个用例（入站 / replay），并发的第二个 `set` 把第一个的替身顶掉
+   ⇒ 第一个假绿、第二个假红。**共享点的最干净解法是把它们排进同一个用例**（不是加锁：加锁会把
+   `tokio::sync::MutexGuard` 跨 `await` 持有，虽然 clippy 允许，但那是又一处需要解释的形状）。
+4. **「不提示也得能跑」与「提示要真有用」是两条独立判据**，必须各有正负对照：
+   拉长 ticker 到 60s 之后的「不提示 ⇒ 2s 后仍 `queued`」负对照，才是正对照「52.6ms 被消费」的
+   因果前提；否则那 52.6ms 完全可能只是「刚好赶上一拍 ticker」。
+5. **池的启动会替你把第一把扫掉**：`run_loop` 起身就先认领一次 + `interval` 首拍立即就绪 ⇒
+   量「ticker 多久消费」时必须在**池静下来之后**才落行（本片的 `await_pool_idle`）；
+   否则量到的是「起飞」而不是「ticker」（本片第一版实测 843µs，把 `DoD` 2 的证据变成了噪声）。

@@ -56,6 +56,8 @@ pub mod ratelimit;
 pub mod signature;
 mod worker;
 
+use std::sync::Arc;
+
 use mc_realtime::RealtimeHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -434,15 +436,64 @@ pub struct InboundRequest<'a> {
     pub body: &'a [u8],
 }
 
+// ---------------------------------------------------------------------------
+// 投递唤醒端口（`webhook_delivery_worker.go` 的 `Notify()` 面）
+// ---------------------------------------------------------------------------
+
+/// 「队列里可能又多了一条可认领的投递」的提示口 —— 投递 worker 的唤醒侧。
+///
+/// # 契约：**可以丢**
+///
+/// 队列与租约都在 Postgres（上游 `WebhookDeliveryWorker` 的结构体注释逐字：
+/// 「the in-memory notification is only a latency hint」）⇒ 实现**允许**在容量满 / 无人等待时
+/// 直接丢弃提示，**不得**阻塞、**不得** panic。它只影响「多久被消费」，不影响「会不会被消费」
+/// （那由 worker 自己的 `1s` ticker 保证）。
+///
+/// # 为什么是一个端口而不是直接一个 tokio 句柄
+///
+/// 本 crate 的依赖表被 anchor 冻结（`docs/44` §5.2 逐字「此后 M5 各切片**不得**再新增三方依赖」），
+/// 里面**没有** `tokio` ⇒ 这里只能声明一个 `Send + Sync` 的 trait，由宿主（`apps/mc-server`，
+/// 它本来就有 tokio）给出实现。形状与 M8-2 的 `mc_vcs_github::port::PrRefresh` 逐条同款
+/// （端口 trait + `Disabled*` 空实现 + 进程级注入槽 + 宿主注入）。
+pub trait WebhookNotify: Send + Sync + 'static {
+    /// 非阻塞提示。**唯一允许的语义**：尽快，且可以丢。
+    fn notify(&self);
+}
+
+/// 共享端口句柄（`Arc<dyn …>`）：入站侧**每次请求**构造一个 [`WebhookIngress`]，
+/// 句柄必须廉价可克隆。
+pub type SharedWebhookNotify = Arc<dyn WebhookNotify>;
+
+/// 未接线的空实现（**诚实退化**）：不假装 worker 被唤醒 —— 投递仍由 worker 自己的 `1s`
+/// ticker 消费（这正是 `DisabledPrRefresh` 的同判例）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DisabledNotify;
+
+impl WebhookNotify for DisabledNotify {
+    fn notify(&self) {}
+}
+
+/// 缺省端口（未注入 ⇒ 空实现）。
+#[must_use]
+pub fn disabled_notify() -> SharedWebhookNotify {
+    Arc::new(DisabledNotify)
+}
+
 /// webhook 入站面 + worker 面的服务对象。
 ///
 /// 只持有 [`AutopilotDispatcher`]：pool 从它取（`dispatcher.pool()`），realtime 出口也在它里面。
 /// 这样「入站建 run」与「worker 派发」共用同一套事件发布路径，不会出现一边发事件一边不发。
 ///
+/// 另持一个[投递唤醒端口][WebhookNotify]：入站侧三处「投递留在 `queued`」的时刻提示 worker
+/// （上游 `handler/autopilot_webhook.go` 的 4 处 `h.WebhookDeliveryWorker.Notify()` 里的 3 处；
+/// 第 4 处在 replay 路由，读的是 `mc-http` 的进程级槽）。**B 段（worker 自己）不用它。**
+///
 /// 不派 `Debug` / `Clone`：[`AutopilotDispatcher`] 都没有（它持 realtime 出口），入站侧每次调用
 /// 就地构造一个即可，没有跨层传递需求。
 pub struct WebhookIngress {
     dispatcher: AutopilotDispatcher,
+    /// 缺省 [`DisabledNotify`]（未接线，诚实退化）。
+    notify: SharedWebhookNotify,
 }
 
 impl WebhookIngress {
@@ -451,6 +502,7 @@ impl WebhookIngress {
     pub fn new(pool: PgPool) -> Self {
         Self {
             dispatcher: AutopilotDispatcher::new(pool),
+            notify: disabled_notify(),
         }
     }
 
@@ -458,6 +510,15 @@ impl WebhookIngress {
     #[must_use]
     pub fn with_events(mut self, events: RealtimeHandle) -> Self {
         self.dispatcher = self.dispatcher.with_events(events);
+        self
+    }
+
+    /// 带投递唤醒端口（`mc-http` 传 `webhook_notify_port()`，实现由 `apps/mc-server` 的
+    /// `webhook_worker` 注入）。**additive builder**：[`Self::new`] 的单参签名被
+    /// `crates/mc-http/tests/autopilots/webhook_worker.rs` 多处直接调用，不能改成必填参数。
+    #[must_use]
+    pub fn with_notify(mut self, notify: SharedWebhookNotify) -> Self {
+        self.notify = notify;
         self
     }
 
@@ -470,5 +531,16 @@ impl WebhookIngress {
     /// 派发器（A 段准入 / B 段派发都从这里走）。
     pub(crate) fn dispatcher(&self) -> &AutopilotDispatcher {
         &self.dispatcher
+    }
+
+    /// 提示 worker「队列里可能又多了一条」。
+    ///
+    /// 上游三处的本地对应物（见 [`WebhookIngress`] 的文档）：去重命中（
+    /// `autopilot_webhook.go:499`，**仅当该行仍是 `queued`**）、同步准入失败（`:592`，投递原地
+    /// 留在队列里等下一位认领者）、已接受/跳过（`:627`，`acknowledge` 之后 `status` 仍是
+    /// `queued`）。三处共同的前提都是「把这一条留给 worker」，所以提示本身**无返回值、无失败**
+    /// ——丢掉一枚提示最多多等一拍 ticker（见 [`WebhookNotify`] 的契约）。
+    fn notify_worker(&self) {
+        self.notify.notify();
     }
 }

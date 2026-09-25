@@ -51,8 +51,9 @@ use super::ratelimit;
 use super::signature;
 use super::{
     IgnoredReason, InboundOutcome, InboundRequest, RejectedReason, SigStatus, WebhookEnvelope,
-    WebhookError, WebhookIngress, DELIVERY_STATUS_IGNORED, DELIVERY_STATUS_REJECTED,
-    MAX_WEBHOOK_BODY_BYTES, QUOTA_EXCEEDED_MESSAGE, REASON_CODE_QUOTA_EXCEEDED,
+    WebhookError, WebhookIngress, DELIVERY_STATUS_IGNORED, DELIVERY_STATUS_QUEUED,
+    DELIVERY_STATUS_REJECTED, MAX_WEBHOOK_BODY_BYTES, QUOTA_EXCEEDED_MESSAGE,
+    REASON_CODE_QUOTA_EXCEEDED,
 };
 
 // worker 面的常量（`WEBHOOK_WORKER_MAX_ATTEMPTS` 等）与结果枚举 `WebhookDispatch` 在
@@ -120,7 +121,7 @@ impl WebhookIngress {
                 dedupe_key,
                 dedupe_source,
                 signature_status: sig_status.as_str().to_owned(),
-                status: super::DELIVERY_STATUS_QUEUED.to_owned(),
+                status: DELIVERY_STATUS_QUEUED.to_owned(),
                 selected_headers: req.headers.to_selected_json(),
                 content_type: envelope.request.content_type.clone(),
                 raw_body: req.body.to_vec(),
@@ -155,6 +156,14 @@ impl WebhookIngress {
                     attempt_count = delivery.attempt_count,
                     "webhook: duplicate delivery"
                 );
+                // 上游第 7 步 dup 分支的 `if delivery.Status == deliveryStatusQueued {
+                // h.WebhookDeliveryWorker.Notify() }`：这一行**已经是**别人的投递（去重命中），
+                // 但队列里那一条仍等着 worker 收口 ⇒ 提示一声。
+                // 去重索引的谓词是 `status NOT IN ('rejected','failed')` ⇒ 命中行也可能是已被
+                // 收口的行，所以这里必须与上游一样按 `status` 判 —— 对已终态的行提示只是噪声。
+                if delivery.status == DELIVERY_STATUS_QUEUED {
+                    self.notify_worker();
+                }
                 Ok(InboundOutcome::Duplicate {
                     delivery_id: delivery.id,
                     run_id,
@@ -281,6 +290,10 @@ impl WebhookIngress {
                     }
                 };
                 self.acknowledge(delivery_id, &outcome).await;
+                // 上游 `autopilot_webhook.go:627`：`AcknowledgeWebhookDelivery` **只写响应字段、
+                // 不动 `status`**（本地 [`Self::acknowledge`] 逐字同款）⇒ 这一条仍是 `queued`，
+                // 等 worker 认领后走 B 段派发。提示一声让延迟从「一拍 ticker」降到近零。
+                self.notify_worker();
                 Ok(outcome)
             }
             Err(AdmitRefusal::QuotaExceeded) => {
@@ -298,7 +311,9 @@ impl WebhookIngress {
             }
             Err(AdmitRefusal::Repo(message)) => {
                 // 上游：**不动** delivery 行（留在 `queued`），叫醒 worker 让它稍后重试准入，
-                // 然后回 500。本地无轮询循环（M5-8 才有），投递照样留在队列里等下一次 sweep。
+                // 然后回 500。本片（`LUM-1745`）起本地也有轮询循环了 ⇒ 这一处就是上游
+                // `autopilot_webhook.go:592` 的 `h.WebhookDeliveryWorker.Notify()`；即便提示丢掉，
+                // worker 的 `1s` ticker 也会把它扫回来（`docs/32` §27）。
                 tracing::warn!(
                     delivery_id = %delivery_id,
                     trigger_id = %trigger.id,
@@ -306,6 +321,7 @@ impl WebhookIngress {
                     reason = %message,
                     "webhook: admission failed, delivery stays queued"
                 );
+                self.notify_worker();
                 Err(WebhookError::AdmitFailed)
             }
         }

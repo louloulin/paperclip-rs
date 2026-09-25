@@ -33,9 +33,11 @@
 //!    重推 `event`；那对函数属 M5-5 的入站面。本地沿用**原投递的 `event`**（同一 body 的
 //!    事件名只可能由同一份归一化逻辑得出），但**保留**「`raw_body` 必须仍是合法 JSON」的
 //!    校验，以维持上游 `stored body no longer parses: …` 的 400 契约。
-//! 2. **不唤醒 worker**：上游最后 `h.WebhookDeliveryWorker.Notify()`。本地 replay 只把行写进
-//!    `queued`，由 M5-5 的投递 worker 下次轮询取走 ⇒ 登记为 `known_gap`（M4-4 对同一类
-//!    「唤醒 daemon」调用的取舍一致，`docs/42` §4.3）。
+//! 2. **不再登记为缺口（M5-D8 / `LUM-1745` 补上）**：上游最后 `h.WebhookDeliveryWorker.Notify()`
+//!    —— 这一处现在与其它三处入站触发点一样调 `webhook_notify_port()`（`mc-http` 的进程级槽，
+//!    宿主 `apps/mc-server/src/webhook_worker.rs` 注入）。**只在真正新建 replay 行的那条出口**提示
+//!    （上游的幂等命中出口提前 `return` 了，不提示）；即便提示丢掉，worker 的 `1s` ticker 也会
+//!    把这一行扫走（`docs/32` §27）。
 //! 3. **replay 行的 id 是 v4**：上游 `dbid.NewV7()`，仓库既有行 id 取自 `uuid::Uuid::new_v4()`
 //!    （`mc-repos` 全部写面同口径）。
 //! 4. **500 折法**：上游三条查询各自一条固定文案（`failed to list deliveries` /
@@ -386,7 +388,13 @@ async fn replay_autopilot_delivery(
         replay_idempotency_key: idempotency_key.clone(),
     };
     match delivery_sql::create_replay(state.db.pool(), &new).await {
-        Ok(replay) => Ok(accepted(&replay)),
+        Ok(replay) => {
+            // 上游 `webhook_delivery.go:344` 的 `h.WebhookDeliveryWorker.Notify()`：新行已落
+            // `queued`，叫 worker 来收。幂等命中 / 并发冲突回读那两条出口**不**提示（上游同款：
+            // 那两条在 `Notify()` 之前就 `return` 了）。
+            crate::routes::webhooks::autopilots::notify_webhook_worker();
+            Ok(accepted(&replay))
+        }
         // 并发重放（唯一索引抢先）⇒ 读回那一行，语义与幂等命中相同。
         Err(RepoError::Conflict) => {
             match delivery_sql::find_replay(state.db.pool(), original.id, &idempotency_key).await {
