@@ -97,6 +97,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // **搬运**过来的 501 占位（`/api/issues/:id/pull-requests`）⇒ 合并后**注册键集合
         // 逐字不变**（`docs/61` §6.1 的 M8-0 行：`local 406` 不动，这是第二个不刷 ⑦ 基线的 anchor）。
         .merge(mount_slice_code_artifacts())
+        // ----- M2-A 尾片（LUM-1691）：issue-views / preferences / pins / 指派人频次 -----
+        // 12 条键（19 个注册点：`/api/issue-views`、`/api/issue-views/:id`、`/api/pins`
+        // 三组各带尾斜杠别名）；转尾斜杠形态的判据与实测见 `docs/63-M2A-TAIL-ISSUE-VIEW-PIN.md` §4。
+        .merge(mount_slice_issue_view_pin())
 }
 
 /// workspace + member + me 切片。
@@ -413,4 +417,33 @@ fn mount_slice_code_artifacts() -> Router<Arc<AppState>> {
         .merge(super::vcs::router())
         .merge(super::mcp::router())
         .merge(super::composio::router())
+}
+
+// ---------------------------------------------------------------------------
+// M2-A 尾片（LUM-1691）
+// ---------------------------------------------------------------------------
+//
+// 12 条键一次性接好，按**上游 handler 文件**分三个新文件：
+// - `issue_views.rs`（`issue_view.go`：issue-views 5 条 + `activity.go` 的指派人频次 1 条）；
+// - `issue_view_preferences.rs`（`issue_view_preference.go`：2 条）；
+// - `pins.rs`（`pin.go`：4 条）。
+// 拆三个而不是两个是门 ⑩（单文件 800 行硬上限）的结果 —— 合在一起是 803 行。
+// `routes/mod.rs` 也只多了三行 `pub mod`，既有行一个未动（写集与在飞片零交集）。
+//
+// ⚠️ 三条接线纪律（与前几波同款）：
+// 1. 同 path+method 重复注册 ⇒ axum 在**启动时 panic**（docs/15 §9.6.6）；
+// 2. 尾斜杠形态：`/api/issue-views/`、`/api/issue-views/{id}/`、`/api/pins/` 三组必须
+//    **两个形态都注册**（上游 chi `Mount`），而 `/api/issue-view-preferences`、
+//    `/api/assignee-frequency`、`/api/pins/reorder`、`/api/pins/{itemType}/{itemId}`
+//    是 plain 注册 ⇒ **只注册无斜杠形态**（本波 `slash-alias-allowlist.tsv` 是 0 数据行，
+//    `MISSING_ALIAS` / `MISSING_EXACT` 无豁免退路）；
+// 3. 路径参数写 `:name`（matchit 0.7 把 `{name}` 当字面量：编译通过但恒 404）。
+
+/// M2-A 尾片切片：`/api/issue-views*` + `/api/issue-view-preferences` +
+/// `/api/assignee-frequency` + `/api/pins*`（12 条上游键）。
+fn mount_slice_issue_view_pin() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::issue_views::router())
+        .merge(super::issue_view_preferences::router())
+        .merge(super::pins::router())
 }
