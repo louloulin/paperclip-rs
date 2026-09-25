@@ -23,7 +23,7 @@
 //! - **推进闸门读的是持久化后的聚合**，不是「本次载荷有没有关闭词」：一个 `Closes MUL-1` 的
 //!   PR 先合并、只带链接的兄弟 PR 后关闭时，仍然是 MUL-1 前进。
 //!
-//! 查询落点的理由（为什么不放 `mc-repos/src/github/*.rs`）见 `docs/32` §18.2 的 D3。
+//! 查询落点的理由（为什么不放 `mc-repos/src/github/*.rs`）见 `docs/32` §19.2 的 D3。
 
 use std::collections::{BTreeMap, HashMap};
 

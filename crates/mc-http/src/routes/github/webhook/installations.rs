@@ -17,7 +17,7 @@
 //! 3. **`account_type` 走 `coalesce(…, "User")`，`avatar` 走 `strPtrOrNil`**（空串 ⇒ NULL）；
 //!    `account_login` 先 `TrimSpace` 再判空，空 ⇒ 只打一条 warn 就返回（不写半条记录）。
 //!
-//! 查询落点的理由（为什么不放 `mc-repos/src/github/installation.rs`）见 `docs/32` §18.2 的 D3。
+//! 查询落点的理由（为什么不放 `mc-repos/src/github/installation.rs`）见 `docs/32` §19.2 的 D3。
 
 use super::AppState;
 use mc_repos::github::installation::{GithubInstallationRepo, GithubInstallationRow};

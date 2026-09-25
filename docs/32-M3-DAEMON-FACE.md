@@ -1816,29 +1816,199 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
   `telegram/mod.rs` 里的 → `telegram/tests.rs`（**不是** `telegram/mod/tests.rs`）。本片第一次
   就把它写错到 `mod/` 下，编译器只报"找不到文件"，改个目录名就过了。
 
-## 18. M8-4（`LUM-1801`）：GitHub 入站 webhook + PR 镜像 + 自动关联/关闭 + issue↔PR 读面（2 路由）
+## 18. M7-6（`LUM-1771`）：telegram 出站与投递（0 路由）
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片当轮 base 上核对。本片**起手 base**
+是 `a326ced7`（= 合并 #92（M7-5）之后 `origin/feat/multica-rs-initial` 的 tip —— M7-5 的合并提交
+`a326ced77d1dbadde67aa7cebb8dedabf55a35cc` 带 `merge(m7): PR #92 …` 的标题，**不带** `merge #93`）。
+提交时 origin tip 已前进到 **`0ec41345`**（§97/§98 cycle + 合并 #93 / M2-A 尾-补）⇒ 本片已 rebase 到它，
+**写集零交集、无冲突**（进场的是 `mc-http/src/routes/{mod,mount}.rs` + 一个新 route 文件 + `mc-repos/src/{lib.rs,squad_evaluation.rs}`，
+与本片 20 个改动文件无交集）。
+
+### 18.1 落点（逐字路径）
+
+| 落点 | 写者 | 内容 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/telegram/markdown.rs` + `markdown/tests.rs` | M7-6 | 上游 `markdown.go`（119 行）：Markdown → Telegram **HTML parse mode**（逐行、代码块保真、非贪婪语义手写复刻） |
+| `crates/mc-channel/src/telegram/sender.rs` + `sender/tests.rs` | M7-6 | 上游 `sender.go`（194 行）：UTF-16 码元分片（优先换行）、HTML 渲染、**HTML 被拒回落纯文本**、只第一片引用、`SendResult` 带末片 |
+| `crates/mc-channel/src/telegram/delivery.rs` + `delivery/tests.rs` + `delivery/testing.rs` | M7-6 | 上游 `delivery.go`（457 行）：投递**所有权状态机**（租约 / 阶段 / 发送状态 / 结转 / 收口）+ `DeliveryStore` 端口 + `PgDeliveryStore` 适配；`testing.rs` 是 `pub(crate)` 的进程内替身（`outbound/tests.rs` 也用它） |
+| `crates/mc-channel/src/telegram/outbound.rs` + `outbound/tests.rs` | M7-6 | 上游 `outbound.go`（1,633 行）的可判定面：占位消息一次、编辑阶梯、终态编辑/分片、失败告知、目标解析 |
+| `crates/mc-channel/src/telegram/api.rs`（**扩展**） | M7-5 落 + **M7-6 补** | 补出站半边：`editMessageText`（端口 + `EditMessageText` 入参 + wire 形态）、`send_message_with_retry_after`（429 的**一次**重试，上游 `sendMessageWithRetryAfter`）。**既有五个方法的形态一字未动** |
+| `crates/mc-channel/src/telegram/mod.rs`（**扩展**） | M7-5 落 + **M7-6 补** | 模块表 + `Channel::send` 的**单点替换**（走发送器；判决回复与 agent 答复同一条路径） |
+| `crates/mc-http/tests/channels/telegram_round_trip.rs` + `main.rs`（一行 `mod`） | M7-6 | **端到端收发回路**（`docs/60` §4.2 的渠道门禁证据），真库 `#[ignore]` |
+| `crates/mc-repos/src/channel/delivery.rs`（**追加**）+ `delivery/tests.rs`（新） | M7-6 追加 | 上游 `channel.sql` 里投递状态机的**十条语句**（见 D1）；内联 `db_tests` 原样搬到子目录 |
+
+### 18.2 偏离（D1…D10，逐条可核对）
+
+- **D1 写集勘误（三类，逐类说明）**：
+
+  1. **新增路径**（都在 `docs/60` §3.3 的写集之外，但都是实现该片所必需的）：
+     `telegram/{markdown,sender,delivery,outbound}.rs` 的 `*/tests.rs` 子目录、`delivery/testing.rs`、
+     `crates/mc-http/tests/channels/telegram_round_trip.rs`（+ `main.rs` 一行 `mod`）。
+     `mod.rs` 本身由**起手补充**追加（第二类漏项第 3 次：不写进去四个新文件根本不参与编译）。
+     四个测试子目录是**门 ⑩ 的 800 行硬限**逼出来的切分（`outbound.rs` 首次成形 809 行 ⇒ 再压到 788；
+     `delivery.rs` 764）。**未动** `scripts/file_size_baseline.tsv`。
+  2. **追加到 M7-1 的已合并文件**：`crates/mc-repos/src/channel/delivery.rs` 追加**十条语句**
+     （`get_reply_turn` / `acquire_reply_delivery` / `release_…` / `renew_…` / `mark_…_sending` /
+     `record_…_placeholder` / `record_…_chunk` / `reset_…_send` / `mark_…_send_unknown` / `close_…_turn`）
+     与两个入参结构（`NewReplyDeliveryAttempt` / `CloseReplyDeliveryTurn`）。**没有改 M7-1 的任何一条既有语句或断言** ——
+     它的 `claim_reply_delivery` 与上游 `AcquireChannelReplyDelivery` 有三处语义差异（深度由调用方给且只前进、
+     `phase` 守卫、不重置 `send_state`），所以新增的是**上游形态**的那一条而不是改既有那条（既有那条有自己的调用者与用例）。
+     同时把内联 `mod db_tests` **原样**搬到 `crates/mc-repos/src/channel/delivery/tests.rs`（内联会把文件顶过 800）。
+     理由：投递状态机要**真库**才算落成（DoD 明写"delivery 状态机有表驱动用例"），而 `mc-channel` 的依赖面被 anchor 冻结
+     （没有 `sqlx`、没有 `mc-db`）⇒ PG 语句只能落在 `mc-repos`。
+  3. **改 M7-5 的四个测试替身 + 一条断言**：`api.rs` 的 trait 新增 `edit_message_text` ⇒
+     `install/tests.rs`、`replier/tests.rs`、`resolvers/tests.rs`、`telegram/tests.rs` 里的四个 `TelegramApi` 替身
+     各补一个（失败关闭的）实现。另**一条断言改了**：`telegram/tests.rs` 的
+     `send_uses_plain_text_with_thread_and_quote` → `send_goes_through_the_outbound_sender` ——
+     出站替换点接上发送器之后，"纯文本 + 裸数字 id"按设计变成"HTML + 复合键"（上游 `sender.go` 的 `Send` 就是后者）。
+     这是本片**唯一**改动的 M7-5 用例。
+- **D2 没有事件总线 ⇒ 入口是显式调用（**登记为缺口**，不是漏实现）**：上游 `Outbound` 是 `events.Bus` 的订阅者
+  （transcript / done / failed / cancelled 四类事件），并自带 terminal worker 池、重试最小堆与空闲清扫器来驱动它。
+  本仓**没有**那条进程内总线（`mc-realtime` 是给前端的信封通道）⇒ 本片只落**状态机 + 一次一步**的入口
+  （`push_partial` / `deliver_answer` / `deliver_failure_notice`，回报 `Step{Done,RetryAfter,Failed}`），
+  由宿主按自己的节奏驱动。与 M7-4 对 `slack/outbound.go` 的处理**同一条先例**（本波两个出站片都没有总线可挂）。
+  **宿主接线（`apps/mc-server`）不在本片写集** ⇒ 登记为缺口，与 M7-5 的解析器面装配同一类。
+- **D3 目标解析 = 纯函数 + 调用方取数**：上游 `resolveTarget` 自己查 `channel_task_delivery` /
+  `channel_installation` 并解密凭据。本仓的 adapter 不直接写 DB ⇒ 解析的**语义**落在
+  `ReplyTarget::from_task_delivery`（纯函数，表驱动用例：渠道判别、config 里的 `chat_id` 优先、线程/引用零值），
+  两次读库留在宿主 / 端到端用例那一侧（用例里就是**真库**那两次读）。
+- **D4 没有 `regex` ⇒ 手写扫描器**：上游 `markdown.go` 用 7 条 `regexp`；本 crate 的依赖集在 M7-0 之后冻结
+  （`docs/60` §2.2 不得新增三方依赖）⇒ 七条模式手写成扫描器，**非贪婪语义逐条复刻**（含"斜体那条模式的分组 1
+  吃掉开星号前一个字符"这种会被写丢的细节），并用上游 `telegram_test.go` 的用例 + 边界用例（`****` / `*a**b*` /
+  `a `` b` / 多字节）钉住。多字节上第一版真的踩过：`open + 3` 的字节下标落在 `中`（3 字节）中间 ⇒ panic。
+- **D5 两处 message id 形态不同（逐字照上游）**：`Channel::send` 的 `SendResult` 是**复合键** `"chat:message"`
+  （上游 `messageKey`），而 `channel_reply_delivery.message_id` 是**裸** platform id（`deliveryLease.messageID()`
+  要把它 `ParseInt` 回 `int64`）。两条路径各有各的用例；**不要**把其中一处"统一"成另一处。
+- **D6 `unknown` 那条写**不围栏在 owner 上（上游逐字）：持有者自己的请求挂死、租约过期之后，这条写仍然必须落地 ——
+  否则后继者会读成"什么都没发过"并重发（那是重复投递的成因）。`mark_reply_delivery_send_unknown` 与
+  `DeliveryLedger::record_send` 都按这条落，用例只断言"从 `in_flight` 才能转 `unknown`"。
+- **D7 未接的字段 / 能力**：`send_state = 'in_flight'` 只在 claim 之后写（与上游同）；
+  消息编辑的 `message_thread_id` 不在 `editMessageText` 的 wire 里（上游也没有）。
+  `Capability::MESSAGE_EDIT` 的声明在 M7-5 就已给出，本片**补上了它的实现**（这才是那条位图成立的时刻）。
+- **D8 单副本假设**在这里**不适用**：投递租约是**真库**的 CAS（`owner_token` / `owner_expires_at`），
+  与 R-M7-1 的"无 Redis ⇒ 进程内租约"不同 —— 出站投递的跨副本一致性由 Postgres 承担，不需要 Redis 替身。
+  本片因此没有可登记的 Redis 偏离。
+- **D9 门 ⑩ 的两次拆分**：`crates/mc-repos/src/channel/delivery.rs`（内联用例外出）、
+  `crates/mc-channel/src/telegram/outbound.rs`（首版 809 行 ⇒ 压到 788：删掉三个没被调用的门面函数 + 收文档）。
+  `mc-http/tests/channels/telegram_round_trip.rs` 也按 `too_many_lines` 拆成三段函数（同一条链路的三段，不是三个用例）。
+- **D10 429 的两条处置不同（逐字照上游）**：`sendMessage` 走 `send_message_with_retry_after`
+  （**在同一处**按 Telegram 强制的退避睡一次再试）；`editMessageText` **不**在原地重试，而是回 `Step::RetryAfter`
+  让调度器等（编辑跑在租约里，原地等会让调用越过租约）。两条都有用例（`sender/tests.rs` 的
+  `a_rate_limit_is_retried_exactly_once`、`delivery/tests.rs` 的编辑阶梯表）。
+
+### 18.3 门禁读数（本片当轮实测）
+
+```
+$ bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+```
+
+```
+$ bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+=> overall: PASS — 10/10 gate(s) green in 445s（本片树 @ 起手 base `a326ced7`，新文件已 `git add`）
+
+# ⑥ 真库：migrate=0,e2e=0（新增：mc-repos 的 6 条投递状态机 PG 用例 + mc-http 的 1 条端到端回路）
+
+# ⑦（0 路由 ⇒ 与起手预测**逐字相同**，不变式全部成立）
+upstream 456 (commit f41fae6b08fb) | local 451 registered | baseline 406
+  implemented  364 real +   4 placeholder =  368 / 456   known_gap   88   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5  M2-A=1
+
+# ⑦ 第二条（形态门）：M7 无 allowlist 退路，三类都是硬失败
+$ python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv
+  declared 24 upstream key(s); dual-form required: 0 | single-form: 24
+  shapes OK: every registered upstream key matches the form upstream serves
+  => 0 defect(s) from findings, 0 warning(s)     # exit 0 ⇒ 未引入 MISSING_ALIAS / MISSING_EXACT / EXTRA_ALIAS
+
+# ⑨（本片 0 路由 ⇒ **逐字不变**）
+  pass 6  mismatch 23  unmounted 30  placeholder 0  unevaluable 306
+  report matches crates/mc-conformance/report.json
+
+# ⑩（新文件全部 ≤800；`scripts/file_size_baseline.tsv` **未动**）
+$ python3 scripts/file_size_check.py --quiet   # exit 0
+```
+
+**rebase 到 `0ec41345` 之后**（交付树；在飞片 M2-A 尾-补已进场，它带 1 条路由）：同一套命令 **10/10 绿 / 499s**
+（`migrate=0,e2e=0`），门 ⑦ 的差**全部来自那一片**，本片仍为 0 路由：
+
+```
+$ bash scripts/gates.sh --with-db            # rebase 后的交付树
+upstream 456 (commit f41fae6b08fb) | local 452 registered | baseline 406
+  implemented  365 real +   4 placeholder =  369 / 456   known_gap   87   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5        # M2-A 线已收口，不再有 M2-A 行
+=> overall: PASS — 10/10 gate(s) green in 499s
+```
+
+⇒ 本片**未刷基线**（`--write-baseline` 归 M7-21），本片自身的 `local / implemented / known_gap /
+owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片无关）—— 与派发描述里的预测一致。⚠️ 门 ⑩ 只扫 `git ls-files` ⇒ **新文件必须先 `git add`**
+才受它约束（本片首次跑 ⑩ 时四个新模块还是 untracked，是"假绿"）。
+
+### 18.4 交接（给 M7-21 / INT / 后续出站片）
+
+1. **M7-21（`LUM-1786`）**：本片 **0 路由** ⇒ ⑦ 的 `local / implemented / known_gap / owners.M7` 全部**不动**
+   （不变式 `implemented + known_gap == 456`、`regression == 0`）。请一并收口本片登记的三条缺口：
+   **D2**（出站调度器的宿主接线，与 M7-5 的解析器面装配同一个落点 `apps/mc-server/src/channels.rs`）、
+   **D3**（目标解析的两次读库）、以及 M7-5 留下的 **§17.4 第 1 条**（`register_with` 的宿主调用）。
+2. **lark / dingtalk / wecom 的出站片可照抄的四件事**：`markdown.rs` 的"逐行 + 代码块保真 + 手写非贪婪"、
+   `sender.rs` 的"分片 → 渲染 → 回落"三段、`delivery.rs` 的"**端口 + 真库 CAS + 三层守卫**"
+   （`phase` / `attempt_depth` / `send_state`）、`outbound.rs` 的"**一步一回报**"（`Step` 三态）。
+   四个平台的出站语义能共用后面两件，只有 wire 不同。
+3. **写 `delivery` 面时先查这三件事**：(a) 取租约的 SQL 有**三条** `WHERE` 守卫（收口 / `phase` / 深度），
+   少一条就会让迟到的旧尝试或流式帧重写用户正在读的内容；(b) `unknown` 那条写**不能**围栏在 owner 上；
+   (c) 占位消息**不是进度** —— `message_id` 与 `chunks_sent` 是两个字段，混起来会静默截断回复。
+4. **端到端回路的可复用件**：`crates/mc-http/tests/channels/telegram_round_trip.rs` 里的
+   `BotState`（真方法名的 axum 替身 + 逐字段捕获）、`drive_inbound`（真 `TelegramChannel` + 真 engine `Router`
+   + 五个真 PG 端口）、`drive_streaming_delivery`（真 `PgDeliveryStore` + `push_partial` / `deliver_answer`）。
+   四平台的"每渠道至少一条真实收发回路"（`plan1.md` §5 W7）可以照这份骨架来。
+
+### 18.5 lesson（本片新增）
+
+- **【lesson·"上游一个文件 = 本仓一个文件"在出站面第一次失效】** `outbound.go` 1,633 行里真正**可判定**的部分
+  （占位/编辑阶梯/分片/告知/目标解析）不到一半，其余是**事件总线驱动的基础设施**（worker 池、重试堆、清扫器、
+  按 chat 的限速表）。本仓没有那条总线 ⇒ 照抄基础设施只会得到一堆没人调的代码。**判据**：先把上游按
+  "状态机 / 调度基础设施 / wire"三分，只搬第一与第三类，第二类换成**一次一步的显式入口 + 三态回报**
+  （`Step`），语义等价且可测（用例因此完全不睡真觉）。
+- **【lesson·空值语义要在 wire 层断言"缺席"而不是"零"】** Telegram 的 `message_thread_id` / `reply_parameters`
+  在**空**时的正确形态是**字段缺席**，不是 `0`。这一点只有帧级断言能钉住（`assert!(frame.get(…).is_none())`），
+  Rust 侧的 `#[serde(skip_serializing_if = "…")]` 或 `if x != 0` 写错时，单元测试全绿而线上会被拒。
+- **【lesson·真库用例要用"每次运行都不同"的路由键】** `channel_installation` 的唯一索引建在
+  `(channel_type, config->>'app_id')` 上：写死 `123456` 的用例在上一轮**失败**（清场没跑到）之后会一直红，
+  而报错是"duplicate key"，看起来像代码问题。**做法**：路由键取 run 级随机值（`fresh_bot_id()`），
+  清场只当优化、不当正确性前提。
+- **【lesson·"一条断言改了"要当成交付项写出来】** D1 第 3 条那条改动是本片唯一改 M7-5 用例的地方。
+  它之所以必须改，是因为**替换点接线的时刻**本身就是形态变化的时刻：出站从"纯文本 + 裸 id"变成
+  "HTML + 复合键"。写"将来会被替换"的代码时，用例应断言**语义**（"走发送器"），而不是断言**当年的形状**。
+- **【lesson·`too_many_lines` 会挑出"剧本式用例"】** 端到端回路天生是线性的（造帧 → 入站 → 断言 → 出站 → 断言），
+  pedantic 的 100 行上限把它挑了出来。**修法不是加 `#[allow]`**：把同一条链路的**段落**提成函数
+  （`drive_inbound` / `drive_streaming_delivery`），用例本体只剩"接线 + 三处断言"，反而比原来更清楚。
+## 19. M8-4（`LUM-1801`）：GitHub 入站 webhook + PR 镜像 + 自动关联/关闭 + issue↔PR 读面（2 路由）
 
 > **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
+> `## 11.` 是 M8-0）。**起手**实测最大 = `## 17.`（M7-5）⇒ 本片原取 **`## 18.`**；
+> 但 `## 18.` 在本片在飞期间被 **M7-6（`LUM-1771`，已先合入 base）** 占用 ⇒
+> 合并时**让号**改为 **`## 19.`**（M8-4 的 D 编号与内容不变，只有节号平移）。
 > `## 11.` 是 M8-0）⇒ 按派发时「起手复核 `N+1`」的约定取 **`## 18.`**（起手实测最大 =
 > `## 17.` = M7-5）。
 
-### 18.1 落点（写集逐字）
+### 19.1 落点（写集逐字）
 
 | 文件 | 行数 | 内容 |
 | --- | --: | --- |
-| `crates/mc-vcs-github/src/payload.rs` | 448 | anchor 建桩、本片原地填充：`GithubEventKind`（三族 + **`Ping`**）+ 三个 wire 结构（`installation` / `pull_request` / CI）+ `coalesce` / `str_ptr_or_nil` / `parse_gh_time{,_required}` + 5 条单测 |
-| `crates/mc-vcs-github/src/webhook.rs` | 146 | 原地上填：`verify_webhook_signature`（`hmac`/`sha2`/`hex` 直连边复刻上游三语义）+ `sign_webhook_body`（替身发帧用）+ `event_kind_for_request` + 4 条单测 |
-| `crates/mc-vcs-github/src/links.rs` | 368 | 原地上填：`extract_identifiers` / `extract_closing_identifiers` / `issue_number_for_prefix` —— **手写扫描器**逐字复刻上游两条正则（理由与两条 Go/Rust 语义差见模块头）+ 14 条单测（`DoD` 点名的 **6 个边界**逐条） |
-| `crates/mc-vcs-github/src/closepolicy.rs` | 218 | 原地上填：`CloseIntent` 三态 + `close_intent_policy` + `preserve_close_intent` + `CloseIntentPolicy`（`unrestricted`/`owner` + `permits` + `from_resolvers` + `for_bindings`）+ 6 条单测 |
-| `crates/mc-vcs-github/src/mirror.rs` | 496 | **形状修订**（见 D5）：`MirrorRequest` 保留、新增 `identifiers` / `derived_state` / `mergeable_write` / `refresh_request` / `plan` → `MirrorPlan`；`derive_pr_state` / `derive_pr_mergeable_state` / `base_ref_changed` 逐字对齐上游 + 11 条单测 |
-| `crates/mc-repos/src/github/check_suite.rs` | 263 | 原地上填：`GithubCheckSuiteRepo` 两条查询（`list_pr_numbers_by_head_sha` 上游逐字 SQL；`list_workspace_pr_numbers` 按载荷直接给的号）+ 1 条真库单测 |
-| `crates/mc-repos/src/github/pending.rs` | 55 | **doc-only 结论**（见 D7）：实测上游 `f41fae6b` 上 `github_pending_check_suite` **零写者零读者**（Plan C 取代了迁移 `096` 描述的暂存-回放）⇒ 本波**不**造无调用方的仓储面 |
-| `crates/mc-http/src/routes/github/webhook.rs` | 232 | 入口与装配：`router()`（1 个**新增**注册键）+ 端口注入槽 + `handle_github_webhook`（验签/分派/状态码）+ `flat_error` + 3 条单测 |
-| `crates/mc-http/src/routes/github/webhook/installations.rs` | 184 | `installation` 族处理 + 3 条按 `installation_id` 的查询 |
-| `crates/mc-http/src/routes/github/webhook/mirror.rs` | 551 | `pull_request` 族：扇出 + 投递级关闭裁决 + 逐 workspace 镜像 + 自动推进 + 跨 provider 关闭聚合 + 3 条共享读 + 2 条单测 |
+| `crates/mc-vcs-github/src/payload.rs` | 510 | anchor 建桩、本片原地填充：`GithubEventKind`（三族 + **`Ping`**）+ 三个 wire 结构（`installation` / `pull_request` / CI）+ `coalesce` / `str_ptr_or_nil` / `parse_gh_time{,_required}` + 5 条单测 |
+| `crates/mc-vcs-github/src/webhook.rs` | 172 | 原地上填：`verify_webhook_signature`（`hmac`/`sha2`/`hex` 直连边复刻上游三语义）+ `sign_webhook_body`（替身发帧用）+ `event_kind_for_request` + 4 条单测 |
+| `crates/mc-vcs-github/src/links.rs` | 474 | 原地上填：`extract_identifiers` / `extract_closing_identifiers` / `issue_number_for_prefix` —— **手写扫描器**逐字复刻上游两条正则（理由与两条 Go/Rust 语义差见模块头）+ 14 条单测（`DoD` 点名的 **6 个边界**逐条） |
+| `crates/mc-vcs-github/src/closepolicy.rs` | 241 | 原地上填：`CloseIntent` 三态 + `close_intent_policy` + `preserve_close_intent` + `CloseIntentPolicy`（`unrestricted`/`owner` + `permits` + `from_resolvers` + `for_bindings`）+ 6 条单测 |
+| `crates/mc-vcs-github/src/mirror.rs` | 528 | **形状修订**（见 D5）：`MirrorRequest` 保留、新增 `identifiers` / `derived_state` / `mergeable_write` / `refresh_request` / `plan` → `MirrorPlan`；`derive_pr_state` / `derive_pr_mergeable_state` / `base_ref_changed` 逐字对齐上游 + 11 条单测 |
+| `crates/mc-repos/src/github/check_suite.rs` | 273 | 原地上填：`GithubCheckSuiteRepo` 两条查询（`list_pr_numbers_by_head_sha` 上游逐字 SQL；`list_workspace_pr_numbers` 按载荷直接给的号）+ 1 条真库单测 |
+| `crates/mc-repos/src/github/pending.rs` | 50 | **doc-only 结论**（见 D7）：实测上游 `f41fae6b` 上 `github_pending_check_suite` **零写者零读者**（Plan C 取代了迁移 `096` 描述的暂存-回放）⇒ 本波**不**造无调用方的仓储面 |
+| `crates/mc-http/src/routes/github/webhook.rs` | 239 | 入口与装配：`router()`（1 个**新增**注册键）+ 端口注入槽 + `handle_github_webhook`（验签/分派/状态码）+ `flat_error` + 3 条单测 |
+| `crates/mc-http/src/routes/github/webhook/installations.rs` | 188 | `installation` 族处理 + 3 条按 `installation_id` 的查询 |
+| `crates/mc-http/src/routes/github/webhook/mirror.rs` | 567 | `pull_request` 族：扇出 + 投递级关闭裁决 + 逐 workspace 镜像 + 自动推进 + 跨 provider 关闭聚合 + 3 条共享读 + 2 条单测 |
 | `crates/mc-http/src/routes/github/webhook/ci.rs` | 111 | 三族 CI 事件（纯触发器 → 入队） |
-| `crates/mc-http/src/routes/github/issue_pr.rs` | 540 | 原地上填：`GET /api/issues/:id/pull-requests` 真实现（替换 501 占位）+ `PullRequestCard`（上游 31 字段形状）+ 3 条单测 |
-| `crates/mc-http/tests/github_webhook/{main,support,webhook,ci,issue_pr}.rs` | 26 / 372 / 711 / 205 / 282 | **新测试目标**：14 条真库 e2e（三族事件 + 幂等 + 两个反例 + 端到端四条链 + 读面/越权/VCS 合流） |
+| `crates/mc-http/src/routes/github/issue_pr.rs` | 542 | 原地上填：`GET /api/issues/:id/pull-requests` 真实现（替换 501 占位）+ `PullRequestCard`（上游 31 字段形状）+ 3 条单测 |
+| `crates/mc-http/tests/github_webhook/{main,support,webhook,ci,issue_pr}.rs` | 26 / 372 / 709 / 212 / 282 | **新测试目标**：14 条真库 e2e（三族事件 + 幂等 + 两个反例 + 端到端四条链 + 读面/越权/VCS 合流） |
 
 **零编辑（anchor 冻结，逐条实测未动）**：`crates/mc-http/src/state.rs`、`routes/mod.rs`、`routes/mount.rs`、
 `routes/github/mod.rs`、`routes/issues/**`、三个 `Cargo.toml`、`Cargo.lock`、`docs/61-M8-PLAN.md`、
@@ -1854,7 +2024,7 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
 （门 ⑩ 的 800 硬上限），按 `channels/slack.rs` + `channels/slack/store.rs` 的既有手法拆
 （`webhook.rs` 里 `mod ci; mod installations; mod mirror;` ⇒ `routes/github/webhook/*.rs`）。
 
-### 18.2 偏离登记（M8-4-D1 … M8-4-D9）
+### 19.2 偏离登记（M8-4-D1 … M8-4-D10）
 
 | # | 偏离 | 位置 | 性质与理由 |
 | --- | --- | --- | --- |
@@ -1869,7 +2039,7 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
 | **D9** | `link_issue` 的 `linked_by_type` 写 **`"system"`**（上游 `LinkIssueToPullRequest` 的 `strToText("system")`），而非本仓其它路径惯用的 `"webhook"` | `webhook/mirror.rs::apply_auto_link` | 逐字对齐上游 GitHub webhook 路径。**注意** M8-1 的 repo 单测用的是 `"webhook"` —— 那是**测试自己的取值**，不是生产口径；生产口径只有上游这一个 |
 | **D10** | **写集之外**唯一一处改动：`crates/mc-http/tests/issues/auth.rs` 的 501 占位断言重新指向（`pull-requests` → `attachments`，+5 行注释） | `tests/issues/auth.rs:121-140` | 这条断言的**既有惯例**就是「不管哪个切片实现掉当前那条占位，就由它把断言指向下一条最远的缺口」（原注释逐字：「这条断言换过三次落点」，并逐次列出了前三片）。本片把 `GET /api/issues/:id/pull-requests` 从 501 换成真实现（`docs/61` §6.1 预测的 `implemented_placeholder 4→3` 正是这一条）⇒ 断言必然变红（门 ⑥ 实测 `left: 404, right: 501`），**不修就是留一条已知错误的测试**。取 `attachments` 的理由：`docs/61` §9.2 把它判给 `M3+` 并作为 W8 尾账登记 ⇒ 比其它候选耐久。**本片之外零改动**（`git diff` 只有这 13 + 3 个文件） |
 
-### 18.3 专属 DoD 逐条证据（`docs/61` §6.5 的 M8-4 行）
+### 19.3 专属 DoD 逐条证据（`docs/61` §6.5 的 M8-4 行）
 
 | DoD 条目 | 证据 |
 | --- | --- |
@@ -1884,32 +2054,7 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
 | ⑩：新文件 ≤800 行 | 见 18.4；`scripts/file_size_baseline.tsv` **未动** |
 | 凭据面：手写 `Debug` 脱敏 + 「错误路径不回显凭据」 | 本片**不新增**凭据类型（App 私钥 / installation token 在 M8-1 的 `app.rs` / `token_cache.rs`，本片只读其不透明接口）。本面对应的一条是**广播不得回显管理手柄**：`installation_deleted…` 断言广播载荷里不出现数字 `installation_id`（只出现内部行 id），`installation_id` 本身是 GitHub 的公开数字标识、但对非 admin 成员是管理手柄（上游逐字口径） |
 
-### 18.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
-
-1. **M8-5（ghsnapshot 管道）—— 本片给你留了一个**装配点**，请接上**：`routes/github/webhook.rs`
-   的 `set_pr_refresh_port(Arc<dyn PrRefreshPort>)` 就是 `h.PRRefresh` 的等价物；M8-5 实现
-   `impl PrRefreshPort for Manager` 之后，在 `apps/mc-server` 的装配里调用它（**在** `router()`
-   之前），webhook 与页面访问两条入队路径就都活了。**不要**在 `mc-http` 里造第二份 worker。
-   另外：**不要**碰 `github_pull_request_check_{suite,run}` 的写面 —— 那是你的
-   （`github_snapshot.sql.go` 的对应物），本片刻意一行没写（D7）。
-2. **M8-7（INT）**：本片把 ⑦ 推成 `local 453 / implemented 370 (367 real + 3 placeholder) /
-   `known_gap 86 / owners.M8 5`；下一次 `--write-baseline`（406 → …）归你。请一并：① 把
-   **D2**（端口注入槽）登记为「anchor 缺口的临时处置」并决定是否正式挂到 `AppState`；
-   ② 把 **D3** 的 6 条查询要么归位到 `mc-repos`、要么在写集表里显式认下它们的当前位置；
-   ③ 把 **D6**（wakeup 停机 + 父 issue 通知未接线）与 **D7**（`github_pending_check_suite`
-   无归属）写进缺口清单；④ `mc-vcs-github/src/{lib,mirror}.rs` 与 `mc-repos/src/github/{mod,
-   check_suite,pending}.rs` 的模块头里还有「M8-4 待落地 / doc-only 桩」的**文案债**（anchor
-   冻结文件，本片不得改，与 §14.2 / §16.5 第 3 条同性质）。
-3. **给后续任何写 GitHub 面的片**：三个**顺序契约**不要动 —— ① 投递级关闭裁决必须在任何
-   workspace 关联**之前**算完（`resolve_close_intent_policy`），镜像那趟只能收紧它；
-   ② 推进闸门必须读**持久化之后**的聚合（跨 GitHub + VCS 两张关联账），不是本次载荷；
-   ③ 裸提及在 PR 仍可编辑时**要掉链**、终态之后**不得**掉链（`preserveCloseIntent` 的
-   `Action != "closed"` 那一半最容易被读反）。
-4. **给后续任何写 `routes/github/webhook.rs` 的片**：本文件已按门 ⑩ 拆成
-   `webhook.rs` + `webhook/{installations,mirror,ci}.rs`（`channels/slack.rs` 的同款手法）。
-   新增事件族请**新开子模块**，不要把 `webhook.rs` 顶回 800 行以上（它现在 232 行，入口与
-   装配是它唯一的职责）。
-### 18.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-4b.log`）
+### 19.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-4b.log`）
 
 ```
 bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801'
@@ -1968,3 +2113,28 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:54
   编译。**判据**：门禁日志出现这一行**不是**本片红灯，但不能据此提前报数 —— `ps` 看着自己的
   `gates.sh` PID 还活着就等它。本片两次全量跑：9/10 / 695s（含等待）与 10/10 / 360s。
 
+### 19.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
+
+1. **M8-5（ghsnapshot 管道）—— 本片给你留了一个**装配点**，请接上**：`routes/github/webhook.rs`
+   的 `set_pr_refresh_port(Arc<dyn PrRefreshPort>)` 就是 `h.PRRefresh` 的等价物；M8-5 实现
+   `impl PrRefreshPort for Manager` 之后，在 `apps/mc-server` 的装配里调用它（**在** `router()`
+   之前），webhook 与页面访问两条入队路径就都活了。**不要**在 `mc-http` 里造第二份 worker。
+   另外：**不要**碰 `github_pull_request_check_{suite,run}` 的写面 —— 那是你的
+   （`github_snapshot.sql.go` 的对应物），本片刻意一行没写（D7）。
+2. **M8-7（INT）**：本片把 ⑦ 推成 `local 453 / implemented 370 (367 real + 3 placeholder) /
+   `known_gap 86 / owners.M8 5`；下一次 `--write-baseline`（406 → …）归你。请一并：① 把
+   **D2**（端口注入槽）登记为「anchor 缺口的临时处置」并决定是否正式挂到 `AppState`；
+   ② 把 **D3** 的 6 条查询要么归位到 `mc-repos`、要么在写集表里显式认下它们的当前位置；
+   ③ 把 **D6**（wakeup 停机 + 父 issue 通知未接线）与 **D7**（`github_pending_check_suite`
+   无归属）写进缺口清单；④ `mc-vcs-github/src/{lib,mirror}.rs` 与 `mc-repos/src/github/{mod,
+   check_suite,pending}.rs` 的模块头里还有「M8-4 待落地 / doc-only 桩」的**文案债**（anchor
+   冻结文件，本片不得改，与 §14.2 / §16.5 第 3 条同性质）。
+3. **给后续任何写 GitHub 面的片**：三个**顺序契约**不要动 —— ① 投递级关闭裁决必须在任何
+   workspace 关联**之前**算完（`resolve_close_intent_policy`），镜像那趟只能收紧它；
+   ② 推进闸门必须读**持久化之后**的聚合（跨 GitHub + VCS 两张关联账），不是本次载荷；
+   ③ 裸提及在 PR 仍可编辑时**要掉链**、终态之后**不得**掉链（`preserveCloseIntent` 的
+   `Action != "closed"` 那一半最容易被读反）。
+4. **给后续任何写 `routes/github/webhook.rs` 的片**：本文件已按门 ⑩ 拆成
+   `webhook.rs` + `webhook/{installations,mirror,ci}.rs`（`channels/slack.rs` 的同款手法）。
+   新增事件族请**新开子模块**，不要把 `webhook.rs` 顶回 800 行以上（它现在 232 行，入口与
+   装配是它唯一的职责）。

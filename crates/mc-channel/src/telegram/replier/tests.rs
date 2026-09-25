@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::engine::resolvers::{DropReason, Outcome};
-use crate::telegram::api::{ApiError, ApiResult, WebhookInfo};
+use crate::telegram::api::{ApiError, ApiResult, EditMessageText, WebhookInfo};
 use crate::telegram::inbound::{Chat, Message, Update, User};
 use crate::telegram::resolvers::InstallationRow;
 use crate::telegram::TYPE_TELEGRAM;
@@ -75,6 +75,17 @@ impl TelegramApi for RecordingApi {
         _message_thread_id: i64,
     ) -> ApiResult<()> {
         Ok(())
+    }
+
+    /// M7-6 补的端口方法：判决回复走的是 `sendMessage`，本替身不编辑。
+    async fn edit_message_text(
+        &self,
+        _bot_token: &str,
+        _params: &EditMessageText,
+    ) -> ApiResult<()> {
+        Err(ApiError::Malformed {
+            method: "editMessageText",
+        })
     }
 }
 

@@ -127,7 +127,7 @@ async fn issue_auth_workspace_and_not_implemented() {
     // 于是改用 `GET /api/issues/:id/attachments`。
     //
     // 为什么选 attachments：它是本仓**已登记**的最远缺口之一 —— `docs/61` §9.2 把附件面
-    // 维持判给 `M3+`、并作为 W8 的尾账登记（`docs/32` §18 的缺口清单里复述）。它**不是**
+    // 维持判给 `M3+`、并作为 W8 的尾账登记（`docs/32` §19 的缺口清单里复述）。它**不是**
     // 「等某个在飞切片顺手做掉」的能力，所以比其它候选更耐久。
     let res = app
         .clone()

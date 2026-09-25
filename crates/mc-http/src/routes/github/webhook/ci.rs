@@ -10,7 +10,7 @@
 //!    `github_pull_request.head_sha`；
 //! 3. `enabled() == false`（缺 App 私钥）⇒ 一次都不入队（上游第一条短路）。
 //!
-//! # 与上游的两处差异（登记 `docs/32` §18.2 的 D4）
+//! # 与上游的两处差异（登记 `docs/32` §19.2 的 D4）
 //!
 //! - 上游**直接**按载荷里的号入队，不查库（未知 PR 也入队，由 Manager 稍后自己解析）；
 //!   本仓端口的定位键含 `workspace_id`（`mc-vcs-github/src/port.rs`）⇒ 必须先把号映射回

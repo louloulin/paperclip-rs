@@ -18,7 +18,7 @@
 //! | `GITHUB_WEBHOOK_SECRET` 缺失 / 为空 | **404** | `not found`（宁可整体拒收，也不把未配置当成「所有签名都有效」） |
 //! | 验签失败 | **401** | `invalid signature` |
 //! | body 读失败 | 400 | `read body failed` |
-//! | body 超限 | **413** | `payload too large`（与上游 `LimitReader` 的静默截断刻意不同，登记 `docs/32` §18.2 的 D1，与 M8-2 的 `vcs/webhook.rs` 同判） |
+//! | body 超限 | **413** | `payload too large`（与上游 `LimitReader` 的静默截断刻意不同，登记 `docs/32` §19.2 的 D1，与 M8-2 的 `vcs/webhook.rs` 同判） |
 //! | `ping` | **200** | `{"ok":"pong"}` |
 //! | 其余（含未建模事件） | **202** | 空 body |
 //!
@@ -37,7 +37,7 @@
 //! - `webhook/mirror.rs`：`pull_request` 事件（扇出 + 投递级关闭裁决 + 镜像 + 自动推进）
 //! - `webhook/ci.rs`：三族 CI 事件（纯触发器 → 快照刷新入队）
 //!
-//! # 快照刷新端口：一个 anchor 缺口的**本地处置**（登记 `docs/32` §18.2 的 D2）
+//! # 快照刷新端口：一个 anchor 缺口的**本地处置**（登记 `docs/32` §19.2 的 D2）
 //!
 //! 上游 `h.PRRefresh` 是 Handler 的字段；本仓 `AppState` **没有**对应字段
 //! （`docs/61` §5 的 `state.rs` 行只加了 vcs/github/composio 三组密钥），而 `state.rs` 与

@@ -94,10 +94,14 @@
 pub mod api;
 pub mod binding;
 pub mod config;
+pub mod delivery;
 pub mod inbound;
 pub mod install;
+pub mod markdown;
+pub mod outbound;
 pub mod replier;
 pub mod resolvers;
+pub mod sender;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -381,29 +385,29 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
-    /// 出站：**最小可用**的纯文本 `sendMessage`（判决回复正是这条路径）。
+    /// 出站：走 M7-6 的**发送器**（上游 `sender.go` 的 `Send` 逐字）。
     ///
-    /// M7-6 会把这一格换成 [`crate::telegram::replier`] 之外的完整发送器
-    /// （Markdown→HTML / 分片 / 流式编辑 / 投递状态机）—— 见模块文档的写者表。
+    /// 这是本片**唯一**改动的出站替换点（M7-5 的交接第 2 条：判决回复与 agent 答复必须走
+    /// **同一条**发送器，上游 `replier.go` 就是这么做）。形态由 [`crate::telegram::sender`]
+    /// 负责：**分片（按 UTF-16 码元）→ 每片 Markdown→HTML → 发 → HTML 被拒则回落纯文本**，
+    /// 只有第一片引用触发消息，`SendResult` 带**末片**的复合键。
     async fn send(&self, out: OutboundMessage) -> ChannelResult<SendResult> {
-        let chat_id = out
-            .chat_id
-            .parse::<i64>()
-            .map_err(|_| ChannelError::Transport {
-                message: "telegram: outbound chat id is not a number".to_string(),
-            })?;
-        let thread_id = out.thread_id.parse::<i64>().unwrap_or(0);
-        let params = SendMessage::text(chat_id, &out.text)
-            .in_thread(thread_id)
-            .with_reply_to(parse_message_ref(&out.reply_to));
-        let message = self
-            .api
-            .send_message(self.bot_token.expose(), &params)
+        let sender = crate::telegram::sender::Sender::new(Arc::clone(&self.api));
+        let frame = sender
+            .send(self.bot_token.expose(), &out)
             .await
             .map_err(|error| ChannelError::Transport {
-                message: format!("telegram: sendMessage failed ({})", error.method()),
+                // 只带方法名 / 目标错误码，**绝不**带 token 或请求 URL（§2.3）。
+                message: match &error {
+                    crate::telegram::sender::SendError::BadChatId { .. } => {
+                        "telegram: outbound chat id is not a number".to_string()
+                    }
+                    crate::telegram::sender::SendError::Api(api) => {
+                        format!("telegram: sendMessage failed ({})", api.method())
+                    }
+                },
             })?;
-        Ok(SendResult::single(message.message_id.to_string()))
+        Ok(frame.to_send_result())
     }
 
     /// 上游 `CapText | CapThreadReply | CapQuoteReply | CapTypingIndicator | CapMessageEdit`。
