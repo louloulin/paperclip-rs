@@ -3922,6 +3922,34 @@ upstream 456 (commit f41fae6b08fb) | local 465 registered | baseline 458
   ⇒ 一条只在泛化表里有、遗留表里没有的安装会让"能装配但不能路由"。
   这是上游的形态（`docs/60` §6.4 的两套表不得合并），本片照搬并登记；收敛不在 M7 写集内。
 
+### 29.6 合并期复核（当轮实做）
+
+合并 `origin/feat/multica-rs-initial` = **`f8c972fc`**（M7-15 `LUM-1780` 的合并 + §117/§118/§119 三轮
+cycle 的 docs-only）⇒ 零冲突。新 base 的变动面 = `crates/mc-channel/src/wecom/**`、
+`crates/mc-http/src/routes/channels/wecom*`、`docs/{32,37,60}`，与本片写集**逐文件 ∅**
+（唯一的同名文件是 `docs/32`，本片按号段纪律**插中段**，两节都留）。
+
+**合并树上逐门重跑**（`CARGO_INCREMENTAL=0`，本机 `/` 只有 49G ⇒ 那一轮的门 ④⑤⑥⑧⑨ 首跑撞过
+**ENOSPC**，见 §29.3 的 ENOSPC 一段）：
+
+| 门 | 结果 | 说明 |
+| --- | --- | --- |
+| ① fmt | PASS 3s | |
+| ② build | PASS 180s | 合并树含 M7-15 的 wecom ⇒ 冷建 |
+| ③ clippy | PASS 81s | |
+| ④ clippy-test-util | PASS 35s | |
+| ⑤ test | PASS 47s（第二轮） | 首轮红的唯一用例是 `mc-composio::state::tests::tampered_signature_is_rejected_bit_for_bit` = §26.4 的**既有 flake (a)**（单跑实测 1/3 红，与登记的 3/60 ≈ 5% 同量级） |
+| ⑥ db | **红（首轮）** 350s，`migrate=0` | 红点 `mc-scheduler/tests/jobs_issue_wakeup.rs:312` = §26.4 的**既有 flake (b)**；**单跑 3/3 绿**（0.14s ×3），与 §31.5 对同一条 flake 的实测手法与结论逐字同形 |
+| ⑧ schema-drift | PASS 50s | |
+| ⑦ route-parity | PASS 1s | 合并树读数 = **base 的** `local 469 / implemented 386 real + 3 ph / known_gap 70 / owners.M7 5 / baseline 458`（= M7-15 落 4 路由的结果）；本片 **0 路由** ⇒ 它一个数都没动 |
+| ⑨ conformance | PASS 70s | `report matches` |
+| ⑩ file-size | PASS | |
+
+> **两条 flake 都不是本片引入**：两者都在 `docs/32` §26.4 的第 4 条里**逐条登记过机理与复现率**
+> （(a) = 32 字节 HMAC 的 `base64url_nopad` 末字符只承载 4 个有效 bit；(b) = 只读一次 wakeup 的
+> global plan，而审计行先以 `Running` 落库），且本片 diff 只在 `crates/mc-channel/src/lark/**`
+> 与 `docs/32` 的 §29 ⇒ 与 `mc-composio` / `mc-scheduler` **零交集**。
+
 ## 31. M7-15（`LUM-1780`）：wecom 契约 / 凭据 / 安装与绑定面（**4 路由**）
 
 > **号段说明**：base `83761edb` 实测 `docs/32` 末号 = **`## 27.`**（M5-D8）；28/29/30 已按**派发顺序**
