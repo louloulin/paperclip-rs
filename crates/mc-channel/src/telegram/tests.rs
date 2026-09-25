@@ -114,6 +114,17 @@ impl TelegramApi for ScriptedApi {
         })
     }
 
+    /// M7-6 补的端口方法：入站回路只发"暂不支持"告知，不编辑消息。
+    async fn edit_message_text(
+        &self,
+        _bot_token: &str,
+        _params: &api::EditMessageText,
+    ) -> ApiResult<()> {
+        Err(ApiError::Malformed {
+            method: "editMessageText",
+        })
+    }
+
     async fn send_chat_action(
         &self,
         _bot_token: &str,
@@ -459,9 +470,13 @@ async fn a_channel_without_a_handler_or_token_fails_closed() {
     assert!(api.offsets().is_empty(), "失败关闭时一次都不轮询");
 }
 
-/// 出站：纯文本 + 话题 + 引用；`SendResult` 带平台消息 id。
+/// 出站：走发送器（HTML + 话题 + 引用）；`SendResult` 带**末片**的复合键。
+///
+/// ⚠️ 本用例在 M7-6（`LUM-1771`）改了三条断言 —— 那是本片**唯一**改动的 M7-5 用例，
+/// 登记在 `docs/32` §18 D2：出站替换点接上发送器之后，"纯文本 + 裸数字 id"这两条形态
+/// 按设计变成了"HTML + 复合键"（上游 `sender.go` 的 `Send` 就是后者）。
 #[tokio::test]
-async fn send_uses_plain_text_with_thread_and_quote() {
+async fn send_goes_through_the_outbound_sender() {
     let api = Arc::new(ScriptedApi::default());
     let handler = Arc::new(RecordingHandler::default());
     let channel = channel(&api, &handler, "my_bot");
@@ -474,9 +489,13 @@ async fn send_uses_plain_text_with_thread_and_quote() {
         })
         .await
         .expect("send");
-    assert_eq!(result.message_id, "1");
+    assert_eq!(
+        result.message_id, "-100:1",
+        "复合键（chat:message）：投递账里存的就是它"
+    );
     let sent = api.notices();
     assert_eq!(sent[0].text, "agent reply");
+    assert_eq!(sent[0].parse_mode, "HTML", "出站走 HTML parse mode");
     assert_eq!(sent[0].chat_id, -100);
     assert_eq!(sent[0].message_thread_id, 77);
     assert_eq!(
@@ -495,6 +514,10 @@ async fn send_uses_plain_text_with_thread_and_quote() {
         .await
         .expect_err("bad chat id");
     assert!(error.to_string().contains("not a number"));
+    assert!(
+        !error.to_string().contains("123456:not-a-real-bot-token"),
+        "错误路径不得回显令牌"
+    );
 
     // `disconnect` 是空操作（生命周期关在 `connect` 里）。
     channel.disconnect().await.expect("disconnect");

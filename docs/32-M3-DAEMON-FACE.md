@@ -1815,3 +1815,171 @@ base f1cd4bbc : local 428 | implemented 348 real + 4 ph = 352 | known_gap 104 | 
   `telegram/inbound.rs` 里的 `mod tests;` → `telegram/inbound/tests.rs`；而
   `telegram/mod.rs` 里的 → `telegram/tests.rs`（**不是** `telegram/mod/tests.rs`）。本片第一次
   就把它写错到 `mod/` 下，编译器只报"找不到文件"，改个目录名就过了。
+
+## 18. M7-6（`LUM-1771`）：telegram 出站与投递（0 路由）
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片当轮 base 上核对。本片**起手 base**
+是 `a326ced7`（= 合并 #92（M7-5）之后 `origin/feat/multica-rs-initial` 的 tip —— M7-5 的合并提交
+`a326ced77d1dbadde67aa7cebb8dedabf55a35cc` 带 `merge(m7): PR #92 …` 的标题，**不带** `merge #93`）。
+提交时 origin tip 已前进到 **`0ec41345`**（§97/§98 cycle + 合并 #93 / M2-A 尾-补）⇒ 本片已 rebase 到它，
+**写集零交集、无冲突**（进场的是 `mc-http/src/routes/{mod,mount}.rs` + 一个新 route 文件 + `mc-repos/src/{lib.rs,squad_evaluation.rs}`，
+与本片 20 个改动文件无交集）。
+
+### 18.1 落点（逐字路径）
+
+| 落点 | 写者 | 内容 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/telegram/markdown.rs` + `markdown/tests.rs` | M7-6 | 上游 `markdown.go`（119 行）：Markdown → Telegram **HTML parse mode**（逐行、代码块保真、非贪婪语义手写复刻） |
+| `crates/mc-channel/src/telegram/sender.rs` + `sender/tests.rs` | M7-6 | 上游 `sender.go`（194 行）：UTF-16 码元分片（优先换行）、HTML 渲染、**HTML 被拒回落纯文本**、只第一片引用、`SendResult` 带末片 |
+| `crates/mc-channel/src/telegram/delivery.rs` + `delivery/tests.rs` + `delivery/testing.rs` | M7-6 | 上游 `delivery.go`（457 行）：投递**所有权状态机**（租约 / 阶段 / 发送状态 / 结转 / 收口）+ `DeliveryStore` 端口 + `PgDeliveryStore` 适配；`testing.rs` 是 `pub(crate)` 的进程内替身（`outbound/tests.rs` 也用它） |
+| `crates/mc-channel/src/telegram/outbound.rs` + `outbound/tests.rs` | M7-6 | 上游 `outbound.go`（1,633 行）的可判定面：占位消息一次、编辑阶梯、终态编辑/分片、失败告知、目标解析 |
+| `crates/mc-channel/src/telegram/api.rs`（**扩展**） | M7-5 落 + **M7-6 补** | 补出站半边：`editMessageText`（端口 + `EditMessageText` 入参 + wire 形态）、`send_message_with_retry_after`（429 的**一次**重试，上游 `sendMessageWithRetryAfter`）。**既有五个方法的形态一字未动** |
+| `crates/mc-channel/src/telegram/mod.rs`（**扩展**） | M7-5 落 + **M7-6 补** | 模块表 + `Channel::send` 的**单点替换**（走发送器；判决回复与 agent 答复同一条路径） |
+| `crates/mc-http/tests/channels/telegram_round_trip.rs` + `main.rs`（一行 `mod`） | M7-6 | **端到端收发回路**（`docs/60` §4.2 的渠道门禁证据），真库 `#[ignore]` |
+| `crates/mc-repos/src/channel/delivery.rs`（**追加**）+ `delivery/tests.rs`（新） | M7-6 追加 | 上游 `channel.sql` 里投递状态机的**十条语句**（见 D1）；内联 `db_tests` 原样搬到子目录 |
+
+### 18.2 偏离（D1…D10，逐条可核对）
+
+- **D1 写集勘误（三类，逐类说明）**：
+
+  1. **新增路径**（都在 `docs/60` §3.3 的写集之外，但都是实现该片所必需的）：
+     `telegram/{markdown,sender,delivery,outbound}.rs` 的 `*/tests.rs` 子目录、`delivery/testing.rs`、
+     `crates/mc-http/tests/channels/telegram_round_trip.rs`（+ `main.rs` 一行 `mod`）。
+     `mod.rs` 本身由**起手补充**追加（第二类漏项第 3 次：不写进去四个新文件根本不参与编译）。
+     四个测试子目录是**门 ⑩ 的 800 行硬限**逼出来的切分（`outbound.rs` 首次成形 809 行 ⇒ 再压到 788；
+     `delivery.rs` 764）。**未动** `scripts/file_size_baseline.tsv`。
+  2. **追加到 M7-1 的已合并文件**：`crates/mc-repos/src/channel/delivery.rs` 追加**十条语句**
+     （`get_reply_turn` / `acquire_reply_delivery` / `release_…` / `renew_…` / `mark_…_sending` /
+     `record_…_placeholder` / `record_…_chunk` / `reset_…_send` / `mark_…_send_unknown` / `close_…_turn`）
+     与两个入参结构（`NewReplyDeliveryAttempt` / `CloseReplyDeliveryTurn`）。**没有改 M7-1 的任何一条既有语句或断言** ——
+     它的 `claim_reply_delivery` 与上游 `AcquireChannelReplyDelivery` 有三处语义差异（深度由调用方给且只前进、
+     `phase` 守卫、不重置 `send_state`），所以新增的是**上游形态**的那一条而不是改既有那条（既有那条有自己的调用者与用例）。
+     同时把内联 `mod db_tests` **原样**搬到 `crates/mc-repos/src/channel/delivery/tests.rs`（内联会把文件顶过 800）。
+     理由：投递状态机要**真库**才算落成（DoD 明写"delivery 状态机有表驱动用例"），而 `mc-channel` 的依赖面被 anchor 冻结
+     （没有 `sqlx`、没有 `mc-db`）⇒ PG 语句只能落在 `mc-repos`。
+  3. **改 M7-5 的四个测试替身 + 一条断言**：`api.rs` 的 trait 新增 `edit_message_text` ⇒
+     `install/tests.rs`、`replier/tests.rs`、`resolvers/tests.rs`、`telegram/tests.rs` 里的四个 `TelegramApi` 替身
+     各补一个（失败关闭的）实现。另**一条断言改了**：`telegram/tests.rs` 的
+     `send_uses_plain_text_with_thread_and_quote` → `send_goes_through_the_outbound_sender` ——
+     出站替换点接上发送器之后，"纯文本 + 裸数字 id"按设计变成"HTML + 复合键"（上游 `sender.go` 的 `Send` 就是后者）。
+     这是本片**唯一**改动的 M7-5 用例。
+- **D2 没有事件总线 ⇒ 入口是显式调用（**登记为缺口**，不是漏实现）**：上游 `Outbound` 是 `events.Bus` 的订阅者
+  （transcript / done / failed / cancelled 四类事件），并自带 terminal worker 池、重试最小堆与空闲清扫器来驱动它。
+  本仓**没有**那条进程内总线（`mc-realtime` 是给前端的信封通道）⇒ 本片只落**状态机 + 一次一步**的入口
+  （`push_partial` / `deliver_answer` / `deliver_failure_notice`，回报 `Step{Done,RetryAfter,Failed}`），
+  由宿主按自己的节奏驱动。与 M7-4 对 `slack/outbound.go` 的处理**同一条先例**（本波两个出站片都没有总线可挂）。
+  **宿主接线（`apps/mc-server`）不在本片写集** ⇒ 登记为缺口，与 M7-5 的解析器面装配同一类。
+- **D3 目标解析 = 纯函数 + 调用方取数**：上游 `resolveTarget` 自己查 `channel_task_delivery` /
+  `channel_installation` 并解密凭据。本仓的 adapter 不直接写 DB ⇒ 解析的**语义**落在
+  `ReplyTarget::from_task_delivery`（纯函数，表驱动用例：渠道判别、config 里的 `chat_id` 优先、线程/引用零值），
+  两次读库留在宿主 / 端到端用例那一侧（用例里就是**真库**那两次读）。
+- **D4 没有 `regex` ⇒ 手写扫描器**：上游 `markdown.go` 用 7 条 `regexp`；本 crate 的依赖集在 M7-0 之后冻结
+  （`docs/60` §2.2 不得新增三方依赖）⇒ 七条模式手写成扫描器，**非贪婪语义逐条复刻**（含"斜体那条模式的分组 1
+  吃掉开星号前一个字符"这种会被写丢的细节），并用上游 `telegram_test.go` 的用例 + 边界用例（`****` / `*a**b*` /
+  `a `` b` / 多字节）钉住。多字节上第一版真的踩过：`open + 3` 的字节下标落在 `中`（3 字节）中间 ⇒ panic。
+- **D5 两处 message id 形态不同（逐字照上游）**：`Channel::send` 的 `SendResult` 是**复合键** `"chat:message"`
+  （上游 `messageKey`），而 `channel_reply_delivery.message_id` 是**裸** platform id（`deliveryLease.messageID()`
+  要把它 `ParseInt` 回 `int64`）。两条路径各有各的用例；**不要**把其中一处"统一"成另一处。
+- **D6 `unknown` 那条写**不围栏在 owner 上（上游逐字）：持有者自己的请求挂死、租约过期之后，这条写仍然必须落地 ——
+  否则后继者会读成"什么都没发过"并重发（那是重复投递的成因）。`mark_reply_delivery_send_unknown` 与
+  `DeliveryLedger::record_send` 都按这条落，用例只断言"从 `in_flight` 才能转 `unknown`"。
+- **D7 未接的字段 / 能力**：`send_state = 'in_flight'` 只在 claim 之后写（与上游同）；
+  消息编辑的 `message_thread_id` 不在 `editMessageText` 的 wire 里（上游也没有）。
+  `Capability::MESSAGE_EDIT` 的声明在 M7-5 就已给出，本片**补上了它的实现**（这才是那条位图成立的时刻）。
+- **D8 单副本假设**在这里**不适用**：投递租约是**真库**的 CAS（`owner_token` / `owner_expires_at`），
+  与 R-M7-1 的"无 Redis ⇒ 进程内租约"不同 —— 出站投递的跨副本一致性由 Postgres 承担，不需要 Redis 替身。
+  本片因此没有可登记的 Redis 偏离。
+- **D9 门 ⑩ 的两次拆分**：`crates/mc-repos/src/channel/delivery.rs`（内联用例外出）、
+  `crates/mc-channel/src/telegram/outbound.rs`（首版 809 行 ⇒ 压到 788：删掉三个没被调用的门面函数 + 收文档）。
+  `mc-http/tests/channels/telegram_round_trip.rs` 也按 `too_many_lines` 拆成三段函数（同一条链路的三段，不是三个用例）。
+- **D10 429 的两条处置不同（逐字照上游）**：`sendMessage` 走 `send_message_with_retry_after`
+  （**在同一处**按 Telegram 强制的退避睡一次再试）；`editMessageText` **不**在原地重试，而是回 `Step::RetryAfter`
+  让调度器等（编辑跑在租约里，原地等会让调用越过租约）。两条都有用例（`sender/tests.rs` 的
+  `a_rate_limit_is_retried_exactly_once`、`delivery/tests.rs` 的编辑阶梯表）。
+
+### 18.3 门禁读数（本片当轮实测）
+
+```
+$ bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+```
+
+```
+$ bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+=> overall: PASS — 10/10 gate(s) green in 445s（本片树 @ 起手 base `a326ced7`，新文件已 `git add`）
+
+# ⑥ 真库：migrate=0,e2e=0（新增：mc-repos 的 6 条投递状态机 PG 用例 + mc-http 的 1 条端到端回路）
+
+# ⑦（0 路由 ⇒ 与起手预测**逐字相同**，不变式全部成立）
+upstream 456 (commit f41fae6b08fb) | local 451 registered | baseline 406
+  implemented  364 real +   4 placeholder =  368 / 456   known_gap   88   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5  M2-A=1
+
+# ⑦ 第二条（形态门）：M7 无 allowlist 退路，三类都是硬失败
+$ python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv
+  declared 24 upstream key(s); dual-form required: 0 | single-form: 24
+  shapes OK: every registered upstream key matches the form upstream serves
+  => 0 defect(s) from findings, 0 warning(s)     # exit 0 ⇒ 未引入 MISSING_ALIAS / MISSING_EXACT / EXTRA_ALIAS
+
+# ⑨（本片 0 路由 ⇒ **逐字不变**）
+  pass 6  mismatch 23  unmounted 30  placeholder 0  unevaluable 306
+  report matches crates/mc-conformance/report.json
+
+# ⑩（新文件全部 ≤800；`scripts/file_size_baseline.tsv` **未动**）
+$ python3 scripts/file_size_check.py --quiet   # exit 0
+```
+
+**rebase 到 `0ec41345` 之后**（交付树；在飞片 M2-A 尾-补已进场，它带 1 条路由）：同一套命令 **10/10 绿 / 499s**
+（`migrate=0,e2e=0`），门 ⑦ 的差**全部来自那一片**，本片仍为 0 路由：
+
+```
+$ bash scripts/gates.sh --with-db            # rebase 后的交付树
+upstream 456 (commit f41fae6b08fb) | local 452 registered | baseline 406
+  implemented  365 real +   4 placeholder =  369 / 456   known_gap   87   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5        # M2-A 线已收口，不再有 M2-A 行
+=> overall: PASS — 10/10 gate(s) green in 499s
+```
+
+⇒ 本片**未刷基线**（`--write-baseline` 归 M7-21），本片自身的 `local / implemented / known_gap /
+owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片无关）—— 与派发描述里的预测一致。⚠️ 门 ⑩ 只扫 `git ls-files` ⇒ **新文件必须先 `git add`**
+才受它约束（本片首次跑 ⑩ 时四个新模块还是 untracked，是"假绿"）。
+
+### 18.4 交接（给 M7-21 / INT / 后续出站片）
+
+1. **M7-21（`LUM-1786`）**：本片 **0 路由** ⇒ ⑦ 的 `local / implemented / known_gap / owners.M7` 全部**不动**
+   （不变式 `implemented + known_gap == 456`、`regression == 0`）。请一并收口本片登记的三条缺口：
+   **D2**（出站调度器的宿主接线，与 M7-5 的解析器面装配同一个落点 `apps/mc-server/src/channels.rs`）、
+   **D3**（目标解析的两次读库）、以及 M7-5 留下的 **§17.4 第 1 条**（`register_with` 的宿主调用）。
+2. **lark / dingtalk / wecom 的出站片可照抄的四件事**：`markdown.rs` 的"逐行 + 代码块保真 + 手写非贪婪"、
+   `sender.rs` 的"分片 → 渲染 → 回落"三段、`delivery.rs` 的"**端口 + 真库 CAS + 三层守卫**"
+   （`phase` / `attempt_depth` / `send_state`）、`outbound.rs` 的"**一步一回报**"（`Step` 三态）。
+   四个平台的出站语义能共用后面两件，只有 wire 不同。
+3. **写 `delivery` 面时先查这三件事**：(a) 取租约的 SQL 有**三条** `WHERE` 守卫（收口 / `phase` / 深度），
+   少一条就会让迟到的旧尝试或流式帧重写用户正在读的内容；(b) `unknown` 那条写**不能**围栏在 owner 上；
+   (c) 占位消息**不是进度** —— `message_id` 与 `chunks_sent` 是两个字段，混起来会静默截断回复。
+4. **端到端回路的可复用件**：`crates/mc-http/tests/channels/telegram_round_trip.rs` 里的
+   `BotState`（真方法名的 axum 替身 + 逐字段捕获）、`drive_inbound`（真 `TelegramChannel` + 真 engine `Router`
+   + 五个真 PG 端口）、`drive_streaming_delivery`（真 `PgDeliveryStore` + `push_partial` / `deliver_answer`）。
+   四平台的"每渠道至少一条真实收发回路"（`plan1.md` §5 W7）可以照这份骨架来。
+
+### 18.5 lesson（本片新增）
+
+- **【lesson·"上游一个文件 = 本仓一个文件"在出站面第一次失效】** `outbound.go` 1,633 行里真正**可判定**的部分
+  （占位/编辑阶梯/分片/告知/目标解析）不到一半，其余是**事件总线驱动的基础设施**（worker 池、重试堆、清扫器、
+  按 chat 的限速表）。本仓没有那条总线 ⇒ 照抄基础设施只会得到一堆没人调的代码。**判据**：先把上游按
+  "状态机 / 调度基础设施 / wire"三分，只搬第一与第三类，第二类换成**一次一步的显式入口 + 三态回报**
+  （`Step`），语义等价且可测（用例因此完全不睡真觉）。
+- **【lesson·空值语义要在 wire 层断言"缺席"而不是"零"】** Telegram 的 `message_thread_id` / `reply_parameters`
+  在**空**时的正确形态是**字段缺席**，不是 `0`。这一点只有帧级断言能钉住（`assert!(frame.get(…).is_none())`），
+  Rust 侧的 `#[serde(skip_serializing_if = "…")]` 或 `if x != 0` 写错时，单元测试全绿而线上会被拒。
+- **【lesson·真库用例要用"每次运行都不同"的路由键】** `channel_installation` 的唯一索引建在
+  `(channel_type, config->>'app_id')` 上：写死 `123456` 的用例在上一轮**失败**（清场没跑到）之后会一直红，
+  而报错是"duplicate key"，看起来像代码问题。**做法**：路由键取 run 级随机值（`fresh_bot_id()`），
+  清场只当优化、不当正确性前提。
+- **【lesson·"一条断言改了"要当成交付项写出来】** D1 第 3 条那条改动是本片唯一改 M7-5 用例的地方。
+  它之所以必须改，是因为**替换点接线的时刻**本身就是形态变化的时刻：出站从"纯文本 + 裸 id"变成
+  "HTML + 复合键"。写"将来会被替换"的代码时，用例应断言**语义**（"走发送器"），而不是断言**当年的形状**。
+- **【lesson·`too_many_lines` 会挑出"剧本式用例"】** 端到端回路天生是线性的（造帧 → 入站 → 断言 → 出站 → 断言），
+  pedantic 的 100 行上限把它挑了出来。**修法不是加 `#[allow]`**：把同一条链路的**段落**提成函数
+  （`drive_inbound` / `drive_streaming_delivery`），用例本体只剩"接线 + 三处断言"，反而比原来更清楚。

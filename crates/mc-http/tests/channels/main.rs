@@ -17,8 +17,11 @@
 //! - `channels/support.rs`：连接 / `AppState` 字面量 / 种子 / 请求 / 替身 starter
 //! - `channels/slack.rs`：Slack 四条路由的「未配置 + 未授权」矩阵 + BYO 装/撤 + 绑定兑换幂等
 //! - `channels/telegram.rs`：Telegram 四条路由的同名矩阵 + Bot API 替身
+//! - `channels/telegram_round_trip.rs`：**M7-6**（`LUM-1771`）—— telegram 的端到端收发回路
+//!   （替身造帧 → 真入站 → 真 DB → 真出站 → 帧回替身，`docs/60` §4.2 的渠道门禁证据）
 #![cfg(feature = "test-util")]
 
 mod slack;
 mod support;
 mod telegram;
+mod telegram_round_trip;
