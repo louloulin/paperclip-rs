@@ -12,8 +12,9 @@
 //! 2. 成功与幂等命中都是 **202**，幂等命中**不新建第二行**、换键才新行，原投递行不被改写；
 //! 3. replay 行不带 `dedupe_key`（上游刻意让重放绕开 provider 去重）。
 //!
-//! replay **不唤醒 worker**（本切片登记的 `known_gap`）= 新行落 `queued` 后没人取走，
-//! 所以这里只断言「行落库 + 字段对」，不断言它被处理。
+//! replay 行的下游消费：M5-5 期登记的 `known_gap`（「新行落 `queued` 后没人取走」）已由
+//! M5-D8（`LUM-1745`）的投递 worker 关闭 ⇒ 本文件仍然**只**断言「行落库 + 字段对」，
+//! 不断言它被处理（那是 worker 自己的用例）；唤醒口的判据在 `webhook_notify.rs`。
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
