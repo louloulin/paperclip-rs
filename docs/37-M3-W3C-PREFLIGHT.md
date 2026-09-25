@@ -7517,3 +7517,104 @@ cycle issue。** 同类积压 `todo` 升至 **10 条**（`LUM-1834`＝本 run �
   两者都写 `routes/{mod,mount}.rs` 注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
 - 回收：活物 `target/`（1766 2.1G / 1797 16G）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删
   （1797 那 16G 是**本轮最大的单一可回收池**）。
+
+---
+
+## §86 09:00 cycle（`LUM-1837`，01:00Z 触发）：**合并 #84（M7-1）+ #83（M8-0 anchor）⇒ base `4d8a3f32`**；0 open PR；空位 2 ⇒ 派 **M7-2（`LUM-1767`）+ M8-1（`LUM-1798`）**
+
+### 86.1 起手三连
+
+| 项 | 值 |
+| --- | --- |
+| `df -h /` | **15G 可用（69% used）** —— 起手最紧的一次 |
+| `origin/feat/multica-rs-initial` | **`ed79c5e0`**（自 08:00 cycle 未动） |
+| 认证 GH `pulls?state=open` | **2**（#84 / #83）—— 连续三轮「0 PR」后首次有货 |
+| daemon `running_task_count` | **1**（仅本 cycle 自身）⇒ 在飞 0 片 ⇒ **本项目空位 2** |
+| `/proc/*/cwd` 逐 PID 扫描 | 两片 workdir **零命中** ⇒ 上一轮的两片 run **均已终态** |
+
+`LUM-1766`（M7-1）与 `LUM-1797`（M8-0）**两片都交付了 PR**（§84/§85 记的「仍活、未推分支」在 00:1x–00:5x 之间收口）：
+`#84`（01:00:55Z 开）与 `#83`（00:17:40Z 开）。
+
+### 86.2 判据链（两片各一条，均 `mergeable: true`）
+
+| 检查 | `#84`（M7-1） | `#83`（M8-0 anchor） |
+| --- | --- | --- |
+| 预检 `--numstat` | `ed79c5e0..b711dede` = **18 文件 `+7147/−294`** == PR API **逐字** | `git merge-base = 401548db` ⇒ `401548db..84d60c87` = **84 文件 `+4411/−15`** == PR API **逐字** |
+| 形态 | base **是** head 祖先 ⇒ 合并树 == head 树 | base **不是** head 祖先 ⇒ 需真合 |
+| `merge-tree --write-tree` | `ebadc126…` == `tree(b711dede)` ✓ | 实合 rehearsal：`T1 + 84d60c87` ⇒ **`37b72a01…`** |
+| head 上 CI | **fast / db / contract 三 job 全 success** | 同左（三 job 全 success） |
+| 写集交集 | 18 文件（`mc-channel/src/engine/**` + `mc-repos/src/channel/**`） | 84 文件（`mc-vcs*` / `mc-composio` / `mc-http/routes/{github,vcs,mcp,composio}` / `mc-repos/src/{vcs,github,mcp,composio}` / `state(+integrations)` / `Cargo.lock`） ⇒ **两片交集 = ∅** |
+
+**base 前进段论证（本轮的形态关键）**：`401548db..ed79c5e0` **只动 `docs/37` 一个文件**（+246 行，§82–§85），
+而 `#84`/`#83` **都不改 `docs/37`**（`git diff --numstat 401548db..84d60c87 -- docs/37` = 空）⇒ 合并零冲突，
+且 `T2` 的 docs/37 blob == base 的（`f936bf82`）。**零门禁重跑的依据**：`T1`（= `ed79c5e0` + M7-1 delta）
+**逐字等于 `tree(b711dede)`** ⇒ 它就是 CI 三绿的那棵树；`T1 → T2` **逐字等于 `#83` 的 slice delta**
+（`--numstat` 84/4411/15），而该 delta 在 `T1` 上的落点与 `401548db` 上的**逐字相同**（两片交集 ∅）。
+
+### 86.3 合并与落地树等式
+
+| 步 | 结果 |
+| --- | --- |
+| `PUT /pulls/84/merge`（钉 head `b711dede`） | **`a1f4d22d`** ⇒ `tree` = `ebadc126…` **== 预检** ✓ |
+| `PUT /pulls/83/merge`（钉 head `84d60c87`） | **`4d8a3f32`** ⇒ `tree` = **`37b72a01…` == 预检 `T2`** ✓ |
+| `git diff cyc-merge-test origin/feat/multica-rs-initial` | **0 行**（rehearsal 分支与落地 base **树等价**） |
+
+合并后 **0 open PR**；`LUM-1766` / `LUM-1797` 保持 `in_review`（`done` 归人工）。
+
+### 86.4 合并树上当场实测（不继承读数）
+
+`bash scripts/gates.sh --only route-parity,file-size` ⇒ **2/2 PASS / 0s**：
+
+```
+⑦ upstream 456 (commit f41fae6b08fb) | local 406 registered | baseline 406
+  implemented 326 real + 4 placeholder = 330 / 456   known_gap 126   unclaimed 0   regression 0   local_only 9
+⑩ file-size exit 0
+```
+
+⇒ **两片都是 0 路由片，读数逐字不变**，与 `#84`/`#83` 各自的 ⑦ 声明一致（`owners` 表不变：`M9=33 M7=24 M8=24 M3+=16 M2-A=13 M3=11 M10=5`，和 = 126 ✓）。
+⑨（`conformance`）未在本机重跑：两片 head 的 CI **`contract` job（= route parity + conformance）已各绿**，
+且合并树 = 两条**互斥** delta 的并 ⇒ 以 CI 证据 + 树等式替代重跑（与本仓 `--only` 的 CI 同源命令，无漂移）。
+`--write-baseline` 未跑（归 M7-21 `LUM-1786` / M8-7 `LUM-1804`）。
+
+### 86.5 回收（四判据齐 ⇒ 整删）
+
+`lum-1797-d40efe34eaf7` 的 `target/` **19G** + `lum-1766-ba7ddf538cc8` 的 `target/` **715M** = **19.7G**
+（判据：run 终态 ∧ 交付已在 base ∧ `/proc/*/cwd` 逐 PID 零命中 ∧ `git status --porcelain` 空）。
+`df` **13G → 33G 可用（31%）**。§85 预警的「1797 那 16→19G 是最大单一可回收池」本轮兑现。
+
+### 86.6 派发（空位 2 ⇒ 两片同轮）
+
+依据 `docs/61` §7.2 的单值结论「**M7 ∥ M8 并行**（M7 保 2 槽 / M8 保 1 槽）」与 §7.3 的 stage 表：
+
+| 片 | issue | 写集（逐字） | 硬前置 |
+| --- | --- | --- | --- |
+| **M7-2** engine 会话/命令/租约（0 路由） | `LUM-1767` | `mc-channel/src/engine/{session,batcher,lease,commands}.rs` + `engine/mod.rs`（见下） + `mc-repos/src/channel/{session,inbound_audit,dedup}.rs` | M7-0 + **M7-1 已在 base** ✓ |
+| **M8-1** GitHub App 安装/回调/仓库浏览（**5 路由**） | `LUM-1798` | `mc-vcs-github/{app,token_cache,rest,dto}.rs` + `ghsnapshot/client.rs` + `mc-repos/src/github/{installation,pull_request}.rs` + `routes/github/{install,setup,dto}.rs` | **M8-0 已在 base** ✓ |
+
+**两片交集 = ∅**（`mc-channel`+`mc-repos/channel` vs `mc-vcs-github`+`mc-repos/github`+`routes/github`），
+**都不写** `routes/{mod,mount}.rs`/`state.rs`/`lib.rs`/manifest/`Cargo.lock`（两个 anchor 已把注册面与依赖边一次接好）
+⇒ 满足 `docs/61` §7.2 的「零文件交集」判据。派发后 daemon **3/3**（cycle + 两片），两片 workdir 实测起跑中。
+
+### 86.7 本轮 lesson
+
+1. **非祖先形态 PR 的预检必须用 `merge-base..head`，不能用「当前 base tip..head」**：本轮首次按后者量 `#83`
+   得 `85 文件 +4411/−261`，与 PR API 的 `84/4411/15` 差 **1 文件 / −246 行** —— 差值**恰好**是 base 前进段
+   （`docs/37` §82–§85）在反向 diff 里被算成「删除」。**口径**：`git diff <base_tip>..<head>` 会把 base 自己的
+   新增读成删除 ⇒ 量切片只看 `merge-base..head`；两者都量、再解释差值（`#84` 因 base 是祖先 ⇒ 两法同值，因此
+   **只有非祖先片会踩这个坑**）。
+2. **「第二类漏项」再逮到一条**：`LUM-1767` 的写集把 `mc-channel/src/engine/mod.rs` 列为「只读」，但 anchor
+   在该文件里只声明了 3 个 `pub mod`（`resolvers`/`router`/`supervisor`），并**逐字约定「M7-2 自己追加四行」**
+   ⇒ **必须由本片改**（M7-1 已合入 ⇒ 它是唯一写者）。同类第二处**不需要**改（`mc-repos/src/channel/mod.rs`
+   已由 anchor 预声明全部 8 个 `pub mod`）—— 所以**同类的两个文件，一个要改一个不要**，只能**逐文件实测**
+   （`git show <base>:<file> | grep '^pub mod'`），不能按规则推。两条都已写进该 issue 的「起手补充」。
+3. **cycle workdir 自己会长出一个 1.5–1.6G 的 `target/`**：本轮 `lum-1837-…/workdir/paperclip-rs/target/debug`
+   在 01:02–01:04 由 **pi-lens 的后台 `cargo clippy`** 生成（本 run 自己一条 cargo 都没跑，且伴随一条
+   rust-clippy 的 deferred-runner 提示）⇒ **每个 cycle workdir 的磁盘预算要按 +1.6G 算**，别把它当成在飞片的产物。
+
+### 86.8 观察项（第 24 轮）
+
+- 连续第三轮**干净起手**（无并发 cycle：`LUM-1831`/`1833`/`1834` 均已 `in_review` 终态）。
+- autopilot 建单护栏**仍未落地**；积压 `todo` cycle issue 现 **10 条**（`1837` 自身 + `1826/1810/1805/1748/1740/1737/1726/1533/1521`），只登记不动状态；`blocked` = 0。
+- 下一轮起点：**base `4d8a3f32`**；GH **0 open PR**；在飞 **2 片**（`LUM-1767` ∥ `LUM-1798`，同 stage、交集 ∅）。
+  槽位一空：`LUM-1767` 终 ⇒ **M7-3（`LUM-1768`）**；`LUM-1798` 终 ⇒ **M8-2（`LUM-1799`）/ M8-3（`LUM-1800`）**（均 stage 2、与 M7 侧交集 ∅）。
+  `LUM-1691`/`LUM-1793`（+12/+1 路由）与 `LUM-1745`（M5-D8）仍等：前者争注册段 + `Cargo.lock`，后者争 `state.rs`。
