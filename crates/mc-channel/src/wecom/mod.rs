@@ -26,6 +26,18 @@
 //! M7-15 … M7-20 的事。anchor 的 `register()` 是**空实现**，因此注册表在 anchor 期是空的
 //! （这也正是"零路由、零读数的变化"的形态证据）。
 
+// M7-15（`LUM-1780` / `docs/60-M7-PLAN.md` §3.3）：wecom 的契约 / 凭据 / 安装与绑定面。
+// 追加这 7 行是本片写集的**唯一** mod.rs 改动（写集勘误见 `docs/32` §31 的 D1）：
+// 上游 `internal/integrations/wecom/{types,credentials,credential_probe,installation,store,
+// binding,strings,language,metrics}.go` 的本地落点。
+pub mod binding;
+pub mod credentials;
+pub mod installation;
+pub mod metrics;
+pub mod store;
+pub mod strings;
+pub mod types;
+
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;
 
