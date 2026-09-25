@@ -8810,3 +8810,115 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5        （和 = 87 ✓�
 - **§100.4′ 的时间线写错了**（写成「40 分钟内 8.8G → 13.4G → 20.7G」）。按本 run 的实际时间戳逐点复读：**08:01Z `8.8G` → 08:04Z `13.4G` → 08:08Z `20.7G` → 08:12Z `21.3G`** ⇒ **约 11 分钟涨 12.5G**（峰值 ≈ **1.1G/分钟**，末段仍 **0.75G/分钟**：45 秒内 20,845 → 21,373 MB）。**量级比原写法更严重**，不是更轻。
 - ⇒ **磁盘时间线（订正）**：起手 08:00Z **25G（47%）** → 08:09Z **11.5G（71%）**（⑨ 冷编 + 上述增长）→ 三笔回收后 **14.8G** → 第三笔（陈旧 `/tmp/ups1673`+`/tmp/m6probe`+`/tmp/mc_repos-*` = **311M** + 三个终态工作区 = 余项）**+529,768 KB ≈ 0.5G** ⇒ 收尾 **14G（70%）**、工作区目录 **28 → 3**（只剩三个在飞片）。
 - **结论（下一轮必须照做）**：本仓「一个片的全量 cargo 构建」在**本机磁盘上就是 ~20G 级**的事件，而 **0.75–1.1G/分钟的增速**意味着 **15G 余量只够 ~15–20 分钟**。所以 §100.8 的第一条不是「先看三连」，而是**先看 `LUM-1801` 是否终态并立刻回收它的 target**；它未终态时**任何新 cargo 片都不得同飞**（§87 的 ENOSPC 形态本轮已经有完整前兆数据，只是靠回收续了命）。
+
+## §101 16:30 cycle（`LUM-1924`，08:30Z 触发）：**0 open PR + 空位 0 ⇒ 只读监控轮（第十次）**；🔴 **磁盘首次真触 0 字节**（§100.4″ 的 ENOSPC 前兆本轮兑现为事件）—— `LUM-1772` 的 `--with-db` 门禁被 ENOSPC 打断（session 内 **7 处 `No space left`**、门读数 `5/10` / `7/10`），cycle 自救 **≈1.0G**
+
+### §101.1 起手三连与在飞判活
+
+| 项 | 起手实测（08:31:42Z） | 说明 |
+| --- | --- | --- |
+| `df -h /` | **7.4G 可用（85% 已用）** | 收尾 **3.2G（94%）**；本轮同一天内出现 **0 字节** 窗口，见 §101.2 |
+| `git ls-remote origin refs/heads/feat/multica-rs-initial` | **`5b1028e1`** | = §100 收尾值，**零意外前进**（§100 的三笔 docs 提交之后无任何提交） |
+| 认证 GH `pulls?state=open` | **0** | 无 PR 可合 ⇒ 「合并不变量」本轮无对象（§101.6 F 给出两片交 PR 时的形态预判） |
+| daemon `running_task_count` | **3**（逐 PID 拆 = **cycle 自身 10357 + `LUM-1772` 64293 + `LUM-1801` 7828**） | **本项目在飞 2 ⇒ 空位 = 3 − 1 − 2 = 0** |
+
+| 片 | pi PID / etime | `git status --porcelain` | HEAD | `target/` |
+| --- | --- | ---: | --- | ---: |
+| `LUM-1772`（M7-7，dingtalk 入站 + Stream，0 路由） | **64293** / 59m29s | **24** 项 —— **100% 落在 `crates/mc-channel/src/dingtalk/**`**（越界检查 = **0**，见 §101.6 E） | **`6ae471fe`**（= M7-6 的合并提交；尚不含 §99/§100 的 docs）**未推分支** | **13G** |
+| `LUM-1801`（M8-4，GitHub 入站 webhook + PR 镜像，2 路由） | **7828** / 1h23m | **0**（全部已提交；**2 提交在 base 之上**） | **`9c658b7d`**（含 base `5b1028e1` 的合并提交；**base 是 HEAD 祖先**）**未推分支** | **18G** |
+
+**两片都已在各自的收尾门禁段**（这是本轮与 §99/§100 的结构性差别）：`LUM-1772` 的 `bash scripts/gates.sh --with-db`（pid 6198，08:26 起）在 08:35 前**消失**；`LUM-1801` 的 `bash scripts/gates.sh --with-db --db-url postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801`（pid 6408，08:26 起）到 08:38 仍**活跃**（其 `cargo test` 子进程 46s 龄）。两片都不再是「写代码阶段」，而是「门禁阶段」—— 磁盘成了它们的唯一风险源（§101.2）。
+
+### §101.2 🔴 磁盘事件：首次真触 **0 字节**（ENOSPC 落地），`LUM-1772` 的门禁被打断
+
+**时间线（本 run 全程实测，`df -h /` 逐点复读）**：
+
+| 时刻（UTC） | 可用 | 事件 |
+| --- | ---: | --- |
+| 08:31:42 | **7.4G（85%）** | 起手三连读数 |
+| 08:32:30 | **5.9G** | 本 cycle 的 `multica repo checkout` 落盘（自身源码 + pi-lens 开始起 cargo） |
+| 08:34:0x | **651M** | 两片构建 + **本 cycle workdir 里 pi-lens 起的 9 个 cargo 进程**（`clippy --all-targets -- -D warnings` / `clippy --fix` / `cargo test`）并推 |
+| **08:34:5x** | **0 字节（100%）** | **ENOSPC 窗口**（本仓历史上第一次真正触底；§87 记录的是 `mkdir … .pending-849638484: no space left`，§100.4″ 记录的是前兆） |
+| 08:35:30 | 651M | 处置第 ① 笔后（kill 9 个 pi-lens cargo + 删其 target 656M） |
+| 08:36:16 | **3.8G** | `LUM-1772` 的 run **自行**清空自己的 `target/debug/incremental`（4.0G）—— 它把 `CARGO_INCREMENTAL=0` 写进了重跑配方 |
+| 08:37:35 | 2.8G | `LUM-1801` 继续构建消耗 |
+| 08:38:05 | **3.2G（94%）** | 第 ②③ 笔处置后 |
+
+**受害者（唯一一处，证据在 session 里而非猜测）**：`LUM-1772` 的门禁 `--with-db` 这一趟拿到 **`5/10` / `7/10`**，其 session `~/.multica/pi-sessions/20260925T073627.972972748.jsonl` 内出现 **7 处 `No space left on device`**。⇒ **那两个分数不是「片的质量」读数**，下一轮合它的 PR 时不得把它们当作回归证据（§101.7 lesson 3）。
+
+**cycle 的三笔自救（合计 ≈1.0G）**：
+
+| # | 对象 | 判据 | 量 |
+| --- | --- | ---: | ---: |
+| ① | 本 cycle workdir 里 **pi-lens 自建**的 cargo 进程 9 个（PID 30346/30365/30474/30483/30518/30519/30526/30717/30737）+ 其 `target/` | 它们只服务编辑器提示，**不属任何交付门禁**；PID 逐个落在我自己的 `/proc/<pid>/cwd` 上（非 daemon PID 39、非两片 PID） | **656M** |
+| ② | `~/.npm/_cacache` | 纯缓存（可重下） | **319M** |
+| ③ | `/tmp` 陈旧项：180 分钟以上文件 **731** 个 + `wt/` `upm/` `tt2/` `cargo-manual/` 等目录 | 均属已终态 run；不碰在飞片路径 | **49M** |
+
+- **不重复计**：`LUM-1772` 的 `target/debug/incremental` 我执行 `rm -rf` 时实测已是 **4.0K**（空目录）—— 那 4.0G 是**它自己**清的（同一分钟内 `df` 自己回弹 +3.3G）。
+- **量取法**：`df --output=avail /` 前后差（§98.3 既定口径），不看 `du`。
+
+### §101.3 ⑦ / ⑩ 实测（base `5b1028e1`，读数与 §99.2 / §100.2 **逐字相同**）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 452 registered | baseline 406
+implemented  365 real +   4 placeholder =  369 / 456   known_gap   87   unclaimed 0   regression 0   local_only 9
+gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5        （和 = 87 ✓）
+```
+
+- 门 ⑦ 两条命令 `route_parity.py --quiet` / `slash_alias_audit.py --quiet` **exit 0**；门 ⑩ `file_size_check.py --quiet` **exit 0**。
+- 读数绑定核对：跑 ⑦ 前 `git rev-parse HEAD` = **`5b1028e16bade3488a27841f17c28b3f71780b67` 逐字等于当轮 base**。
+- **门 ⑥ / ⑨ 本轮未跑，理由是磁盘（不是省事）**：满盘窗口里任何 cargo 冷编都会**杀死两片在飞片**（§101.2）。等价的替代论证：`git diff --name-only 8edd49ee..5b1028e1` = **只有 `docs/37-M3-W3C-PREFLIGHT.md`（+132 行）**，非 docs 路径 **0** ⇒ 门 ⑥ 的编译面与门 ⑨ 的 `crates/mc-conformance/report.json` 输入与 §100 逐字相同，§100 的 `⑥ 416/0`、`⑨ report matches` 读数**在输入不变的条件下成立**。
+- **⑦ 基线仍 406**（唯一刷新者仍是 `LUM-1786` M7-21 INT / `LUM-1804` M8-7 INT，且不得同轮）。
+
+### §101.4 看板与状态
+
+- **项目内口径**（`--project da4310b1-…`，`--offset` 分页 3 页）：共 **239** 条 → `in_review 197 / backlog 29 / todo 11 / in_progress 2 / blocked 0`。
+- `in_progress` 恰好 = 两片在飞（`LUM-1772` / `LUM-1801`），无漂移；`LUM-1773`/`1774`/`1786`/`1802`/`1803`/`1804` 均 `backlog`（其中 `1786`/`1802`/`1803`/`1804` 无 assignee）。
+- 本 issue：更名 + `in_review` + 顶层评论（此前 0 评论）。
+- **观察项第 39 轮**：积压 `todo` cycle **10** 条（`1521 1533 1726 1737 1740 1748 1805 1810 1826 1835`）+ 本单 = 11，只登记不动状态；本轮**无并发 cycle**（起手逐 PID 只有本项目 3 个进程）；autopilot「同项目已有未终态 cycle 单时不建新单」护栏仍未落地。
+
+### §101.5 空位裁定：0 个空位 ⇒ 零派发
+
+**空位 = 3 − 1（cycle 自身）− 2（`LUM-1772` ∥ `LUM-1801`）= 0。** 四组候选全部**不派**：
+
+| 候选 | 当轮实测就绪度 | 裁定 |
+| --- | --- | --- |
+| M7-8 `LUM-1773`（0 路由）/ M7-9 `LUM-1774`（7 路由），stage 4 | 硬前置 = **M7-7（`LUM-1772`）在飞** ⇒ 未就绪（另：两者在 `dingtalk/mod.rs` 的交集是必然的，须串行派） | 拦住（槽位 0 + 前置） |
+| M8-5 `LUM-1802`（0 路由，rev 2 已补读数）/ M8-6 `LUM-1803`（5 路由，**rev 1 未补**） | 文件面就绪；但 M8 的 1 槽**已被 `LUM-1801` 占**（`docs/61` §7.2「M7 保 2 / M8 保 1」） | 让位 |
+| M5-D8 `LUM-1745`（0 路由，high，`backlog`，已 assign） | 就绪（无硬前置）；但槽位 0 | 让位 |
+| 两片 INT（`LUM-1786`/`LUM-1804`） | **未就绪**：`owners.M7 = 16 ≠ 0`、`owners.M8 = 6 ≠ 0` | 拦住 |
+
+⇒ 本轮是**只读监控轮（第十次）**。零空位不放空 ⇒ §101.6。
+
+### §101.6 零空位不放空：下一批派发/合并的预飞复核（2 条阴性 + 1 条待补 + 2 条形态预判）
+
+**A. `LUM-1773` / `LUM-1774` 的描述确已补好（rev 2，§100 的「起手补充」段在文末）**：两者都写了①写集补 `crates/mc-channel/src/dingtalk/mod.rs` + 追加纪律（只追加自己那 5 行、不重排 `register*`）、②⑦ 读数九个数、③`docs/32` 号段「当轮实测最大 +1」。**base 侧的漏项结论本轮复测仍成立**：`crates/mc-channel/src/dingtalk/mod.rs` = **37 行 / `pub mod` = 0**，而 `telegram/mod.rs` = **11**、`slack/mod.rs` = **13**（同构目录兄弟 adapter 尺子，第三轮使用）。
+
+**B.【待补】`LUM-1803`（M8-6，5 路由）仍是 rev 1**：§100.6 C 的读数差额**只登记在旧报告里**，没进它的描述。⇒ 派它之前必须照当轮实测补「起手补充」（片后预期 = M8-4 合入后的基线 +5）。`LUM-1802`（rev 2）已补，可直接派。
+
+**C. M8 侧写集 0 缺件（阴性对照第 2 轮）**：`crates/mc-vcs-github/src/ghsnapshot/mod.rs:29–35` 三条 `pub mod`（`client`/`refresh`/`snapshot`）+ 三条 `pub use` 齐全（`refresh`/`snapshot` 正是 `LUM-1802` 的写集）✓；`crates/mc-composio/src/{catalog,client,overlay,service,state}.rs` 全部存在（`LUM-1803` 写集）✓ ⇒ M8 侧无「父 `mod.rs` 未声明」类漏项。
+
+**D. `docs/32` 当轮最大号段 = `## 18.`（M7-6）** ⇒ `LUM-1772` 预期取 `## 19.`（其 `mod.rs` 头部已在写集勘误里引用了 `docs/32` §19），`LUM-1773`/`1774` 顺延。与 §100.6 的记述一致。
+
+**E.【合并前预检·1772 越界检查 = 0】** `LUM-1772` 的 24 项改动 **100% 落在 `crates/mc-channel/src/dingtalk/**`**（`git status --porcelain` 逐条过滤，非 dingtalk 路径集合为空）⇒ 它的 0 路由承诺在**文件面**成立；`mod.rs` 的改动只重写模块文档 + 追加 `pub mod` 五行 + `register*` 三入口（未触碰别的 adapter）。下一轮合它时**不必**担心跨波污染，只需按 0 路由片核对 ⑦ 逐字不变。
+
+**F.【形态预判·1801 交 PR 即「零门禁重跑」】** `LUM-1801` 的 HEAD `9c658b7d` 是**含 base `5b1028e1` 的合并提交**，`git merge-base --is-ancestor 5b1028e1 HEAD` = **真** ⇒ `merge-base == base` ⇒ **合并树恒等于 head 树**（§98/§99 的「第 0 步形态判定」，本轮提前判定，`porcelain` = 0 已全部提交）。⇒ 下一轮起手若看到它的 PR：预检 `--numstat` 与 PR API 逐字比对 + head CI 三绿即可，**零门禁重跑**。`LUM-1772` 反之（HEAD `6ae471fe` 落后 base，且 base 前进段 `6ae471fe..5b1028e1` 含 §99/§100 的 docs + #94 的代码面）⇒ **必须先判 `merge-base --is-ancestor`，多半要真合 + 在它自己的热 target 上重跑 `--with-db` 10/10**（其热 target 13G 在 `lum-1772-89cec5cd720e`，**勿清**；但因本轮它撞过 ENOSPC，重跑前先确认磁盘 ≥8G）。
+
+### §101.7 lesson（本轮新增）
+
+1. **【满盘边缘的 `df` 是振荡量，单次读数不能当派片判据】** 本轮 90 秒内实测 **7.4G → 5.9G → 651M → 0 → 651M → 3.8G → 2.8G → 3.2G**（振幅 **±4G**）。回弹不是「平台 GC」，是 **`LUM-1772` 自己的 run 执行了 `CARGO_INCREMENTAL=0` 并清掉 4.0G incremental**。⇒ 判「能否派新 cargo 片」的正确问法不是「现在多少 G」，而是**「在飞片是否处于全量构建段」+ 连续两次采样**（§100.4″ 的 0.75–1.1G/分钟 已经说明余量与时间窗的关系，本轮的 `0 字节` 说明余量可以瞬间归零）。
+2. **【cycle 自己就是压垮点之一 —— 满盘时先管好自己】** 本 run 一执行 `multica repo checkout`，**pi-lens** 立刻在我的 workdir 起了 **9 个** cargo 进程（`clippy --all-targets -- -D warnings`、`clippy --fix --allow-dirty`、`cargo test --no-fail-fast`）并把它自己的 `target/` 长到 **656M** —— 在一个只剩 7.4G（随后 0）的盘上，这不只是浪费。⇒ **满盘轮的三条纪律**：① checkout 后**不跑任何 cargo**（本轮门 ⑥/⑨ 就以此为由跳过，并用「非 docs 路径 diff = 0」补等价证据）；② 发现 workdir 里出现**非自己主动发起**的 cargo 进程，直接 kill（只服务编辑器提示，不属交付门禁）；③ 收尾前删掉自己的 `target/`。
+3. **【环境杀出来的门禁分数不是「片的质量」读数】** `LUM-1772` 的 `--with-db` 那趟是 `5/10` / `7/10`，session 里 **7 处 `No space left`**。⇒ 判它下一轮的 PR 时，若它没有重跑到 10/10，必须把「ENOSPC 中断」写进判据，**不得**当作回归/缺陷证据。这是 §89「`ld terminated with signal 7 [Bus error]` = 磁盘耗尽 ⇒ 只重跑那个门」的同族形态（那次的信号是 bus error，这次是 ENOSPC 直接拒绝写入）。
+4. **【ENOSPC 的连锁成本是可计量的：被迫关掉增量编译】** `LUM-1772` 为了在窄盘上重跑，把配方改成 `CARGO_INCREMENTAL=0`（增量缓存 4.0G 全弃）⇒ 同一套门禁的重跑变慢数倍。**这就是 owner 的 `incremental = false` 请求反面的代价**：节约的是峰值磁盘，付的是每一轮重跑的时间与随之而来的「跑不完就死」的风险。本轮把它从「节约」升级为「可用性问题」的第三份证据。
+
+### §101.8 next（下一轮第一动作）
+
+- **base `5b1028e1`；GH 0 open PR（收尾时）；daemon = cycle + `LUM-1772` + `LUM-1801` ⇒ 3/3 满（空位 0）。**
+- **三连之前先 `df -h /`，并连采两次**（§101.7 lesson 1；`< 8G` 先回收再谈其它）；然后 `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd` 拆 slot。
+- **片终态即走判据链，先做形态判定**：
+  - `LUM-1801` 终 ⇒ 形态 = **「零门禁重跑」**（§101.6 F：base 是其 HEAD 祖先）⇒ 预检 `--numstat` == PR API 逐字 + head CI 3/3 即可；⑦ 预期 **`local 454 / baseline 406 / implemented 371（367 real + 3 ph）/ known_gap 85 / owners.M8 5`**（2 路由 ⇒ `local +2`；**起手重取实测**）。合 ⇒ 派 `LUM-1802`（rev 2 已就绪），再往后 `LUM-1803`（**先补描述**）。
+  - `LUM-1772` 终 ⇒ 形态多为**非祖先** ⇒ 真合 + 在 `lum-1772-89cec5cd720e` 的热 target 上重跑 `--with-db` **10/10**（**先确认 ≥8G**；它被 ENOSPC 打断过，`5/10 7/10` 不可作证据）⇒ 0 路由 ⇒ ⑦ 应**逐字不变**（`local 452 / baseline 406 / implemented 369（365+4）/ known_gap 87 / owners.M7 16`）。合 ⇒ M7 stage 4 两片**只派其一**（`dingtalk/mod.rs` 交集必然）——先 `LUM-1773`（本渠道端到端证据片、0 路由），`LUM-1774` 后派。
+  - `LUM-1745`（M5-D8，0 路由，high）随时可插（读数按 §100.6 E 刷新）。
+- **两片 INT（`LUM-1786`/`LUM-1804`）仍必须等** `owners.M7 → 0` / `owners.M8 → 0`，且彼此不得同轮跑 `--write-baseline`；`register_with` 的宿主调用（§100.6 D4）由它们一次收口。
+- **回收对象**：任一在飞片终态 ⇒ 按四判据整删其 `target/`（`LUM-1801` 的 18G 是本机最大单块盘占）；本轮已清空 `~/.npm/_cacache`，下一轮别重复计。
+- **⑦ 基线仍 406。**
