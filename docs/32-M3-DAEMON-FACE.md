@@ -1983,7 +1983,184 @@ owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片�
 - **【lesson·`too_many_lines` 会挑出"剧本式用例"】** 端到端回路天生是线性的（造帧 → 入站 → 断言 → 出站 → 断言），
   pedantic 的 100 行上限把它挑了出来。**修法不是加 `#[allow]`**：把同一条链路的**段落**提成函数
   （`drive_inbound` / `drive_streaming_delivery`），用例本体只剩"接线 + 三处断言"，反而比原来更清楚。
-## 19. M8-4（`LUM-1801`）：GitHub 入站 webhook + PR 镜像 + 自动关联/关闭 + issue↔PR 读面（2 路由）
+
+## 19. M7-7（`LUM-1772`）：dingtalk 入站与 Stream 连接（0 路由）
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片当轮 base 上核对。本片**起手 base**
+是 `6ae471fe6272a8ce5b335aa74d049efb3c3aad26`（= 合并 PR #94 / M7-6 之后
+`origin/feat/multica-rs-initial` 的 tip；派发描述的起手补充与 `git fetch` 后的实测一致）。
+提交时 origin tip 已前进到 **`c16e00a6`**（§101 cycle 报告 + 合并面，**docs-only**）⇒ 与本片
+24 个改动文件**零交集**；本片**未 rebase**（无必要），PR 以 `6ae471fe` 为 base。
+
+### 19.1 落点（逐字路径）
+
+| 落点 | 写者 | 上游 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/dingtalk/mod.rs` | M7-0 建 / **M7-7 填** | `dingtalk_channel.go` 的连接那一半（`Connect` / 工厂 / 注册面） |
+| `crates/mc-channel/src/dingtalk/jobs.rs`（新） | M7-7 | `dingtalk_channel.go` 的 `onMessage`（前置判决）+ `runInbound`（作业体） |
+| `crates/mc-channel/src/dingtalk/stream.rs` + `stream/{endpoint,tungstenite}.rs` + `stream/tests.rs` | M7-7 | `ws_frame.go`（67）+ `ws_endpoint.go`（105）+ `ws_connector.go`（226） |
+| `crates/mc-channel/src/dingtalk/inbound.rs` + `inbound/{card,quoted,mention}.rs` + `inbound/{tests,card/tests,quoted/tests}.rs` + `testdata/*.json` | M7-7 | `inbound.go`（827）+ `inbound_card.go`（108）+ 上游 `testdata/` 四份 golden |
+| `crates/mc-channel/src/dingtalk/dispatch.rs` + `dispatch/tests.rs` | M7-7 | `dispatch.go`（202）+ `dingtalk_channel.go` 的 `dispatchSlot` 一族 |
+| `crates/mc-channel/src/dingtalk/emotion.rs` + `emotion/tests.rs` | M7-7 | `emotion.go`（67）的平台契约那一半 |
+| `crates/mc-channel/src/dingtalk/resolvers.rs` + `resolvers/tests.rs` | M7-7 | `resolvers.go`（533）的**判决**那一半 |
+| `crates/mc-channel/src/dingtalk/tests.rs`（新） | M7-7 | 本文件自己的用例（工厂 / 生命周期 / 入站闭环） |
+
+### 19.2 偏离（D1…D14，逐条可核对）
+
+- **D1 写集勘误（三类）**：
+
+  1. **`mod.rs` 本身**（起手补充第二类漏项，第 4 次）：不写进去五个新文件根本不参与编译；
+  2. **新增路径**（`jobs.rs` / `stream/{endpoint,tungstenite}.rs` / `inbound/{card,quoted,mention}.rs` /
+     九个 `*/tests.rs` / `testdata/*.json`）：**全部**是门 ⑩ 的 800 行硬限逼出来的切分，不是风格选择。
+     切分边界都取上游自己的文件边界（`ws_endpoint.go` / `inbound_card.go` / `dispatch.go` 的槽那一族）
+     或"连接怎么跑 / 一条回调怎么入库"这种单一接缝。首次成形时 `inbound.rs` 877 / `mod.rs` 896 /
+     `stream.rs` 952 三处越限，拆完 **775 / 725 / 637**，全部 ≤800；**未动** `scripts/file_size_baseline.tsv`；
+  3. **四份上游 golden 用 `include_str!` 嵌入**（`src/dingtalk/testdata/`）：编译期进二进制 ⇒
+     用例不依赖运行目录（`git ls-files` 会收它们，门 ⑩ 只扫 `.rs`，不受影响）。
+- **D2 出站位**失败关闭（实现归 **M7-8**）：本片**不**交"发不出去却自称 `TEXT`"的半成品，
+  `Channel::send` 明说未接线（同 M7-3 → M7-4 的先例）。`Capability::TEXT | ATTACHMENT` 照上游声明，
+  `ATTACHMENT` 的实现时刻在 M7-8。
+- **D3 生命周期停机的判决换成 `Drop`**：上游在 `Connect` 的 `defer` 里记
+  `stopDispatch = ctx.Err() != nil`（supervisor 取消子 ctx = 生命周期停机；自己返回 = 重连）。
+  本仓的取消是 supervisor 的 `select!` **丢弃** `connect` 的 future（`engine/supervisor.rs:652`）
+  ⇒ 同一个判决由 `RelinquishGuard` 在 `Drop` 里给出（正常返回时 `defuse`）。语义逐条对应，
+  且两边都有用例（`a_gateway_redial_keeps_the_queue_alive` / `a_dropped_connect_future_is_a_lifecycle_stop`）。
+  实测：`tokio::spawn(connect).abort()` 之后 `relinquished() == true`。
+- **D4 队列跨重连复用**：上游 `dispatchSlot` + `dispatchSlotRegistry` 一族落在本片的 `dispatch.rs`
+  （按 AppKey 一格；**已收口的槽不再复用**；`release` 按 `Arc` 比较，重连期重叠的旧代不得删掉
+  已被换代接管的那一格）。三条都有用例。
+- **D5 取消**不穿透工作业签名：上游把 `d.ctx` 派生的 ctx 交给 handler，硬取消时在飞作业**立刻**
+  看到取消；本仓的作业签名（engine 的 `InboundHandler`）没有 ctx ⇒ 硬取消只丢**排队中**的，
+  在飞作业跑完自己那一次（最长 `job_timeout` 120s）。收口预算取 **4s**（小于 supervisor 的
+  `disconnect_timeout = 5s`）⇒ 收口先结束，supervisor 的超时不会先响。
+- **D6 绑定行 `config` 列不写**：上游把 `{conversation_type, conversation_id, staff_id}` 写进
+  `channel_chat_session_binding.config`；本仓的通用 binder 写 `null`（M7-2 的形态，动它要改
+  M7-5/M7-6 的已合用例）。本片把**上游自己的兜底**（按 `channel_chat_id` 寻址）显式落成
+  `outbound_target` 纯函数 ⇒ M7-8 拿到的是同一份判决，而不是"读到一个 null 就崩"。
+- **D7 群清单 / bot 身份只落接缝**：上游 `groupPresenceObserver` 写 `dingtalk_bot_identity` /
+  `dingtalk_group_presence` / `dingtalk_group_activity`（并调 M7-9 的 `BotNameResolver` 解析可读 bot 名）。
+  三张表的**写语句**要落在 `crates/mc-repos/**`（**不在本片写集**）⇒ 本片落 `GroupPresenceObserver`
+  接缝 + 诚实默认值 `NoGroupPresence`（什么都不写、不报错）。观察是**尽力而为**的：失败只记 warn，
+  绝不改判决（上游逐字）—— 一条用例专门钉这条。
+- **D8 bot 名来源是同步接缝**：上游 `BotNameResolver.Resolve` 是 async 且要打平台 API + 权限缓存。
+  本片只定形状（`BotNameSource::bot_name(&self, app_key, conversation_id) -> Option<String>` +
+  `NoBotName` = **失败关闭**：拿不到名字就一个提及都不剥）。实现归 M7-9 的 `bot_identity.go` 面。
+- **D9 读截止 / 单所有者写 / ping 事件**：上游 `SetReadDeadline` 每次读之前设一次、pong 处理器再设一次；
+  本仓把读做成一次 `timeout`，靠把 pong **显式上抛**（`WsEvent::Pong`）实现"每个事件刷新一次截止"
+  （有空闲但在心跳的链路不超时）。ping 与读放进同一个 `select!`（一个连接一个所有者）⇒ 端口可以是
+  `&mut self`，用例的替身也因此简单。`Ping` 事件不显式回写：`tokio-tungstenite` 自己会回
+  （其文档逐字："the library will automatically reply to Ping frames with Pong frames"）。
+- **D10 引导/拨号的错误形态**：上游把响应体原样拼进引导错误；本仓**只带状态码**（网关的错误体可能
+  回声请求，而请求里就带 `AppSecret`）。拨号错误同样**不**原样透出（`connect_async` 的错里带完整
+  URL，而那条 URL 自带一次性 Stream ticket）。两条各有一个反例用例（loopback 服务端的 401 体里
+  就放着那个 secret；拨号失败的断言的则是"错误里没有 ticket"）。
+- **D11 没有 `regex` ⇒ `webURLStart` 手写**：上游那条 `(?i)(?:https?://|www\.)` 在冻结依赖集的
+  前提下写成"取最左匹配"的扫描器（`to_ascii_lowercase` 逐字节等长 ⇒ 下标可直接用于原串）。
+  `web_url_spans` 是**跨片共享件**：M7-8 的 `markdown.rs` 要用它（上游放在 `markdown.go`）⇒
+  请**复用**而不是再写一份（见 19.4）。
+- **D12 凭据形态**：`StreamInstallConfig` 多一个**明文** `app_secret` 列（只给本地 / 用例；生产走
+  `app_secret_encrypted`，且**必须有解密器**才装配）。`AppSecret` / `Decrypter` 是本 crate 的
+  **第三份**同形件（`slack::config::Sensitive` / `telegram::config::Sensitive`）；收敛不在本片写集
+  （要动 M7-3/4/5 的已合文件）⇒ 与 M7-9 的 `config.rs` 合并时一并处理。三个承载凭据的类型
+  （`AppSecret` / `OpenConnectionRequest` / `StreamInstallConfig`）都**手写 `Debug`** + 三条
+  "错误路径不回显凭据"用例。
+- **D13 `/issue` 派发失败告知归 M7-8**：上游 `notifyIssueDispatchError` 要用 `sender` /
+  `targetFromMessage` / `isAddressedIssueCommand`（全在 `outbound_send.go` / `reply_source.go`）⇒
+  本片的作业体在 handler 失败时只记 warn，那条**用户可见的告知**由 M7-8 的回复器接管（登记，不静默）。
+- **D14 本片**不**碰 `mc-repos/**`**：没有新 SQL、没有 schema 变更、没有新迁移（⑥ 门的读数与本片
+  无关的部分照旧）。`dingtalk_*` 三张表的建表在前（`docs/60` §6.4），写入见 D7/D8。
+
+### 19.3 门禁读数（本片当轮实测）
+
+```
+$ CARGO_INCREMENTAL=0 MULTICA_TEST_DATABASE_URL=<local-pg> bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+=> overall: PASS — 10/10 gate(s) green in 433s
+   （⑥ 的读数：migrate=0,e2e=0；真库角色必须带 CREATEDB，否则 ⑧ 的探针库建不出来 ⇒ exit 2）
+
+# ⑦（本片 0 路由 ⇒ 与起手预测**逐字相同**，不变式全部成立）
+upstream 456 (commit f41fae6b08fb) | local 452 registered | baseline 406
+  implemented  365 real +   4 placeholder =  369 / 456   known_gap   87   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5
+
+# ⑦ 第二条（形态门）：M7 无 allowlist 退路，三类都是硬失败
+$ python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv
+  declared 24 upstream key(s); dual-form required: 0 | single-form: 24
+  shapes OK: every registered upstream key matches the form upstream serves
+  => 0 defect(s) from findings, 0 warning(s)      # exit 0 ⇒ 未引入 MISSING_ALIAS / MISSING_EXACT / EXTRA_ALIAS
+
+# ⑨（本片 0 路由 ⇒ **逐字不变**）
+  pass 6  mismatch 23  unmounted 30  placeholder 0  unevaluable 306
+  report matches crates/mc-conformance/report.json
+
+# 本片相关的 12 条 fixture（§6.2 点名的那个集合）
+  12 条 = pass 1 + unmounted 7 + unevaluable 4      # 本片**未**增删任何一条
+
+# ⑩（新文件全部 ≤800；`scripts/file_size_baseline.tsv` **未动**）
+$ python3 scripts/file_size_check.py --quiet   # exit 0
+
+# 单元测试：`cargo test -p mc-channel` ⇒ 471 passed（其中本片 95 条）
+```
+
+⚠️ **门 ⑩ 只扫 `git ls-files`** ⇒ 新文件必须**先 `git add`** 才受它约束（本片首次跑 ⑩ 时四个
+新模块还是 untracked，是"假绿"）。
+
+⚠️ **磁盘（本轮的真实事故，登记给后续片）**：本片与另一片（`lum-1801`）同时在跑，`/` 49G 被两个
+`target/` 吃满（各 16–21G），`--with-db` 的第一次与第二次尝试都撞到 **ENOSPC**：③④ 与 ⑨ 报
+`failed to create directory … target/debug/.fingerprint/…`，⑥ 报
+`ld terminated with signal 7 [Bus error]`（链接器写不出输出），⑧ 报
+`could not create directory "base/…": No space left on device`。**这些都不是代码红**。
+自救三步：`rm -rf target/debug/incremental`（6.8G）、`rm -rf target/debug/deps/mc_conformance-* target/debug/deps/rustc*`、
+以及给 cargo 加 `CARGO_INCREMENTAL=0`（不再生成 incremental）⇒ 第三次跑 **10/10 / 433s**。
+判据留给下一片：**`df` 低于 ~8G 时别开 `--with-db`**（`--all-targets` 全量重建 + `-p mc-http
+--features mc-http/test-util` 的第二份测试二进制各 ~7G）。
+
+### 19.4 交接（给 M7-8 / M7-9 / M7-21 / 宿主）
+
+1. **M7-8（dingtalk 出站/媒体/回复）**：
+   (a) `Channel::send` 是**单点替换**（照 M7-6 的 `telegram/mod.rs` 先例：一个委托，不动别处）；
+   (b) **复用** `inbound::card::web_url_spans` 与 `inbound::card::readable_quoted_text`（上游的
+   `markdown.go` 要用前者，别再写一份扫描器）；
+   (c) `emotion.rs` 的 `EmotionTransport` 端口是你的 `sender` 要实现的那一半（校验与 401 重试
+   已经在 `set_emoji_reaction` 里，别重复实现）；
+   (d) `resolvers::outbound_target` 是出站寻址的**唯一**判决点（含 D6 的兜底）；
+   (e) 队列的 `drain_and_close` 是收口口（D3/D5）。
+2. **M7-9（安装/凭据/群身份 + 7 条路由）**：
+   (a) `config.rs` / `token.go` 接管 `StreamInstallConfig` 与 `Decrypter`（D12 的收敛一并做）；
+   (b) `BotNameSource` / `GroupPresenceObserver` 的两个诚实默认值（`NoBotName` /
+   `NoGroupPresence`）换成真实现 ⇒ 群里的 `@bot` 提及剥离与群清单写入才真正生效；
+   (c) `group-routes` **必须保持 404**（`docs/60` §1.6）；
+   (d) 本片在 `dingtalk/mod.rs` 追加的 `pub mod` 行与 `register_resolvers` 是接线点（后合者 rebase）。
+3. **M7-21（`LUM-1786`）**：本片 **0 路由** ⇒ ⑦ 的 `local / implemented / known_gap / owners.M7`
+   全部**不动**（不变式 `implemented + known_gap == 456`、`regression == 0`）；本片**未刷基线**
+   （`--write-baseline` 归它）。请一并收口本片登记的缺口：D2（出站）、D7/D8（群清单 / bot 名来源）、
+   D13（`/issue` 派发失败告知）、D14（`dingtalk_*` 写语句）。
+4. **宿主（`apps/mc-server/src/channels.rs`，anchor 写集）**：`register_with(&registry, &DingTalkDeps)`
+   （部署密钥 + `NoBotName` 的替换）与 `Dispatcher::drain_and_close` 的停机调用 —— 与 M7-5/M7-6 的
+   两处装配缺口同一个落点。**停机顺序照旧**：先停渠道连接 → 再停调度器 → 最后停 actor。
+
+### 19.5 本片的 lesson（写给后续的渠道片）
+
+- **【lesson·"上游一个文件 = 本仓一个文件"在**连接面**同样会失效】** `ws_connector.go` 226 行里
+  真正属于本仓的是"帧循环 + 三个收尾判决"；`gorilla` 的并发写、`WriteControl` 的语义、
+  ctx 取消都**没有**对应物 ⇒ 换成"单所有者 `select!` + `WsEvent` 上抛 + `Drop` 判决"。
+  判据：先问"上游这一行依赖的是**库**还是**平台**"；依赖库的那部分要按本仓的运行时重写，
+  而不是照抄。
+- **【lesson·`watch::Sender::send` 在没有接收者时会**不更新值**】** `Dispatcher` 的四个 `watch`
+  通道（closed / cancelled / done / workers）第一版全被试出来：`send` 返回 `Err` 且值不变 ⇒
+  "先置位、后来者才订阅"读到旧值（收口判决失效、worker 计数停在 0、`drain_and_close` 立刻宣布
+  完成）。修法是**四条通道各留一个常驻接收者**（`channel_keepers`）。同一形状的第二处：
+  "计数在起任务**之前**加"（否则收口会把刚落地的 enqueue 读成"没有在跑的"）。
+- **【lesson·替身必须保真到"取消安全"】** 脚本化 socket 第一版是"pop 再 sleep"：帧循环在 ping
+  那一支赢下 `select!` 时会**丢弃**正在等的读 future（真 socket 的 `poll_next` 是取消安全的），
+  于是那个替身把事件提前吃掉、用例测出了一个真实实现不会有的行为（"socket closed"）。
+  修法：事件带一个**只定一次**的截止时间，取消后下次继续等同一个时刻。
+- **【lesson·`AppKey` / `AppSecret` 这类混排词必须进反引号】** pedantic 的 `doc_markdown` 会在
+  新文件里逐个挑出来（本片 9 处）；同批还有 `doc_lazy_continuation`（列表项续行要缩进）。
+
+> **号段勘误（cycle 合并 #95 时裁定）**：本节原取 `## 19.`，与同轮在飞的 M7-7（`LUM-1772`，PR #96）撞号；M7-7 的 `mod.rs` 头部已引用 `docs/32 §19`，故本节让号改为 `## 20.`（编号 `19.x → 20.x`），D 编号与内容一字未动。
+
+## 20. M8-4（`LUM-1801`）：GitHub 入站 webhook + PR 镜像 + 自动关联/关闭 + issue↔PR 读面（2 路由）
 
 > **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
 > `## 11.` 是 M8-0）。**起手**实测最大 = `## 17.`（M7-5）⇒ 本片原取 **`## 18.`**；
@@ -1992,7 +2169,7 @@ owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片�
 > `## 11.` 是 M8-0）⇒ 按派发时「起手复核 `N+1`」的约定取 **`## 18.`**（起手实测最大 =
 > `## 17.` = M7-5）。
 
-### 19.1 落点（写集逐字）
+### 20.1 落点（写集逐字）
 
 | 文件 | 行数 | 内容 |
 | --- | --: | --- |
@@ -2024,7 +2201,7 @@ owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片�
 （门 ⑩ 的 800 硬上限），按 `channels/slack.rs` + `channels/slack/store.rs` 的既有手法拆
 （`webhook.rs` 里 `mod ci; mod installations; mod mirror;` ⇒ `routes/github/webhook/*.rs`）。
 
-### 19.2 偏离登记（M8-4-D1 … M8-4-D10）
+### 20.2 偏离登记（M8-4-D1 … M8-4-D10）
 
 | # | 偏离 | 位置 | 性质与理由 |
 | --- | --- | --- | --- |
@@ -2039,7 +2216,7 @@ owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片�
 | **D9** | `link_issue` 的 `linked_by_type` 写 **`"system"`**（上游 `LinkIssueToPullRequest` 的 `strToText("system")`），而非本仓其它路径惯用的 `"webhook"` | `webhook/mirror.rs::apply_auto_link` | 逐字对齐上游 GitHub webhook 路径。**注意** M8-1 的 repo 单测用的是 `"webhook"` —— 那是**测试自己的取值**，不是生产口径；生产口径只有上游这一个 |
 | **D10** | **写集之外**唯一一处改动：`crates/mc-http/tests/issues/auth.rs` 的 501 占位断言重新指向（`pull-requests` → `attachments`，+5 行注释） | `tests/issues/auth.rs:121-140` | 这条断言的**既有惯例**就是「不管哪个切片实现掉当前那条占位，就由它把断言指向下一条最远的缺口」（原注释逐字：「这条断言换过三次落点」，并逐次列出了前三片）。本片把 `GET /api/issues/:id/pull-requests` 从 501 换成真实现（`docs/61` §6.1 预测的 `implemented_placeholder 4→3` 正是这一条）⇒ 断言必然变红（门 ⑥ 实测 `left: 404, right: 501`），**不修就是留一条已知错误的测试**。取 `attachments` 的理由：`docs/61` §9.2 把它判给 `M3+` 并作为 W8 尾账登记 ⇒ 比其它候选耐久。**本片之外零改动**（`git diff` 只有这 13 + 3 个文件） |
 
-### 19.3 专属 DoD 逐条证据（`docs/61` §6.5 的 M8-4 行）
+### 20.3 专属 DoD 逐条证据（`docs/61` §6.5 的 M8-4 行）
 
 | DoD 条目 | 证据 |
 | --- | --- |
@@ -2054,7 +2231,7 @@ owners.M7` 增量为 **0**（451→452 那一条是 M2-A 尾-补的，与本片�
 | ⑩：新文件 ≤800 行 | 见 18.4；`scripts/file_size_baseline.tsv` **未动** |
 | 凭据面：手写 `Debug` 脱敏 + 「错误路径不回显凭据」 | 本片**不新增**凭据类型（App 私钥 / installation token 在 M8-1 的 `app.rs` / `token_cache.rs`，本片只读其不透明接口）。本面对应的一条是**广播不得回显管理手柄**：`installation_deleted…` 断言广播载荷里不出现数字 `installation_id`（只出现内部行 id），`installation_id` 本身是 GitHub 的公开数字标识、但对非 admin 成员是管理手柄（上游逐字口径） |
 
-### 19.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-4b.log`）
+### 20.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-4b.log`）
 
 ```
 bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801'
@@ -2113,7 +2290,7 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:54
   编译。**判据**：门禁日志出现这一行**不是**本片红灯，但不能据此提前报数 —— `ps` 看着自己的
   `gates.sh` PID 还活着就等它。本片两次全量跑：9/10 / 695s（含等待）与 10/10 / 360s。
 
-#### 19.4.1 合并树上的重跑（base 前进到 `5b1028e1` 之后）
+#### 20.4.1 合并树上的重跑（base 前进到 `5b1028e1` 之后）
 
 ```
 bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801'
@@ -2145,7 +2322,7 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:54
   409 —— 那是**上一轮遗留行**，与代码无关。⇒ 门 ⑥ 自己会 `mc-migrate run`，但**不会**清库；
   凡是「唯一约束 + 跨 workspace 归属」这类断言，跨轮复用同一个库就会假红。
 
-### 19.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
+### 20.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
 
 1. **M8-5（ghsnapshot 管道）—— 本片给你留了一个**装配点**，请接上**：`routes/github/webhook.rs`
    的 `set_pr_refresh_port(Arc<dyn PrRefreshPort>)` 就是 `h.PRRefresh` 的等价物；M8-5 实现
