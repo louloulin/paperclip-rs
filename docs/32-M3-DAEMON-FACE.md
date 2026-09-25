@@ -1272,3 +1272,130 @@ M7-3 的五格是 `slack/{inbound,resolvers,media,mrkdwn,config}.rs`。本片**�
 3. **M7-21（INT）**：本片**未**动任何基线（`route-parity-baseline.json` / `file_size_baseline.tsv` /
    `slash-alias-allowlist.tsv`）；本片对 ⑦ 的贡献是 **0**（0 路由、0 占位删除）⇒ `--write-baseline`
    仍归你（`docs/60` §6.1 的 M7-21 行）。
+
+
+---
+
+## 14. M8-2（`LUM-1799`）：VCS provider 抽象 + 连接管理 + 入站 webhook（5 路由）的落点、偏离与门禁读数
+
+`docs/61-M8-PLAN.md` §4.1 的 **stage 2 第二片**（`5` 路由 / 上游 `vcs.go` (336) + `vcs_webhook.go` (335)
++ `integrations/vcs/*` (649) = **1,320** 行）。本节是它在 `docs/32` 的**自己那一段**
+（`docs/61` §3.3 / §6.5 第 7 条）。号段起手复核：`## 11.` = M8-0 anchor、`## 12.` = M8-1
+⇒ 本节**原取** `## 13.`；合并进 base 时 `## 13.` 已被 M7-3（`LUM-1768`，PR #88）占用
+（两片同为 `docs/32` 尾节追加 ⇒ cycle `LUM-1851` 按「两侧都保留」解，本片顺延为 `## 14.`）
+（计划书写的「§9.12」是计划期占位号）。
+
+**起手 base = `ca05edbd`**（= `5f1a34ec` + 合并 #85 / M8-1）。硬前置两条**当轮重验通过**：
+M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里。
+
+### 14.1 落点（写集逐字）
+
+| 文件 | 角色 | 内容 |
+| --- | --- | --- |
+| `crates/mc-vcs/src/forgejo.rs` | **实现**（M8-2） | `ForgejoProvider{kind}`（**一个结构体两个 kind**：`forgejo` + `gitea`，上游 `init()` 逐字）的 `Provider` 六方法；`X-Gitea-Signature` HMAC-SHA256 验签（容忍 `sha256=` 前缀，空 secret 直接拒）；PR / commit-status 载荷解析（三段 owner 回落、`derivePRState` 的**顺序**、五态→三态）；`GET /api/v1/user` 的 token 校验。文件尾承接上游同 package 的 shared helpers：`normalize_instance_url` / `coalesce` / `decode_payload` |
+| `crates/mc-vcs/src/gitlab.rs` | **实现**（M8-2） | `GitLabProvider`：`X-Gitlab-Event` 分类、`X-Gitlab-Token` **明文常量时间**比较、MR 载荷映射（`path_with_namespace` 拆子组、三段 draft 判据、`locked` 读作 open）、pipeline 载荷（合成 context `gitlab/pipeline`）、`GET /api/v4/user`；**手写公历算法**的 `normalize_gitlab_time`（见 13.2 D7） |
+| `crates/mc-repos/src/vcs/connection.rs` | **实现**（M8-2） | `VcsConnectionRow`（**手写 `Debug` 脱敏两个密文列**）+ `VcsConnectionRepo`：`list_by_workspace` / `find_by_id`（不收窄 workspace，webhook 的唯一入口）/ `upsert`（`ON CONFLICT (workspace_id, instance_url)` 原地轮换）/ `rotate_webhook_secret`（`WHERE … AND workspace_id`）/ `delete`（**一条带 `target` CTE 的语句**，4 张表无 FK ⇒ 子行显式清） |
+| `crates/mc-repos/src/vcs/pull_request.rs` | **实现**（M8-2，M8-4 只读） | `VcsPullRequestRow` 全列投影 + `upsert`（15 列逐列 `CASE WHEN EXCLUDED.pr_updated_at >= …` 守卫）+ `find` + `list_by_issue`（按**当前 head_sha** 聚合 passed/failed/pending）+ 关联账 `link_issue`（`preserve_close_intent` 冻结语义）/ `unlink_issue` / `list_issue_ids_for_head` |
+| `crates/mc-repos/src/vcs/commit_status.rs` | **实现**（M8-2） | `VcsCommitStatusRow` + `VcsCommitStatusRepo::upsert`（`WHERE EXCLUDED.updated_at >= 现值` 单调守卫）/ `find` / `list_for_head` |
+| `crates/mc-http/src/routes/vcs/dto.rs` | **实现**（M8-2） | `VcsConnectionResponse` / `VcsConnectResponse`（**手写 `Debug`** 脱敏一次性明文）/ `VcsConnectionsResponse`；`webhook_path` / `webhook_url` + `MULTICA_PUBLIC_URL` 接缝；`error_with_code`（本仓嵌套信封 + 上游稳定 code） |
+| `crates/mc-http/src/routes/vcs/connections.rs` | **实现**（M8-2） | 4 条 workspace 路由 + `VcsScope`（member/admin 门）+ `provider_registry()`（**本片唯一的 registry 构造点**，webhook 复用）+ `seal_secret` / `open_secret`（`secretbox` + base64）+ `mint_webhook_secret`（32 随机字节 hex）+ `is_absolute_http_url` |
+| `crates/mc-http/src/routes/vcs/webhook.rs` | **实现**（M8-2） | 公开路由 `POST /api/webhooks/vcs/:connectionId`：`DefaultBodyLimit(10 MiB)` + **扁平** `{"error":…}` 错误体 + 失败阶梯 404/400/413/500/401 + 两条镜像路径（PR / CI 状态）+ 广播 |
+| `crates/mc-http/tests/vcs/{main,support,connections,webhook}.rs` | **新增测试**（M8-2） | 真库 + 离线实例替身的端到端 **17** 例 |
+| `docs/32` §14（本节） | **文档**（M8-2） | 落点 / 偏离 / `DoD` 证据 / 门禁读数 |
+
+**只读**（未改一个字节）：`crates/mc-secrets/src/secretbox.rs`（M7-0 建）、
+`crates/mc-vcs/src/{provider,events,registry,signature}.rs`、`crates/mc-vcs/Cargo.toml`、
+`crates/mc-http/src/{state.rs,state/integrations.rs,routes/{mod,mount}.rs,routes/vcs/mod.rs}`、
+`crates/mc-repos/src/vcs/mod.rs`、`Cargo.toml` 根、`Cargo.lock`、`docs/fixtures/**`、`apps/**`。
+
+**零注册编辑**：`routes/vcs/mod.rs`（anchor）已 `merge(connections::router()).merge(webhook::router())`
+⇒ 本片只在两个子文件里注册 5 条键，**注册键集合**与上游字面量逐字一致（`dual-form required: 0`）。
+
+### 14.2 偏离登记（M8-2-D1 … M8-2-D11）
+
+| ID | 事项 | 计划书 / anchor 期 | 本片 | 理由 |
+| --- | --- | --- | --- | --- |
+| **M8-2-D1** | 「未配置」的状态码 | `docs/61` §2.5 的 VCS 行写 **503** | **403 + `vcs_not_configured`**（connect / rotate） | 上游 `ConnectVCS` / `RotateVCSConnectionWebhook` 走 `writeFeatureDisabled(...)`，其实现逐字是 `writeErrorCode(w, http.StatusForbidden, …)`；注释写明「被关掉的能力不是瞬时故障，回 503 会招来重试与告警噪音」。M8-1 的 `repositories` 遇上同一分歧做了同一选择（§12.2 D6） |
+| **M8-2-D2** | `error_with_code` 的复用 | §12.5 第 3 条说 `routes/github/install.rs` 的同名函数是 `pub(crate)`，「直接用，不要再复制一份」 | **实测它是私有的**（`fn error_with_code`，无可见性标注）⇒ 本片在 `routes/vcs/dto.rs` 持自己的副本（`routes/agents.rs` 的注释逐字：「各切片各自持有本地副本，与本仓既有约定一致」） | 改 `install.rs` 的可见性 = 动 M8-1 的写集文件；本仓惯例本来就是每片一份 |
+| **M8-2-D3** | 公开 webhook 的错误体形状 | 本仓标准是嵌套 `{"error":{"code","message"}}` | **扁平** `{"error": msg}` + 尾随 `\n` | 上游这一族用 `writeError`（`writeJSON` 还补尾随换行，注释逐字 "Match the trailing newline…"），provider 的投递 UI 按扁平体解析。与 `routes/webhooks/autopilots.rs`（M5-5）同一判断 |
+| **M8-2-D4** | 超大 body 的语义 | 上游 `io.ReadAll(io.LimitReader(r.Body, 10<<20))` **静默截断** | `DefaultBodyLimit(10 MiB)` ⇒ **413** | `Bytes` 抽取器给不出「截断后的前缀」。上游截断后的 body 验签必然失败 ⇒ 得到 **401**。选 413 的理由：它比「看起来像签名不匹配」更容易被投递 UI 解释清楚；上界常量与上游逐字相等（`10 * 1024 * 1024`） |
+| **M8-2-D5** | provider registry 的构造点 | anchor 的 `registry.rs` 是**值**（不是全局可变状态） | `mc_http::routes::vcs::connections::provider_registry()`：每请求构造（3 个零尺寸 `Arc`），`webhook.rs` 复用同一函数 | anchor 逐字要求「不用进程内全局 map（单测互相串扰）」。单一构造点避免两处各注一份而漂移 |
+| **M8-2-D6** | `normalize_instance_url` / `coalesce` / `decode_payload` 的位置 | —— | 落在 `forgejo.rs`（**上游同 package 的 shared helpers 段所在文件**） | `provider.rs` / `signature.rs` / `registry.rs` 被 anchor 冻结；上游这两个 helper 就写在 `forgejo.go` 的文件尾。`gitlab.rs` 与路由层都引用同一份 |
+| **M8-2-D7** | GitLab 时间戳归一化 | 上游 `normalizeGitLabTime` 用 Go `time` 的 layout 表 | **手写公历算法**（`days_from_civil` / `civil_from_days`，Howard Hinnant 公开算法）等价于 `time.Parse(...).UTC().Format(time.RFC3339Nano)` | `mc-vcs/Cargo.toml` 被 anchor 冻结（注释逐字「此后 M8-2 的写者不得再新增三方依赖」）而 `mc-vcs` **没有 `chrono`**；把方言泄进共享解析层则违反 `events.rs` 的「RFC3339 或空串」契约。与上游的两点差异：命名时区只认 `UTC`/`GMT`（GitLab 只发这两种或数字偏移）；偏移范围校验 `±23:59`（与 `time.Parse` 的拒绝一致） |
+| **M8-2-D8** | 载荷解码的 `serde` 口径 | —— | **容器级** `#[serde(default)]` + `decode_payload` 的**对象形状前置** | Go 的 `json.Unmarshal` 对**缺字段**不报错（serde 默认要求字段存在 ⇒ 不加会**收窄**）；但容器级 default 有个副作用：serde 派生的 `visit_seq` 不再要求元素个数 ⇒ `[]` 会被解成零值，**而 Go 对数组进结构体是报错的** ⇒ 显式拦回。`null` 则手动折成 `Default`（Go 对 `null` 是 no-op） |
+| **M8-2-D9** | 本片的范围：**只做镜像** | `docs/61` §1.6 的两列对照写「VCS：PR 镜像 + CI 状态镜像，**无**自动关联/关闭」 | webhook **只** upsert PR / CI 状态 + 广播；关联账的**写入原语与读面**仍按 anchor 的写者表交付（`link_issue` / `unlink_issue` / `list_by_issue` / `list_issue_ids_for_head`），由 M8-4 调用 | 自动关联依赖 `extractIdentifiers` / `lookupIssueByIdentifier` / `advanceIssueToDone`（上游住在 `github.go` L964–L1997 = **M8-4** 的写集）；在 M8-2 里再写一份标识符抽取就是两个写者各持一份策略。⇒ 本波结束后 `issue_vcs_pull_request` 在没有其它写者之前为空，**这是登记过的缺口，不是遗漏** |
+| **M8-2-D10** | `GetIssueCombinedPullRequestCloseAggregate` | `pkg/db/queries/vcs.sql` 里的一条 | **不交付** | 它服务的是「自动推进 issue 到 done」的决策（= 关闭策略，M8-4 的 `closepolicy.rs`），且同时读 `github_pull_request` / `issue_pull_request` 两张 GitHub 表 ⇒ 落点应由那个写者决定。与 D9 同一条边界 |
+| **M8-2-D11** | `rotate_webhook_secret` 无匹配行 | 上游 `:one` 拿不到行 ⇒ handler 报 **500** | 本仓回 **404**（跨 workspace 的行与不存在同判） | 路由层已经在同一 workspace 内确认过连接存在 ⇒ 0 行只可能是竞态/越权，404 比「服务器内部错误」更诚实。上游那 500 是 sqlc `:one` 的副产物，不是刻意契约 |
+
+**另记两条文案债**（与 §12.2 D12 同性质，归 M8-7 收口）：
+① `crates/mc-repos/src/vcs/mod.rs` 与三个子文件的模块头还写着「M8-2 待落地 / doc-only 桩」；
+② `crates/mc-http/src/routes/vcs/mod.rs` 的「anchor 期：三个子文件全是空 `Router::new()`」已过期。
+两者都在 anchor 冻结文件里，本片**不改**。
+
+### 14.3 专属 `DoD` 的证据（`docs/61` §6.5 的 M8-2 行逐条）
+
+| `DoD` 条目 | 证据（用例） |
+| --- | --- |
+| `Provider` trait 的**三个检验**（forgejo + gitlab + 未注册 provider 报可区分错误） | `forgejo.rs::register_populates_both_forgejo_and_gitea`（两个 kind 一份 wire 行为：同一 body 的解析结果逐字相等）、`gitlab.rs::register_makes_gitlab_resolvable_and_unknown_kind_errors`（`RegistryError::UnknownProvider(Forgejo)` + 错误文案 `vcs: no provider registered for kind \`forgejo\``，**不是 panic、不是静默 None**）、`connections.rs::connect_rejects_bad_requests_and_maps_outbound_failures`（未注册 / 未认识的 provider ⇒ 400 `unsupported provider`） |
+| **三种签名方案各 1 正例 + 1 反例** | Forgejo/Gitea HMAC：`forgejo.rs::hmac_signature_accepts_correct_and_rejects_tampered`（正例裸 hex + `sha256=` 前缀；反例：差 1 位 / body 差 1 字节 / 换密钥 / 缺头 / 空 secret / 非法 hex）+ **真库 e2e** `tests/vcs/webhook.rs::forgejo_hmac_accepts_signed_frame_and_rejects_tampered_one`（三次反例之后仍然**只有 1 行**）；GitLab 明文：`gitlab.rs::plaintext_token_accepts_correct_and_rejects_others`（差 1 位 / 长一截 / 空 / 大小写）+ e2e `gitlab_plaintext_token_accepts_matching_and_rejects_others`。常量时间比较的共用原语在 anchor 的 `signature.rs`（本片只读） |
+| `rotate-webhook`：旧 secret **立刻失效** / 新 secret **立刻生效** / 明文**只此一次** | `tests/vcs/connections.rs::rotate_returns_one_time_secret_and_nothing_else_does`（rotate 后库里解出来的就是**新** secret、`≠` 旧值；rotate 之后再读列表，**两个** secret 都不出现在响应里；跨 workspace 的连接 id ⇒ 404） |
+| per-connection secret 与 PAT 落库 = `secretbox` **密文**（明文入库即失败）+ `Debug` 脱敏 | e2e `connect_forgejo_persists_ciphertext_only`：响应里没有 PAT（只有一次性 `webhook_secret`）、没有 `encrypted` 字样；库里两列 `≠` 明文且**能解回原值**；`connection.rs::debug_redacts_encrypted_columns`（`VcsConnectionRow` 的手写 `Debug`）+ `dto.rs::connection_response_never_carries_credential_columns`（响应 JSON 里一个字节的密文都不许出现）+ `dto.rs::connect_response_debug_redacts_the_one_time_secret` |
+| 5 条路由的「**产品边界** vs **未配置**」两层语义逐端点 | `product_boundary_off_matrix`（GET 200 + 四格恒定 / connect 404 / rotate 404 / **DELETE 不看边界** 204）、`boundary_on_without_key_matrix`（GET 200 + `configured:false` / connect + rotate 403 `vcs_not_configured` / **一行都不落库**）、`authorization_matrix_per_endpoint`（member+guest 403 ×3 / outsider 404 / 无会话 401 / 非法 ws 400 / 非法 connection id 400 ×2 / member 列表 `can_manage:false` vs admin `true`）、`webhook.rs::missing_surface_and_unknown_connection_are_404`（边界关 / 密钥缺 / 连接不存在三条路径都是 **404 `unknown connection`**）、`undecryptable_connection_secret_is_500_and_writes_nothing` |
+| **离线替身端到端**（每连接自带 `instance_url` 是天然接缝） | `connect_forgejo_persists_ciphertext_only`（路由 → 真 HTTP `/api/v1/user`（替身）→ `secretbox` 封装 → 真库 → 响应 + `webhook_url` 派生）与 `connect_gitlab_uses_api_v4`（`/api/v4/user`）；**入站**面用真实 wire 帧（真 HMAC / 真 `X-Gitlab-Token` 头 + 真 JSON），**不需要**替身。替身三条纪律：只替 platform wire（axum 起的假实例，不是假 service）、字段逐项断言、两个反例必测（验签失败不落库 / 重复投递只留一行） |
+| 幂等与单调（`docs/61` §4.2 纪律 ③） | `pull_request_mirror_is_idempotent_and_monotonic`（同帧两次 1 行；陈旧帧不得回退 title/state/head_sha；`merged=true` 归一化）、`commit_status_mirror_is_context_keyed_and_monotonic`（context 是主键的一部分；陈旧重投递被守卫挡住；缺 sha/state 确认但忽略）、`gitlab_pipeline_uses_synthetic_context`、`unmodelled_event_is_acknowledged_without_writing`（202 且不落任何行；**仍然要验签**） |
+
+### 14.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-2.log` / `gates-clippy.log`）
+
+```
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:5432/mc_lum1799'
+  ①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑥db 0（migrate=0, e2e=0）
+  ⑧schema-drift 0 · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0
+  ⇒ overall: PASS — 10/10 gate(s) green in 346s
+```
+
+- ⑦（**本片会动读数**；`baseline 406` **不动**）：`upstream 456 (commit f41fae6b08fb) | local 416 registered`、
+  `implemented 336 real + 4 placeholder = 340 / 456`、`known_gap 116`、`unclaimed 0`、`regression 0`、
+  `local_only 9`、`gaps by owner: M9=33 M7=24 **M8=14** M3+=16 M2-A=13 M3=11 M10=5`（和 = 116 ✓）。
+  **与 issue 描述「起手补充（11:00 cycle）」的片后预期逐字相同**：`local 411→416`、`implemented 335→340`、
+  `known_gap 121→116`、`owners.M8 19→14`（−5 = 本片 5 条路由）；`--write-baseline` **未跑**（归 M8-7）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py --quiet` = **exit 0**（5 条均为上游 plain 注册，
+  `dual-form required: 0`；M8 没有 allowlist 退路 ⇒ 三类缺陷都是硬失败）。
+- ⑩：**0 违规**，`scripts/file_size_baseline.tsv` **未动**。本片最大文件在 `cargo fmt --all` **之后**量：
+  `crates/mc-vcs/src/gitlab.rs` **788** 行（⚠️ 硬限 800，余量只有 12 行 —— 它承接了手写公历算法 +
+  时间戳测试；后续要改它请先看这条）、`tests/vcs/connections.rs` 763、`mc-repos/vcs/pull_request.rs` 776、
+  `forgejo.rs` 656、其余 ≤ 549。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片 0 fixture 改动 ⇒ 未漂移；M8 面的那条
+  composio fixture 仍归 M8-6）。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表改动 ⇒ 与基线同形）。
+- ⑥：`mc-migrate` 566 个迁移 + `--ignored` 全绿（含本片 **19** 例真库用例：`mc-repos::vcs` 2 例 db +
+  `mc-http --test vcs` 17 例）。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿；本片在其中新增 **34** 例**零 DB** 用例
+  （`mc-vcs` 单元 19：`forgejo.rs` 8 + `gitlab.rs` 11；`mc-repos::vcs` 单元 5；
+  `mc-http` lib 的 `routes::vcs` 10）⇒ 连同真库 19 例，本片共 **53** 例新测试。
+- **【lesson·磁盘满的两种表现】** 本片起手 `df` 16G 可用；一次 `--all-targets` 冷建 + 一次 17 例 e2e
+  链接就打满到 **358MB**，报错形态是 `could not create incremental compilation session directory …:
+  No space left on device`（**编译期**）与 `error: could not create directory …/.fingerprint`
+  （**门 ⑨**）。同项目另一片（`lum-1767` / 其合并树复验 run `LUM-1847`）当时正在跑
+  `CARGO_INCREMENTAL=0 gates.sh --with-db`，`target` 23G 且**有活进程**（`/proc/*/cwd` 逐 PID 命中）
+  ⇒ 未动它。**本片自己的处置**：`rm -rf target/debug/incremental`（3.0G）→ 仍不够 →
+  `cargo clean` + **`CARGO_INCREMENTAL=0` 全量重建**（target 5.3G，比之前的 11G 省一半；
+  与本项目 cycle 的 `LUM-1847` 同一手法）。此后所有 cargo 调用都带 `CARGO_INCREMENTAL=0`
+  （env 覆盖 `.cargo/config.toml` 的 `incremental = true`），门禁读数不受影响（同一脚本、同一批命令）。
+
+### 14.5 交接（给 M8-3 / M8-4 / M8-6 / M8-7）
+
+1. **M8-4 读这三处**：`mc_repos::vcs::pull_request`（`link_issue` 的 `preserve_close_intent` 冻结语义、
+  `unlink_issue` 的「终态后不得调用」纪律、`list_by_issue` 的聚合、`list_issue_ids_for_head` 的扇出
+  **都已就位并有真库用例**）、`mc_vcs::events::{PullRequestEvent,CIStatusEvent}`（归一化后的唯一形状；
+  终态判据用 `PullRequestEvent::is_terminal()`，**不要**在 handler 里重写 action 集合）、
+  `mc_repos::vcs::commit_status`（单调守卫的语义与「必须喂事件时间戳」这条前提）。
+  你的两条路由（`POST /api/webhooks/github` / `GET /api/issues/:id/pull-requests`）需要
+  跨 GitHub+VCS 的关闭聚合时，**新增**查询的落点请选 `mc-repos/src/github/pull_request.rs`
+  或你自己的新文件（见 §14.2 D10 —— 本片刻意没写那条跨表 CTE）。
+2. **M8-3 / M8-6**：本片**没有**碰 `routes/{mcp,composio}/**`、`mc-composio/**`、`state*.rs`、
+  `routes/{mod,mount}.rs`、manifest ⇒ 与本片写集**零交集**。公开 webhook 的**扁平**错误体与
+  `DefaultBodyLimit` 手法（`webhook.rs`）可直接照抄（composio 的 callback 是同类公开路由）。
+3. **M8-7（INT）**：本片把 ⑦ 推成 `local 416 / implemented 340 / known_gap 116 / owners.M8 14`；
+  下一次刷新（`--write-baseline`：`baseline 406 → ？`）归 M8-7。请一并收口两条文案债（§14.2 末）与
+  **D9/D10 两条「登记过的不实现」**（VCS 侧自动关联/关闭、跨表关闭聚合），并在 INT 报告里复述
+  「`issue_vcs_pull_request` 在本波结束时仍为空」这条已知缺口。
