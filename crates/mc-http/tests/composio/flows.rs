@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use crate::support::{
     api_key_for, app_with, call, cleanup, configured_keys, connect, error_code, req_json,
-    reset_calls, seed_user, send, stub_base, CALLBACK_BASE, VARIANT_BOOM, VARIANT_FOREIGN,
-    VARIANT_NO_CONFIGS, VARIANT_OK,
+    seed_user, send, stub_base, CALLBACK_BASE, VARIANT_BOOM, VARIANT_FOREIGN, VARIANT_NO_CONFIGS,
+    VARIANT_OK,
 };
 
 /// 从替身记录的那次 `/connected_accounts/link` 请求里取出 signed state（**零 mock** 的关键：
@@ -61,7 +61,6 @@ async fn connect_then_callback_then_persist_then_toolkits() {
     let user = seed_user(&pool).await;
     let api_key = api_key_for(VARIANT_OK, user);
     let app = app_with(db.clone(), configured_keys(VARIANT_OK, user).await, true);
-    reset_calls();
 
     // ① connect init：拿托管链接。
     let (status, body, _, raw) = send(
@@ -272,7 +271,6 @@ async fn disconnect_is_idempotent_and_hides_foreign_connections() {
     };
     let user = seed_user(&pool).await;
     let app = app_with(db.clone(), configured_keys(VARIANT_OK, user).await, true);
-    reset_calls();
 
     // 先连一条（经回调，避免测试自己插行）。
     let state = crate::support::flow_state(&app, user).await;

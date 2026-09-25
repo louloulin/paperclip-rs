@@ -11414,3 +11414,152 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - **门 ⑥ 红先分类**（`docs/37` §128.4 表）：`telegram.rs` / `telegram_round_trip.rs` / `composio/**` = 名录；`jobs_plugin_hook.rs:427` = 弱等待；`lease_db.rs:273` = 时钟桶跨界 —— **后两条正是 `LUM-1980` 本轮在修的**，它合入后这两条应消失；仍红就先查 `df`（`os error 28`）+ 换**当轮新建库**（角色带 `CREATEDB`）。
 - **槽位链（勿抄旧行）**：`1784` 终 ⇒ 判据链 + 合入 ⇒ 空位 ⇒ **`LUM-1785`**（M7-20 rev 5；**必须在 1784 合入后**起手，同写 `wecom/mod.rs` 追加段）⇒ 之后 **`LUM-1786`**（M7-21 INT rev 6；`owners.M7 = 0` **已成立**，唯一一次 `--write-baseline`：`458` → 当轮 `local` 实测；与 M9-INT `LUM-1825` **不得同轮**）。`LUM-1980` 终 ⇒ 其合入即修复 7 条测试侧竞态 ⇒ 之后门 ⑥ 的「概率门」判据要**重定基线**（旧名录不再是有效参照）。
 - **回收预告**：`LUM-1784` 一合 ⇒ 其 **29G** `target/` 四判据齐即可整删（**本轮最大的单块回收**）；`LUM-1980` 一合 ⇒ 4.2G。
+
+### §129.9 轮内转非只读：`LUM-1980` 在 23:24:00Z 交付 ⇒ 判据链合并 **PR #112**
+
+`LUM-1980` 在本轮进行中交付：`fd85db9f`（测试修复，23:12:27Z）→ 并 base `0273b817`（= **本 run 的 §129 直推**）→ head **`3e99926f`**（23:12:35Z）→ **PR #112 于 23:24:00Z 开出**，其后 `porcelain` 归零、pi 进程在 23:3xZ 消失 ⇒ **空位 1**。判据链六步：
+
+| 步 | 判据 | 本 run 实测 |
+| --- | --- | --- |
+| ① | `merge-base..head` numstat == PR API **逐字** | `git diff --numstat 0273b817 3e99926f` = **10 文件 `+337 −33`**，与 `pulls/112/files` **逐文件逐字相等** ✓ |
+| ② | 形态判定 | `0273b817` **是** head 的祖先（片自己把 base 并了进来）⇒ **合并平凡** ✓ |
+| ③ | 三读数 | `head^{tree}` == `git merge-tree --write-tree` == **`refs/pull/112/merge^{tree}`** = **`bcf7531c61f436e47561010ed54d9f8156be30ef`** ✓（`refs/pull/N/merge` 在 PR **open** 时可得 ⇒ 再次印证 §128.3 的口径修正「合并即消失 ≠ 冲突」） |
+| ④ | 证据 | **同树** `--with-db` **10/10**（`overall: PASS — 10/10 gate(s) green in 513s`，DB `mc_lum1980`）。「与合并树同一棵树」用**时间戳**证明：末笔提交 `3e99926f` = **23:12:35Z** < 门禁完成 = **23:21:23Z**，且片工作树 `porcelain` 为零 ⇒ 那次 10/10 跑的**就是** head 树 ✓ |
+| ⑤ | 钉 sha + 合并 | API `PUT /pulls/112/merge` 带 40 位 sha `3e99926f…` + `merge_method=merge` ⇒ 落地提交 **`b248e02bddc6ae573e08705988325900d4ae656c`** ✓ |
+| ⑥ | 落地验证 | 落地 `^{tree}` == `bcf7531c…` **逐字命中**、`git diff 3e99926f <base>` = **0 行**；⑦ 在落地 base 上当场重跑 **2/2 绿（1s）**、九个数**逐字不变**（0 路由纯测试片，与预测一致）✓ |
+
+- **片的名录从 5 条扩到 8 条**（PR 标题即写「八条」）：8 个测试文件含 §128 新抓的两条（`jobs_plugin_hook.rs:427` 弱等待 / `lease_db.rs:273` 时钟桶跨界），且 `lease_db.rs` 的 `TEMP-EXPERIMENT` 复现块**已在提交前删除**（`git show 3e99926f:… | grep -c TEMP-EXPERIMENT` = **0**）、`catch_up_window` 终值 = `Duration::minutes(5)`（§128.4(b) 的建议①）；另带两个 docs（`docs/32` §36 / `docs/48`）。
+- **回收**：`LUM-1980` 的 `target/` **19G** 按四判据（PR 已合 ∧ run 终态 ∧ `/proc/*/cwd` 逐 PID 零命中 ∧ `porcelain` 空）整删 ⇒ `df -h /` **5.8G → 25G**。
+- **本轮回收合计**：PG 真库 **+563 MiB** + `LUM-1980` 的**陈旧** `incremental` **≈1G**（`CARGO_INCREMENTAL=0` 的构建不写它；末次写入 23:06:53 ⇒ 18.7 分钟前、零 fd 引用）+ `target/` **19G**。
+
+### §129.10 🔴 号段撞车（新 finding）+ 空位 1 **无处可派**
+
+- 🔴 **`docs/32` 的 `## 36.` 被两片同时占用**：`LUM-1980`（**已落地** `b248e02b`）写 `## 36. 门 ⑥ 的测试侧竞态收口（LUM-1980）：八条`，而在飞的 `LUM-1784`（提交 `ec95337d`，未推分支）同样写 `## 36. M7-19（LUM-1784）：wecom 入站与解析` ⇒ **它一合并就会出现重号**（甚至同点追加冲突）。**裁定（沿用 §127 的冲突定式「两侧都保留 + 号段归位到编号单调位」）**：先落地的 `LUM-1980` 保 `## 36.`，`LUM-1784` 的重编号为 **`## 37.`** ⇒ 后续 M7-20 = **`## 38.`**、M7-21 INT = **`## 39.`**。已写进三片描述（`LUM-1784` rev 7 / `1785` rev 6 / `1786` rev 7）。
+  - **lesson（第五类预飞检查 = 号段对账）**：号由**落地顺序**占，而各片在**起手时**就按「末号 + 1」写进自己的 docs ⇒ **凡有 ≥2 片同时在飞，号段必须在合并那一刻再对一次账**；本 run 是在合并 `#112` 之后用 `git show HEAD:docs/32-… | grep '^## ' | tail -4` 才发现的。
+- **空位 1（`LUM-1980` 终态）但无处可派**（逐条给可观测阻塞，不是「忘了派」）：`LUM-1785`（M7-20）硬前置 = `LUM-1784` 合入 ⇒ 当轮 base 里它的 5 个产物**仍全 MISSING**；`LUM-1786`（M7-21 INT）= 等 1784+1785 收口；`LUM-1815`（M9-0）= `docs/62` §7.1 硬前置「M7 全合」未成立；`LUM-1745`（M5-D8）**已交付且已合入**（`apps/mc-server/src/webhook_worker.rs` 在 base、`main.rs` 第 10 步已接线），issue 停在 `in_review` 等人工验收 ⇒ **不是派发候选**。⇒ 空位**刻意留空**。
+- **轮末 base = `b248e02b` + 本 §129.9/§129.10 docs-only 直推**（起手一律 `git rev-parse` 实测）；GH 轮末 **0 open PR**；daemon **2**（cycle 自身 ∥ `LUM-1784`）。
+
+## §130 07:30 cycle（`LUM-2087`，23:30Z 触发）：**起手 0 open PR + 空位 1 + 磁盘健康（20G / 58%）⇒ 只读监控轮（第二十六次）**；⑦/⑩ 当场（与 §129 逐字相同）、⑨ 用「门输入逐 blob 恒等」**第 9 次主动不冷编**；🔴 **门 ⑥ 重定基线拿到「受控对照对」：`f3c92913` 与 `0273b817` 只差 `docs/37` 一个文件（+76 行、零代码）却 CI 一红一绿（#369 红 / #370 绿），且近 3 个红 run 的红点逐字取证后 100% 落在 `LUM-1980` 名录内、无未登记签名**；在飞 `LUM-1784` 的 3 条自报**独立复核全中**（⑦ 九个数 / ⑨ 三个输入 blob / ⑩ 最长新文件 773 行 + `scanned 1147`）；**合并预演：base × 1784 head 的唯一冲突面 = `docs/32`（号段），其余全自动合并**；零派发（**空位 1 无处可派**，逐条给可观测阻塞判据）；回收 +40 MB（PG 死库 2 个；`df` 粒度看不出）
+
+### §130.1 起手（三连 + 逐 PID 拆槽）：**无并发 cycle（连续第 20 轮）**
+
+| 读数 | 实测（23:30–23:35Z） |
+| --- | --- |
+| `df -h /` | **20G 可用（58%）** 23:30Z → **20G（60% used）** 23:35Z ⇒ 4 分钟内被在飞片的 ⑥ 编译吃掉的量**小于 1G**（本 run 零 cargo） |
+| `git ls-remote origin feat/multica-rs-initial` | **`067329b6`**（= §129.9/§129.10 的 docs 直推，23:2xZ） |
+| 认证 GH `pulls?state=open` | **0**（23:31Z） |
+| daemon `running_task_count` | **2**（`active_task_count = 2`）⇒ **未越限** |
+| 逐 PID（`cmdline` + `/proc/*/cwd`） | `22090` = `lum-1784`（**etime 1h49m**）∥ `6755` = **本 run**；1784 下挂着 `63388 timeout 4800 bash scripts/gates.sh --with-db` → `14378 cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server` → `16941 autopilots-dd82…`（**已进入 ⑥ 的用例执行段，不再是编译段**） |
+| 空位 | **3 − 1(cycle) − 1(在飞) = 1** |
+
+- 🔴 **新坑（起手第一步就有坑）**：`multica repo checkout https://github.com/louloulin/paperclip-rs` 这一次落在 **`main` 线**（HEAD `4fc96f30` = 另一条历史，与 `feat/multica-rs-initial` **无共同祖先** ⇒ `git merge-base` **rc=1**、`git log origin/feat/multica-rs-initial..HEAD` 打出一整棵无关树）。**必须先** `git fetch origin feat/multica-rs-initial` + `git checkout -B agent/devbox5/<suffix> origin/feat/multica-rs-initial`（本 run 已做）——否则 ⑦/⑩/⑨ 会对着**错误的树**跑，而且**不会报错**（脚本只看工作树）。判据：起手第一件事核对 `git merge-base --is-ancestor <base> HEAD`（或直接 `git rev-parse HEAD` == `git ls-remote` 的 base）。
+
+### §130.2 在飞片 `LUM-1784`（M7-19 wecom 入站与解析，0 路由）体检：**活、已提交、树干净、未推**；3 条自报**独立复核全中**
+
+| 项 | 实测（23:31–23:35Z） |
+| --- | --- |
+| 提交 | **2 笔**（`f617bdd8` feat / `effc01cb` docs，末笔 `23:27:16Z`），merge-base = `0273b817`（比 base `067329b6` 落后 3 笔 ⇒ **它必须并一次 base**，而那次并会撞 `docs/32`，见 §130.6） |
+| `porcelain` | **0**（树干净；§129 的 14→21 项已全部落成提交） |
+| 分支 | `agent/devbox5/80429b9e50ef` **未推**（`git ls-remote` 空） |
+| 当前动作 | `bash scripts/gates.sh --with-db`（`timeout 4800`，**已到 ⑥ 的用例执行段**）⇒ **收尾段**，不是迭代段 |
+| 自报（feat 提交正文） | `--with-db` **10/10 PASS / 556s**（新库 `multica_lum1784`）、⑦ 九个数逐字不变、⑨ blob 未动、⑩ 最长新文件 773 行、`mc-channel` lib **1449 passed** |
+
+**独立复核（零成本、三中三）**：
+
+1. **⑦**：在**它自己的工作树**（= 已提交的 `effc01cb`，`porcelain` 为零 ⇒ 与提交树同一棵）上当场跑 `python3 scripts/route_parity.py` ⇒ `upstream 456 | local 474 | baseline 458 | implemented 388 real + 3 placeholder = 391 / 456 | known_gap 65 | unclaimed 0 | regression 0 | local_only 9`、`gaps by owner: M9=33 M3+=16 M3=11 M10=5` ⇒ **与 base 的九个数逐字相同**，其「0 路由」自报成立 ✓
+2. **⑨**：三个门输入 blob 与 base **逐一恒等** —— `report.json` = `3eb0430a…`、`crates/mc-conformance` tree = `f696e5cc…`、`docs/fixtures` tree = `5e44cecd…` ⇒ 「blob 未动」成立 ✓
+3. **⑩**：在它的树上 `scanned **1147**` / `baseline 10` / `violations 0`（base = **1130**）——🔴 **增量算得出来**：`git diff --diff-filter=A 067329b6 effc01cb` = **17 个文件、17 个全是 `.rs`** 且全在 ⑩ 的口径 `crates/**.rs` 内 ⇒ `1130 + 17 = 1147` **逐字吻合**；最长新文件 = `wecom_channel/inbound.rs` **773 行**（< 800）✓
+
+⇒ 该片**已具备交付形态**（提交 + 树干净 + 门禁跑过 + 自报可复核），差「推分支 + 开 PR」这一步。
+
+### §130.3 ⑦ / ⑩ 当场；⑨ 静态继承（第 **9** 次）
+
+- **⑦ PASS（1s）**：`upstream 456 (f41fae6b08fb) | local 474 registered | baseline 458 | implemented 388 real + 3 placeholder = 391 / 456 | known_gap 65 | unclaimed 0 | regression 0 | local_only 9`；`gaps by owner = {M9:33, M3+:16, M3:11, M10:5}`（和 = 65 ✓）⇒ **与 §128 / §129 逐字相同**（独立复现，第三轮连测）。
+- **⑩ PASS（0s）**：`scanned **1130** / baseline 10 / violations 0` ⇒ 与 §129 的 `1130` 相同（**没有**重犯 §128 抄过期值的错）。
+- **⑨ 不冷编（第 9 次生效）**：三个门输入与 §129 的验证树 `aa6dbd64` **逐一恒等**（同上三个 blob/tree）；`git diff --name-only aa6dbd64 067329b6` = 11 个文件，其中 `crates/mc-conformance/**` 与 `docs/fixtures/**` **零命中** ⇒ 读数继承：totals **`fixtures 365 / pass 14 / mismatch 23 / unmounted 22 / placeholder 0 / unevaluable 306`**（直接读 `report.json` 的 `totals`，未跑二进制）。
+- 口径提醒（沿用 §112.3）：中间那 8 个 `crates/mc-*/tests/**.rs` 与 `docs/32`、`docs/48` 是 **PR #112** 的落地（测试侧修复），**不进 ⑨ 的三个输入**；`⑦` 的九个数也**不受测试侧影响**。
+
+### §130.4 槽位与派发：**零派发**（空位 1，但无处可派 —— 逐条给可观测判据）
+
+- 空位 = 1（§130.1）⇒ 按纪律**先找候选**，再逐条验阻塞；本轮**仍无一可取**：
+
+| 候选 | 硬前置的可观测判据 | 当轮实测 |
+| --- | --- | --- |
+| `LUM-1785`（M7-20，backlog，rev 7） | M7-19 的 5 个产物在 base：`git cat-file -e HEAD:crates/mc-channel/src/wecom/{wecom_channel,resolvers,inbox_message,markdown,seal}.rs` | base 上**五条全 MISSING**（在 `effc01cb`、不在 `067329b6`）⇒ **未满足** |
+| `LUM-1786`（M7-21 INT，backlog，rev 8） | 前两片（1784 / 1785）**全合** | 1784 未推分支、1785 未起手 ⇒ **未满足** |
+| `LUM-1815`（M9-0 anchor，backlog） | `docs/62` §7.1「**M7 全合** + M8 全合」 | M7 未全合（`owners.M7 = 0` 只说明**缺口清空**，不等于 M7-19/20/21 落地）⇒ **未满足** |
+| `LUM-1825`（M9-10 INT，backlog）等 M9-1..9 | 全部等 M9-0 | 同上 ⇒ **未满足** |
+| `LUM-1745`（M5-D8） | 是否已交付 | `apps/mc-server/src/webhook_worker.rs` 在 base、`main.rs` 第 10 步已接线、issue 停 `in_review` ⇒ **已交付**，不是派发候选 |
+| 其余 `todo`（`LUM-2012` / `1835` / `1826` / `1810` / `1805` / `1748` / `1740` / `1737` / `1726` / `1533` / `1521`） | — | **全是 cycle 类 issue**（标题即「multica-rs」或「NN cycle」），非工作片；只登记不动状态 |
+
+- ⇒ **空位刻意留空**。零空位不放空 ⇒ 把两片的**递补读数**刷新到当轮（见 §130.7）。
+- **`LUM-1784` 一合入，空位链立刻变为**：1784 合 ⇒ 派 **`LUM-1785`**（`wecom/mod.rs` 的写者链只有它俩，**必须串行**）⇒ 1785 合 ⇒ 派 **`LUM-1786`**（唯一一次 `--write-baseline`）⇒ 之后 M9-0（`LUM-1815`）。
+
+### §130.5 回收 = **+40 MB**（PG 死库 2 个；`df` 粒度看不出，量只认 PG 侧读数）
+
+- **动作**：`pg_stat_activity` 零连接 ∧ 名字里的 run-id 属**已终态且已合入**的片 ⇒ `DROP DATABASE mc_lum1980` / `mc_lum1980f`（都是 `LUM-1980` 的遗留，其 PR #112 已于 23:2xZ 合入、run 终态）。
+- **读数**：PG 侧 **6 个库 / ≈84 MB → 4 个库 / 44 MB（含系统库）**；`df --output=avail -m /` = **20068 MiB**（前后同一读数 ⇒ 40 MB 低于本轮 `df` 的可分辨差，**不虚报**）。
+- **为什么本轮只有这一步**：唯一的大块（`LUM-1784` 的 `target/` **18G**）是**活物**（正在跑 ⑥）；其余 16 个历史 workdir 各 ~30M（平台管理）；`.repos` 跨项目裸库镜像只登记不删。⇒ 磁盘健康（20G / 58%）时**不做外科手术**（§129.6 lesson 2 的排序键仍适用）。
+- **预告**：`LUM-1784` 一合 ⇒ 其 **18G** `target/` 四判据齐即可整删（下一轮的最大单块）。
+
+### §130.6 🔴 门 ⑥ 重定基线（§129.8 的预告项）：**拿到「受控对照对」+ 名录完整性第三次确证**
+
+§129.8 写着「`LUM-1980` 合入后门 ⑥ 的『概率门』旧名录不再是有效参照，需重定基线」。本轮把**近窗口的每一个红 run 逐字取证**（而不是抄结论）：
+
+| run | head | 结论 | 红点（逐字） | 与 `LUM-1980` 名录的关系 |
+| --- | --- | --- | --- | --- |
+| #365 | `7eb95caf` | **failure** | `telegram.rs:156` `telegram::binding_redeem_is_idempotent_and_classifies_three_failures` **+** `telegram.rs:273` `telegram::install_list_revoke_and_reinstall`（`25 passed; 2 failed`） | **两条都在名录**（`telegram.rs` 两处正是名录里的） |
+| #368 | `9f298f0a` | **failure** | `mc-scheduler/tests/jobs_plugin_hook.rs:427` `real_db_the_loop_delivers_each_schedule_bucket_exactly_once`（`0 passed; 1 failed`） | **名录**（**弱等待类**，§128 新抓、后被 `LUM-1980` 并入） |
+| #369 | `f3c92913` | **failure** | `telegram.rs:156` 同一条（`26 passed; 1 failed`） | **名录** |
+| **#370** | **`0273b817`** | **success** | — | **无修复的树也能绿** |
+| #372 | `b248e02b` | cancelled | —（被后推的 #373 顶掉） | 见下 |
+| #373 | `067329b6` | in_progress（23:28:36Z 起） | — | **含 8 条修复的第一棵树** |
+
+- 🔴 **受控对照对（本轮最强的新证据）**：`f3c92913` 与 `0273b817` 的差异**只有 `docs/37-M3-W3C-PREFLIGHT.md` 一个文件（`+76 −0`，零代码）**，而 #369（前者）**红**、#370（后者）**绿** ⇒ **「同一棵可编译代码树、红绿交替」拿到第 2 次取证**（第 1 次是 §116 的「同一代码树红绿交替 + 三次红三个不同用例轮换」），且这次是**相邻 run 的严格对照**（点对点、无第三个变量）。
+- **名录完整性第三次确证**：近 **3 个红 run** 的**每一个红点**（4 个 panic 点、3 个不同测试函数）**全部**落在 `LUM-1980` 交付的 8 条名录内 ⇒ **窗口内无「未登记签名」**（§128 抓的两条已被它自己并入，本轮复现为 §130 的 #368）。
+- **新基线（从 #373 起算）**：`067329b6` 是**第一个含 8 条修复的树** ⇒ 门 ⑥ 的旧名录（`telegram*` / `composio/**` / `jobs_plugin_hook:427` / `lease_db:273`）**从此只作「若再红则判本片回归」的参照**，而**不再**作为「CI 红属正常」的理由。⚠️ **样本量 1**：`#373` 单绿**不足以**宣布概率门关闭（§116 的对照说明无修复的树也能绿）⇒ 需 ≥3 个连续 run 的表态才能改判。
+- **顺带的口径**：`#372`（`b248e02b`，**合并提交**）被判 **cancelled** —— 因为 1 分钟后 `067329b6` 又推了一次，GitHub 的 concurrency 把它顶掉。⇒ **「head CI 3/3 绿」这条证据路对合并提交可能天然取不到**（第 3 次出现：`#367` / `#372`），判据链的 ④ 必须保留「合并树同树 `--with-db` 10/10」这条**离线**路。
+
+### §130.7 零空位不放空：两片递补读数刷新到当轮（`LUM-1785` rev 6 → **7**、`LUM-1786` rev 8）
+
+- 内容 = 当轮 ⑦/⑨/⑩ 实测（§130.3，三个数**逐字不变**）+ **写者链的下限换成了「已提交」读数**（更稳）：`crates/mc-channel/src/wecom/mod.rs` base = **81 行 / 21 个 `pub mod`**、`LUM-1784` 的**已提交**树 `effc01cb` = **106 行 / 26 个 `pub mod`**（§129 记的 106/26 是它**工作树**的中间态，这回是提交态 ⇒ 同一个数，但证据等级更高）。
+- 号段复核（`docs/32` 当轮实测末四节）：`## 33.` M7-16 / `## 34.` M7-17 / `## 35.` M7-18 / **`## 36.` `LUM-1980`（门 ⑥ 竞态，已落地）** ⇒ M7-19 合并时重编号为 **`## 37.`**、M7-20 = **`## 38.`**、M7-21 INT = **`## 39.`**（rev 6/7 的裁决**当轮复核仍成立**）。
+
+### §130.8 合并预演（给下一轮的判据链 ③ 一条**预置预测**）：**唯一冲突面 = `docs/32`**
+
+- 命令：`git merge-tree --write-tree --messages 067329b6 effc01cb` ⇒ **`151d8da7d23c7dd4d7a59883f454f4df82d79a8e`**，输出里**恰好一次** `CONFLICT (content)`，`--name-only` 也只有**一个文件**：**`docs/32-M3-DAEMON-FACE.md`**。
+- ⇒ 除号段外**全自动合并**（含 `crates/mc-channel/src/wecom/mod.rs` —— 两侧加的是**不同行段**，不冲突）；`docs/32` 的冲突正是 §129.10 判定的**号段撞车**（两侧都在文件末尾追加 `## 36.`）。
+- **解法（沿用 §127 定式「两侧都保留 + 号段归位到编号单调位」）**：保留 base 的 `## 36. 门 ⑥ 的测试侧竞态收口（LUM-1980）`，把 1784 那节改成 `## 37. M7-19（LUM-1784）：wecom 入站与解析`（含正文里对它的自引用）。该指令**已在 `LUM-1784` 描述 rev 7 的勘误节里**（它自己会在并 base 时解掉；它若不自解，则合并方按上式解）。
+- ⚠️ 预演的 `151d8da7` 是**带冲突标记的树**，**不是**落地树预测值（它只用来证明「冲突面 = 1 个文件」这一条）；真预测值要等它推分支后按判据链 ③ 重取。
+
+### §130.9 lesson
+
+1. 🔴 **`multica repo checkout` 的落点必须在起手第一步实测**（§130.1 的坑）：它可能落在**与 `feat/multica-rs-initial` 无共同祖先**的 `main` 线上，而 ⑦/⑩/⑨ **都不会报错**（脚本只看工作树）⇒ 整轮读数会对着**错误的树**。判据：`git rev-parse HEAD` == `git ls-remote origin feat/multica-rs-initial`（不等就先 `checkout -B … origin/feat/…`）。
+2. 🔴 **「重定基线」的正确做法是逐字取证，而不是换一句话写结论**：本轮把 3 个红 run 的**失败测试名 + 行号 + passed/failed 计数**从**作业日志**里抠出来（`actions/jobs/<id>/logs`），才拿到「100% 落在名录内」和「受控对照对」这两条**可判真伪**的陈述。⇒ 门 ⑥ 这类**概率门**的证据单位是「**红点签名**」，不是「run 的结论」。
+3. 🔴 **受控对照对（只差 docs 的两个 head，一红一绿）是「概率门」最省也最硬的证据形态** —— 它把「CI 玄学」压缩成一条**零代码差异**，且天然排除了「代码回归」这一竞争解释。产出成本 ≈ 2 次 API 读 + 2 次 `git diff --name-only`。
+4. **在飞片的自报要「零成本可复核」地验**：⑦（纯 Python 扫源码，1s）、⑨（`git rev-parse <tree>:<path>` 比 blob）、⑩（`scanned` 的**增量可以算出来**：`--diff-filter=A` 的 `.rs` 计数）三项都不需要 cargo，本轮三中三。⇒ **把「自报可复核项」作为验收期望写进片描述**（`--with-db 10/10` 那种必须靠**同树**论证，见 §129 的时间戳法）。
+5. **合并预演（`merge-tree --name-only`）应当在片**交付前**就跑一次**：它把「会不会有冲突、冲突在哪个文件」变成一条**前置预测**，本轮据此确认「唯一冲突面 = `docs/32`（号段）」而其它（含共用的 `mod.rs`）**都不冲突** —— 这直接回答了「1785 是否必须等 1784」这类串行化问题（要等，是因为**语义**上的写者链，**不是**因为文本冲突）。
+
+### §130.10 观察项（第 **67** 轮）
+
+- 起手 **无并发 cycle（连续第 20 轮）**；daemon `running_task_count = 2` **未越限**；autopilot 护栏（「同项目存在未终态 cycle issue 时不建新单」）**仍未落地**。
+- 积压 `todo` cycle **只登记、不动状态**（本轮不动任何别 issue 的状态；`LUM-1784` 本身 `in_progress` 不重写）。
+- 看板精确计数**取不到**（`issue list` 分页上限）⇒ 不把这种读数当判据（沿用 §128.8）。
+- 🔴 `docs/32` 末号 = **`## 36.`**（`LUM-1980` 已占）；`## 37.` / `## 38.` / `## 39.` 分别由 M7-19 / M7-20 / M7-21 INT 按**落地顺序**取（已同步进三片 rev）。
+
+### §130.11 next cycle 起点（08:00 / 00:00Z）
+
+- **base = `067329b6` + 本 §130 docs-only 直推**（起手一律 `git rev-parse` 实测，别抄本行）；GH **0 open PR**；daemon **2**（cycle 自身 ∥ `LUM-1784`）。
+- **起手第一动作**：① `df -h /`（本轮 20G ⇒ 若 < 4G 先回收）② `git rev-parse HEAD` **对** `git ls-remote origin feat/multica-rs-initial`（§130.9 lesson 1）③ 认证 GH `pulls?state=open` ④ 逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）⑤ 逐片「run 终态 ∧ 形态判定」，**终态才进判据链**。
+- **判据链铁律（沿用 §129.8）**：① 预检 `merge-base..head` numstat == PR API 逐字 ② 形态两半（`merge-base == base` ∧ 尾提交 docs-only）⇒ 真合 + 在片自己的热 target 上重跑 `--with-db` 10/10 ③ 三/四读数（`merge-tree --write-tree` == rehearsal `write-tree` == `refs/pull/N/merge^{tree}` == 落地 `^{tree}`）④ 证据两条路任一（head CI 3/3 绿 **或** 合并树同树 `--with-db` 10/10）⑤ API 钉 40 位 sha + `merge_method=merge` ⑥ 落地树逐字 + `git diff` 空。
+- **本轮的预置预测（判据链可直接引用）**：`LUM-1784` 的 PR **只会与 `docs/32` 冲突**（§130.8 的 `merge-tree --name-only` 单文件），解法 = 保留 `## 36.`（`LUM-1980`）+ 它改 `## 37.`；它若已自行并入 base（`merge-base == base`）则**无冲突**，直接走真合。
+- **门 ⑥ 判据（已重定，§130.6）**：旧名录**只作「再红则判本片回归」的参照**，**不再**是「红了也正常」的理由；新基线从 `#373`（`067329b6`，含 8 条修复）起算，**需 ≥3 个连续 run 才能改判**；红时先查 `df`（`os error 28`）+ 换**当轮新建库**。
+- **槽位链（勿抄旧行）**：`1784` 终 ⇒ 判据链合入 ⇒ 空位 ⇒ **`LUM-1785`**（M7-20 rev 7；**必须在 1784 合入之后**，同写 `wecom/mod.rs` 追加段 —— 是**语义**写者链，不是文本冲突）⇒ 之后 **`LUM-1786`**（M7-21 INT rev 8；`owners.M7 = 0` 已成立，唯一一次 `--write-baseline`；与 M9-INT `LUM-1825` **不得同轮**）⇒ 之后 **`LUM-1815`**（M9-0 anchor）。
+- **回收预告**：`LUM-1784` 一合 ⇒ 其 **18G** `target/` 四判据齐即可整删（下一轮最大单块）。
+
+### §130.12 轮内 ISR 回填：`#373`（含 8 条修复的第一棵树）**逐用例转绿**；门 ⑥ 新基线第 1 个数据点
+
+- `#373`（head `067329b6`，23:28:36Z 起、**23:34:09Z 完成**）⇒ **`success`**，三个 job **全绿**（`fast` / `db` / `contract`）。
+- 🔴 **不是只看 run 结论，而是逐用例核对**（`actions/jobs/108288154853/logs`，2543 行，`FAILED` 出现 **0** 次）：§130.6 表里三个红点——`telegram::binding_redeem_is_idempotent_and_classifies_three_failures`、`telegram::install_list_revoke_and_reinstall`、`real_db_the_loop_delivers_each_schedule_bucket_exactly_once`——**当轮逐一打印 `... ok`**（23:32:34Z / 23:32:34Z / 23:33:32Z）。
+- ⇒ **`LUM-1980` 的 8 条修复在 CI 上成立**（至少一次），且**红→绿的对应关系是逐用例可追的**（不是「换个 run 就绿了」这种弱结论）。门 ⑥ 新基线：`#373` = 第 **1** 个数据点（≥3 个连续 run 才改判，见 §130.6）。
+- ⚠️ 顺带：本 run 的 §130 直推 **`3385d7d5` 又触发了一个 run（`#374`，23:36:09Z）** —— 每次 docs-only 直推都会起一个 CI run（成本 ≈ 10 分钟 × 3 job）；这不影响判据链（走「合并树同树 `--with-db`」那条离线路即可）。

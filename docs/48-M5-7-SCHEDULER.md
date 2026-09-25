@@ -297,3 +297,29 @@ mc-scheduler = { path = "../../crates/mc-scheduler" }
    （仅在 `db_now` 失败时用到）。
 4. **没有指标上报**：`mark_stale_as_failed` / `Conflicted` 的次数只进日志，未进 metrics（`docs/44` §6.2 未要求）。
 5. **没有改 ⑦ 基线**：0 路由片，读数应保持 300/290/243/213（§6 已核）。
+
+## 8. 已知语义：`catch_up_window <= 0` 会吞掉「还能重试的 FAILED 桶」（`LUM-1980` 登记）
+
+§3 规则 1 与 `catch_up_window` 的**优先级**：`every_plan_plans`（`crates/mc-scheduler/src/manager.rs`）
+先按规则 1 取 `start = info.plan_time`（最新行 `FAILED` 且还能重试 ⇒ **停在同一个 `plan_time`**，
+否则那个 FAILED 桶会被**永久跳过**），**随后**被窗口夹一次：
+
+```rust
+let oldest_allowed = if job.catch_up_window <= Duration::zero() { latest } else { now - job.catch_up_window };
+...
+if start < oldest_allowed { start = floor_plan(oldest_allowed, job.cadence); ... }
+```
+
+⇒ `catch_up_window <= 0` 时 `oldest_allowed = latest`（**本 tick 的桶**）：一旦两次 tick 之间**跨过桶边界**，
+规则 1 的 `plan_time` 被换成**新桶** ⇒ 那个 FAILED 桶**再也不会被重试**。
+
+* **实现选择的是「窗口赢」，不是规则 1** —— 与 §3 规则 1 的自述**冲突**，故登记在本节。
+* **生产不可达**：三个 job 全是 `CatchUpMode::LatestOnly`（`jobs/plugin_hook.rs` / `jobs/issue_wakeup.rs` /
+  `jobs/autopilot.rs`），其中两个还带 `PlansHook`（`catch_up_mode` 只当审计）
+  ⇒ `EveryPlan + window <= 0` 这个组合**只存在于测试里**，不是产品缺陷、不拦合并。
+* 该组合下的行为是**时钟依赖的确定红**（窗口 = 桶边界，约 0.1–1%/次），不是「概率抖动」。
+* **测试侧已修**：`crates/mc-scheduler/tests/lease_db.rs` 的
+  `every_plan_returns_to_the_failed_bucket_when_its_backoff_has_burned` 改用
+  `Duration::minutes(5)`（正窗口 ⇒ 夹取分支对该用例**结构性死掉**，规则 1 被单独钉住）。
+  确定性 A/B 取证（base 配置 + 强制跨桶边界 ⇒ 红；正窗口 + 同一强制 ⇒ 绿）见 `docs/32` §36.9。
+* 若将来要把它变成**产品语义**（规则 1 压过窗口），需 M5 spec 仲裁；`LUM-1980` 不动产品代码。

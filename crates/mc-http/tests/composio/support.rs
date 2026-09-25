@@ -84,14 +84,6 @@ pub(crate) struct StubCall {
 
 static CALLS: Mutex<Vec<StubCall>> = Mutex::new(Vec::new());
 
-/// 清空替身侧的调用记录（用例起手调用，避免读到别的用例的调用）。
-pub(crate) fn reset_calls() {
-    CALLS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clear();
-}
-
 /// 读回替身侧的调用记录（拷贝）。
 pub(crate) fn calls() -> Vec<StubCall> {
     CALLS
@@ -106,6 +98,27 @@ pub(crate) fn calls_for(key: &str, path_contains: &str) -> Vec<StubCall> {
         .into_iter()
         .filter(|call| {
             call.api_key.as_deref() == Some(key) && call.path_and_query.contains(path_contains)
+        })
+        .collect()
+}
+
+/// **本用例自己**的那几笔调用 —— 按 key 里带的 user id 认领，**不看**进程级的先后顺序。
+///
+/// ⚠️ 为什么不能按「全局最后一条」读：`CALLS` 是**进程级**静态，而同一个测试二进制里的
+/// 用例是**并行**跑的（一条 `#[tokio::test]` 一个 runtime，但共享进程）⇒ `calls()` 里
+/// 混着别的用例的调用，「最后一条」可能属于别人（`docs/32` §36.1/§36.3 的实测现场）。
+/// 每个用例用自己 `seed_user` 出来的 uuid 造 key（`ak_<variant>_<uuid>`），key 的 user 段
+/// 因此是全进程唯一的判据 ⇒ 按它过滤是零竞态的，也**不需要**任何清场（曾经的
+/// `reset_calls()` 反而是害：它按进程级粒度清，会连带清掉并行用例已发出、还没读回的记录）。
+pub(crate) fn calls_for_user(user: Uuid, path_contains: &str) -> Vec<StubCall> {
+    let owner = user.to_string();
+    calls()
+        .into_iter()
+        .filter(|call| {
+            call.api_key
+                .as_deref()
+                .is_some_and(|key| parse_api_key(key).1 == owner)
+                && call.path_and_query.contains(path_contains)
         })
         .collect()
 }
@@ -556,6 +569,11 @@ pub(crate) async fn call(
 
 /// 走一遍 `connect/init` 并把**真流程产出**的 signed state 交回调用者
 /// （e2e 用例里要拿它去回调，避免测试自己签 state）。
+///
+/// ⚠️ 取调用的方式按 [`calls_for_user`]：**按自己的 user id 认领**，不是
+/// 「`api_keys.last()`」。曾经的 `last()` 在并行下会拿到**别的用例**的 key ⇒ 拿到别人那份
+/// state ⇒ 回调把行写进别人的用户名下（本用例看到 0 行），而自己的 state 被偷走后又被
+/// 对方消费 ⇒ 后来者落 `401 composio_state_invalid`（`docs/32` §36.1/§36.3）。
 pub(crate) async fn flow_state(app: &Router, user: Uuid) -> String {
     let (status, _, _, raw) = send(
         app,
@@ -568,13 +586,9 @@ pub(crate) async fn flow_state(app: &Router, user: Uuid) -> String {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "connect init failed: {raw}");
-    let api_keys: Vec<String> = calls()
-        .into_iter()
-        .filter_map(|call| call.api_key)
-        .collect();
-    let key = api_keys.last().expect("the stub saw the link call").clone();
-    let link_calls = calls_for(&key, "/connected_accounts/link");
-    let link = link_calls.last().expect("a link call");
+    let link = calls_for_user(user, "/connected_accounts/link")
+        .pop()
+        .expect("a link call");
     let body: Value = serde_json::from_str(&link.body).expect("link body");
     body["callback_url"]
         .as_str()
