@@ -1400,6 +1400,157 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:54
   **D9/D10 两条「登记过的不实现」**（VCS 侧自动关联/关闭、跨表关闭聚合），并在 INT 报告里复述
   「`issue_vcs_pull_request` 在本波结束时仍为空」这条已知缺口。
 
+## 15. M7-4（`LUM-1769`）：slack 出站/回复/命令历史 + 安装与绑定面（4 路由）
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与本片当轮 base 上核对。本片**起手 base**
+是 `b21cf928`（= 合并 #88（M7-3）+ #87（M8-2）之后），提交后 `origin/feat/multica-rs-initial`
+已前进到 **`43361e92`**（= `d1bd3db0`（#89 / M8-3）+ §92/§93 docs）⇒ 本片已 rebase 到它，
+§15.3 的两个读数（本片起手 tree 与 rebase 后 tree）都给。
+
+### 15.1 落点（逐字路径）
+
+| 落点 | 内容 |
+| --- | --- |
+| `crates/mc-channel/src/slack/outbound.rs` | `chat.postMessage` 的 wire 形状、`MessageApi` 端口、`Sender`（mrkdwn → 分片 → 线程化 → 元数据）、进程内 API 基址接缝 |
+| `crates/mc-channel/src/slack/replier.rs` | 判决 → 文案（7 个 `Outcome`）、绑定卡、issue 标题消毒、`BindingMinter` / `OutboundLedger` 端口 |
+| `crates/mc-channel/src/slack/typing.rs` | 👀 反应的生命周期（加/摘 + 2 分钟年龄闸门）、`ReactionApi` / `InstallationConfigs` 端口 |
+| `crates/mc-channel/src/slack/history.rs` + `slack/history/{reader,text,flatten,tests}.rs` | 频道目录 / 单线程两条读面、四道过滤、正文摊平与人名标签 |
+| `crates/mc-channel/src/slack/slash.rs` | `/issue`（快速创建）+ `/new` / `/clear`（DM 会话控制）、`ControlStarter` 的 engine 端口实现 |
+| `crates/mc-channel/src/slack/install.rs` | BYO 安装的三步校验、`InstallStore` / `InstallApi` 端口、list/get/revoke |
+| `crates/mc-channel/src/slack/binding.rs` | 绑定令牌的铸造与原子兑换（`BindingStore` 端口） |
+| `crates/mc-channel/src/slack/{mod.rs,socket.rs}` | 7 个新模块的可见性、`register_resolvers` 装配入口；`socket.rs` 的 `send` 由失败关闭改为委托 `Sender` |
+| `crates/mc-http/src/routes/channels/slack.rs` + `slack/{store.rs,tests.rs}` | 4 条路由、鉴权层、未配置语义、wire DTO；三条上游查询的 PG 端口实现 |
+| `crates/mc-http/tests/channels/{main.rs,support.rs,slack.rs}` | 4 条路由的真库端到端（门 ⑥，`#[ignore]`） |
+
+### 15.2 偏离（D1…D12，逐条可核对）
+
+- **D1 写集勘误（新增路径）**：`docs/60` §3.3 给本片的格子是 7 个 `.rs` + 1 个路由文件。
+  起手补充已追加 `slack/mod.rs` 与条件性的 `slack/socket.rs`。本片**再追加**的都是**门 ⑩
+  的 800 行硬限**逼出来的切分（与 M7-3 对 `{inbound,media,resolvers,socket}/tests.rs` 同款，
+  不是拆凑数字）：7 个 `slack/*/tests.rs`、`slack/tests.rs` + `slack/tests/support.rs`、
+  `slack/history/{reader,text,flatten}.rs`（上游 `history.go` 一个文件 737 行，移植后 1,374 行）、
+  `routes/channels/slack/{store.rs,tests.rs}`、`crates/mc-http/tests/channels/**`。
+  **`slack/socket/tests.rs` 改了一条断言**（M7-3 的 `send_is_fail_closed_until_m7_4` 断言的
+  是错误文案里的 `"M7-4"`；接线点落地后文案不再指向未来 ⇒ 改成断言"未注入发送器时失败关闭"）。
+- **D2 三条上游查询没有泛化仓储**：`ListChannelInstallationsByWorkspace`（含 revoked）、
+  `UpsertChannelInstallation` + 死主回收 + 唯一冲突分类、`ConsumeChannelBindingToken` +
+  成员闸门 + 建绑定（同事务）在 `mc-repos` 里不存在，而本片写集**不含**
+  `crates/mc-repos/src/channel/**` ⇒ 它们以**端口实现**（`PgInstallStore` / `PgBindingStore`）
+  的形态落在 `routes/channels/slack/store.rs`。**语义逐条照上游**（事务边界、冲突三分类、
+  `ON CONFLICT … WHERE multica_user_id = EXCLUDED…` 的拒绝语义、成员不通过即回滚不烧令牌），
+  而"adapter 不得直接写 DB"这条边界仍然是类型层面的事实（`mc-channel` 只拿到 trait）。
+- **D3 同步接缝 + 脱离任务（优于上游）**：engine 的 `OutboundReplier::reply` /
+  `TypingNotifier::{on_ingested,on_settled}` 是**同步**方法（调用点在 `tokio::spawn` 里），
+  上游在这几处**阻塞着**发 HTTP。本仓的同步方法只推一个脱离任务，真正的工作在 async 的
+  `reply_now` / `add` / `clear` 里 ⇒ 引擎调用点绝不阻塞在 Slack HTTP 上，且用例能直接
+  `await` 完整路径（不必 sleep 等后台任务）。**语义等价**（上游 `Add` 的顺序：
+  年龄闸门 → 解密 → 调用 → 记状态；本片逐条照搬，包括那条"先调用后记状态"的既有竞态）。
+- **D4 令牌不进结构体字段**：上游的 `slackSender` 持一个绑好令牌的 `*slack.Client`；
+  本仓的 `Sender` 是**无状态**的，令牌作为形参传入 ⇒ 同一个 sender 服务多个安装，
+  且"令牌不进字段"在类型层面成立（凭据纪律第 1 条）。
+- **D5 绑定令牌的随机源**：上游 `crypto/rand` 读 32 字节；本 crate 的依赖集里没有 `rand`
+  （`docs/60` §3.1 冻结）⇒ 取两个 v4 UUID 拼成 32 字节（244 bit 熵，与"15 分钟单次令牌"
+  同量级，base64url **线的长度也相同**）。**存储哈希与 TTL 逐字不变**（`sha256(raw)` 的 hex、
+  15 分钟、库侧 `CHECK` 仍钉着上限）。
+- **D6 history 读面的三处形态差异**：(a) 上游的 `ListChannelOutboundMessageIDsForContext`
+  依赖 `channel_outbound_message.channel_context_revision` 列，**本仓该列不存在** ⇒
+  `allowed_bot_messages` 用「按 `(binding_id, route_revision)` 列出的出站行」近似 ——
+  粒度是**路由代际**而不是上下文代际，方向是**多**放行同代际内早前轮次的本 bot 消息
+  （不会少放行，即**不会**把该看见的藏起来）；(b) Block Kit 的摊平走通用 JSON 遍历
+  （按 `type` 分派：`section`/`header`/`context`/`markdown`/`rich_text`），语义逐字照搬、
+  类型树不照搬；(c) 页面类型（`HistoryPage`/`HistoryMessage`/`HistoryOptions`）定义在
+  adapter 内 —— 消费方是 `multica chat history` / `chat thread`，**不在 M7 写集内**
+  ⇒ 与 R-M7-6（读侧有一条属 M4）同类，**登记为缺口**，不是"漏实现"。
+- **D7 `/issue` 的答复走 `response_url`**（上游同）：`EphemeralResponder` 的默认实现 POST
+  `{"response_type":"ephemeral", …}`；`response_url` 自带签名票据 ⇒ 与
+  `apps.connections.open` 的 `wss://` 同一条纪律（不进日志、不进 `Debug`、错误文案不回显）。
+- **D8 出站记账的**边界**：绑定卡这条路径（`NeedsBinding`）**不**写 `channel_outbound_message`
+  —— 那一刻还没有会话绑定行，没有"这条出站属于谁"可记。上游 `postResult` 逐字同
+  （`if r.ledger == nil || !res.ChannelBindingID.Valid { return nil }`）。有绑定的两条
+  （`control_ack` / `issue_ack`）照记，且历史读面正是按它过滤控制回执。
+- **D9 解析器面的装配悬空**（登记缺口，**不**擅自扩写集）：宿主装配点是
+  `apps/mc-server/src/channels.rs`（**anchor 写集**）。本片不碰它，改为提供**一个**入口
+  `slack::SlackResolverWiring` + `slack::register_resolvers(router, wiring)`（出站回复器 +
+  打字指示 + M7-3 的五个必填端口一次接好），由 INT / 后续锚点调一次。**工厂侧已闭环**：
+  `socket::factory` 交给每个 channel 的 `send` 已接上真 `Sender::http()`，
+  所以"出站面是否可用"不再有第二个答案。
+- **D10 `MULTICA_APP_URL`（回落 `FRONTEND_ORIGIN`）的读取口在路由文件**
+  （`routes::channels::slack::app_url`，`pub`）。理由同 D9：`mc-channel` 不得自己
+  `std::env::var`，而唯一的 env 读取面是 `mc-http`。宿主装配出站回复器时要把**同一个值**
+  交给 `SlackOutboundReplier`（上游注释逐字：`MULTICA_PUBLIC_URL` 是 API 主机，**不是**绑页主机）。
+- **D11 平台替身的两个注入点**：(a) `mc_channel::slack::outbound::{set_api_base,reset_api_base}`
+  （进程全局，与 M8-1 的 `set_github_api_base` 同款）；(b) 入站侧的 `SocketTransport` 端口
+  （M7-3 已留）。本片的端到端回路**不用** (b)：它跑真 `tokio-tungstenite` 客户端对**本地 WS
+  服务端**（"只替平台 wire，不替业务路径"，`docs/60` §4.2）。
+- **D12 400 文案带上 Slack 自己的错误码**：上游用一串通用文案（"could not verify the Slack
+  tokens — …"）+ 日志里的 `err.Error()`；本仓的 `InstallError::Api{step,code}` 把
+  `auth.test` / `bots.info` / `apps.connections.open` 的**具体**原因（`invalid_auth` 一类）
+  带进结构化错误码，供前端指路。**只带 Slack 的错误码**，不带令牌、不带 URL。
+
+### 15.3 门禁读数（本片当轮实测）
+
+```
+$ bash scripts/gates.sh --with-db
+①fmt ②build ③clippy ④clippy-test-util ⑤test ⑥db ⑦route-parity ⑧schema-drift ⑨conformance ⑩file-size
+```
+
+门 ⑦（`route_parity.py`）在**两棵树上各测一次**（本片的 `+4` 与预测逐字一致）：
+
+```
+# ① 本片起手 tree（base b21cf928 `+` 本片）：与 §6.1 / 派发描述的预测逐字相符
+upstream 456 (commit f41fae6b08fb) | local 420 registered | baseline 406
+  implemented  340 real +   4 placeholder =  344 / 456   known_gap  112   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M7=20  M3+=16  M8=14  M2-A=13  M3=11  M10=5
+
+# ② rebase 到当轮 base 43361e92（`d1bd3db0` #89 / M8-3 `+` §92/§93）之后的 tree
+#    （同一个命令，同两棵树之差 = 本片的 4 条）
+base 43361e92 : local 424 | implemented 348 | known_gap 108 | owners.M7 24 | baseline 406
+本片 rebase 后: local 428 | implemented 352 | known_gap 104 | owners.M7 20 | baseline 406
+  gaps by owner: M9=33  M7=20  M3+=16  M2-A=13  M3=11  M8=6  M10=5
+```
+
+⇒ 两个 tree 上**本片都是 `+4`**（四条路由：`GET`/`DELETE …/slack/installations[/…]`、
+`POST …/slack/install/byo`、`POST /api/slack/binding/redeem`），且不变式
+`implemented + known_gap == 456`、`regressions == 0`、`unclaimed == 0`、`local_only == 9`
+全部成立；**`scripts/file_size_baseline.tsv` 未动**。门 ⑦ 的第二条（形态）实测 `0 defect(s)`、
+exit 0（M7 没有 allowlist 退路）。
+
+### 15.4 交接（给 M7-5 / M7-9 / M7-14 / M7-15 / M7-21）
+
+1. **四片可照抄的四件事**（同构面）：`outbound.rs` 的「wire 形状 + `MessageApi` 端口 + 基址接缝」、
+   `binding.rs` 的「铸哈希令牌 + 原子兑换 + 三个不透明失败」、`install.rs` 的「BYO 三步校验 +
+   `InstallStore::persist` 的冲突三分类」、`routes/channels/<platform>.rs` 的「鉴权层 →
+   **逐端点**未配置语义 → wire DTO」四段结构。**未配置语义按各平台的 ⑨ fixture 逐条复核**
+   （slack 这份是：列表 200 空 + 两个 `false`，其余三条 403 `slack_not_configured`）。
+2. **绑定兑换的幂等判据是 DB 的 `consumed_at` CAS**（`UPDATE … WHERE consumed_at IS NULL`），
+   **不是**应用层读改 —— 两片都不要在应用层再加一把锁（那会与这条 CAS 语义重复）。
+3. **M7-21（INT）**：本片把 ⑦ 推成 `owners.M7 24 → 20`（在当轮 base `43361e92` 上是
+   `local 424 → 428 / implemented 348 → 352 / known_gap 108 → 104`）；
+   下一次 `--write-baseline`（`baseline 406 → ？`）归 M7-21。请一并收口本片登记的三条缺口：
+   **D6(c)**（history 的消费方 `chat history` 命令面）、**D9**（解析器面的宿主装配一次调用）、
+   **D10**（`MULTICA_APP_URL` 交给回复器），并在 INT 报告里复述 D6(a) 那条
+   `channel_context_revision` 列缺失（**本波结束时仍在**）。
+4. **本片与 M7-5/9/14/15 的写集零交集**：只碰 `crates/mc-channel/src/slack/**`（本平台目录）、
+   `crates/mc-http/src/routes/channels/slack*`（本平台文件 + 同名前缀的子模块目录）、
+   `crates/mc-http/tests/channels/**`、`docs/32`。根 `Cargo.toml` / `Cargo.lock` **未动**
+   （零新依赖、零新成员）。
+
+### 15.5 lesson（本片新增）
+
+- **【lesson·门 ⑩ 与"用例内联"是互斥的】** 本仓的写法是「用例写在被测文件末尾的
+  `#[cfg(test)] mod tests`」，但一个 400 行的实现 + 400 行用例正好把 800 行用光。
+  可复用的切法是 **`<file>.rs` + `<file>/tests.rs` 子目录**（`mod tests;` 会解析到它），
+  它比"把两个模块塞进一个文件"更省事，也让"装置 / 断言"这条线显式化
+  （本片的 `slack/tests.rs` 最终拆成 `tests.rs` + `tests/support.rs`）。
+- **【lesson·`f64 → i64/u32` 是 pedantic 下的两类硬失败】** `as i64` 触发
+  `cast_possible_truncation`、`as u32` 再触发 `cast_possible_sign_loss`。Slack 的
+  `ts` 是 `"<秒>.<微秒>"`：**只取整数秒部分**（字符串切分 + `parse::<i64>`）就同时避开两类，
+  代价只是亚秒精度（对"2 分钟"这类阈值无影响）。同理 `usize → i64` 用 `i64::try_from`。
+- **【lesson·"替换别人文件里的一条断言"要明说】** D1 里那条
+  `socket/tests.rs` 的断言改动是本片唯一一处**改 M7-3 的用例**：它的断言把
+  "未接线"绑在了错误文案的 `"M7-4"` 上 —— 那种断言在**交付的那一刻**必然失效。
+  写"指向未来"的错误文案时，用例应断言**语义**（"失败关闭"），而不是字面量里的票号。
+
 ## 16. M8-3（`LUM-1800`）：MCP 服务器库 + agent 绑定 + per-task overlay 纯函数（8 路由）的落点、偏离与门禁读数
 
 > **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、

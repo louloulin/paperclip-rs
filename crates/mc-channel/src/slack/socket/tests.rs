@@ -300,9 +300,10 @@ fn factory_validates_the_config() {
     assert_eq!(error.code(), "channel_invalid_config");
 }
 
-/// 出站：本片失败关闭，且错误文案带上交接去向。
+/// 出站：**未注入发送器**时失败关闭（M7-4 把接线点放在 `with_outbound`，
+/// 而工厂**总是**注入 [`Sender::http`] ⇒ 这条只覆盖"有人手工装配却没接线"的形态）。
 #[tokio::test]
-async fn send_is_fail_closed_until_m7_4() {
+async fn send_is_fail_closed_when_no_sender_is_wired() {
     let channel = SlackChannel::new(
         "A1",
         "UBOT",
@@ -320,7 +321,7 @@ async fn send_is_fail_closed_until_m7_4() {
         })
         .await
         .expect_err("出站未接线");
-    assert!(error.to_string().contains("M7-4"));
+    assert!(error.to_string().contains("not wired"));
     assert!(channel.disconnect().await.is_ok());
 }
 
