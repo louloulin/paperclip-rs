@@ -2867,3 +2867,220 @@ bash scripts/gates.sh --with-db（合并树 5ef58d5d，与上面同一条命令�
    set/reset base（那会把 §23.4 那条 lesson 的坑重新挖出来）。
 3. **未来任何碰 `mc-composio::state` 的切片**：nonce 台账是**进程级**的（D4），TTL 是
    上游的 5 分钟；改台账粒度前先读 `the_replay_ledger_is_process_wide_not_per_signer` 的注释。
+
+## 24. M7-9（`LUM-1774`）：dingtalk 安装 / 凭据 / 群身份 + agent 群面（7 路由）
+
+> **号段说明**：派发描述 rev 5 写「取 `## 23.`」，**rev 6 已作废并改取 `## 24.`**（`## 23.` 被
+> M8-6 / `LUM-1803` 的 PR #99 占；`docs/37` §108 的 lesson「号段不能在 base 上取末号 + 1」）。
+> 本节落笔时 `grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` = `## 23. M8-6（LUM-1803）：composio…`
+> （已合进 base）⇒ 本节取 **`## 24.`**。
+
+**口径**：本节一切落点与偏离都在上游 `f41fae6b08fb` 与**本片实测树**上核对。
+
+- **起手 base**：`2d3a5d33`（= 派发描述 rev 5/rev 6 钉的合并点 / PR #98 的 merge）。
+- **提交时 origin tip = `1edb3d83`**：`2d3a5d33` → M8-6 PR #99 合并 `f0326bce` → §108/§109/§110
+  cycle docs。逐文件差集与本片 21 个文件**零交集**（M8-6 只动 `mc-composio/**` + `routes/composio/**`
+  + `tests/composio/**` + `docs/32` §23 + `docs/37` + `report.json`）⇒ 本片**已 rebase** 到
+  `1edb3d83`（一次干净 rebase，无冲突），PR 以 `1edb3d83` 为 base。**门禁在 rebase 后的树上跑**
+  （读数见 §24.3）。
+- ⚠️ **`report.json` 的基线随 rebase 一起前进**：M8-6 的 5 条 composio 路由改变了 stateless 快照
+  ⇒ 本片**不**重刷快照（门 ⑨ 的 `--check` 对着 rebase 后的那份跑）。
+
+### 24.1 落点（逐字路径）
+
+| 落点 | 写者 | 上游 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/dingtalk/mod.rs` | M7-0 建 / M7-7 填 / M7-8 追加 / **M7-9 追加 5 行 `pub mod`** | 本片**只**追加 `binding / client / config / group_identity / install` 五行（788 → **793** ≤ 800）；三个注册入口与 `register*` **一行未动** |
+| `dingtalk/config.rs` + `config/tests.rs` | M7-9 | `config.go`（150）的**写侧与公开投影**：`InstallConfig::byo`、`encode_ciphertext` / `decode_ciphertext`（`StdEncoding` + `stripWhitespace`）、`decode_public_config`、`credentials_from_config` |
+| `dingtalk/client.rs` + `client/tests.rs` | M7-9 | `client.go`（125）+ `token.go`（201）+ `bot_identity.go` 的**传输**那一半：`Client`（令牌缓存 + 折叠铸造 + `post_json` + 401 ⇒ 作废 + 重试一次）、`message_file_download_url`、`bot_name_in_group`（按 `robotCode` **精确匹配**） |
+| `dingtalk/install.rs` + `install/tests.rs` | M7-9 | `install.go`（285）+ `byo_install.go`（100）：`InstallError` 十字变体、`InstallStore` 端口、`InstallService::{list,get_in_workspace,revoke,register_byo}` |
+| `dingtalk/binding.rs` + `binding/tests.rs` | M7-9 | `binding.go`（178）：令牌铸造 / 原子兑换（`BindingStore` 端口）、`hash_binding_token`、`random_binding_token` |
+| `dingtalk/group_identity.rs` + `group_identity/bot_name.rs` + `group_identity/tests.rs` | M7-9 | `bot_identity.go`（250）+ `handler/dingtalk.go` 的 `listDingTalkGroups` 一族：清单装配（分组 / 排序 / 分页 / 可见性）、查询计划（四条 400 分支）、`BotNameResolver`（三类缓存）、`PresenceObserver` |
+| `crates/mc-http/src/routes/channels/dingtalk.rs` | M7-9 | `handler/dingtalk.go`（782）：**7 条路由** + 七个 handler + 端口装配（[`install_service`] / [`group_inventory_store`] / [`resolver_set`]） |
+| `routes/channels/dingtalk/{dto,scope}.rs` | M7-9 | 上面两条的**门 ⑩ 切分**：wire DTO / 鉴权与群清单取数 |
+| `routes/channels/dingtalk/store.rs` + `store/groups.rs` + `tests.rs` | M7-9 | 六条上游查询的 PG 端口实现（安装 / 绑定面 ∥ 群面）+ 不依赖库的 wire / 状态码用例 |
+| `crates/mc-http/tests/channels/dingtalk.rs` + `dingtalk/support.rs` | M7-9 | 7 条路由的**真库**端到端（门 ⑥，`#[ignore]`）+ 装置（`accessToken` 替身、`AppKey` 生成、群观察行） |
+| `crates/mc-http/tests/channels/main.rs` | M7-4 建 / **M7-9 追加 1 行 `mod dingtalk;`** | 与 M7-5 追加 `mod telegram;` 同款 |
+| `crates/mc-conformance/report.json` | **本片不动** | M8-6 的 5 条路由已经改过它（rebase 带来）；本片 7 条路由的 stateless 层结论**不**因它们而变（见 §24.3 的 ⑨） |
+
+**写集勘误（三类，逐条）**：`docs/60` §3.3 给本片的格子是
+`dingtalk/{install,binding,client,config,group_identity}.rs` + `routes/channels/dingtalk.rs`；
+派发补充（第二类第 5 次）已追加 `dingtalk/mod.rs`。本片**再追加**的路径只有三类：
+
+1. **`*/tests.rs` 子模块**（`config/` `client/` `install/` `binding/` `group_identity/` +
+   `routes/channels/dingtalk/tests.rs` + `tests/channels/dingtalk/support.rs`）：同目录先例
+   `slack/*/tests.rs` / `telegram/*/tests.rs`；
+2. **门 ⑩ 的 800 行硬限逼出来的切分**：首版成形时 `group_identity.rs` **924**、
+   `routes/channels/dingtalk.rs` **1053**、`store.rs` **979**、`tests/channels/dingtalk.rs` **823**
+   四文件越限 ⇒ 按**单一接缝**切开：读面（清单装配）∥ 写面 + 平台身份查询
+   （`group_identity/bot_name.rs`）、wire ∥ 鉴权/取数 ∥ handler（`{dto,scope}.rs`）、
+   安装/绑定 ∥ 群（`store/groups.rs`）、装置 ∥ 用例（`dingtalk/support.rs`）。拆完最大 **793**
+   （`mod.rs`），全部 ≤ 800；**未动** `scripts/file_size_baseline.tsv`（仍 22 行）；
+3. **`tests/channels/main.rs` +1 行**（`mod dingtalk;`）：M7-5 追加 `mod telegram;` 的同一手法。
+
+### 24.2 偏离（D1…D10，逐条可核对）
+
+- **D1 写集勘误**：见上（三类，逐条点名）。`mod.rs` 的 5 行只追加、不改别人的行、不重排
+  `register` / `register_with` / `register_resolvers`。
+- **D2 `Decrypter` 的类型留在 `mod.rs`（只追加 5 行的硬预算）**：M7-7 的 `pub struct Decrypter` /
+  `StreamInstallConfig` / `resolve_app_secret` 是**已经合入**的接口面，而本片对 `mod.rs` 只有
+  **7 行余量**（788 + 5 = 793）⇒ 不搬类型。于是凭据面是**三分法**：**类型**在 `mod.rs`、
+  **唯一判据**在 `outbound::credentials::decode_credentials`（M7-8 已合）、**写侧 + 公开投影**
+  在 `config.rs`（`config::credentials_from_config` 再导出前者，于是 route 层的唯一入口叫
+  `config::…`，实现只有一份）。**收敛票归 M7-21**，与 `docs/32` §22 的 D4 同一张票。
+- **D3 agent 级那条路由的落法**（派发补充的「写集标注勘误」逐字）：`GET /api/agents/:id/dingtalk/groups`
+  用**完整路径**注册在**本片自己的** `routes/channels/dingtalk.rs` 里，靠 `channels/mod.rs:91`
+  的 `.merge(dingtalk::router())` 上台 —— **不** nest 进 `routes/agents.rs`（照抄上游的 nest 会与
+  该文件既有挂载点抢同一前缀，axum 0.7 嵌套重叠会 panic）。同形先例：`routes/mcp/agent.rs`
+  的 4 条 `/api/agents/:id/mcp-servers*`（M8-3，`agents.rs` 一行没动）。⚠️ 本文件 anchor 期的
+  头注表格第 7 行写「（挂在既有 `/api/agents/{id}` 子路由内部）」是**上游 Go 的注册位置**，
+  不是本仓的落法 ⇒ 已在 `dingtalk.rs` 的模块文档里显式勘误。
+- **D4 `persistInstall` 收成一个端口方法；"死主"判据在 `DELETE` 谓词里**：上游那一个事务的五步
+  （advisory lock → 回收死主占的 `(dingtalk, app_id)` 槽 → 读当前机器人身份 → **换机器人时退休
+  旧行** → upsert）在 `PgInstallStore::persist` 里逐条照抄。两条**不简化**的地方：① 回收的判据
+  写在 `DELETE` 的 `WHERE` 里（不是前置 `SELECT`）⇒ READ COMMITTED 下执行时重查（EvalPlanQual）
+  关掉"读-再删"的 TOCTOU；② 依赖行清理跟着**实际被删掉的 id**（`dead` / `retired` CTE）走 ⇒ 只对
+  本语句真的删掉的那一行跑（14 张依赖表逐条点名，含 `dingtalk_*` 三张与 `detached_audit`）。
+- **D5 `dingtalk_*` 三张表的读写语句落在 `store/groups.rs`**：`crates/mc-repos/src/channel/**`
+  对本片**只读**（写集表）⇒ 它们以端口实现的形态落在 `mc-http`（与 M7-4 / M7-5 的三条上游查询
+  同手法）。**M7-7 的两个诚实默认值在这里换成真实现**：`NoGroupPresence` → `PresenceObserver`
+  （写 `dingtalk_group_presence` + `dingtalk_bot_identity`，**尽力而为**：失败只记 warn、绝不改判决）、
+  `NoBotName` → `BotNameResolver`（三类缓存：成功 1h / 其它失败 1min / **权限拒绝 30s 且跨群共享**）。
+  `resolver_set(state)` 是这套装配的唯一入口（宿主在 `apps/mc-server/src/channels.rs` 调一次，
+  那一步是 anchor 写集 ⇒ 登记缺口）。
+- **D6 随机性**：上游 `crypto/rand` 读 32 字节；本 crate 的依赖集里**没有** `rand`
+  （`docs/60` §3.1 冻结）⇒ 取两个 v4 UUID（各 122 bit 熵）拼成 32 字节 —— 熵量级同级、**线长相同**，
+  只是那 32 字节不是均匀分布。与 M7-5 的 `random_binding_token` 同一处取舍。
+- **D7 未配置分支先于鉴权（跨片约定，**逐端点对齐**）**：上游 `ListDingTalkInstallations` /
+  `ListDingTalkGroups` 的第一句都是 `if h.DingTalkInstall == nil { 200 空; return }` ⇒ 本仓也用
+  `Option<AuthUser>` 让**未配置**分支先返回。**agent 级那条是唯一的例外**：上游把
+  `loadAgentForUser` + `canAccessPrivateAgent` 放在 nil 判断**之前** ⇒ 认不出的 agent 是 404、
+  看得见但未配置才是 200 空（顺序**逐字**照抄，有用例钉住）。这条顺序是 ⑨ 的
+  `TestListTelegramInstallationsNotConfiguredReturnsEmpty` 那一族（M7-5 的 D1）**唯一**可达的形态。
+- **D8 客户端两份实现并存**：`outbound/openapi.rs` 的 `HttpOpenApi`（M7-8 已合、冻结）**保留**；
+  本片的 `Client` 是**完整实现**（多出安装校验与 bot 名查询两条调用），并且**同样** `impl
+  OpenApiTransport` ⇒ 宿主在 `DingTalkDeps::with_outbound` 处换成 `Arc::new(client::Client::new())`
+  即可（`docs/32` §22 的 D3 交接项逐字：**换实现即可，语义一行不动**）。两条语义上有专门用例：
+  `minting_caches_per_app_key_and_never_repeats_a_hit` / `a_401_on_a_lookup_invalidates_and_retries_exactly_once`。
+  `envelope_error` 是 **本地副本**（平台错误体可能回声请求体 ⇒ 只取 `code`；与 M7-8 同款）。
+- **D9 `url_encode` 空格 → `+`**：上游 `dingtalk/replier.go:195` 用 `url.QueryEscape` ⇒ 本文件的
+  绑定链接转义与 `telegram` / `slack` 两侧**同一份实现**（各自持有一份，本仓既有约定）；
+  测试同时钉住 `+/=` 与空格两种字形。
+- **D10 群观察的写入语义（`ON CONFLICT` 的逐条对齐）**：标题 / `bot_name` / `bot_identity_issue`
+  只在**新值非空**时覆盖（旧值保留）；`first_seen_at` 取更早（由 DB 的默认值 + 触发器兜住）；
+  每次观察 `last_active_at = now()` 且 `mention_count + 1`；`workspace_id` 由**安装行**推导
+  （不信调用方给的）。`dingtalk_bot_identity` 的写**独立成一条命令**（上游逐字给的理由是
+  mixed-version 触发器要能观察到已完成的那条命令）。
+
+### 24.3 门禁与读数（**rebase 后的树上实测**）
+
+```
+⑦  upstream 456 (f41fae6b08fb) | local 458 → 465 registered | baseline 406（不刷）
+   起手 1edb3d83 : implemented 372 real + 3 placeholder = 375 / 456 | known_gap 81 | unclaimed 0 | regression 0 | local_only 9
+                  gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5
+   本片落地树     : implemented 379 real + 3 placeholder = 382 / 456 | known_gap 74 | unclaimed 0 | regression 0 | local_only 9
+                  gaps by owner: M9=33  M3+=16  M3=11  M7=9  M10=5     ← Δ=+7，owners.M7 16 → 9（与 rev 5/6 的预测一致）
+形态门  declared 24 / dual-form 0 / 0 defect（exit 0）；local 实况 0 defect（exit 0）
+⑩     新文件最大 793（dingtalk/mod.rs）；scripts/file_size_baseline.tsv **未动**（仍 22 行）
+⑨     `pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`（rebase 后的快照，
+      含 M8-6 的 2 条）+ `report matches crates/mc-conformance/report.json` ⇒ **本片不刷快照**
+```
+
+**⑨ 的真库层（本片的专属验收：4 条 `unevaluable` 必须转 evaluable 并给实测结论）**
+
+命令：`cargo run -q -p mc-conformance -- --filter DingTalk --db-url <mc_lum1774>`（`--json`，**不**
+`--write`）⇒ `fixtures 5 · pass 3 · mismatch 2 · unmounted 0 · placeholder 0 · **unevaluable 0**`。
+
+| fixture | 路由 | 期望 | 真库层实测 | 结论与归因 |
+| --- | --- | ---: | --- | --- |
+| `…/integration_test.go:786#6` | `GET …/dingtalk/group-routes`（**已退役**） | 404 | **404 pass** | 反向验收成立（§24.2 的 D3 / `docs/60` §1.6） |
+| `…/integration_test.go:792#7` | `GET …/{testWorkspaceID}/dingtalk/groups` | 200 | **200 pass** | 未配置 → 200 空（`group_discovery_supported:true`） |
+| `…/handler/dingtalk_test.go:642#11` | `GET …/{id}/dingtalk/groups` | 200 | **200 pass** | 同上（该 fixture 走 `handler` 面，回放时也过 router 中间件） |
+| `…/integration_test.go:811#5` | `GET /api/agents/:id/dingtalk/groups` | 200 | **404 mismatch** | 归因 = **回放数据**：fixture 的 agent id 是上游测试**当场创建**的行，回放库的种子 workspace 里没有它 ⇒ 上游在同样前提下也是 404（v5 → v6 都只承诺"转 evaluable + 给结论"，**不**承诺 pass） |
+| `…/integration_test.go:977#8` | `GET /api/workspaces/d1474000-…/dingtalk/groups` | 404 | **200 mismatch** | 归因 = **未配置分支的先后**（D7）：本条 fixture 的前提是"集成**已配置**"（那时 `workspaceMember` 先跑 ⇒ 非成员 404）；本仓回放环境的落库密钥未配置，而上游在未配置时**也**先回 200 空 ⇒ 不是实现缺陷。⑨ 的 `d1474000-…` 与种子 workspace 不同 ⇒ 若改成"先鉴权"这一条会 pass、但 lark/wecom 那一族（7+4 条未配置 fixture）会全线变红 —— 取舍见 D7 |
+
+> **纪律check**：这两条 mismatch **没有被改写成 pass**（`docs/57` §6.2 / `docs/60` §6.2 的明文要求），
+> 也**没有**为了它们去改实现顺序 —— 反例（`#5` 的 agent 门 / `#8` 的未配置优先）都在 `tests.rs`
+> 里有**正面**用例钉住：`the_agent_level_gate_runs_before_the_unconfigured_branch`。
+
+**用例账（全部实跑）**
+
+- `cargo test -p mc-channel --lib dingtalk::` ⇒ **220 passed / 0 failed**（M7-7 的 95 + M7-8 的 80 +
+  **本片 45**）；`cargo test -p mc-http --lib routes::channels::dingtalk` ⇒ **11 passed**；
+- 门 ⑥ 的真库 e2e：`crates/mc-http/tests/channels/dingtalk.rs` **7 例全绿**（未配置矩阵 /
+  反向验收 404 / **agent scope 矩阵 4 格 + `public_to` 一格** / BYO 往返 + 密文落库 + 冲突分类 /
+  群清单 + 摘群 + 非活跃分页 / agent 级只回自己的 agent / 绑定兑换四判决）。
+
+**门禁汇总（rebase 后实测，逐 gate 的 `GATE_*_EXIT`）**
+
+```
+bash scripts/gates.sh --with-db   →  overall: FAIL — 9/10 gate(s) green in 582s
+①fmt 0   ②build 0   ③clippy 0   ④clippy-test-util 0   ⑤test **101**   ⑥db 0（migrate=0, e2e=0）
+⑦route-parity 0   ⑧schema-drift 0   ⑨conformance 0（63s）   ⑩file-size 0（1s）
+
+bash scripts/gates.sh --only test →  overall: PASS — 1/1 gate(s) green in 48s
+                                    GATE_TEST_EXIT=0，126 个测试二进制全部 `test result: ok`
+```
+
+> ⚠️ **⑤ 第一次红的归因（**不是**本片的回归，且**不是**随机噪声）**：红在
+> `crates/mc-composio/src/state.rs:390` 的 `state::tests::tampered_signature_is_rejected_bit_for_bit`
+> —— **M8-6（PR #99，已合）** 的用例，与本片 21 个文件**零交集**。机制可用一段纯计算复现：
+> 32 字节 HMAC 的 base64url 是 **43** 字符（末字符只承载 4 个有效 bit ⇒ 取值恰 16 种）；该用例把
+> 签名**末字符** `A→B`，而 `A`(0000) 与 `B`(0001) 解码时**取的是同 4 个 bit** ⇒ 字节**完全相同**、
+> 签名照旧成立 ⇒ `assert_eq!(verify(...), Err(Tampered))` 必然失败。本机实测：
+> 20000 次随机签名里末字符 = `A` 的 **1184 次（5.9%）**，其中 **1184/1184** 都解出同一份字节；
+> 12 次单跑该用例**失败 1 次**。⇒ 这是一条 **~6% 概率**的数据相关 flake（本片按 `docs/37` §109
+> 「⑥ 的红有四种来源」的同一思路分类结清：**不是**我的改动、**不是**磁盘、**不是**复用库）。
+> **修法（一行，归 mc-composio 的写者 / INT）**：翻**中间**那个字符（`signature` 的
+> `flipped.pop()` 换成翻任意非末位字符），或直接断言"解出的字节不同"。
+> 本片**不改**别人的文件（一格一写者的纪律）；⑤ 单跑复现为绿（48s / 126 target）。
+
+### 24.4 交接（给 M7-14 / M7-15 / M7-21 INT / 宿主）
+
+1. **给 M7-14（lark，5 路由）与 M7-15（wecom，4 路由）**：本片把"未配置语义**逐端点对齐**"
+   的两种形态都跑通了 —— 列表/群清单 = **200 空**（D7 的顺序理由逐字可复用）；撤销 / BYO /
+   兑换 = **403 `<platform>_not_configured`**。**不要**统一成 503。另外三件可直接抄的：
+   ① `PgInstallStore::persist` 的五步（advisory lock → 死主回收 → 身份读 → 换机器人退休 → upsert）；
+   ② 绑定面的"三段一个事务 + 令牌表按 `channel_type` 收窄"；③ `tests/channels/dingtalk/support.rs`
+   这套"装置与用例分开 + 每轮新 `AppKey`"的写法（固定 `app_id` 会让重复运行互相占 `(type, app_id)` 槽）。
+2. **给 M7-21（`LUM-1786`）· 需要你收口的三件**：
+   ① `owners.M7` 从 9 继续往下（余下 9 条 = lark 5 + wecom 4；**本片 7 条已清零**）；
+   ② ⑦ 基线 `--write-baseline` **406 → 全波落地值**（本片**未**刷；rebase 后的快照是 M8-6 的那份）；
+   ③ 在 INT 报告里复述 §24.3 的两条 mismatch 归因（**回放数据**与**未配置优先**）与 D7 的取舍。
+3. **给宿主（`apps/mc-server/src/channels.rs`，anchor 写集）**：本片新增**一个**装配入口
+   `mc_http::routes::channels::dingtalk::resolver_set(&state)`（`Option<DingTalkResolverSet>`，
+   `None` = 未配置 ⇒ 该平台整体不装配）。它一次把 M7-7 的两个诚实默认值换成真实现
+   （`PresenceObserver` + `BotNameResolver`），并返回可直接交给
+   `mc_channel::dingtalk::register_resolvers(&router, set)` 的集合。**仍缺**的装配项（逐条登记，
+   与 M7-7/M7-8 的清单相加）：`register_with(&registry, &DingTalkDeps)`（`with_decrypter` /
+   `with_bot_names` / `with_outbound`）、`with_replier` / `with_media` / `with_typing`、
+   `ReplySourceCache` 的写入点。
+4. **给后续任何写 `dingtalk/` 的片**：本片对 `dingtalk/mod.rs` **只追加了 5 行 `pub mod`**
+   （788 → 793，余量 **7** 行）⇒ 再往里加装配代码会撞门 ⑩；`Channel::send` 的单点替换仍是
+   `mod.rs` 里那一个委托。SQL 一律落在 `routes/channels/dingtalk/**`（`mc-repos/src/channel/**`
+   对本波只读）。
+
+### 24.5 本片的 lesson
+
+- **【lesson·门 ⑩ 的硬限会在**同一片里**逼出三处切分，而"先写后拆"要按**单一接缝**切】**
+  本片首版四文件越限（924 / 1053 / 979 / 823）⇒ 全部按"读面 ∥ 写面"、"wire ∥ 鉴权 ∥ handler"、
+  "安装/绑定 ∥ 群"、"装置 ∥ 用例"四条**语义接缝**切开，而不是按行数均分。判据：**每一处切分
+  都要能一句话说清"这两半各自回答什么问题"**；说不清就说明该文件其实只有一个关注点，应当先去
+  掉重复（本片顺带用"抽 `fx.request(...)` 助手"消掉了 4 处七行样板）。
+- **【lesson·`clippy` 的 pedantic 在**新文件**上会挑三类"结构"而不是"风格"】** 本片踩到四条：
+  `too_many_arguments`（上游一条 SQL 的七个 `sqlc.arg` 收成 `PresenceQuery`）、
+  `needless_pass_by_value`（只读遍历的参数要按值收下并 `for … in vec` 消费掉）、
+  `assigning_clones`（`x = y.clone()` 要写成 `x.clone_from(&y)`）、
+  `implicit_hasher`（收 `HashSet` 的参数要泛化 `S: BuildHasher` —— 连带**测试**里要写
+  `assemble_inventory::<RandomState>(…)`，否则类型推不出来）。**这四条都不该开豁免**：它们各自
+  指向一处真的可以更好的形状。
+- **【lesson·"门 ⑥ 的红"要先分类，别先怀疑代码】** 本轮 ⑥ 第一次红是 **ENOSPC**
+  （`couldn't create a temp dir` + `ld terminated with signal 7 [Bus error]` —— 链接器写不出输出），
+  不是用例失败：本片与另一个 workdir 的 `target/` 同时在长，`/` 只剩 4.9G。教训与 `docs/32` §22
+  的观察项合并成一条可执行判据：**`df` 低于 ~10G 不要开 `--with-db`**；`--with-db` 前后各看一次
+  `df`，并把"测试库是否重建 / 是否同库第二跑"写进报数（`docs/37` §109 的"⑥ 的红有四种来源"
+  在本片又一次成立）。
+- **【lesson·号段要在"全局最大"上取，而不是 base 的末号 + 1】** 派发 rev 5 说"取 `## 23.`"，
+  5 分钟后被 rev 6 推翻（`## 23.` 被 PR #99 的在飞分支占了）。base **看不见**"已开 PR / 在飞未
+  提交"的占号 ⇒ 起手要同时看**在飞分支的 workdir**（`git -C <workdir> log --oneline -1` + 它的
+  `docs/32` 末号）。这条已记 `docs/37` §108，本片是它的第一个受益者（改号成本 = 0，因为还没动 docs）。

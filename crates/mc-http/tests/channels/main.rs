@@ -21,6 +21,7 @@
 //!   （替身造帧 → 真入站 → 真 DB → 真出站 → 帧回替身，`docs/60` §4.2 的渠道门禁证据）
 #![cfg(feature = "test-util")]
 
+mod dingtalk;
 mod slack;
 mod support;
 mod telegram;
