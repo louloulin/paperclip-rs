@@ -41,6 +41,16 @@ pub mod types;
 pub mod ws_frame;
 pub mod ws_sender;
 
+// M7-17（`LUM-1782` / `docs/60-M7-PLAN.md` §3.3）：wecom 的中继与出站回复面。
+// 追加这 4 行是本片写集的**唯一** mod.rs 改动（写集勘误见 `docs/32` §34 的 D12）：
+// 上游 `internal/integrations/wecom/{relay_outbound,outbound,outbound_outcome,replier}.go`
+// 的本地落点。`relay.rs` 上游 1,578 行 ⇒ 按 §6.3 拆出 `relay/` 子目录（同 `ws_frame/`、
+// `ws_sender/` 的先例），`outbound.rs` / `replier.rs` 各带一个 `tests.rs`。
+pub mod outbound;
+pub mod outcome;
+pub mod relay;
+pub mod replier;
+
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;
 
