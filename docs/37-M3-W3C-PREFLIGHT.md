@@ -9849,3 +9849,80 @@ InvalidLastSymbol ⇒ state.rs:213 的 `.map_err(|_| Malformed)` 先于常量时
 - **`LUM-1786`（M7-21 INT）**：硬前置 = **`owners.M7 → 0`**（现 **9**）；它是 M7 线**唯一**的 `--write-baseline` 片，**不得与任何 `--write-baseline` 片同轮**；正文的 `baseline 344 → 430` 与「`owners.M7 0` 前置」措辞**已过期 4 轮**，派发前必须补「起手补充」（当轮 base + 当轮 ⑦ 实测 + 片前/片后的基线值契约）。
 - **`LUM-1980` 已扩到 5 条**测试侧 flake（含本轮新查明的两条），处置建议不变：①②③④ 一起放进一个独立测试修复片。
 - **门 ⑥ 纪律（连续第 6 轮）**：每轮**新建当轮库**（`CREATE DATABASE <name> OWNER <role>` + **`ALTER ROLE … CREATEDB`**）；撞上 `LUM-1980` 那 5 条就**换库重跑**，别追成本片回归；`df` 低于 ~10G 不要开 `--with-db`。
+
+## §112 22:00 cycle（`LUM-1992`，14:00Z 触发）：**起手 0 open PR + 空位 0 + 磁盘健康（30G / 37%）⇒ 只读监控轮（第十六次）**；⑦/⑨/⑩ 在落地 base `4cdd897e` 上**当场重跑**（⑦/⑩ 与 §111 九个数逐字相同，**⑨ 首次在合并树上独立复验**：`report matches` / 116s）；零空位不放空 ⇒ 下一片派发预飞（M7-11 写集漏 `lark/mod.rs`、M7-21 INT 的「片前基线」已被 M8-INT 改成 **458**）；🔴 新 lesson：**「挂新路由 ⇒ 必须刷 `report.json`」是假命题**，真判据是 fixture 的 `actor` 是否 `anonymous`（离线可判定）
+
+- **本轮性质**：与 §111（非只读轮、两条判据链）不同 —— 起手 GH **0 open PR**、探针库空位 **0** ⇒ **零合并、零派发**，本轮的全部产出 = **读数复验** + **下一片派发预飞** + **一条可复用的判据**。
+- **base**：起手 `git ls-remote` 实测 = **`4cdd897e`**（= §111 的 docs 直推，**零前进**）；本 cycle 的 §112 docs 直推后，base 由下轮起手重取（**文档里的 base 值一律只当历史刻度**，§105 lesson 3）。
+
+### §112.1 起手三连
+
+| 项 | 当轮读数 | 备注 |
+| --- | --- | --- |
+| `df -h /` | **30G 可用（37%）**，连采两次稳定 | 两个在飞 target 合计 **5.0G**（`1745` 3.8G + `1775` 852M）⇒ 无 §107/§111 那种分钟级振荡 |
+| `git ls-remote origin feat/multica-rs-initial` | **`4cdd897e`** | 相对 §111 收尾**零前进**（无并发 cycle、无新 PR 合入） |
+| 认证 GH `pulls?state=open` | **0**（rate `4944/5000`） | 与 §111「收尾 0 open PR」一致 |
+| daemon `running_task_count` | **3** | 逐 PID 拆 **全为本项目**（见 §112.2）⇒ 全局数 == 本项目数，无需 §84/§105 的减 1 修正 |
+
+### §112.2 在飞两片（3/3 满位 ⇒ 空位 0）
+
+| 片 | pid | HEAD | 未提交 | target | 5 分钟内 target 新文件 | 判活 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `LUM-1745`（M5-D8） | 42448（子链 `802`→`803`→`805` = `timeout 1500 cargo test -p mc-server -- --ignored webhook_worker`） | `0cb9ff6a` | **7**（`apps/mc-server/src/{main.rs,webhook_worker.rs,webhook_worker/tests.rs}` + `mc-autopilot/src/webhook/{admission,mod}.rs` + `mc-http/src/routes/{autopilots/delivery,webhooks/autopilots}.rs` —— **与 rev 5 写集逐格相符**，`state.rs` 零触碰 ✓） | 4.2G | **571** | **活**（`webhook_worker*.rs` 2 分钟内仍有写入） |
+| `LUM-1775`（M7-10） | 56583 | `af729ecf` | **3**（`lark/{client,params,types}.rs` 全为 `??` 新文件；`lark/mod.rs` 尚未追加） | 1.8G | **2769** | **活**（3 个文件都在 10 分钟窗口内） |
+
+- 两片写集**逐字交集 ∅**（`apps/mc-server/**`+`mc-autopilot/**`+`mc-http/src/routes/{autopilots,webhooks}` vs `mc-channel/src/lark/**`）⇒ 同飞合法（**依据 = 当轮 base 的 docs 计划 + 逐字文件交集**，非 issue 正文的历史措辞）。
+- **看板状态字段连续第 4 轮不可信，且本轮是错得最多的一次**：`in_progress` 实测只有 **1** 条（= **本 cycle 自己**），而两片在飞都挂 **`todo`**（`LUM-1745`、`LUM-1775`）⇒ 判「在飞」只剩 daemon + `/proc/*/cwd` + `.managed_env.json.issue_id` 一条路（§106 第 1 次 1 条错 / §107 1 条 / §110 1 条 / **本轮 2 条**）。
+
+### §112.3 ⑦/⑩/⑨ 在落地 base 上**当场重跑**（不继承 §111 读数）
+
+- **⑦ `bash scripts/gates.sh --only route-parity,file-size` = 2/2 PASS / 1s**（纯 Python、0s、不需 target）：
+  `upstream 456 | local 465 | baseline 458 | implemented 379 real + 3 ph = 382 | known_gap 74 | unclaimed 0 | regression 0 | local_only 9`；
+  `gaps by owner: M9=33  M3+=16  M3=11  **M7=9**  M10=5`（和 = 74 ✓）。**九个数与 §111 逐字相同** —— 预期结果：`1edb3d83..4cdd897e` 只含 `docs/37`（§111 自己那条直推）。
+- **⑨ `--only conformance` = PASS / 116s**（`CARGO_INCREMENTAL=0`，冷编；跑完即删本 run `target/` 1.8G）：
+  `report matches crates/mc-conformance/report.json`，totals `fixtures 365 / pass 7 / mismatch 23 / unmounted 29 / placeholder 0 / unevaluable 306`（`by_actor`：`anonymous {pass 7, mismatch 23, unmounted 29}`、`member 293 unevaluable`、`agent 13 unevaluable`）。
+  **这是 #101（M7-9，7 路由）合入后第一次在合并树上跑 ⑨** —— 依据 §111 那次是「三哈希等式免跑」，⑨ 未本地复验。结论：**新挂 7 条 dingtalk 路由没有改动 `report.json` 的任何一格**（见 §112.4 的判据）。
+
+### §112.4 🔴 本轮 lesson：**「挂了新路由 ⇒ 必须刷 `report.json`」是假命题**；真判据是 fixture 的 `actor`
+
+- 事实一：`git log -- crates/mc-conformance/report.json` 最后一次 = **`0f9182fe`（M8-6）** ⇒ #101（M7-9 的 7 条路由）**一个字都没动它**，而 ⑨ 在合并树上**仍然 `report matches`**。
+- 事实二：`report.json` 里 **365** 条 fixture 的离线可判定面 = **`actor=anonymous` 的 59 条**（`pass 7 / mismatch 23 / unmounted 29`）；`member 293 + agent 13 = 306` 条恒 `unevaluable`（无库门下判不了）。
+- 对照实验（同一天、同一条门）：
+
+  | 片 | 挂的路由 | 该域 fixture 的 `actor` | ⑨ 结果 |
+  | --- | --- | --- | --- |
+  | M8-6（`LUM-1803`，composio） | 5 | **anonymous**（`via: router`，离线可判定） | **必须刷**：`unmounted → pass`，`pass 6→7 / unmounted 30→29` |
+  | M7-9（`LUM-1774`，dingtalk） | 7 | **member/agent**（该域 5 条全 `unevaluable`） | **一个字没动**，⑨ `report matches` |
+
+- ⇒ **判据（两行）**：`report.json` 里该路由的 fixture `actor == "anonymous"` **且** 当前 `outcome == "unmounted"` ⇒ 你挂上路由就会改快照，**必须刷**；否则无论挂多少路由 ⑨ 都不变。**推论（可直接用来排期）**：当轮 29 条 `unmounted` 里，除了 `GET /api/config` **17** 条 + `GET /health` **1** 条（**M10**）之外，只剩两簇会动快照 ——
+  - **lark 7 条** ⇒ **M7-14（`LUM-1779`，5 路由）**；
+  - **`POST /api/webhooks/stripe` 3 条**（403/401/429）⇒ **M9-6（`LUM-1821`，1 路由）**。
+  ⇒ 这两片（或它们的 INT）收口时必须刷新 `crates/mc-conformance/report.json`，否则 ⑨ 会在某轮红且**极难归因**（红点离肇事片很远）。**已逐字写进 `LUM-1776`（rev 2）、`LUM-1786`（rev 3）的「起手补充」。**
+- 反向用途：**M7 剩下的 0 路由片（M7-11/12/13、M7-16…M7-20）恒不该动 `report.json`** ⇒ ⑨ 在这些片上逐字不变是**正面控制组**，不是"没生效"。
+
+### §112.5 下一片派发预飞（零空位不放空；两片描述已落库）
+
+- **`LUM-1776`（M7-11 lark WS，0 路由）→ rev 1 → rev 2**：
+  - 🔴 **写集漏项（第二类第 7 次）**：`crates/mc-channel/src/lark/mod.rs` **不在写集、也不在只读清单**。当轮实测 `crates/mc-channel/src/lark/` **只有 `mod.rs`**（**38 行**、`grep -c '^pub mod'` = **0**、`register()` 是 anchor 空壳）⇒ 三个新文件（`ws_connector.rs`/`ws_frame.rs`/`ws_endpoint.rs`，当轮**全 MISSING**）不写进它**根本不进编译单元**。已补进写集（**仅追加 3 行 `pub mod`**；`lib.rs:71` 已有 `pub mod lark;` ⇒ `lib.rs` 不入写集）。
+  - **行数预算（本轮是阴性）**：38 →（M7-10 追加 4 行，在飞）= 42 →（本片 3 行）= **45**，离门 ⑩ 的 800 极远 ⇒ **没有 `dingtalk/mod.rs`（793/800）那种压力**。
+  - **硬前置的可观测判据**：本片「只读」清单里的 `lark/{http_client.rs,client.rs,types.rs}` 当轮**全是 MISSING**（它们是 M7-10 的产物）⇒ 起手第一件事是 `git cat-file -e HEAD:crates/mc-channel/src/lark/http_client.rs`（等三个），**任一 MISSING 就不许起手**。与 M7-10 **同写 `lark/mod.rs`** ⇒ 与 `LUM-1775` **不得同飞**。
+  - **`docs/32` 号段 = 三段并集**：base 末号 **`## 26.`**（M8-7 已合）；在飞占 **25**（M7-10）+ **27**（M5-D8）⇒ 本片取 **`## 28.`**（**base 上 `## 25.` 根本不存在**，取"末号 + 1"会得 27 而撞 `LUM-1745` —— §108 纪律的第 3 次复现）。
+- **`LUM-1786`（M7-21 INT）→ rev 2 → rev 3**：
+  - 🔴 **「片前基线」被同波另一个 INT 合法改写**：`--write-baseline` 的片前值 = 当轮 `baseline` 实测值，而 **M8-INT 已把它刷成 458**（`0cb9ff6a`，§111 逐字命中）⇒ rev 2 里写的 **406** 作废；`344/406/430` 一个都不能写。**这是「过期读数」的第 2 种成因：不是时间流逝，而是同波另一片的合法副作用**（§107 记的「行数被在飞片改写」同族，这次落在基线文件上）。
+  - 硬前置当轮**未满足**：`owners.M7 = 9`（**lark 5 条**逐条点名 ⇒ M7-14 `LUM-1779`；**wecom 4 条** ⇒ M7-15 `LUM-1780`）⇒ **这 9 条就是 M7 波的全部剩余**。
+  - 已把 §112.4 的快照义务写进该片：**收口前先问 M7-14 有没有刷 `report.json`**，没刷就补刷。
+- **未派/未动的候选**：`LUM-1777`（M7-12，5 文件写集，`docs/60` §3.3 行 348 —— **同一类 `lark/mod.rs` 漏项**，等它派发时按本节同法补）；`LUM-1815`（**M9-0 anchor**）—— `docs/62` §7.1 的硬前置是 **M7 全合 + M8 全合**（M8 ✅，M7 未 ⇒ **仍拦**）；`LUM-1980`（门 ⑥ 五条测试侧竞态，**零共享文件、可随时插**，但优先级低于计划片）。
+
+### §112.6 回收 / 未回收（附理由）
+
+- **本 run 自回收**：⑨ 冷编 `target/` **1.8G** 跑完即删（`df --output=avail` 27,367,292K → **29,203,652K**，差 **+1.79G**）。
+- **判据齐但体积低于阈值 ⇒ 本轮不动**（照 §110 的「排序键 = 判据数量 × 可逆性，不是体积」）：`lum-1774`（**100M**，PR #101 已合、`porcelain` 0、`HEAD` 是 base 祖先）与 `lum-1987`（**27M**，§111 自身 workspace）合计 **127M**，留作 ENOSPC 现成储备。
+- **明确不动的不可逆项**：`/home/devbox/multica_workspaces/.repos`（**1.7G**，12 个**跨项目**裸库镜像，删了别的项目要重克隆）。
+- 收尾 `df` = **29G 可用（39%）**。
+
+### §112.7 元数据
+
+- 看板（项目 `da4310b1-4d33-4e4f-9bed-d2073388abf5` 口径，全量分页 **251** 条）：`in_review 215 / backlog 23 / todo 12 / in_progress 1 / blocked 0`；`todo 12` = 积压 cycle **10** 条（`1521 1533 1726 1737 1740 1748 1805 1810 1826 1835`）+ **两片在飞却挂 `todo`**（`LUM-1745`、`LUM-1775`）。
+- **观察项第 50 轮**：积压 `todo` cycle 10 条**只登记不动状态**；autopilot 建单护栏**仍未落地**；本轮起手**无并发 cycle（连续第 11 轮）**。
+- **在飞 3/3**（cycle ∥ `LUM-1745` ∥ `LUM-1775`）⇒ 槽位一空即派：`LUM-1775` 终 ⇒ **`LUM-1776`（rev 2 已就绪，可直派）**；`LUM-1745` 终 ⇒ 判据链 + ⑦ 预期（M5-D8 是 M5 最后一条缺口，`owners.M5` 早已为 0 ⇒ **本片 0 路由 ⇒ ⑦ 逐字不变**）。
+- **门 ⑥ 纪律（连续第 7 轮）**：`--with-db` 一律**当轮新建测试库**（角色建时就带 `CREATEDB`）；撞上 `LUM-1980` 的已知噪声（telegram 共用 `BOT_TOKEN` / composio 跨用例互踩 / `state.rs` 末字符取反）⇒ 换新库重跑，不追当片回归。
