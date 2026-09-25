@@ -8922,3 +8922,86 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M8=6  M10=5        （和 = 87 ✓�
 - **两片 INT（`LUM-1786`/`LUM-1804`）仍必须等** `owners.M7 → 0` / `owners.M8 → 0`，且彼此不得同轮跑 `--write-baseline`；`register_with` 的宿主调用（§100.6 D4）由它们一次收口。
 - **回收对象**：任一在飞片终态 ⇒ 按四判据整删其 `target/`（`LUM-1801` 的 18G 是本机最大单块盘占）；本轮已清空 `~/.npm/_cacache`，下一轮别重复计。
 - **⑦ 基线仍 406。**
+
+
+## §102 17:00 cycle（`LUM-1930`，09:00Z 触发）：**起手 2 open PR + 3/3 满位 + 磁盘只剩 2.2G（96%）⇒ 先急救回收 ≈19G ⇒ 两片双双终态 ⇒ 判据链合并 #96/#95 ⇒ base `a20f69a2`（M7-7 + M8-4 收口）；空位 2 ⇒ 派 M7-8（`LUM-1773`）+ M8-5（`LUM-1802`）；本轮合计回收 ≈38G**
+
+### §102.1 起手三连与空位
+
+- `df -h /` **2.3G → 2.2G**（96%，连采两次）—— 三连里唯一红灯，且是**首要风险**。
+- base = **`c16e00a6`**（= §101 收尾，零前进）；GH = **2 open PR**（`#96` M7-7 / `#95` M8-4，两者 `base.sha` 都是 `c16e00a6`）；daemon `running_task_count = 3` = cycle(47216) + `LUM-1772`(64293) + `LUM-1801`(7828) ⇒ **空位 0**。
+- 逐 PID `/proc/*/cwd` 拆 slot：两个命中都在本项目 workdir，与 daemon 计数一致（本轮无并发 cycle、无 chat 会话占位）。
+
+### §102.2 磁盘急救（**本轮最大的一笔回收，也是 lesson 1 的来源**）
+
+起手 45G used / 2.2G avail，两个在飞片占 **29G（`lum-1772`）+ 6.8G（`lum-1801`）** = 39G。活物不能整删，于是做**分级外科**：
+
+| 笔 | 对象 | 量 | 依据 |
+| --- | --- | ---: | --- |
+| ① | `lum-1772/target/debug/deps` 里 **75 个 >100M 的无扩展名可执行文件** | **17.9G** | 它们是历轮 `cargo test` 的**产品二进制**（`cargo test --workspace` 每个集成测试目标一个）；删掉只付**重链**（relink），不付重编 —— 与 `.rlib`/`.rmeta`/`.d` 无关 |
+| ② | `lum-1772/target/debug/incremental` | 1.1G | 纯缓存 |
+| ③ | `lum-1801/target/debug/incremental` | 0.39G | 纯缓存 |
+| ④ | `#96` 合并后整删 `lum-1772/target` 残余 | 12.5G | 四判据齐（见 §102.3） |
+| ⑤ | `#95` 合并后整删 `lum-1801/target` | 7.3G | 同上 |
+
+⇒ 2.2G → **37.8G 可用**（收尾 23% used）。**量只认 `df --output=avail` 的 rm 前后差**。
+
+### §102.3 两片终态与判据链
+
+- 两片**在我做急救的时候**（09:04:00 / 09:04:23）各自 `status=completed`（`output_bytes` 2793 / 2425，tools 251 / 203），分支未再移动 ⇒ 「下手时点 = 分支静默 + 0 进程」判据本轮成立。两者的交付评论都在各自 issue 上（顶层）。
+- **`#96`（M7-7，25 文件 `+9249/−18`）**：预检 `merge-base..head` `--numstat` 与 PR API **逐文件逐字相同**；`git merge-tree --write-tree c16e00a6 efe355e7` = **`ec983dc8d515`**，rehearsal 真合 `git write-tree` = 同一哈希，且合并树 vs head 树**只差 `docs/37`（§95–§101，+343 行）** ⇒ 代码面与它自己验过的那棵树逐字相同 ⇒ **零门禁重跑**。API 钉 sha 合并 ⇒ 落地 `91c37ee1`，`^{tree}` = `ec983dc8d515` **逐字命中预测**。
+- **`#95`（M8-4，19 文件 `+5577/−125`）**：它**起手已把 base 真合进分支**（`9c658b7d`）⇒ 我合掉 #96 后，在 `lum-1801` 的热 target 上把新 base `91c37ee1` 合进它的分支、解掉唯一冲突（`docs/32` 号段，见 §102.5），**当场重跑 `gates.sh --with-db` = 10/10，338s**（① 3s ② 51s ③ 21s ④ 21s ⑤ 40s ⑥ 127s `migrate=0,e2e=0` ⑧ 31s ⑦ 0s ⑨ 44s ⑩ 0s），推回 `agent/devbox5/73d51790d2dc`（`d289bec8 → 5b1cd5c0`）后 `merge-base --is-ancestor 91c37ee1 HEAD` = 真 ⇒ 合并树恒等于 head 树（`7fbf3e84`）⇒ API 钉 sha 合并 ⇒ 落地 `a20f69a2`，`^{tree}` = `7fbf3e84` **逐字命中被门禁验过的那棵树**。
+- 门禁环境：`CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0` + **全新真库** `multica_lum1930`（角色建库即带 `CREATEDB`）。日志 = `lum-1801-…/workdir/gates-union-m7-7-m8-4.log`。
+
+### §102.4 【本轮最重要】CI `db` job 在两个 PR head 上双红 —— 裁定为**测试库复用假红**，不是回归
+
+- 两个 head 的 CI 都是 **`fast` 绿 + `contract` 绿 + `db` 红**。`db` 卡在门 ⑥，两例都炸在 telegram 面：`telegram_bot_owned_by_another_workspace`（`#96`：1 failed/19 passed；`#95`：2 failed/18 passed，非确定性 ⇒ 竞态）。
+- **三条独立证据链**（两条命令即可复现，成本秒级）：
+  1. **失败用例文件逐字同一**：`crates/mc-http/tests/channels/telegram.rs` 的 blob sha 在 base `c16e00a6`、`efe355e7`、`d289bec8` 上都是 **`b13f7ac8214ac0cb127d2b086dfd62652b085422`**；`git diff` 在 `tests/channels` / `mc-channel/src/telegram` / `mc-repos/src/channel` / `routes/channels` 四个面上对两个 PR 都是**空**。
+  2. **`#96` 的门 ⑥ 代码面与 base 逐字相同**：`git diff c16e00a6..efe355e7 -- crates/mc-http crates/mc-repos crates/mc-scheduler apps/mc-server` = **空**（它只动 `dingtalk/**` + `docs/32`，而门 ⑥ 根本不跑 `mc-channel`）⇒ 同一份代码在 base 上 `db` **绿**、在它头上**红**。
+  3. **切片自己的记录**：`LUM-1801` 的交付评论明写「同一个库跨轮跑会让 telegram 面出现『bot 已连到别的 workspace』的 409 假红……门 ⑥ 自己会 `mc-migrate`，但**不会**清库」。
+- ⇒ **不按回归处理、也不重跑整套**：统一用 §102.3 的**合并树当场 `--with-db` 10/10** 结清（比「重跑 CI 那一门」更强——它验的是**联合树**）。
+- **登记为跨波缺陷**：CI 的 `db` job 与本地门 ⑥ 都**复用测试库**；这是**下一次 base 提交也可能撞**的假红源。建议把「门 ⑥ 起手 `DROP/CREATE` 一个按 PID 命名的新库」写进 `scripts/gates.sh`（与门 ⑧ 的 `schema_probe_*_<pid>` 同款做法），归一次渠道面/CI 面收口。
+
+### §102.5 `docs/32` 号段裁定（本轮唯一冲突）
+
+两个 PR 都往 `docs/32-M3-DAEMON-FACE.md` 追偏离表，**都取了 `## 19.`**（`#96` 是按 §101.6 D 的预告取的，`#95` 是相对它起手时的最大号 `## 18.` 取的） ⇒ 两次合并（我在 rehearsal 与我 workdir 外各验证一次）**都只在 `docs/32` 冲突一处，代码面零冲突**。
+**裁定**：**先到者保号** —— `#96`（M7-7）保 `## 19.`（它的 `mod.rs` 头部已经引用了 `docs/32 §19`），`#95`（M8-4）让号改 **`## 20.`**（`19.x → 20.x` 连同 `#### 19.4.1 → 20.4.1` 一起改），D 编号与正文一字未动，并在节首留一行号段勘误说明。⇒ 结果：`docs/32` 现最大号 = **`## 20.`**（这也是我给本轮两片钉的 `## 21.` 起点）。
+
+### §102.6 ⑦/⑨/⑩ 读数（base `a20f69a2` 实测，**不刷基线**）
+
+```
+upstream 456 (f41fae6b08fb) | local 453 registered | baseline 406
+implemented 367 real + 3 placeholder = 370 / 456 | known_gap 86 | unclaimed 0 | regression 0 | local_only 9
+gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5
+```
+
+- 递推逐字命中：起手 `local 452 / implemented 369(365 real+4 ph) / known_gap 87 / owners.M7 16 M8 6` ⇒ `#96`（0 路由）**不动**，`#95`（2 路由，实际只新增 1 个注册键）⇒ `local +1`、`implemented +1`（real +2、placeholder −1）、`known_gap −1`、`owners.M8 6→5`。**`M8-4` 自己预测的「366 real」偏 1（实测 367）** —— 已写进 `LUM-1802` 的 rev 3 起手补充。
+- ⑩ `file_size_check.py --quiet` rc=0、⑨ 未跑（⑨ 要 `cargo run -p mc-conformance`；本轮以「合并树 10/10 里的 ⑨ = `report matches crates/mc-conformance/report.json`」为据）。基线仍 **406**（唯一刷新权归 M7-21 `LUM-1786` / M8-7 `LUM-1804`）。
+
+### §102.7 派发（空位 2 ⇒ 两片，各逐字复核后落 rev 3）
+
+- **`LUM-1773`（M7-8 dingtalk 出站/媒体/回复，0 路由）**：硬前置 M7-7 已合 ✓；只读面 `dingtalk/{stream,resolvers}.rs` + 四份 golden 已在 base ✓；`dingtalk/mod.rs` 实测 **726 行 / 6 个 `pub mod`**（`:87–92`），本片要追加的 5 行会把它推到 ≈731（<800 ✓）；5 个新文件在 base 全不存在 ✓。**同类兄弟为尺**（第二类漏项第 6 次复核）：`telegram/mod.rs` = 11、`slack/mod.rs` = 13 个 `pub mod` —— 写集补行已写进 rev 3。**`LUM-1774` 本轮不派**（同写 `mod.rs`）。
+- **`LUM-1802`（M8-5 ghsnapshot 快照管道，0 路由）**：硬前置 M8-0/M8-1/M8-4 全合 ✓；**文件面 0 缺件**（`ghsnapshot/mod.rs:29–31` 已 `pub mod {client,refresh,snapshot}`、`port.rs:46` trait 在、`integrations.rs` 桩在、`main.rs:30/188` 装配点在）；**`apps/mc-server/Cargo.toml:62` 已有 `mc-vcs-github` 边 ⇒ 不动 manifest/`Cargo.lock`**（这正是 `LUM-1802` 起手补充里没写、我当轮补上的那一格）。
+- 两片**代码写集交集 ∅**（`mc-channel/**` vs `mc-vcs-github/**` + `apps/mc-server/src/integrations.rs`），只共享 `docs/32`（故两片都按「当轮最大 +1 = `## 21.`」钉，后落者顺延）。**`LUM-1803`（M8-6，5 路由）本轮不派**（描述仍 rev 1、未补读数，且其 `apps/mc-server` 宿主面与 1802 可能同文件）。
+- 派发两步（`assign --to-id … --no-start` → `status todo`）各跑一次，daemon 随即 **3/3**，workdir = `lum-1773-f0eef19aebc6` / `lum-1802-ee6724bec179`。
+
+### §102.8 lesson（本轮新增）
+
+1. **【满盘急救的最大单块在 `deps` 的「产品二进制」里，而它不是 `deps` 规则要保护的东西】** 旧规则「`deps` 永不删」保护的是 `.rlib`/`.rmeta`/`.d` 这类**依赖产物**（删了 ⇒ 全量重编）。而 `cargo test --workspace` 会在 `deps/` 里留下**每个集成测试目标一个**的可执行文件（本仓单个体积 **235–248M**，本轮一片里 **75 个 = 17.9G**）。删它们只让 cargo **重链**（每个数十秒），不触发重编 ⇒ **在「活物的 target 不能整删」的窄盘里，这是唯一能拿到两位数 GB 的杠杆**。同理**必须先按 `-size +100M` 且「无扩展名」筛**，否则会误伤 `.rlib`。
+2. **【CI 的 `db` job 双红可能有且只有一个根因，两秒就能证实】** 「失败用例文件的 blob sha 在 base 与 head 上相同」+「该 PR 的门 ⑥ 代码面 diff 为空」= **判定环境假红的充分证据**（本轮两条都成立）。**别按回归处理、也别只重跑那一门** —— 直接在一次真库里跑**联合树的 `--with-db`**，一次把两片都结清，比补 CI 证据更强也更省。
+3. **【同轮两片都写 `docs/32` ⇒ 冲突是必然的，别当意外】** 本轮 4 次 rehearsal/真合里，**代码面零冲突、`docs/32` 每次都冲突**。裁定用「**先到者保号 + 后到者让号 + 节首留一行勘误**」，且**要让号方连同子编号一起改**（`19.4.1 → 20.4.1`），否则交叉引用会指到别人的节。
+4. **【`--with-db` 的测试库跨轮复用 = 假红工厂】** 本轮 CI 两红与 `LUM-1801` 自记的假红同源（telegram 的 bot 全局唯一约束 + 遗留行）。⇒ 门 ⑥ 应像门 ⑧ 那样**每次开一个按 PID 命名的新库**；在那之前，**派发预飞必须把这条写进 slice 描述**（本轮已写进 `LUM-1773`/`LUM-1802` 的 rev 3）。
+5. **【急救不打断在飞片】** 我在两个 run 的**收尾段**删了它们 target 里的可执行文件与增量缓存，两片都在 1 分钟内 `completed` 且分支未回退 —— 因为「删产品二进制 = 只付重链」而它们此时已不再构建。**但判据仍是「分支静默 + 0 进程」**：若当时它们正在 `cargo test`，同一次删除就会变成一次缺文件的重链失败。
+
+### §102.9 next（下一轮第一动作）
+
+- **base `a20f69a2`；GH 0 open PR（收尾时）；daemon = cycle + `LUM-1773` + `LUM-1802` ⇒ 3/3 满（空位 0）。**
+- ① `df -h /` **连采两次**（收尾 37.8G/23%；`< 8G` 先按 §102.2 分级回收）→ ② `git ls-remote origin feat/multica-rs-initial agent/devbox5/*` → ③ 认证 GH `pulls?state=open` → ④ **从 `/` 起手**逐 PID 扫 `/proc/*/cwd` 拆 slot（`LUM-1773`/`LUM-1802` 是新 run，起手点 `a20f69a2`）。
+- **片终态才进判据链，第 0 步先做形态判定**（`merge-base == base == PR base.sha` ⇒ 合并树 ≡ head 树 ⇒ 零门禁重跑）：
+  - `LUM-1773` 终 ⇒ **0 路由 ⇒ ⑦ 应逐字等于 `local 453 / baseline 406 / implemented 370(367 real+3 ph) / known_gap 86 / owners.M7 16`**；合 ⇒ M7 stage 4 尾片 `LUM-1774`（`dingtalk/mod.rs` 追加段交集 ⇒ 只能单独飞）。
+  - `LUM-1802` 终 ⇒ **0 路由 ⇒ 同上逐字不变**；合 ⇒ `LUM-1803`（**先补 rev 2 起手补充**：当轮实测 ⑦ + 硬前置重验 + 禁跑 `--write-baseline`）。
+  - `LUM-1745`（M5-D8，0 路由）随时可插（写 `apps/mc-server` + 可能碰 `mc-http/src/state.rs` ⇒ 与 `LUM-1802` 的 `integrations.rs` 不同文件，但仍要逐文件核）。
+- **两片 INT 仍必须等**：`owners.M7 → 0`（→ `LUM-1786` M7-21）/ `owners.M8 → 0`（→ `LUM-1804` M8-7），且**彼此不得同轮跑 `--write-baseline`**。`register_with` 的宿主调用仍是已登记缺口（归 INT 一次收口）。
+- **CI 假红处置**：若下一轮 PR 的 `db` job 仍红，**先按 §102.8 lesson 2 的两条命令判环境**，再决定；并考虑把「门 ⑥ 用 PID 命名的新库」作为一次独立小片派出去（`scripts/gates.sh` + CI workflow，零路由）。
+- 看板（项目内 240）：`in_review 200 / backlog 27 / todo 11 / in_progress 2 / blocked 0`。观察项**第 40 轮**：积压 `todo` cycle **10 条**（`1835 1826 1810 1805 1748 1740 1737 1726 1533 1521`）只登记不动状态；autopilot 建单护栏仍未落地；本轮起手**无并发 cycle**（连续第 2 轮）。
