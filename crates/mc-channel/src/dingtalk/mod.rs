@@ -1,93 +1,88 @@
-//! `DingTalk` adapter（上游 `internal/integrations/dingtalk`（76 文件 / 25 非测试 / 5,910 上游行））。
+//! `DingTalk` adapter（上游 `internal/integrations/dingtalk`：76 文件 / 25 非测试 / 5,910 上游行）。
 //!
-//! **状态：M7-7 已落「入站 + Stream 连接」**（`LUM-1772`）—— 本文件承载**每安装一条的 Stream
-//! WebSocket 连接**（建连 / 帧服务 / 停机判决）、工厂与注册面；帧编解码与连接引导在
-//! [`stream`]、归一化在 [`inbound`]、per-conversation 串行队列在 [`dispatch`]、解析器面在
-//! [`resolvers`]、表情契约在 [`emotion`]。
+//! **状态：M7-7 落「入站 + Stream 连接」，M7-8 落「出站 / 媒体 / 回复 / 回执」**
+//! （`LUM-1772` → `LUM-1773`）。本文件承载**每安装一条的 Stream WebSocket 连接**（建连 /
+//! 帧服务 / 停机判决）、工厂与注册面；帧编解码与连接引导在 [`stream`]、归一化在 [`inbound`]、
+//! per-conversation 串行队列在 [`dispatch`]、解析器面在 [`resolvers`]、表情契约在 [`emotion`]；
+//! **出站发送**在 [`outbound`]、判决驱动的回复在 [`replier`]、入站媒体在 [`media`]、
+//! 表情回执在 [`ack`]、分片与转义在 [`markdown`]。
 //!
-//! # 这个平台的面
+//! **入站 = Stream WebSocket**（每个 BYO installation 一条，网关把帧**推**过来）；部署密钥
+//! `MULTICA_DINGTALK_SECRET_KEY`（凭据只经 `mc_secrets::secretbox` 与 `mc-telemetry` 的
+//! redaction 通道，`docs/60` §2.3）；`group-routes` **必须保持 404**。
 //!
-//! - **入站 = Stream WebSocket**（每个 BYO installation 一条，网关把帧**推**过来）；
-//! - 7 条路由（含 agent 级 `/api/agents/{id}/dingtalk/groups`）—— 归 **M7-9**；
-//!   引用卡片 / 互动卡片 / 媒体出站 —— 归 **M7-8**；`group-routes` **必须保持 404**；
-//! - 部署密钥 `MULTICA_DINGTALK_SECRET_KEY`；凭据（AppSecret）只经 `mc_secrets::secretbox`
-//!   与 `mc-telemetry` 的 redaction 通道（`docs/60` §2.3）。
-//!
-//! # 本目录的写者表（M7-7 / M7-8 / M7-9）
+//! # 本目录的写者表（M7-7 / M7-8 / M7-9；`mod.rs` 是本文件）
 //!
 //! | 文件 | 写者 | 上游 |
 //! | --- | :-: | --- |
-//! | `mod.rs`（本文件） | **M7-7**（连接 / 工厂 / 注册面） | `dingtalk_channel.go` 的连接那一半 |
-//! | `stream.rs` + `stream/tests.rs` | **M7-7** | `ws_frame.go`（67）/ `ws_endpoint.go`（105）/ `ws_connector.go`（226） |
-//! | `inbound.rs` + `inbound/{card,quoted,tests}.rs` + `testdata/*.json` | **M7-7** | `inbound.go`（827）+ `inbound_card.go`（108）+ 上游 `testdata/` 四份 golden |
-//! | `dispatch.rs` + `dispatch/tests.rs` | **M7-7** | `dispatch.go`（202） |
-//! | `emotion.rs` + `emotion/tests.rs` | **M7-7** | `emotion.go`（67） |
-//! | `resolvers.rs` + `resolvers/tests.rs` | **M7-7** | `resolvers.go`（533） |
-//! | `outbound*.rs` / `replier.rs` / `media.rs` / `ack*.rs` / `reply_source.rs` / `markdown.rs` / `config.rs` / `token.rs` / `client.rs` / `install.rs` / `byo_install.rs` / `binding.rs` / `bot_identity.go` | **M7-8 / M7-9** | 见 `docs/60` §4.1 的两行 |
+//! | `mod.rs` | **M7-7**（连接 / 工厂 / 注册面）+ **M7-8**（`pub mod` 与出站接线） | `dingtalk_channel.go` 的连接那一半 |
+//! | `stream.rs` / `inbound.rs` / `dispatch.rs` / `emotion.rs` / `resolvers.rs`（各带 `tests/`） | **M7-7** | `ws_frame.go`（67）+ `ws_endpoint.go`（105）+ `ws_connector.go`（226）+ `inbound.go`（827）+ `inbound_card.go`（108）+ `dispatch.go`（202）+ `emotion.go`（67）+ `resolvers.go`（533）+ 上游四份 golden |
+//! | `outbound.rs` + `outbound/{target,openapi,credentials,quote,source,tests}.rs` | **M7-8** | `outbound.go`（313）+ `outbound_send.go`（238）+ `outbound_quote.go`（51）+ `reply_source.go`（127）+ `client.go`/`token.go` 的出站两条 |
+//! | `replier.rs` / `media.rs`（各带 `tests/`）、`ack.rs` + `ack/{batch,tests}.rs`、`markdown.rs` | **M7-8** | `replier.go`（342）/ `media.go`（385）/ `ack.go`（220）+ `ack_batch.go`（160）/ `markdown.go`（286）+ `outbound_send.go` 的转义三函数 |
+//! | `config.rs` / `client.rs` / `install.rs` / `byo_install.rs` / `binding.rs` / `group_identity.rs` | **M7-9** | 见 `docs/60` §4.1 的那一行 |
 //!
-//! ## 写集勘误（**逐条登记**，照 M7-3 / M7-5 / M7-6 的先例；全文见 `docs/32` §19）
+//! ## 写集勘误（**逐条登记**，照 M7-3 / M7-5 / M7-6 的先例；全文见 `docs/32` §19 / §22）
 //!
-//! `docs/60` §3.3 给本片的格子是 5 个 `dingtalk/*.rs`；起手补充已追加本文件（**第二类漏项第 4 次**：
-//! 不写进 `pub mod` 就根本不参与编译）。本片再追加的路径只有两类，都是**门 ⑩ 的 800 行硬限**
-//! 逼出来的切分（不是拆凑数字）：
-//!
-//! - `inbound/{card,quoted}.rs`：上游 `inbound.go` + `inbound_card.go` 合起来 935 行，加上本仓
-//!   更啰嗦的 wire 类型必然越过 800；边界正好是上游两个文件各自的边界（卡片投影 / 引用渲染）；
-//! - 四个 `*/tests.rs` 与四份上游 `testdata/*.json`（用 `include_str!` 钉住，不依赖运行目录）。
-//!
-//! 拆完每个文件都 ≤800 行，且**未动** `scripts/file_size_baseline.tsv`。
+//! `docs/60` §3.3 给两片的格子都是 5 个 `dingtalk/*.rs`，起手补充追加了本文件（**第二类漏项
+//! 第 4 次**：不写进 `pub mod` 就根本不参与编译）。再追加的路径**只有两类**，都是**门 ⑩ 的
+//! 800 行硬限**逼出来的切分（不是拆凑数字）：`*/tests.rs`（同目录先例 `slack/*/tests.rs`），
+//! 以及**上游文件边界上**的再切分（`docs/32` §22 的 D1 逐条列了边界）。拆完每个文件都 ≤800 行，
+//! 且**未动** `scripts/file_size_baseline.tsv`。
 //!
 //! # 注册约定（五个 adapter 一致，别各自发明）
 //!
 //! - 工厂必须校验 `raw` 配置并返回 `Err`，**不要**交出半成品（[`crate::channel::Factory`] 的契约）；
-//! - 部署密钥缺失 ⇒ 该平台**整体不装配**（判据在 `apps/mc-server/src/channels.rs`，
-//!   `docs/60` §2.6 第 3 条）。**路由仍然存在**，并按各端点自己的"未配置"语义回响应；
-//! - 一切凭据只经 `mc_secrets::secretbox` 与 `mc-telemetry` 的 redaction 通道（`docs/60` §2.3）；
+//! - 部署密钥缺失 ⇒ 该平台**整体不装配**（判据在 `apps/mc-server/src/channels.rs`，`docs/60`
+//!   §2.6 第 3 条）。**路由仍然存在**，并按各端点自己的"未配置"语义回响应；
 //! - adapter **不得**直接写 DB：只走 [`crate::engine::ChannelDeps`] 里注入的 port。
 //!
 //! # 解密器的接线（**交接项**，与 M7-5 / M7-6 同一落点）
 //!
-//! [`register`] 的签名（`&Registry` + `&ChannelDeps`）里**没有**部署密钥的位置 ——
-//! `ChannelDeps` 是 M7-1 定死的形态，而密钥的**唯一读取口**是
-//! `mc_http::state::ChannelKeys`（`mc-channel` 不得自己 `std::env::var`）。所以：
+//! [`register`] 的签名里**没有**部署密钥的位置（`ChannelDeps` 是 M7-1 定死的形态），而密钥的
+//! **唯一读取口**是 `mc_http::state::ChannelKeys`（`mc-channel` 不得自己 `std::env::var`）⇒
+//! [`register`] 用**失败关闭**的凭据面（带密文的安装行**拒装配**），[`register_with`] 才是
+//! 接线好的入口（[`DingTalkDeps::with_decrypter`]）；M7-9 给正式实现。
 //!
-//! - [`register`]（宿主当前调用的那个）用**失败关闭**的凭据面注册工厂：配置里带
-//!   `app_secret_encrypted` 时，工厂**拒装配**并明说"没接线"，而不是把密文当明文用；
-//! - [`register_with`] 是**接线好的**入口：宿主把 `ChannelKeys::get(DingTalk)` 交给它即可
-//!   （[`DingTalkDeps::with_decrypter`]）。M7-9 的 `config.rs` / `token.go` 会给出正式实现。
-//!
-//! # M7-7 的状态：**入站 + Stream 连接闭环；出站是"失败关闭"**
+//! # 状态：**入站 + Stream 连接闭环；出站闭环（须注入端口）；装配面仍是交接项**
 //!
 //! | 面 | 状态 |
 //! | --- | --- |
-//! | `Channel::connect`（Stream 帧循环） | **已闭环**：引导 → 拨号 → ping/pong（30s/90s/10s）→ 回调入队 → ack，网关 disconnect / 停机 / 链路断三种收尾各有用例 |
-//! | `Channel::send`（出站） | **失败关闭**：明说"出站归 M7-8"，而不是交一个发不出去却自称 `TEXT` 的半成品（同 M7-3 的 slack 先例） |
-//! | 入站流水线（归一化 + 去重 + 会话 + 审计） | **已闭环**：[`resolvers::DingTalkResolverSet`]（装配调用仍是**交接项**，见下） |
-//! | 群清单 / bot 身份 | **接缝 + 诚实默认值**（[`resolvers::NoGroupPresence`] / [`NoBotName`]）：三张表的写语句在 `mc-repos`（不在本片写集）⇒ 登记为缺口 |
+//! | `Channel::connect`（Stream 帧循环） | **已闭环**（M7-7）：引导 → 拨号 → ping/pong → 回调入队 → ack；三种收尾各有用例 |
+//! | `Channel::send`（出站） | **已闭环**（M7-8）：工厂注入 [`outbound::OpenApiTransport`] ⇒ 群发送；直接 `new`（不注入）仍失败关闭 |
+//! | 出站回复 / 判决回复 / 入站媒体 / 表情回执 | **已闭环**：[`outbound::OutboundDelivery`]（`EventChatDone` 那条路的**显式调用**入口，本仓没有进程内事件总线 ⇒ 同 M7-6 先例）、[`replier::DingTalkOutboundReplier`]、[`media::DingTalkMediaResolver`]、[`ack::AckNotifier`]；四者的装配（`with_replier` / `with_media` / `with_typing`）是**交接项** |
+//! | 入站流水线 / 群清单 / bot 身份 | **已闭环**（[`resolvers::DingTalkResolverSet`]，装配调用是交接项）；后两项是**诚实默认值**（三张表的写语句在 `mc-repos`，不在本片写集） |
 //! | 7 条路由 | **归 M7-9**；本片 0 路由 |
 //!
-//! 这张表就是"缺口登记"的形式：**哪一半闭环、哪一半等谁**，一眼可查。
+//! ## M7-8 交给 M7-9 / M7-21 的事项（逐条，别默默略过）
 //!
-//! # 连接的生命周期判决（上游 `stopDispatch`，逐条对应）
+//! 1. **`client.rs` 收敛**：令牌缓存 + `postJSON` 现在是 [`outbound::HttpOpenApi`] ⇒ 换实现
+//!    即可，发送端的校验 / 分片 / 401 重试语义不动。
+//! 2. **凭据解码**：`app_secret_encrypted` 的三条分支**共用** [`StreamInstallConfig`] /
+//!    `resolve_app_secret`（本片把它 `pub(crate)` 了一下）；M7-9 的 `config.rs` 收敛 `Decrypter`
+//!    时并成一处。
+//! 3. **`reply_source` 的写入点**：上游在 resolver 的 append 成功后调 `rememberReplySource`；
+//!    本片给出 [`outbound::ReplySourceCache`] 与 [`ack::AckNotifier::remember_source`]，
+//!    **接线点**仍缺。
+//! 4. **装配**：`with_replier` / `with_media` / `with_typing` 由宿主做（本片 0 路由）。
 //!
-//! 上游在 `Connect` 的 `defer` 里记一句 `c.stopDispatch.Store(ctx.Err() != nil)`：由
-//! supervisor 取消 = "这一代是生命周期停机"（要收口队列），自己返回 = "重连"（**保留**队列，
-//! 跨重连的会话顺序优先）。本仓的 supervisor 用**丢弃 `connect` 的 future** 表达取消
-//! （`engine/supervisor.rs` 的 `select!`）⇒ 同样的判决由 [`RelinquishGuard`] 在 `Drop` 里给出：
-//! future 被丢弃 ⇒ 置位；正常返回 ⇒ 显式"拆信管"（[`RelinquishGuard::defuse`]）。
+//! # 连接的生命周期判决（上游 `stopDispatch`）与队列跨重连复用（上游 `dispatchSlot`）
 //!
-//! 判决的下游：`disconnect` 只在**置位**时收口队列（见 [`Channel::disconnect`]）。
+//! 被 supervisor 取消 = "这一代是生命周期停机"（要收口队列），自己返回 = "重连"（**保留**队列）。
+//! 本仓的 supervisor 用**丢弃 `connect` 的 future** 表达取消 ⇒ 判决由 [`RelinquishGuard`] 在
+//! `Drop` 里给出：被丢弃 ⇒ 置位；正常返回 ⇒ 显式"拆信管"（[`RelinquishGuard::defuse`]）。
+//! 队列由**工厂**持有（[`dispatch::DispatchSlotRegistry`]，按 `AppKey` 一格）⇒ 重连**复用同一条
+//! 队列** —— 上游逐字：*prevents an old in-flight turn and the next turn received after
+//! reconnect from running concurrently*。
 //!
-//! # 队列跨重连复用（上游 `dispatchSlot`）
-//!
-//! 队列由**工厂**持有（[`dispatch::DispatchSlotRegistry`]，按 `AppKey` 一格），所以重连
-//! **复用同一条队列** —— 上游逐字：*prevents an old in-flight turn and the next turn received
-//! after reconnect from running concurrently*。收到收口信号的槽不再复用（下一代会建新队列）。
-
+pub mod ack;
 pub mod dispatch;
 pub mod emotion;
 pub mod inbound;
 pub mod jobs;
+pub mod markdown;
+pub mod media;
+pub mod outbound;
+pub mod replier;
 pub mod resolvers;
 pub mod stream;
 
@@ -188,6 +183,12 @@ pub struct DingTalkChannel {
     knobs: StreamKnobs,
     /// 生命周期停机的判决（见 [`RelinquishGuard`]）。
     relinquish: AtomicBool,
+    /// 出站端口（**M7-8** 注入；见 [`DingTalkChannel::with_outbound`]）。
+    ///
+    /// `None` ⇒ `send` **失败关闭**（构造器不隐式造 HTTP 客户端；工厂会注入）。
+    outbound: Option<Arc<dyn outbound::OpenApiTransport>>,
+    /// 机器人码（上游 `robotCodeOrAppID`）。`send` 的请求体要它。
+    robot_code: String,
 }
 
 impl std::fmt::Debug for DingTalkChannel {
@@ -204,6 +205,14 @@ impl std::fmt::Debug for DingTalkChannel {
             .field("slots", &self.slots)
             .field("knobs", &self.knobs)
             .field("relinquish", &self.relinquish.load(Ordering::SeqCst))
+            .field(
+                "outbound",
+                &self
+                    .outbound
+                    .as_ref()
+                    .map_or("<none>", |_| "<dyn OpenApiTransport>"),
+            )
+            .field("robot_code", &self.robot_code)
             .finish()
     }
 }
@@ -220,8 +229,10 @@ impl DingTalkChannel {
         dispatcher: Arc<Dispatcher>,
         slots: Arc<DispatchSlotRegistry>,
     ) -> Self {
+        let app_key = app_key.into();
         Self {
-            app_key: app_key.into(),
+            robot_code: app_key.clone(),
+            app_key,
             app_secret,
             handler,
             opener,
@@ -230,7 +241,25 @@ impl DingTalkChannel {
             slots,
             knobs: StreamKnobs::default(),
             relinquish: AtomicBool::new(false),
+            outbound: None,
         }
+    }
+
+    /// 注入出站端口（**M7-8**；工厂在装配时调它）。
+    ///
+    /// 不注入也可以构造（M7-7 的用例走的就是那条路）—— 那时 `send` **失败关闭**，
+    /// 而不是偷偷去造一个 `reqwest` 客户端。生产路径由 [`factory_with_slots`] 注入。
+    #[must_use]
+    pub fn with_outbound(mut self, transport: Arc<dyn outbound::OpenApiTransport>) -> Self {
+        self.outbound = Some(transport);
+        self
+    }
+
+    /// 换机器人码（上游 `robotCodeOrAppID`）。
+    #[must_use]
+    pub fn with_robot_code(mut self, robot_code: impl Into<String>) -> Self {
+        self.robot_code = robot_code.into();
+        self
     }
 
     /// 换时间旋钮（用例用；上游的 30s / 90s / 10s 是生产默认值）。
@@ -354,16 +383,31 @@ impl Channel for DingTalkChannel {
         }
     }
 
-    /// 出站：**失败关闭**（实现归 **M7-8** 的 `outbound_send.go` / `sender`）。
+    /// 出站：用本安装的机器人往 `out.chat_id` 发一条群消息（上游 `dingtalkChannel.Send`）。
     ///
-    /// 选 `Transport` 表达"这条出站链路还不存在"（`send` 不在 supervisor 的退避路径上，
-    /// 不会被误重试）。上游的 `Send` 是"用本安装的机器人往 `out.ChatID` 发一条群消息"，
-    /// 它要 `robotCode` + 访问令牌缓存 + 分片 —— 三件都在 M7-8 的写集里。
-    async fn send(&self, _out: OutboundMessage) -> ChannelResult<SendResult> {
-        Err(ChannelError::Transport {
-            message: "dingtalk: outbound send is not wired for this installation (M7-8)"
-                .to_string(),
-        })
+    /// 上游逐字：`Send` 只给 `out.ChatID`，所以目标是**群**（引用 / 直聊那些形态由
+    /// `outbound.rs` / `replier.rs` 的完整目标构造）。
+    /// 没注入端口 ⇒ **失败关闭**（见 [`DingTalkChannel::with_outbound`]）。
+    async fn send(&self, out: OutboundMessage) -> ChannelResult<SendResult> {
+        let Some(transport) = self.outbound.as_ref() else {
+            // `send` 不在 supervisor 的退避路径上，用 `Transport` 表达"这条链路不可用"即可。
+            return Err(ChannelError::Transport {
+                message: "dingtalk: outbound send is not wired for this installation (M7-8)"
+                    .to_string(),
+            });
+        };
+        let sender = outbound::Sender::new(
+            Arc::clone(transport),
+            self.robot_code.clone(),
+            self.app_key.clone(),
+            self.app_secret.clone(),
+        );
+        let target = outbound::SendTarget::group(out.chat_id.clone());
+        let key = sender
+            .send(&target, &out.text)
+            .await
+            .map_err(outbound::DingTalkApiError::into_channel_error)?;
+        Ok(SendResult::single(key))
     }
 
     /// 上游 `CapText | CapAttachment`。
@@ -518,6 +562,8 @@ pub struct DingTalkDeps {
     pub knobs: StreamKnobs,
     /// 队列旋钮（生产默认 = 上游的 8 / 256 / 2048 / 120s）。
     pub limits: DispatchLimits,
+    /// **出站**端口（M7-8）：OpenAPI 的令牌铸造 + JSON POST。
+    pub outbound: Arc<dyn outbound::OpenApiTransport>,
 }
 
 impl std::fmt::Debug for DingTalkDeps {
@@ -530,6 +576,7 @@ impl std::fmt::Debug for DingTalkDeps {
             .field("bot_names", &"<dyn BotNameSource>")
             .field("knobs", &self.knobs)
             .field("limits", &self.limits)
+            .field("outbound", &"<dyn OpenApiTransport>")
             .finish()
     }
 }
@@ -544,6 +591,7 @@ impl Default for DingTalkDeps {
             bot_names: Arc::new(NoBotName),
             knobs: StreamKnobs::default(),
             limits: DispatchLimits::default(),
+            outbound: Arc::new(outbound::HttpOpenApi::new()),
         }
     }
 }
@@ -576,6 +624,13 @@ impl DingTalkDeps {
         self.limits = limits;
         self
     }
+
+    /// 换出站端口（用例注入替身；生产一般不动）。
+    #[must_use]
+    pub fn with_outbound(mut self, outbound: Arc<dyn outbound::OpenApiTransport>) -> Self {
+        self.outbound = outbound;
+        self
+    }
 }
 
 /// 从安装配置解出 Stream 连接要用的明文 `AppSecret`。
@@ -585,12 +640,15 @@ impl DingTalkDeps {
 ///    安装行拒在装配期，而不是把密文当明文用）；
 /// 2. 否则用明文 `app_secret`（本片的本地 / 用例形态，登记在 `docs/32` §19）；
 /// 3. 都没有 ⇒ 配置错误。
-fn resolve_app_secret(
+///
+/// 出站面（M7-8 的 `outbound.rs`）**复用同一条**判据 —— 上游
+/// `decodeCredentials`（`config.go`）也只有这一份 ⇒ 这里 `pub(crate)`，不各自再写一遍。
+pub(crate) fn resolve_app_secret(
     config: &StreamInstallConfig,
-    deps: &DingTalkDeps,
+    decrypt: &Decrypter,
 ) -> ChannelResult<AppSecret> {
     if !config.app_secret_encrypted.is_empty() {
-        let plaintext = deps.decrypt.decrypt(&config.app_secret_encrypted)?;
+        let plaintext = decrypt.decrypt(&config.app_secret_encrypted)?;
         if plaintext.is_empty() {
             return Err(ChannelError::InvalidConfig {
                 kind: TYPE_DINGTALK.as_str().to_string(),
@@ -643,7 +701,7 @@ pub fn factory_with_slots(deps: &DingTalkDeps, slots: Arc<DispatchSlotRegistry>)
                 reason: "installation has no app_id".to_string(),
             });
         }
-        let secret = resolve_app_secret(&cfg, &deps)?;
+        let secret = resolve_app_secret(&cfg, &deps.decrypt)?;
         let handler = config.handler.clone();
         // 队列按 AppKey 复用：重连不会让"重连前的在飞轮次"与"重连后的新轮次"并发
         // （上游 `dispatchSlot` 的唯一目的）。
@@ -664,7 +722,11 @@ pub fn factory_with_slots(deps: &DingTalkDeps, slots: Arc<DispatchSlotRegistry>)
             dispatcher,
             Arc::clone(&slots),
         )
-        .with_knobs(deps.knobs);
+        .with_knobs(deps.knobs)
+        // 出站端口（M7-8）：工厂**注入**它，于是 `Channel::send` 在宿主径上真的能发；
+        // 直接走 `DingTalkChannel::new` 的用例不注入 ⇒ 那条路径失败关闭。
+        .with_outbound(Arc::clone(&deps.outbound))
+        .with_robot_code(cfg.robot_code_or_app_id());
         Ok(Arc::new(channel) as Arc<dyn Channel>)
     })
 }
