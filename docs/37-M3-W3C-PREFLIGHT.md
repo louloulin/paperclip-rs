@@ -7457,3 +7457,63 @@ unclaimed 0   regression 0   local_only 9
   **`LUM-1798`（M8-1，5 路由）** —— M8 stage-2 硬前置是 M8-0 落地，**不可提前**。两者都写 `routes/{mod,mount}.rs`
   注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
 - 回收：活物 `target/`（1766 2.0G / 1797 2.5G）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删。
+
+## §85 08:00 cycle（`LUM-1834`，00:00Z 触发）：**0 open PR / 0 空位 —— 只读监控轮（第三次）**；两片仍活且产物增长明显；**新登记：`LUM-1797` 的 `target/` 35 分钟内 8.6G → 16G，磁盘 24G → 17G 可用**
+
+### 85.1 起手三连
+
+- `df -h /` 起手 **24G 可用（50%）**；本轮进行中 `LUM-1797` 的重编译把磁盘吃到 **17G 可用（66%）**（见 §85.4）。
+  构成 = `lum-1797` 的 `target/` 16G（活物）+ `lum-1766` 的 `target/` 2.1G（活物）；`lum-1833`/`lum-1831`/`lum-1829`/
+  `lum-1765` 四个终态 workdir **均无 `target/`** ⇒ **无残留可回收**。
+- `git ls-remote origin feat/multica-rs-initial` = **`bae0e27e`**（= §84 的 docs-only 提交，**自 07:30 轮起未前进**）；
+  在飞两片分支逐名 `ls-remote`（`agent/devbox5/ba7ddf538cc8`、`agent/devbox5/d40efe34eaf7`）**仍返回空 ⇒ 均未推**。
+- 认证 GH `pulls?state=open`：**0 条** ⇒ **本 cycle 无判据链可走**，与 §83/§84 同形（连续第三个只读轮）。
+- daemon 起手 `running_task_count = 3` / `active_task_count = 3`：**本轮全局数恰好等于本项目数**（无 §84 的非本项目 pi 干扰）。
+  逐 PID 拆解 = **cycle 自身**（pid 54139/54384，cwd = 本 workdir）+ `LUM-1766`（pid 4496）+ `LUM-1797`（pid 4521）
+  ⇒ **本项目在飞 = 3（含 cycle 自身）**，**空位 = 0**。
+
+### 85.2 在飞片复核（判活三件套取二：`/proc` 存活 ∨ 产物增长 ∨ mtime 前进）
+
+| 片 | workdir | 起手点 | 观测（00:04Z） |
+|---|---|---|---|
+| `LUM-1766`（M7-1，渠道契约层 + engine 路由/监管/解析，0 路由） | `lum-1766-ba7ddf538cc8` | `401548db` | **活**：`/proc/4496/cwd` 命中、etime **1h08m**；改动 **9 项**（较 §84 的 2 项**翻 4 倍**）= 新建 `engine/router/`、`engine/supervisor/` 两个**目录**（`media.rs`/`tests.rs`、`runtime.rs`/`ports.rs`/`backoff.rs`/`tests.rs`）+ `engine/{mod,router,resolvers,supervisor}.rs` `M` + 一个 `supervisor.rs.head` 残留；`router.rs` mtime **00:01:30Z**（< 5m）；**0 提交 / 分支未推** |
+| `LUM-1797`（M8-0 anchor，`mc-vcs` / `mc-vcs-github` / `mc-composio` 三 crate） | `lum-1797-d40efe34eaf7` | `401548db` | **活**：`/proc/4521/cwd` 命中、etime **1h08m**；改动 **32 项**（较 §84 的 9 项**翻 3.5 倍**）= 21 个未跟踪路径（`mc-composio/`＋`mc-core/src/{composio,github,mcp,vcs}.rs`＋`mc-core/src/mcp/`＋`mc-http/src/routes/{composio,github,mcp,vcs}/`＋`mc-repos/src/{composio,github,mcp,vcs}/`＋`task/overlay.rs`＋`apps/mc-server/src/integrations.rs`）＋ 11 项 `M`；`mc-vcs-github/src/mirror.rs` mtime **23:57Z**（< 8m）；**0 提交 / 分支未推** |
+
+两片起手点同为 `401548db`（**未含 §82…§84 的 docs**）——无碍：docs 不参与任何门。**两片都仍在「已写代码、未提交」阶段**，
+且**两轮内改动面都在显著扩张**（1766 2→9 项、1797 9→32 项）⇒ 判定为**健康推进**，非静默死亡。
+下一次判据链的前置仍是「等 run 终态 + 分支推出」；**本轮不做任何抢救**（零证据支持动作）。
+
+### 85.3 空位 = 0（本 cycle 不派任何片）
+
+`本项目空位 = 3 − 1(cycle 自身) − 2(在飞) = 0`。就绪但**不派**：`LUM-1767`(M7-2)、`LUM-1768`(M7-3)、`LUM-1798`(M8-1)——
+硬前置逐条复验：M7 stage 顺序为 `M7-1(LUM-1766)` → `M7-2(LUM-1767)` → `M7-3(LUM-1768)`；M8 为 `M8-0(LUM-1797)` →
+`M8-1(LUM-1798)`。⇒ **`LUM-1767` 与 `LUM-1798` 各等自己波次的在飞片落地，`LUM-1768` 还要再等一片**，
+故真正的「槽位一空就派」候选只有 **`LUM-1767`** 与 **`LUM-1798`** 两个。
+**基线 ⑦ 406 不动**（普通片不得 `--write-baseline`；下一次刷新 = `LUM-1786` M7-21 INT）。
+
+### 85.4 新登记：`LUM-1797` 的 `target/` 膨胀速度（本轮唯一新增风险项）
+
+- 观测：00:00Z 时 `lum-1797`/`target` = **8.6G**、磁盘 **24G 可用**；00:03Z = **16G**、磁盘 **17G 可用**。
+  **3 分钟内 +7.4G**（`mc-composio` / `mc-vcs*` 三个新 crate 首次全量编译 + `apps/mc-server` 链接）。
+- 判据：**尚未到动作阈值**（历史紧急态是 3.7G 可用 / 93%），且对象是**活物的构建目录**——**不删**（§84.5 口径）。
+- 但 Rust 全量编译的峰值常出现在**链接阶段之后**，若该 run 继续跑第二/第三个 crate 的测试目标，仍可能再吃数 G。
+  ⇒ 本轮**只登记、不动手**；**下一 cycle 第一动作必须优先读 `df -h /`**，一旦可用 < 5G 且 `lum-1797` run 仍活，
+  按「先救别的片」原则评估（可回收项仍有 `lum-1766` 之外的终态残留为零 ⇒ 真正兜底手段是等 1797 终态后整删其 16G）。
+
+### 85.5 并发 cycle 观察（第 23 轮：护栏仍未落地）
+
+本 run 起手时 **无并发 cycle**（07:00 的 `LUM-1831`、07:30 的 `LUM-1833` 均已 `in_review` 终态）——**连续第二轮干净起手**。
+但 autopilot 仍按 30 分钟节拍建单，护栏**仍未落地**。**建议（重复登记，第 23 轮）：同项目存在未终态 cycle issue 时不再新建
+cycle issue。** 同类积压 `todo` 升至 **10 条**（`LUM-1834`＝本 run 自身 + `1826`/`1810`/`1805`/`1748`/`1740`/`1737`/`1726`/
+`1533`/`1521`，后 9 条零进程零产物）**只登记、不动状态**。`blocked` = **0**。
+
+### 85.6 next cycle 起点与第一动作
+
+- 起点 base = **本 §85 提交**（docs-only 直推 `bae0e27e`）。
+- 第一动作（顺序固定）：① `df -h /`（**本轮起提为第 1 位**，见 §85.4）→ ② `git ls-remote origin feat/multica-rs-initial`
+  → ③ 认证 `pulls?state=open` → ④ **逐 PID 把 `running_task_count` 拆到本项目**（过滤非本项目 workdir）
+  → ⑤ 逐片查 run 是否终态 + `merge-base --is-ancestor <base> <head>`，**终态后才进判据链**（§73 口径）。
+- **槽位一空就派**：`LUM-1766` 合/终 ⇒ 派 **`LUM-1767`（M7-2）**；`LUM-1797` 合/终 ⇒ 派 **`LUM-1798`（M8-1，5 路由）**。
+  两者都写 `routes/{mod,mount}.rs` 注册段 ⇒ 仍与 `LUM-1691`/`LUM-1793`（+12/+1 路由）互斥，后者继续等。
+- 回收：活物 `target/`（1766 2.1G / 1797 16G）不动；任一片 run 终态 + 交付在远端 + `/proc` 零命中 + 0 未提交 ⇒ 立即整删
+  （1797 那 16G 是**本轮最大的单一可回收池**）。
