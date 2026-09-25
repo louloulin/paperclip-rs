@@ -1158,19 +1158,137 @@ bash scripts/gates.sh --with-db      # 10/10
 4. **M8-7（INT）**：本片把 ⑦ 推成 `local 411 / implemented 335 / known_gap 121 / owners.M8 19`；
    `--write-baseline` **仍未到**（归 M8-7）。D12 的文案债与 §11.6 的 R-M8-9（enqueue 尾账）一并收口。
 
+## 13. M7-3（`LUM-1768`）：slack 入站回路的落点、偏离与门禁读数
+
+`docs/60-M7-PLAN.md` §4.1 的 **stage 2 第三片**（`0` 路由 / 上游 `slack/{slack_channel,inbound,resolvers,media_ingest,config,mrkdwn,channel}.go` = 1,786 行）。
+本节是它在 `docs/32` 的**自己那一段**（`docs/60` §6.5 第 7 条；号段照 M8-1 的先例顺延 —— `docs/60`
+计划期写的「§10.x」是占位号，M7 面实际在 `## 10.`，本片取**文件末尾的下一个号** `## 13.`）。
+
+### 13.1 落点（写集逐字）
+
+| 文件 | 角色 | 内容 |
+| --- | --- | --- |
+| `crates/mc-channel/src/slack/config.rs` | **实现**（M7-3） | `InstallConfig` / `Credentials` / `Decrypter` / `SlackDeps`；`decode_credentials`（**唯一**解释点）、`decode_public_config`（解不开回零值，不报错）、`install_team_id`（**不**回退 `app_id`，与 `decode_credentials` 的 team 回退**故意**不同）、`installation_serves_team`、`decrypt_token`（MIME 折行 base64 容忍）、`encode_ciphertext` |
+| `crates/mc-channel/src/slack/inbound.rs`（+ `inbound/tests.rs`） | **实现**（M7-3） | `RawEvent` / `RawFile` / `SlackFile` / `EventBody` / `EventsApiEvent`；`raw_files_from`、`parse_events_api`、`inbound_from_event`（`message` / `app_mention` 两种内部类型）、`slack_chat_type`、`is_ingestable_subtype`、`MentionRe`（`<@U\|name>` 手写匹配器，本 crate 不引 `regex`） |
+| `crates/mc-channel/src/slack/socket.rs`（+ `socket/tests.rs`） | **实现**（M7-3） | `SocketFrame` / `parse_socket_frame` / `ack_json` / `FrameAction` / `dispatch_frame`；`SocketSession` + `SocketTransport` 端口、`TungsteniteTransport`（`apps.connections.open` 引导 + `tokio-tungstenite`）、`SlackChannel`（`Channel` 五方法）、`factory` / `factory_with_decrypter` |
+| `crates/mc-channel/src/slack/media.rs`（+ `media/tests.rs`） | **实现**（M7-3） | `is_slack_file_host` / `is_fetchable_slack_file_url` / `validate_download_url`；`MediaStorage` + `MediaFetcher` 端口、`ThreadedFetcher`（默认实现）、`SlackMediaResolver`（`has_media` / `resolve_media` / `ingest_one`）；`slack_file_content_type`（HTML 登录页不是文件）、`slack_media_kind`、`slack_media_object_key`（按 chat message 派生）、`slack_file_name` / `clean_file_name` / `media_extension` / `safe_media_segment` |
+| `crates/mc-channel/src/slack/mrkdwn.rs` | **实现**（M7-3） | `format_mrkdwn` + 十个手写扫描器（`find_fenced` / `find_inline_code` / `find_md_link` / `find_slack_entity` / `find_blockquote` / `find_header` / `find_italic` / `find_delimited`）+ `Placeholders`（逆序还原） |
+| `crates/mc-channel/src/slack/resolvers.rs`（+ `resolvers/tests.rs`） | **实现**（M7-3） | `InstallationRow`（不透明平台值）；`InstallationQueries` / `IdentityQueries` 端口 + 仓储实现；`SlackInstallationResolver` / `SlackIdentityResolver` / `SlackSessionBinder`；`session_routing`（纯函数）；`SlackResolverSet::{new,from_repos,with_media,with_replier,with_typing,into_engine_set}` |
+| `crates/mc-channel/src/slack/mod.rs` | **实现**（M7-3） | 五个 `pub mod` + `pub mod socket` + 两个注册入口：`register`（**失败关闭**解密器 + 一条 warn）、`register_with`（宿主把 `ChannelKeys` 交进来） |
+
+**写集勘误（**逐条登记**，照 M7-2 的先例 `engine/{commands,session}/tests.rs`）**：`docs/60` §3.3 给
+M7-3 的五格是 `slack/{inbound,resolvers,media,mrkdwn,config}.rs`。本片**追加**四个路径，理由**只有一条**
+= 门 ⑩ 的 **800 行硬限**（不是凑数）：
+
+- `slack/socket.rs`：`inbound.rs` 的**代码面**（不含用例）已 ~940 行 ⇒ 按「归一化 / 传输」拆开，
+  切点正好是上游 `inbound.go` 与 `slack_channel.go` 的边界；两文件相互 `pub` 引用，无环（`inbound`
+  不引用 `socket`；`socket` 引用 `inbound::{inbound_from_event,parse_events_api,TYPE_SLACK}`）。
+- `slack/{inbound,media,resolvers,socket}/tests.rs`：四文件用例内联后分别 1516 / 1242 / 1121 / 835 行
+  ⇒ 用例拆成子模块。`config.rs`（618）与 `mrkdwn.rs`（646）**未拆**。
+
+拆完 `crates/mc-channel/src/slack/**` 最大文件 **656 行**，`scripts/file_size_baseline.tsv` **未动**。
+
+### 13.2 偏离登记（M7-3-D1 … M7-3-D6）
+
+| # | 偏离 | 处置与理由 |
+| --- | --- | --- |
+| **M7-3-D1** | **会话隔离键的分隔符**：上游 `chat_id:线程根`，本仓的通用策略（`BindingKeyPolicy::ChatIdPlusThreadRoot`）用 `#` 分隔 | **隔离粒度完全一致**（一个频道里两个 `@bot` 线程 = 两个会话，`resolvers/tests.rs::session_routing_table` 钉住）；只有键的**字面形态**不同。出站（M7-4）取真实 channel id 时按分隔符前的**前缀**取。**不**改 M7-2 的通用策略（它在 `engine/session.rs`，是各适配器共用的） |
+| **M7-3-D2** | **DM（p2p）线程内的回复落点**：上游把 DM 的回复送进线程（`ReplyThread = ThreadID`），本仓落回 DM 顶层 | 同一个字段既当**隔离键**又当**回复线程**，而 p2p 的隔离键**必须**是 chat id（否则同一条 DM 里的线程消息会被拆成两个会话，agent 直接丢上下文）。两害相权取"会话不分裂"；影响面 = DM 内**线程**回复的落点，DM 顶层回复不受影响 |
+| **M7-3-D3** | **绑定行的 `config` 列**：上游写 `{"channel_id": …}`（复合键下出站要知道真实 channel id），本仓通用实现写 `null` | 真实 channel id 在隔离键的**前缀**里（见 D1），读得回来。若要落到列上，需改 M7-2 的 `NewEnsureSession` 传参面（不属于本片写集） |
+| **M7-3-D4** | **跨安装身份复用**：上游有 `FindReusableChannelUserBinding`（同一个 Slack 工作区里第二个 app 不必重新提示绑定，MUL-3911），`mc-repos/src/channel/binding.rs` **没有**这条查询 | 本片只实现「按 `(installation, 平台用户 id)` 绑定」的主路径。**不是静默略过**：没有它只影响"第二个 app 的第二条消息要重新走一次绑定卡"，不影响安全与数据正确性。落地归**拥有 binding 仓储的那一片**（M7-1 的 `binding.rs` 已合、加查询要另开票） |
+| **M7-3-D5** | **媒体端口的同步形态**：`MediaResolver::resolve_media` 是本仓的**同步**签名（M7-1 定的契约；上游是 ctx-async），而 workspace 的 `reqwest` 没开 `blocking` feature 且 M7 不许新增依赖 / feature | 默认取回器 `ThreadedFetcher` 在**独立线程**上跑一个 current-thread 运行时（对任何调用上下文都成立：不要求 multi-thread runtime、在运行时 worker 上不会 panic）；对象存储与意图账本是 `MediaStorage` / `MediaIntentLedger` 端口，宿主用自己的桥接实现（`mc-storage` 的 `StorageProvider::put` 是 async）。同时**没有 deadline 上下文**：上游按"剩余预算 ÷ 剩余文件数"分摊，本片每个文件用固定 `FILE_FETCH_TIMEOUT`，而"预算耗尽"由 Router 的 `resolve_remote` 门槛 + `MAX_FILES_PER_MESSAGE` 兜底（语义不变：预算耗尽 ⇒ **不**起新下载） |
+| **M7-3-D6** | **`Channel::send` 失败关闭**：上游 `/slack/outbound` 面（`channel.go` + `replier.go`）属 **M7-4** | 本片返回 `ChannelError::Transport{"outbound (chat.postMessage) is not wired yet — lands in M7-4"}`，而不是交一个发不出去却自称 `TEXT` 的半成品。选 `Transport` 是因为它表达的正是"这条出站链路还不存在"，且 `send` **不在** supervisor 的退避路径上（不会被误重试）。`capabilities()` 仍照上游声明 `TEXT | THREAD_REPLY`（位图是**声明**，实现归 M7-4） |
+
+**另有一条不构成偏离的**实现选择（记在这里免得被当漏项）：`register()` 的签名（`&Registry` +
+`&ChannelDeps`）里没有部署密钥的位置，而密钥的**唯一读取口**是 `mc_http::state::ChannelKeys`
+（`mc-channel` 不得自己 `std::env::var`，`docs/60` §3.1）。所以本片给两个入口：
+`register`（宿主当前调用的那个）用**失败关闭**解密器 + 一条 `warn`（绝不把密文当明文），
+`register_with` 是接线好的入口（`SlackDeps::with_secret_box`）。宿主装配点
+`apps/mc-server/src/channels.rs` 属 anchor 写集 ⇒ 接线动作归引入它的那一片。
+
+### 13.3 专属 `DoD` 的证据（`docs/60` §6.5 的 M7-3 行逐条）
+
+| 专属验收 | 证据（`cargo test -p mc-channel --lib` 里的用例名） |
+| --- | --- |
+| Socket Mode 信封帧解析（`events_api`） | `slack::socket::tests::{socket_frames_parse, frame_actions}`（四种信封 + 四类畸形帧 + ACK 线形态逐字 `{"envelope_id":"e1"}`） |
+| 事件去重 | 走 engine 的共享两阶段端口（本片复用 M7-2 的 `ChannelDeduper`）；`resolvers/tests.rs::unknown_installation_is_dropped_without_an_error` 钉住"判决不是错误"的那一半 |
+| 未绑定发件人 ⇒ **回绑定卡**（nil error，不是失败） | 端到端：**真信封帧** → adapter 自己的翻译 → `SlackResolverSet` → `Router::route` ⇒ `Ok(())`、`replier` 收到 `Outcome::NeedsBinding`、审计一行 `unbound_user`。用例：`slack::resolvers::tests::unbound_sender_gets_a_binding_card_and_no_error` |
+| `mrkdwn` 转换一组用例 | `slack::mrkdwn::tests::*`（11 条）：上游 `mrkdwn_test.go` 的 15 条表 + 栅栏保护的 2 条 + 手写扫描器的边界（贪婪 `\s+`、`#{1,6}` 上界、斜体最小匹配、链接里一层平衡括号） |
+| 媒体引用抽取一组用例 | `slack::media::tests::*` 与 `slack::inbound::tests::file_share_keeps_only_fetchable_files`：可取文件的筛选（无 URL / 站外被丢）、`has_media` 纯解码、HappyPath（意图行**先于**上传）、非 Slack 主机**不取不传**、HTML 登录页不当文件、对账器接管的 key 跳过、一个失败不阻断其余、文件名回落（路径穿越 / 全点 / 空）、超限在**落意图行之前**被拒 |
+| 入站是 push（adapter 自己跑接收循环 + 注入的 `InboundHandler`）| `slack::socket::tests::connect_acks_before_dispatching_and_survives_bad_frames`（替身传输喂脚本帧：ACK 只对 `events_api` 发且**先于**投递、坏帧不致命、流结束 ⇒ 链路错误）+ `disconnect_frame_asks_for_a_reconnect` |
+| 凭据面（§2.3 四条判据） | `slack::config::tests::debug_never_echoes_token_material`、`fail_closed_decrypter_refuses_instead_of_passing_ciphertext_through`、`slack::socket::tests::channel_debug_redacts_tokens`、`slack::media::tests::blocked_host_never_reaches_the_network`；承载凭据的类型全部**手写 `Debug`**（`Credentials` / `InstallConfig` / `Decrypter` / `SlackDeps` / `Sensitive` / `SlackChannel`），错误变体只带长度 / 字段名 / 来源 |
+
+`cargo test -p mc-channel --lib` = **162 passed / 0 failed**（其中 `slack::` 新增 52 条）。
+
+### 13.4 门禁读数（逐字取自当轮日志）
+
+**两轮跑完（同一棵树；第二轮只重跑被磁盘打断的门）**：
+
+```
+第一轮（`bash scripts/gates.sh`，无 DB）：①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0
+                                          · ⑦route-parity 0 · ⑨conformance 0 · ⑩file-size 0 ⇒ **8/8 PASS / 307s**
+第二轮（`bash scripts/gates.sh --with-db`）：①–⑤ 0 · ⑥db 0（migrate=0, e2e=0）· ⑧schema-drift 0
+                                          · ⑦ 0 · ⑨ 0 · ⑩ 0 ⇒ **10/10 PASS / 175s**
+```
+
+- **【lesson·门 ⑥ 的「红」又是磁盘满，不是代码错】** 第二次 `--with-db` 起初报
+  `migrate=0,e2e=101`；单跑那条 e2e 命令看到的是 `ld terminated with signal 7 [Bus error]` +
+  `could not write output … No space left on device`（`df -h /` = 100%、本 run 的 `target` **19G**、
+  其中 `target/debug/incremental` **7.7G**）。唯一回收动作 = `rm -rf target/debug/incremental`
+  （**本 run 自己的** target）⇒ 腾出 7.4G 后 10/10 一次全绿。同项目的另一在飞片（`lum-1799`，15G）
+  **未动**（判据：当时无任何进程的 `/proc/*/cwd` 落在它的 workdir，但"run 终态 ∧ 交付在远端 ∧
+  `git status` 空"三条没做 ⇒ 不整删别人的 target）。
+- ⑦（**本片 0 路由 ⇒ 读数逐字不变**；`baseline 406 不动`）：`upstream 456 (commit f41fae6b08fb) |
+  local 411 registered | baseline 406`、`implemented 331 real + 4 placeholder = 335 / 456`、
+  `known_gap 121`、`unclaimed 0`、`regression 0`、`local_only 9`、
+  `gaps by owner: M9=33 M7=24 M8=19 M3+=16 M2-A=13 M3=11 M10=5`（和 = 121 ✓）
+  —— 与 issue「起手补充（11:00 cycle）」的当轮实测**逐字相同**（`owners.M7` 仍 24：本片不认领路由）。
+- ⑦ 第二条（形态门）：`slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv` =
+  `declared 24 upstream key(s); dual-form required: 0 | single-form: 24` ⇒ **0 defect(s)**、exit 0；
+  本地实况同命令 `registered upstream-key literals: 415` ⇒ **0 defect(s)**、exit 0
+  （**未**加任何 allowlist 行，M7 无形态欠账）。
+- ⑨（与当轮 `report.json` 逐字比对）：`report matches crates/mc-conformance/report.json`，exit 0
+  （本片 0 路由 ⇒ 快照不该变，事实也是没变）。
+- ⑩：0 违规；`scripts/file_size_baseline.tsv` / `docs/fixtures/route-parity-baseline.json` /
+  `docs/fixtures/slash-alias-allowlist.tsv` **三者都未动**（`--write-baseline` **禁跑**，唯一一次刷新归 M7-21 `LUM-1786`）。
+
+### 13.5 交接（给 M7-4 / 宿主装配点 / M7-21）
+
+1. **M7-4（slack 出站 + 安装与绑定面）**：
+   - `Channel::send` 目前失败关闭（M7-3-D6）—— 实现 `slack/{outbound.rs,replier.rs}` 后请把
+     `SlackChannel::send` 改成真投递（或在 `outbound.rs` 里给出 sender 并由 `socket.rs` 委托），
+     并把 `capabilities()` 的位图与真实能力对齐；
+   - `/issue`、`/new`、`/clear` 的**斜杠命令**帧已经**收到并 ACK**（`SocketFrame::SlashCommand`），
+     但处理被丢弃（`FrameAction::Ignore`）⇒ 你只需在 `dispatch_frame` 的 `SlashCommand` 分支接上
+     处理器，**不必**再动传输 / ACK 顺序（ACK 已是"先于处理"）；
+   - `InstallationRow`（`ResolvedInstallation.platform` 上的不透明值）里有 `config`，出站可以直接
+     用它解出 bot token（`decode_credentials`），**不用**再查一次库；
+   - 会话隔离键的分隔符是 `#`（M7-3-D1），取真实 channel id 用前缀。
+2. **宿主装配点（`apps/mc-server/src/channels.rs`，anchor 写集）**：Slack 的接线动作是
+   `mc_channel::slack::register_with(&registry, &SlackDeps::with_secret_box(key))`，其中
+   `key = ChannelKeys::get(ChannelKind::Slack)`；现在的 `register(&registry, &deps)` 会打一条 warn
+   并**拒装配**带密文的安装（失败关闭）。同理，`ChannelDeps` 里还缺 `InstallationStore` /
+   `LeaseStore` 的生产实现（归 M7-1/M7-2 的端口实现），在那之前 `start()` 仍是 `deps=None` 的空跑。
+3. **M7-21（INT）**：本片**未**动任何基线（`route-parity-baseline.json` / `file_size_baseline.tsv` /
+   `slash-alias-allowlist.tsv`）；本片对 ⑦ 的贡献是 **0**（0 路由、0 占位删除）⇒ `--write-baseline`
+   仍归你（`docs/60` §6.1 的 M7-21 行）。
+
+
 ---
 
-## 13. M8-2（`LUM-1799`）：VCS provider 抽象 + 连接管理 + 入站 webhook（5 路由）的落点、偏离与门禁读数
+## 14. M8-2（`LUM-1799`）：VCS provider 抽象 + 连接管理 + 入站 webhook（5 路由）的落点、偏离与门禁读数
 
 `docs/61-M8-PLAN.md` §4.1 的 **stage 2 第二片**（`5` 路由 / 上游 `vcs.go` (336) + `vcs_webhook.go` (335)
 + `integrations/vcs/*` (649) = **1,320** 行）。本节是它在 `docs/32` 的**自己那一段**
 （`docs/61` §3.3 / §6.5 第 7 条）。号段起手复核：`## 11.` = M8-0 anchor、`## 12.` = M8-1
-⇒ 本节取 **`## 13.`**（计划书写的「§9.12」是计划期占位号）。
+⇒ 本节**原取** `## 13.`；合并进 base 时 `## 13.` 已被 M7-3（`LUM-1768`，PR #88）占用
+（两片同为 `docs/32` 尾节追加 ⇒ cycle `LUM-1851` 按「两侧都保留」解，本片顺延为 `## 14.`）
+（计划书写的「§9.12」是计划期占位号）。
 
 **起手 base = `ca05edbd`**（= `5f1a34ec` + 合并 #85 / M8-1）。硬前置两条**当轮重验通过**：
 M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里。
 
-### 13.1 落点（写集逐字）
+### 14.1 落点（写集逐字）
 
 | 文件 | 角色 | 内容 |
 | --- | --- | --- |
@@ -1183,7 +1301,7 @@ M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里�
 | `crates/mc-http/src/routes/vcs/connections.rs` | **实现**（M8-2） | 4 条 workspace 路由 + `VcsScope`（member/admin 门）+ `provider_registry()`（**本片唯一的 registry 构造点**，webhook 复用）+ `seal_secret` / `open_secret`（`secretbox` + base64）+ `mint_webhook_secret`（32 随机字节 hex）+ `is_absolute_http_url` |
 | `crates/mc-http/src/routes/vcs/webhook.rs` | **实现**（M8-2） | 公开路由 `POST /api/webhooks/vcs/:connectionId`：`DefaultBodyLimit(10 MiB)` + **扁平** `{"error":…}` 错误体 + 失败阶梯 404/400/413/500/401 + 两条镜像路径（PR / CI 状态）+ 广播 |
 | `crates/mc-http/tests/vcs/{main,support,connections,webhook}.rs` | **新增测试**（M8-2） | 真库 + 离线实例替身的端到端 **17** 例 |
-| `docs/32` §13（本节） | **文档**（M8-2） | 落点 / 偏离 / `DoD` 证据 / 门禁读数 |
+| `docs/32` §14（本节） | **文档**（M8-2） | 落点 / 偏离 / `DoD` 证据 / 门禁读数 |
 
 **只读**（未改一个字节）：`crates/mc-secrets/src/secretbox.rs`（M7-0 建）、
 `crates/mc-vcs/src/{provider,events,registry,signature}.rs`、`crates/mc-vcs/Cargo.toml`、
@@ -1193,7 +1311,7 @@ M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里�
 **零注册编辑**：`routes/vcs/mod.rs`（anchor）已 `merge(connections::router()).merge(webhook::router())`
 ⇒ 本片只在两个子文件里注册 5 条键，**注册键集合**与上游字面量逐字一致（`dual-form required: 0`）。
 
-### 13.2 偏离登记（M8-2-D1 … M8-2-D11）
+### 14.2 偏离登记（M8-2-D1 … M8-2-D11）
 
 | ID | 事项 | 计划书 / anchor 期 | 本片 | 理由 |
 | --- | --- | --- | --- | --- |
@@ -1214,7 +1332,7 @@ M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里�
 ② `crates/mc-http/src/routes/vcs/mod.rs` 的「anchor 期：三个子文件全是空 `Router::new()`」已过期。
 两者都在 anchor 冻结文件里，本片**不改**。
 
-### 13.3 专属 `DoD` 的证据（`docs/61` §6.5 的 M8-2 行逐条）
+### 14.3 专属 `DoD` 的证据（`docs/61` §6.5 的 M8-2 行逐条）
 
 | `DoD` 条目 | 证据（用例） |
 | --- | --- |
@@ -1226,7 +1344,7 @@ M8-0（#83）与 M7-0 的 `crates/mc-secrets/src/secretbox.rs` 都在 base 里�
 | **离线替身端到端**（每连接自带 `instance_url` 是天然接缝） | `connect_forgejo_persists_ciphertext_only`（路由 → 真 HTTP `/api/v1/user`（替身）→ `secretbox` 封装 → 真库 → 响应 + `webhook_url` 派生）与 `connect_gitlab_uses_api_v4`（`/api/v4/user`）；**入站**面用真实 wire 帧（真 HMAC / 真 `X-Gitlab-Token` 头 + 真 JSON），**不需要**替身。替身三条纪律：只替 platform wire（axum 起的假实例，不是假 service）、字段逐项断言、两个反例必测（验签失败不落库 / 重复投递只留一行） |
 | 幂等与单调（`docs/61` §4.2 纪律 ③） | `pull_request_mirror_is_idempotent_and_monotonic`（同帧两次 1 行；陈旧帧不得回退 title/state/head_sha；`merged=true` 归一化）、`commit_status_mirror_is_context_keyed_and_monotonic`（context 是主键的一部分；陈旧重投递被守卫挡住；缺 sha/state 确认但忽略）、`gitlab_pipeline_uses_synthetic_context`、`unmodelled_event_is_acknowledged_without_writing`（202 且不落任何行；**仍然要验签**） |
 
-### 13.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-2.log` / `gates-clippy.log`）
+### 14.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-2.log` / `gates-clippy.log`）
 
 ```
 bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:5432/mc_lum1799'
@@ -1264,7 +1382,7 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:54
   与本项目 cycle 的 `LUM-1847` 同一手法）。此后所有 cargo 调用都带 `CARGO_INCREMENTAL=0`
   （env 覆盖 `.cargo/config.toml` 的 `incremental = true`），门禁读数不受影响（同一脚本、同一批命令）。
 
-### 13.5 交接（给 M8-3 / M8-4 / M8-6 / M8-7）
+### 14.5 交接（给 M8-3 / M8-4 / M8-6 / M8-7）
 
 1. **M8-4 读这三处**：`mc_repos::vcs::pull_request`（`link_issue` 的 `preserve_close_intent` 冻结语义、
   `unlink_issue` 的「终态后不得调用」纪律、`list_by_issue` 的聚合、`list_issue_ids_for_head` 的扇出
@@ -1273,11 +1391,11 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1799:…@127.0.0.1:54
   `mc_repos::vcs::commit_status`（单调守卫的语义与「必须喂事件时间戳」这条前提）。
   你的两条路由（`POST /api/webhooks/github` / `GET /api/issues/:id/pull-requests`）需要
   跨 GitHub+VCS 的关闭聚合时，**新增**查询的落点请选 `mc-repos/src/github/pull_request.rs`
-  或你自己的新文件（见 §13.2 D10 —— 本片刻意没写那条跨表 CTE）。
+  或你自己的新文件（见 §14.2 D10 —— 本片刻意没写那条跨表 CTE）。
 2. **M8-3 / M8-6**：本片**没有**碰 `routes/{mcp,composio}/**`、`mc-composio/**`、`state*.rs`、
   `routes/{mod,mount}.rs`、manifest ⇒ 与本片写集**零交集**。公开 webhook 的**扁平**错误体与
   `DefaultBodyLimit` 手法（`webhook.rs`）可直接照抄（composio 的 callback 是同类公开路由）。
 3. **M8-7（INT）**：本片把 ⑦ 推成 `local 416 / implemented 340 / known_gap 116 / owners.M8 14`；
-  下一次刷新（`--write-baseline`：`baseline 406 → ？`）归 M8-7。请一并收口两条文案债（§13.2 末）与
+  下一次刷新（`--write-baseline`：`baseline 406 → ？`）归 M8-7。请一并收口两条文案债（§14.2 末）与
   **D9/D10 两条「登记过的不实现」**（VCS 侧自动关联/关闭、跨表关闭聚合），并在 INT 报告里复述
   「`issue_vcs_pull_request` 在本波结束时仍为空」这条已知缺口。
