@@ -10455,6 +10455,8 @@ GATE_CONFORMANCE_EXIT=101
   同一批门里 **④ ⑤ ⑥ ⑧ 全绿**（`⑤ test` 43s、`⑥ db` 317s `migrate=0,e2e=0`、`⑧ schema-drift` 48s）⇒ **整体 FAIL 的唯一来源就是这一条 ENOSPC**。
 - **回收后片自己纠正了**：18:04:39Z `LUM-1777` 起了 `/tmp/gate9.log`，只重跑 ⑨（`cargo run -q -p mc-conformance …`）—— 与 `gates.sh` 自己的提示（`rerun the red gate(s) with --only`）一致 ⇒ **本 cycle 的回收直接解了它的阻塞**，无需任何跨 workdir 写入（**不得**替在飞片跑门禁）。⇒ 本轮仍**不会有 PR 可合**（未提交面 11 项 + 0 提交）。
 
+- ✅ **闭环取证（本轮内拿到，写进 §119.2 而非事后推测）**：回收 2.2G 之后，`LUM-1777` 自己只重跑 ⑨ —— `/tmp/gate9.log` 的汇总为 **`⑨ conformance 0 98s PASS` → `overall: PASS — 1/1 gate(s) green in 98s`**，**同一代码树**（未提交面仍 11 项、0 提交）⇒ 原先那条 `exit 101` **逐字确认是 ENOSPC 假红**，不是代码红。⇒ 结论：**磁盘耗尽会把一片的口 ⑨ 打成红，且门汇总只显示 `FAIL`**；本 cycle 的回收是该片继续推进的直接前提。
+
 ### §119.3 ⑦/⑩ 当场重跑 + ⑨ 的省法论证（**第二十一次只读轮**）
 
 ```
