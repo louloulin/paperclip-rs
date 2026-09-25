@@ -3815,3 +3815,21 @@ unclaimed 0 | regression 0 | local_only 9   unclaimed 0 | regression 0 | local_o
   **假命题**的第二组对照（第一组 = M7-9 dingtalk 7 路由，`docs/37` §112.4）。
 * **⑩**：`file_size_check.py --quiet` exit 0；`scripts/file_size_baseline.tsv` 未改。
 * **本片不刷任何快照**：⑦ 基线（`docs/fixtures/route-parity-baseline.json`）与 ⑨ 报告都归 **M7-21**。
+
+### 31.5 合并期复核（当轮实做：合并 `origin/feat/multica-rs-initial` = `8104740d`）
+
+* **文件交集**：新 base 只多了 `crates/mc-channel/src/lark/**`（M7-11 = PR #104）与 `docs/32` §28 /
+  `docs/37` §116 ⇒ 与本片写集**逐字交集 = ∅**（唯一的同名文件是 `docs/32`，按 31.4 前的号段说明
+  两节都留）。
+* **合并树上重跑 ⑦ / ⑨ / ⑩**：`local 469 | implemented 383 real + 3 ph = 386 | known_gap 70 |
+  owners.M7 5 | unclaimed 0 | regression 0 | local_only 9 | baseline 458` —— 与 **31.4 的片后读数逐字相同**
+  （M7-11 是 0 路由片，不该动任何一个数）；⑨ `report matches`；⑩ exit 0；形态门 0 defect。
+* **合并树 `bash scripts/gates.sh --with-db` = 10/10 PASS，266s**（`migrate=0,e2e=0`）。
+  ⚠️ **同树红绿交替的一次实测**（对本波"门 ⑥ 的红判据"有用）：本片合并树的第一轮跑出 **9/10**，
+  红的只有 ⑥，且红点是 `mc-scheduler/tests/jobs_issue_wakeup.rs:312`
+  （`real_db_register_all_wires_both_jobs_and_the_loop_starts_and_stops`：断言 `Success` 拿到 `Running`）——
+  与本片**零交集**（本片 diff 只在 `crates/mc-channel/src/wecom/**` 与
+  `crates/mc-http/src/routes/channels/wecom*`）。该用例**单跑 3/3 绿**（0.34s / 0.14s / 0.19s），
+  同树第二轮全量 **10/10 绿** ⇒ 判为**既有 flake**，不是本片引入的红（第 6 条同族证据，
+  与 `docs/37` §116 的「同一代码树绿红交替」判据同一形态）。
+* **本片不刷任何快照**：⑦ 基线（`route-parity-baseline.json`）、⑨ 报告、⑩ 基线三件套都属于 **M7-21**。
