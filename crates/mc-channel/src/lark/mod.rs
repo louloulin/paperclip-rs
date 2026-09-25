@@ -29,6 +29,12 @@
 use crate::engine::ChannelDeps;
 use crate::registry::Registry;
 
+// M7-10（`LUM-1775`）落地的四个子模块：**只追加这四行**（见本文件「不做什么」）。
+pub mod client;
+pub mod http_client;
+pub mod params;
+pub mod types;
+
 /// 把本平台的工厂注册进 `registry`（anchor 期空实现，见模块文档）。
 ///
 /// 签名里的两个实参就是 adapter 能拿到的全部外部世界：一个共享注册表 + 一个 port 袋。

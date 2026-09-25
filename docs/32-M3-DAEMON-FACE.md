@@ -3099,6 +3099,138 @@ bash scripts/gates.sh --only test →  overall: PASS — 1/1 gate(s) green in 48
   `docs/32` 末号）。这条已记 `docs/37` §108，本片是它的第一个受益者（改号成本 = 0，因为还没动 docs）。
 ---
 
+## 25. M7-10（`LUM-1775`）：lark 客户端与类型（**0 路由**）
+
+> **号段说明**：派发描述 rev 2（`docs/37` §108）定 `## 25.`，rev 3（§111）复核「三段并集（base ∪ 在飞 ∪
+> parked）仍未被占」。落笔前实测 `grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` = `## 26. M8-7（LUM-1804）…`
+> ⇒ 本节按**数值顺序**插在 §24 与 §26 之间，**不是尾行追尾**：同期在飞的 `LUM-1745` 取 `## 27.`（也在尾行）
+> ⇒ 尾行追尾会与之必红（§24 的合并期裁定就是这么红的），插在中段则两份 diff 互不重叠。
+
+**口径**：本节一切落点、偏离与读数都在上游 `f41fae6b08fb` 与**本片实测树**上核对。
+
+- **起手 base**：`af729ecf`（= PR #101 / M7-9 的合并提交，`git fetch` 后 `git rev-parse
+  origin/feat/multica-rs-initial` 实测；派发描述钉的 `0d4510e4` / `2394bfcc` 是计划期读数，已作废）。
+- **提交身份**：`git config --worktree user.name devbox5` / `user.email devbox5@multica.local`。
+- **在飞交集**：起手 `pulls?state=open` = **0**；同期在飞 `LUM-1745`（M5-D8）的写集
+  （`apps/mc-server/src/{webhook_worker,main}.rs` + `mc-autopilot/src/webhook/mod.rs` +
+  `mc-http/src/routes/webhooks/autopilots.rs` + `docs/32` §27）与本片**逐文件 ∅** —— 本片不碰
+  `apps/`、不碰 `mc-http/`、不碰 `mc-autopilot/`，`docs/32` 上两者号段也不同（25 vs 27）。
+- **上游只读副本**：克隆进**自己的** workdir，钉 `f41fae6b08fb`（不依赖别的 run 的 workdir）。
+- **硬前置 M7-1**：早已合入；起手复核 `gaps by owner` 里 **`M7=9`**（= 本片 5 条 lark + wecom 4 条），
+  即 M7 stage 4 的 7 条（dingtalk）已精确清零 ⇒ 本片是 **stage 5 的第一片**，开跑合法。
+
+### 25.1 落点（逐字路径）
+
+| 落点 | 写者 | 上游 / 说明 |
+| --- | :-: | --- |
+| `crates/mc-channel/src/lark/mod.rs` | M7-0 建 / **M7-10 追加 4 行 `pub mod`** | 38 → **44** 行（4 行声明 + 1 行注释 + 1 行空行）。`register()` **一行未动**（仍是 anchor 空实现：注册工厂与 5 条路由归 M7-11…M7-14） |
+| `lark/types.rs` + `types/tests.rs` | M7-10 | `types.go`(129) 的六个类型别名 / `Region` / 两个枚举 + `larkRESTMessageItem` 一族 wire DTO 与其 `normalize` + 各端点信封 |
+| `lark/params.rs` + `params/tests.rs` | M7-10 | `params.go`(137) 的 17 个参数结构 + `client.go` 的 9 个入参结构 + `http_client.go` 的**请求构建**（路径/查询/体）+ `tx.go` |
+| `lark/client.rs` + `client/tests.rs` | M7-10 | `client.go`(461) 的 `APIClient` / `TokenCacheInvalidator` / `stubAPIClient` + `http_client.go` 的**错误分类**那一半 |
+| `lark/http_client.rs` + `http_client/tests.rs` | M7-10 | `http_client.go` 的**传输核**：令牌缓存 + 过期重铸 + 被拒作废重放一次 + `doJSON` + 超时 + region→host 解析 |
+| `lark/http_client/api.rs` + `api/tests.rs` | M7-10（**门 ⑩ 切分**，见 D1） | `http_client.go` 的 **13 个端点**实现 |
+| `lark/http_client/resource.rs` + `resource/tests.rs` | M7-10（**门 ⑩ 切分**，见 D1） | `http_client.go` 的 `downloadMessageResource*` 一族 + 资源响应的形态判定与字节上限 |
+
+**Δ 行数**：12 个新文件，最大 **753**（`http_client/tests.rs`）≤ 门 ⑩ 的 800；
+`types.rs` 612、`params.rs` 706、`client.rs` 576、`http_client.rs` 485、`api.rs` 457、`resource.rs` 287。
+`scripts/file_size_baseline.tsv` **一行未动**（仍 10 条；预飞实测 M7 写集**不在**白名单里）。
+
+**测试账**：`cargo test -p mc-channel lark::` ⇒ **89 passed / 0 failed**（本片全部新增）。
+端点面的 13 个方法**逐个**有用例；三条专属反例（限流 / 凭据失效 / 网络）与两条凭据用例
+（`error_paths_never_echo_the_app_secret`、`a_minted_token_never_reaches_a_debug_rendering`）都在真 HTTP 上跑。
+
+### 25.2 偏离（D1…D10，逐条可核对）
+
+- **D1 写集勘误（三类）**：`docs/60` §3.3 给本片的格子是
+  `lark/{http_client,client,types,params}.rs`。本片**追加**的路径只有三类：
+  1. **`lark/mod.rs` 的 4 行 `pub mod`**（派发描述 rev 2 已点名的第 6 次系统性漏项，逐字仍成立）；
+  2. **`*/tests.rs` 六个子模块**（同目录先例：`dingtalk/*/tests.rs`、`slack/*/tests.rs`）；
+  3. **门 ⑩ 逼出来的两个生产文件**：首版成形时 `http_client.rs` **978** 行、
+     `http_client/tests.rs` **1249** 行，两处都越过 800 硬限 ⇒ 按**单一接缝**切开：传输核（父模块）
+     ∥ 端点面（`api.rs`）∥ 资源响应面（`resource.rs`），资源响应解码的四个类型/函数同时从
+     `types.rs`（首版 **797**，离 800 只剩 3 行）搬进 `resource.rs`。切分**回归上游结构**
+     （上游端点族与下载辅助本来就是两簇），拆完最大 753。
+- **D2 一个 trait 只能有一个 `#[async_trait]` impl 块**：`#[async_trait]` 展开后，同一 trait 的两个
+  impl 块会撞 **E0119（conflicting implementations）**（实测）⇒ 13 个端点在 `api.rs` 的**同一个**
+  impl 块里；`resource.rs` 只交出固有方法 `download_once`（`pub(super)`）供两个下载端点复用。
+  这条写在这里是因为它**不是**风格选择，而是宏的硬约束（后续片若要拆 impl 会踩同一脚）。
+- **D3 平台错误体里的 `msg` 与原始体一律丢掉**：错误只带 `op`（我们自己的静态操作名）/
+  `status` / 平台机器码。理由是**本客户端的铸令牌请求体里就是 `app_secret`**，而平台错误体正是最容易
+  回声请求体的地方（与 M7-8 的 `DingTalkApiError` 差异 3、M7-9 的 `envelope_error` 同款）。
+  代价：运维看不到平台那句人话（分类靠 `ErrorClass` 顶上）。有专门用例钉住"错误路径不回显凭据"。
+- **D4 流式下载进了 `ApiClient` trait（上游只在具体类型上）**：媒体面（M7-12）必须隔着
+  `dyn ApiClient` 用它，而 `http_client.rs`/`api.rs` 是**单写者**文件、后续片不得再改 ⇒ 现在就必须
+  暴露。等价物是**拉取式**的 `ResourceBody`（`read_chunk` / `read_all_capped`），因为本 crate 的依赖面
+  是冻结的（无 `tokio-util` / `bytes` / `url` / `mime`）⇒ 不引入 `AsyncRead`。
+- **D5 每请求超时代替两个 `http.Client`**：上游配 `HTTPClient`(10s) 与 `ResourceHTTPClient`(45s)
+  两个客户端；本仓用同一个 `reqwest::Client` + 每请求 `RequestBuilder::timeout`（reqwest 的总超时含读体）
+  —— 两条超时线各自独立、连接池共享，语义对价。
+- **D6 统一在 `attempt` 里检查信封里的业务码**：上游在每个端点里各写一次 `if resp.Code != 0 {...}`；
+  本仓一次判完 ⇒ 2xx 的非零码与带码的 2xx/非 2xx 走**同一条**"作废 + 重铸 + 重放一次"路径，
+  不容易漏（上游 #7611 那只"卡住的缓存"正是漏在"只看 2xx 的体"上）。
+- **D7 令牌缓存的两条口径逐字照上游**：**不折叠**并发未命中（与上游一致，**不学** M7-9 `DingTalk` 侧的
+  singleflight）+ 缓存**无上限**（上游同款：条数由安装数收敛）。键只有 `app_id`（不是 `(app_id, region)`：
+  `app_id` 跨两个云全局唯一，DB 的 `UNIQUE(app_id)` 钉住同一假设）。
+- **D8 `types.go` 的两个枚举不重复定义**：`ChatType`（`p2p`/`group`）与 `InstallationStatus`
+  （`active`/`revoked`）**重导出** `mc-core` 的领域类型 —— 字面量与上游逐字相同（有用例钉住），
+  但它们已是跨渠道领域类型，两份定义必然漂移。
+- **D9 `tx.go` 的对齐以边界纪律落地，不造第二个事务抽象**：上游在 lark 包内**重新声明** `TxStarter`
+  是为了 integrations 层不反向引用 service 层；本仓的对偶物**已经存在**（`mc_db::Db`，事务由
+  `Db::pool().begin()` 开，`mc_repos::channel::session` 是它的消费者）⇒ 再造一个只会与它抢同一职责。
+  落地形态写进 `params.rs` 的模块文档：lark 的 store 面（M7-14）跨边界只传 `Id` 与本片的参数结构，
+  **不**把 `Db` / `sqlx` 类型递进客户端的公开面。
+- **D10 未落项（明确不做，不是漏）**：WS 长连接（`ws_connector`/`ws_frame`/`ws_endpoint` → **M7-11**）、
+  富文本 flatten 与媒体 ingest（→ **M7-12**）、安装/绑定/扫码会话（→ **M7-14**）。本片是
+  **0 路由的客户端与类型片**：`register()` 仍是 anchor 空实现、`docs/fixtures/route-parity-baseline.json`
+  **未动**、`--write-baseline` **未跑**（M7 线的唯一刷新权归 `LUM-1786`/M7-21，且它必须等 `owners.M7 → 0`）。
+
+### 25.3 门禁与读数（**本片树上实测**）
+
+`bash scripts/gates.sh`（不带 `--with-db`：本片**零 DB 触碰** —— 没有仓储、没有迁移、没有 `mc-http` 改动）：
+
+```
+  ①  fmt                   0     3s  PASS
+  ②  build                 0   148s  PASS
+  ③  clippy                0    44s  PASS
+  ④  clippy-test-util      0    34s  PASS
+  ⑤  test                  0    44s  PASS
+  ⑦  route-parity          0     0s  PASS
+  ⑨  conformance           0    69s  PASS
+  ⑩  file-size             0     1s  PASS
+  overall: PASS — 8/8 gate(s) green in 343s
+```
+
+⑦（`python3 scripts/route_parity.py`，本片 **0 路由** ⇒ 应与 rev 3 的当轮值**逐字相同**，实测相同）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 465 registered | baseline 458
+  implemented  379 real +   3 placeholder =  382 / 456   known_gap   74   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M3=11  M7=9  M10=5
+```
+
+- **不变式**：`implemented + known_gap == 456` ✓、`regression == 0` ✓、`unclaimed == 0` ✓、
+  `local_only == 9` ✓、`owners.M7 == 9`（**本片不动**：0 路由）。
+- **形态门（⑦ 第二条）**：`slash_alias_audit.py --quiet` exit **0**（未引入 `MISSING_ALIAS` /
+  `MISSING_EXACT` / `EXTRA_ALIAS`；`docs/fixtures/slash-alias-allowlist.tsv` 未加行）。
+- **⑨**：`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`
+  ⇒ `report matches`（片内 4 条 lark fixture 仍是 `unmounted`，由 **M7-14** 转 pass）。
+- **⑩**：`scanned=985 baseline=10 violations=0`；本片 12 个新文件最大 753。
+
+### 25.4 交接给后续片（M7-11…M7-14 的可用面）
+
+- 需要 HTTP 时**只**经 `lark::client::ApiClient`（13 个方法）取用；`dyn ApiClient` 可装箱
+  （有用例钉 `Arc<dyn ApiClient>`）。生产实现 `HttpApiClient` 的基址是**配置字段**
+  （`HttpClientConfig::base_url`）而不是进程全局 ⇒ 后续片的用例**不需要**串行锁。
+- 凭据类型是 `lark::params::{AppSecret, InstallationCredentials}`（**手写脱敏 `Debug`**）：
+  明文只经 `AppSecret::expose()` 取出，且**只**在铸令牌那一步。
+- 错误分流走 `lark::client::{ApiError::class, ErrorClass}`；线程回复回落判据走
+  `is_thread_reply_unsupported`（只有上游那六个码为真）。
+- `region` → 主机走 `Region::open_platform_base_url`（`lark` → `open.larksuite.com`，
+  其余 → `open.feishu.cn`）；WS 引导（M7-11）与 REST **共用同一个 host**。
+- **已知缺口（登记，不在本片写集）**：`lark::types` 的 `DropReason` 尚无写库侧消费者
+  （归 M7-12 的丢弃审计）；`params.rs` 的 17 个 DB 参数结构尚无 store 实现者（归 M7-14）。
+  两者都是**有意为之的接口先行**，不是未完成项。
+
 ## 26. M8-7（`LUM-1804`）：M8 集成、快照刷新与缺口登记（**0 路由 / 0 代码改动**）
 
 `docs/61-M8-PLAN.md` §4.1 的 **stage 4 单片**。本节是它在 `docs/32` 的**自己那一段**
