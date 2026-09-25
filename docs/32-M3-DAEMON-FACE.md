@@ -2506,3 +2506,195 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1802:…@127.0.0.1:54
 4. **未来任何改 `routes/github/webhook.rs` 的切片**：本片只**调用**它的
    `set_pr_refresh_port`（进程级注入槽，按请求读 ⇒ `main.rs` 先建 router、后起宿主也生效）。
    若要把端口正式挂到 `AppState`（M8-4 的 D2 建议），那是**一次 anchor 级改动**，请与 D5/D6 一起做。
+
+## 22. M8-6（`LUM-1803`）：composio（SDK 客户端 + 服务 + state HMAC + toolkit 目录 + overlay 构建；5 路由）
+
+> **号段说明**：计划书写的「`docs/32` §9.12」是计划期占位号（`## 9.` 是 M6-0 anchor、
+> `## 11.` 是 M8-0）。**起手**实测最大 = `## 21.`（M8-5）⇒ 本片取 **`## 22.`**
+> （`LUM-1773`/M7-8 同轮在飞；若它先落 `22.` 则由后合者让号平移，D 编号与内容不动 ——
+> 与 M8-4/M8-5 让号同一手法）。
+>
+> 本片**是 M8 的最后一个代码片**：`owners.M8` 的 5 条（= composio 的 5 条）交付后归零。
+
+### 22.1 落点（写集逐字 + 按门 ⑩ 拆出的两个子文件）
+
+| 文件 | 行数 | 内容 |
+| --- | --: | --- |
+| `crates/mc-composio/src/client.rs` | 720 | 原地上填 anchor 桩：`DEFAULT_API_BASE`（修正为上游的 `…/api/v3.1`）、`AuthConfig` / `ToolkitEntry` / `ConnectedAccount` / `CreatedLink` / `ToolRouterSession` 五个 wire 形状 + **7 个端点**（toolkits 分页 / auth_configs 分页 / link / connected_accounts / revoke / delete / session）+ 唯一出站口（`get_json` / `post_json` / `post_empty` / `delete_empty` / `send` / `check_status`） |
+| `crates/mc-composio/src/client/tests.rs` | 146 | **新文件**（`mod tests;`）：Debug 脱敏、默认 base/UA/超时、URL 拼接与百分号编码、`auth_headers` 的 bearer 面、状态码映射、7 条 wire 形状的容错反序列化、link/session 的出站体 |
+| `crates/mc-composio/src/state.rs` | 538 | 原地上填：`StateClaims`（`u/t/a/e/n`）+ `sign` / `verify`（**常量时间**验签、`>` 边界、nonce 台账）+ `fresh_nonce`（`std` 熵 + 进程内计数；**不引** `rand`） |
+| `crates/mc-composio/src/catalog.rs` | 389 | 原地上填：`visible_toolkits`（**纯函数**：auth-config 未配的 toolkit 整条丢弃）+ `best_auth_config_for_each_toolkit` / `better_auth_config`（自定义胜托管、同类间新的胜）+ `AuthConfigDirectory`（TTL 缓存 + 刷新失败发陈旧快照） |
+| `crates/mc-composio/src/service.rs` | 639 | 原地上填：`ComposioError`（10 支）、`ComposioConfig`（+`state_ttl_secs`）、`ConnectionView` / `ToolkitView` / `McpSession` / `CallbackOutcome`（四态）+ `begin_connect` / `complete_callback` / `list_connections` / `disconnect` / `list_toolkits` / `create_mcp_session` + `verify_account_ownership`（**fail closed**） |
+| `crates/mc-composio/src/service/tests.rs` | 238 | **新文件**（`mod tests;`）：四条件、`missing()` 逐条、未配置不 panic、回调 URL、state 四态、store 缺失、错误不回声凭据 |
+| `crates/mc-composio/src/overlay.rs` | 180 | 原地上填：`build_task_overlay`（**纯函数**：三道闸门 + `{"mcpServers":{"composio":{"type":"http","url":…}}}`）+ 与 `mc-core::mcp::overlay::merge_task_overlay` 的合并对接用例 |
+| `crates/mc-repos/src/composio/connection.rs` | 333 | 原地上填 doc-only 桩：`ComposioConnectionRow`（11 列 + `to_domain`）、`NewComposioConnection`、`ComposioConnectionRepo::{upsert,list_active,get,mark_revoked}`（**每条**带 `user_id` 收窄；SQL 提成 `upsert_sql()` / `list_active_sql()` / `get_sql()` / `MARK_REVOKED_SQL` 以便单测断言真语句） |
+| `crates/mc-http/src/routes/composio/connect.rs` | 298 | 原地上填：`POST /connect/init` + 本面的**公共件**（`service_from` / `error_with_code` / `not_configured` / `upstream_error` / `error_response` / `set_composio_api_base`） |
+| `crates/mc-http/src/routes/composio/catalog.rs` | 293 | 原地上填：`GET /toolkits` + `GET /connections` + `DELETE /connections/:id` + 两个响应 DTO（`omitempty` 与 `connectable` 恒真的 wire 契约） |
+| `crates/mc-http/src/routes/composio/callback.rs` | 300 | 原地上填：`GET /callback`（**公开**）+ `app_url_from_env`（`MULTICA_APP_URL` → `FRONTEND_ORIGIN` → 相对路径）+ 302 重定向构造 |
+| `crates/mc-http/tests/composio/{main,support,gating,callback,flows}.rs` | 19/594/181/223/461 | **新目录**（5 文件）：替身（按 `x-api-key` 分派，一个 base 服务整个二进制）+ 15 条真库用例 |
+
+**零编辑（anchor 冻结，逐条实测未动）**：`crates/mc-composio/{Cargo.toml,src/lib.rs}`（**lib.rs 一行未动** ——
+handler 直接走 `mc_composio::catalog::…` / `mc_composio::state::…` 模块路径，不需要新 re-export）、
+`crates/mc-repos/src/composio/mod.rs`、`crates/mc-http/src/routes/composio/mod.rs`、
+`crates/mc-http/src/{state.rs,state/integrations.rs,routes/mod.rs,routes/mount.rs}`、
+`crates/mc-core/src/**`、`Cargo.toml` / `Cargo.lock`、`apps/mc-server/**`、
+`docs/fixtures/**`、`scripts/file_size_baseline.tsv`、`docs/fixtures/route-parity-baseline.json`。
+**只读面零触碰**：`mc-repos/src/task/**`、`crates/mc-chat/src/task.rs`、`crates/mc-autopilot/src/dispatch/**`
+（本片**不接线**，R-M8-9 的尾账原样留给 M8-7）。
+
+#### 22.1.1 门 ⑩ 逼出的**两处**切分（都在 `mc-composio` 自己的文件里）
+
+**判据**：门 ⑩ 是硬线（800 行/文件）。首版实测 `client.rs` **864** / `service.rs` **869** 越线
+（用例与实现同文件）⇒ 两处按 M8-5 的既有手法（§21.1.1 第 1 条）把 **`#[cfg(test)] mod tests`**
+移到 `client/tests.rs` / `service/tests.rs`：
+
+| 文件 | 拆前 | 拆后 |
+| --- | --: | --: |
+| `client.rs` | 864 | **720**（用例 146 移出） |
+| `service.rs` | 869 | **639**（用例 238 移出） |
+
+**新增文件由自己父模块的 `mod tests;` 声明**（`client.rs` / `service.rs` 各一行）——
+
+**没有**碰任何 anchor 冻结的 `mod.rs`，也**没有**动 `lib.rs`（`pub mod client;` 与
+`pub mod service;` 逐字不变；Rust 2018 的路径规则让 `src/client.rs` + `src/client/tests.rs` 共存）。
+⚠️ 门 ⑩ 只扫 `git ls-files` ⇒ 两个新文件**先 `git add`**（§20.4 / §21.4 的同一条实测坑）。
+
+### 22.2 偏离登记（M8-6-D1 … M8-6-D13）
+
+| # | 偏离 | 位置 | 性质与理由 |
+| --- | --- | --- | --- |
+| **D1** | **`client.rs` 由 M8-6 落地**（issue 的「只读」表把它列在只读面） | `client.rs` | 它里面**每一个**方法的 `todo!()` 都逐字写着「实现归 M8-6」（`list_toolkits` 的 `todo!` 文案就是 `GET {api_base}/toolkits（docs/61 §4.2 的 M8-6 行）`）。anchor 已合（`LUM-1797` 终态）⇒ **不存在并发写者**，而留着 `todo!()` 会让一个公开 API 在生产路径上 panic。issue 自己为 `lib.rs` 立了同款判例（「要在 PR 里逐行说明」）⇒ 本片照同一条纪律登记：**只填桩、不改 anchor 钉死的形状**（`new` / `with_api_base` / `enabled` / `api_base` / `Debug` 逐字保留） |
+| **D2** | `DEFAULT_API_BASE` 从 anchor 的 `…/api/v3` 改成上游的 `…/api/v3.1` | `client.rs` | anchor 的注释逐字「若上游 SDK 以后改端点，改这一处」；上游 `pkg/composio.DefaultBaseURL` 实测 = `https://backend.composio.dev/api/v3.1`。**唯一**改动值是这一行，且有 `default_base_matches_the_upstream_sdk` 钉住 |
+| **D3** | `StateSigner::sign` 的签名从 `(subject: &str, now_unix: i64) -> String` 改成 `(&StateClaims) -> Result<String, StateError>`；`verify` 从 `-> Result<String, _>` 改成 `-> Result<StateClaims, _>` | `state.rs` | anchor 那个形状**无法承载契约**：`CompleteCallback` 需要 `ToolkitSlug`（重定向）与 `AuthConfigID`（fail-closed 的跨 toolkit 绑定），只绑一个 `subject` 做不到。两个方法在 anchor 期**零调用方**（`grep -rn 'StateSigner::'` 实测只有桩与 `pub use`）⇒ 无消费者受影响。`StateError` 的四支与 `Debug` 脱敏**逐字保留** |
+| **D4** | state 载荷**多一个 nonce**（上游只有 4 个字段），重放靠**进程级**台账 | `state.rs` | anchor 的 `StateError::Replayed` 与文件头逐字写着「重放靠 nonce（进程内台账，无 Redis ⇒ 单副本部署契约）」⇒ 这是 anchor 指定的契约，上游只用短 `exp` 限重放。⚠️ 台账**必须**是进程级：`ComposioService` 按请求构造（D8），台账若跟着实例，同一份 state 的第二次到达会落到新实例上、永远判不出重放（`the_replay_ledger_is_process_wide_not_per_signer` 钉住这一点）。**代价**：多副本部署时重放窗口跨副本失效 ⇒ 单副本部署契约（与 R-M7-1/R-M8-5 同源） |
+| **D5** | 「未配置」回 **403**，不是计划书写的 503 | `routes/composio/connect.rs` | 与 M8-1 的 `repositories`、M8-2 的 VCS 写面**同一个发现**：上游的实现是 `writeFeatureDisabled(...)` = `writeErrorCode(w, http.StatusForbidden, …)`，上游 `integrations_composio.go` 的文件头逐字写着「A missing deployment capability is a **non-retryable 403**, not a transient 503.」（`router.go` 注释里残留的 503 是过期文案）。四个条件逐条可测（`gating.rs` 的四象限），只是状态码照上游。**同一波里不允许出现两种「未配置」状态码** |
+| **D6** | 公开回调的顺序**反过来**：先验 state，再判配置；「state 不合法」⇒ **401**（上游是 302 失败重定向） | `routes/composio/callback.rs` | ① 「先 state 后配置」是 `docs/61` §6.5 的 M8-6 行逐字要求（「**公开回调仍须按 state 判**」），也是 ⑨ 那条夹具的前提：它跑在「没配 `COMPOSIO_API_KEY`」的环境里，而夹具的 `status_expected` 是 **401**（上游 handler 在那种环境回 403，夹具的注释说「the precise non-401 code is incidental」—— 两条语义都要做对：没配 key ⇒ state 必然验不过 ⇒ 401；配齐 key + 坏 state ⇒ 也是 401）；② 本仓把「state 坏」判成 **401**（`docs/61` §1.5 / §6.5 的本地契约「不合法 ⇒ 401，不是 404」），四类原因**不**外传（只进日志） |
+| **D7** | state **合法**但部署未装配 ⇒ **403**（`CallbackOutcome::NotConfigured`）；其余「state 合法但没成」一律 **302 失败重定向**（含上游不可达） | `callback.rs` / `service.rs` | 上游把**所有**失败都折成 302（注释逐字：the user is never left on a blank API response）⇒ 本片只在「验过 state 之后仍然没这个能力」这一格回 403（复用 D5 的同一格，与 4 条会话路由一致），其余照上游 302。**没有**为上游故障单独开 502（那会把浏览器停在 JSON 上）；故障只影响日志级别 |
+| **D8** | 服务**按请求**构造（`service_from(&state)`），不是进程级单例 | `routes/composio/connect.rs` | 与 M8-1 的 `GithubClient::new(github_api_base())` 同款：服务只持有「配置 + 连接池 + 签发器 + auth-config 目录」，没有跨请求的**语义**状态（重放台账在 D4 里已经提到进程级）。**代价**：`AuthConfigDirectory` 的 TTL 缓存只在一次请求内生效（每个请求各解析一次 `/auth_configs`）——语义不变（可见性判据每次都重新解析，上游注释逐字「enabling a toolkit is a dashboard action」），只是多一次上游往返。**登记为 M8-7 尾账**：跨请求缓存需要一个进程级服务槽，而它必须与「`api_base` 注入面」「测试隔离」一起解决 |
+| **D9** | `ComposioConfig` 多一个 `state_ttl_secs`（测试注入用；`None` ⇒ `DEFAULT_STATE_TTL_SECS` = 上游 5 分钟） | `service.rs` | anchor 的五个字段与 `is_configured` / `missing` **逐字保留**（`missing()` 的 4 条不许动，`config_requires_all_four_conditions` 仍在）。没有它就只能用真时钟测「过期」那一格 |
+| **D10** | `ComposioError` 从 4 支扩到 10 支（+`ToolkitNotSupported` / `ConnectNotSuccessful` / `ConnectionNotFound` / `AccountVerification` / `Upstream{status,context}` / `Store` / `StoreMissing`），并派生 `Clone/PartialEq/Eq` | `service.rs` | 四支（`Transport` / `Unauthorized` / `NotConfigured` / `Malformed`）逐字保留；其余逐条对应上游的导出错误（`ErrToolkitNotSupported` / `ErrConnectNotSuccessful` / `ErrConnectionNotFound` / `ErrAccountVerification`）与本仓的仓储面。**`Upstream` 只带状态码与调用点**：不带响应体、不带 message、不带 URL（`docs/61` §2.4 的 redaction 第 3 条） |
+| **D11** | 新增 `create_mcp_session`（服务）与 `auth_headers`（客户端） | `service.rs` / `client.rs` | 上游 `CreateMCPSession` 是 composio 服务「per-user MCP session helper」的正式一员，也是 R-M8-9 尾账要接的那一端：本片把它交付到「**可注入**」（`create_mcp_session` 拿 URL → `build_task_overlay` 造载荷），**不**接 3 处 enqueue（仍是 R-M8-9 的尾账）。`auth_headers` 是 bearer 的**唯一**出口（返回 `Vec<(String,String)>`，不进 `Debug`） |
+| **D12** | overlay 载荷里**没有** `headers`（上游 `composioMCPServer` 带 `x-api-key`） | `overlay.rs` | 两个硬约束撞在一起：① `mc-core/src/mcp/overlay.rs` 的合并契约逐字「任何不在 `mcpServers` 下的顶层键只从 agent 侧保留……overlay 今天只携带 server 条目，不得悄悄引入别的顶层键」；② anchor 冻结的 `build_task_overlay(toolkit_slug, session_url, composio_user_id)` 签名**不带** bearer。⇒ 条目的 `x-api-key` 由**接线侧**从 `client.auth_headers()` 取并补进 server 条目（M8-7 尾账）。形状已与 M8-3 的测试夹具逐字一致（`{"mcpServers":{"composio":{"type":"http","url":…}}}`） |
+| **D13** | 新增写集外的**测试目录** `crates/mc-http/tests/composio/**`（5 文件）+ 刷新 `crates/mc-conformance/report.json` | 测试 / ⑨ | 测试目录与 `tests/vcs/`、`tests/github/` 同款（新目录，零交集，无需改 manifest）。`report.json` 是**门 ⑨ 的判据文件**（`--check` 逐字节比对）：本片把 ⑨ 唯一那条 M8 fixture 从 `unmounted` 转成 `pass`，不刷它 ⑨ 必红（与 `57798b75`(M7-5)、`e5fe07bc` 同款处置） |
+
+### 22.3 专属 `DoD` 逐条证据（`docs/61` §6.5 的 M8-6 行）
+
+| `DoD` 条目 | 证据 |
+| --- | --- |
+| **⑨ 那 1 条 fixture 转 pass**（匿名 + 错 state ⇒ **401**） | `report.json` 逐字：`integrations/TestComposioCallbackIsPublic_NoCookieNot401@…:25#1` ⇒ `outcome: pass`、`status_observed: 401`（交付前 = `unmounted` / `status_observed: 404`）。⑨ 总量 `pass 6 → 7` / `unmounted 30 → 29`。路由侧另有 `gating.rs` 的两条：**没配 key** 与 **配齐 key** 两种环境**逐字同为 401** + `the_public_callback_never_falls_into_the_session_gate`（带一个非法用户头也必须给 composio 自己的 401，证明这条路由真的不在会话门内） |
+| **四种「未配置」语义逐条** | `gating.rs::every_unconfigured_condition_gates_all_four_session_routes`：`flag 关` / `缺 COMPOSIO_API_KEY` / `缺 state secret` / `缺回调基址` × 4 条会话路由 = **16 格**，逐格断言 403 + `composio_not_configured`（**不是** 401/503，也不是统一的 401）。⚠️ 状态码照上游是 403 而非计划书的 503（D5） |
+| **state HMAC 四反例**（篡改 / 过期 / 重放 / 错密钥） | `state.rs` 的单测：`tampered_payload_is_rejected`（改 `u` / 改 `t` 两例）、`tampered_signature_is_rejected_bit_for_bit`（签名差 1 位 + 非 base64 ⇒ `Malformed`）、`expired_state_is_rejected_and_the_boundary_is_inclusive`（`>` 边界：等号有效、+1 秒 Expired，且**过期优先于重放**）、`replayed_state_is_rejected_once`、`wrong_secret_is_rejected`、`malformed_tokens_are_rejected_before_any_comparison`（8 种坏形态）、`the_replay_ledger_is_process_wide_not_per_signer`、`empty_secret_signs_nothing`。路由侧 `callback.rs::broken_states_are_unauthorized` 把 bogus/tampered/expired/empty 四态打通到 401 |
+| **toolkit 目录动态解析**（auth-config 未配 ⇒ 不出现） | 纯函数：`catalog.rs::unconfigured_toolkits_are_dropped_entirely` / `narrowing_keeps_order_dedupes_and_lowercases_slugs` / `empty_available_set_yields_an_empty_catalog` / `a_toolkit_with_no_candidates_is_invisible_even_if_ids_are_available`；归约：`custom_auth_config_beats_managed_and_newer_beats_older` / `disabled_and_malformed_configs_are_skipped`。路由侧：`flows.rs::connect_then_callback_then_persist_then_toolkits` 在**真替身**上断言目录只剩 `notion`（`github` 的那条 auth config 是 `DISABLED` ⇒ 整条不出现），且 `toolkits_report_upstream_failures_instead_of_an_empty_catalog` 钉住「解析失败 ⇒ 502，**不**回落成空目录」（上游注释逐字） |
+| **离线替身端到端**（connect → callback → 落库 → toolkits，中间零 mock） | `flows.rs::connect_then_callback_then_persist_then_toolkits`：`POST /connect/init`（路由）→ 替身（**真 HTTP**，按 `x-api-key` 分派）收到 `/connected_accounts/link` → 从**真响应体**里取回 `callback_url` 里的 signed state（不是测试自己签的）→ `GET /callback` → 落库 → `GET /connections` / `GET /toolkits`。替身纪律逐条：① 只替平台 wire（替身是「假 Composio」，不是「假 service」）；② 出站逐字段断言（路径 + `x-api-key` 头 + `callback_url` 前缀 `{回调基址}{CALLBACK_PATH}?state=` + `auth_config_id=ac_notion_custom` + `user_id` 不变量）；③ 两个反例必测（同 state 重投 ⇒ 401 且不重复插行；第二次 DELETE ⇒ 204 且**不再**打上游） |
+| **`overlay.rs` 交付到「可注入」为止 + 一条纯函数用例** | `overlay.rs::builds_the_claude_style_server_entry` / `the_payload_has_exactly_one_top_level_key`（顶层只有 `mcpServers`；条目只有 `type`/`url`）/ `every_blank_input_means_no_overlay`（三道闸门）/ `the_session_url_is_trimmed_but_otherwise_verbatim` / `an_agents_own_entry_named_composio_is_meant_to_be_overridden`（与 `mc_core::mcp::overlay::merge_task_overlay` 真合并一次）。**取数口的真链**在 `flows.rs::the_service_can_turn_live_connections_into_an_overlay`：真库连接 → `create_mcp_session`（替身回 `https://mcp.example/s/sess_1`，断言 `toolkits.enable` 与 `connected_accounts` 的钉法）→ `build_task_overlay`。**3 处 enqueue 接线不属本片**（R-M8-9：`runtime_mcp_overlay` 在本波结束后仍恒 `NULL`，登记过的缺口） |
+| **「未配置 + 未授权」两格逐端点** | 未配置：见上（16 格）；未授权：`gating.rs::the_four_session_routes_are_session_gated_even_when_configured`（4 条匿名 ⇒ 401，且 body 不泄漏配置状态）+ `authentication_precedes_the_configuration_check`（**匿名 + 未配置 ⇒ 401**，与上游 middleware 的顺序一致）+ `flows.rs::connect_init_rejects_unknown_toolkits_and_bad_bodies`（toolkit 不支持 ⇒ 400；body 坏 / 缺 slug ⇒ 400；上游 500 ⇒ 502）+ `disconnect_is_idempotent_and_hides_foreign_connections`（不属于调用者的 id ⇒ 404，与「不存在」**同判**，不泄漏存在性；非 uuid ⇒ 400） |
+| **凭据纪律**（手写 `Debug` 脱敏 + 错误路径不回显凭据） | 三个承载密钥的类型全部手写 `Debug`：`ComposioClient`（`api_key` ⇒ `<redacted>`）、`ComposioConfig`（只暴露 `configured` / `missing` / `api_base`）、`StateSigner`（`secret` ⇒ `<redacted>` + 台账条目数）。错误值不回显：`errors_never_echo_credentials`（`ak_test` / `state-secret` 都不出现在 `Transport`/`Upstream`/`Store` 的 Display 与两个 `Debug` 里）+ `check_status_maps_401_and_others_without_echoing_anything`（**只**带状态码与调用点）+ `malformed` 分支的文案里**没有**响应体。库里那 11 列全是不透明标识（bearer 只在会话 URL 路径上） |
+| ⑦：5 条路由 = `owners.M8` **精确归零** | 见 22.4（`local 453 → 458`、`implemented 370 → 375`、`known_gap 86 → 81`、`owners.M8 5 → 0`、`baseline 406` **不动**） |
+| ⑩：新文件 ≤ 800 行 | 见 22.4 与 22.1.1（两处切分就是为了它）；`scripts/file_size_baseline.tsv` **未动** |
+
+### 22.4 门禁读数（逐字取自当轮日志；日志留档在 run workdir 的 `gates-m8-6.log`）
+
+```text
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1803:…@127.0.0.1:5432/mc_lum1803'
+  ①fmt 0(3s) · ②build 0(101s) · ③clippy 0(35s) · ④clippy-test-util 0(32s) · ⑤test 0(45s)
+  ⑥db 0(112s；migrate=0, e2e=0) · ⑧schema-drift 0(28s) · ⑦route-parity 0(0s) · ⑨conformance 0(56s) · ⑩file-size 0(0s)
+  ⇒ overall: PASS — 10/10 gate(s) green in 412s
+```
+
+（单跑，`CARGO_INCREMENTAL=0`；起手磁盘 7.0G 可用 —— 门 ② 一度把它压到 4.2G，随后平台 GC 回收
+15G 至 19G。**首跑即 10/10**，没有 ENOSPC、没有需要修的门。）
+
+- ⑦（**逐字实测**；`baseline 406` **不动**，本片**不跑** `--write-baseline` —— 唯一一次刷新归 M8-7）：
+
+  | 口径 | 片前（起手实测） | 片后（交付） |
+  | --- | ---: | ---: |
+  | `local` | 453 | **458**（+5） |
+  | `implemented` | 370 = 367 real + 3 ph | **375 = 372 real + 3 ph**（+5 real） |
+  | `known_gap` | 86 | **81** |
+  | `owners.M8` | **5** | **0**（精确归零） |
+  | `baseline` | 406 | **406（不动）** |
+
+  不变式逐条成立：`implemented + known_gap == 456`（375 + 81 = 456 ✓）、`regression 0`、`unclaimed 0`、
+  `local_only 9`（本片**不新增** local_only）。`gaps by owner` 的**交付后**逐字：
+  `M9=33 M3+=16 M7=16 M3=11 M10=5`（**M8 已从该行消失** = 0；和 = 81 ✓）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py` = `0 defect(s)`、exit 0；`NOT REGISTERED = 0`、
+  `registered upstream-key literals = 462 / 0 defect(s)`（本片 5 条**只按上游字面量注册**，
+  既没补尾斜杠形态也没漏成带斜杠形态 —— `dual-form required: 0`）。
+- ⑨：`report matches crates/mc-conformance/report.json`。**唯一那条 M8 fixture 已转绿**：
+  `integrations/TestComposioCallbackIsPublic_NoCookieNot401@server/cmd/server/composio_callback_public_test.go:25#1`
+  ⇒ `unmounted → pass`、`status_observed: 404 → 401`；总量 `pass 6 → 7`、`unmounted 30 → 29`、
+  `mismatch 23` / `unevaluable 306` 不变（**没有**制造新的 `unevaluable`）。`report.json` 的 diff
+  只有 15 行上下（三处计数 + 那一条 fixture 的 `outcome`/`status_observed`/`detail`）。
+- ⑩：**0 违规**，`scripts/file_size_baseline.tsv` **未动**。本片最大的四个文件：
+  `client.rs` 720、`service.rs` 639、`tests/composio/support.rs` 594、`state.rs` 538
+  （其余 ≤ 461）。两处越线（864 / 869）按 22.1.1 切开后全部落回线内。
+- ⑧：schema-drift 绿（本片 **0 迁移**、0 表结构改动；`user_composio_connection` 是迁移 `127` 里就有的表）。
+- ⑥：`mc-migrate` 566 个迁移 + `--ignored` 全绿。本片新增的真库目标 = `tests/composio/main.rs`
+  **15 passed / 0 failed**（1.89s），逐条覆盖上面 22.3 的每一格。
+- ⑤（`cargo test --workspace`，**不带**库变量）：全绿。本片新增 **82** 条测试，分布：
+  `mc-composio` lib **49**（`client/tests.rs` 8 + `state` 15 + `catalog` 12 + `service/tests.rs` 10 + `overlay` 5；
+  lib 总数 1 → **50 passed**）、`mc-repos` lib **4**（`composio/connection.rs`）、
+  `mc-http` lib **14**（`routes/composio/{connect,catalog,callback}.rs` 的 4+4+6）、
+  `mc-http` 的 `tests/composio` **15**（真库，见 ⑥）。**零 mock**：所有出站都打在真 HTTP 替身上。
+
+- **[lesson·`#[tokio::test]` 的 runtime 生命周期会杀死 `tokio::spawn` 出来的替身]** 替身服务最初用
+  `tokio::spawn(axum::serve(...))` 挂在**用例自己的 runtime** 上 —— 每个 `#[tokio::test]`
+  各建一个 runtime，**用例一结束就被丢掉**，于是服务任务跟着死，后续用例全部变成
+  `error sending request`（表现为「全链路 502」，非常像业务 bug）。修法：替身跑在**自己的 OS 线程 +
+  自己的 multi-thread runtime** 上（`std::net::TcpListener` 同步 bind 拿到端口 → `thread::spawn`
+  里 `runtime.block_on(serve(TcpListener::from_std(..)))`）⇒ 服务活到进程结束。
+  **判据**：任何「跨用例复用」的进程级替身都必须与用例的 runtime 解耦。
+- **[lesson·进程级台账与「按请求构造的服务」是**结构性**配套]** 重放台账若留在 `StateSigner` 的字段里
+  （看起来更内聚），配上「服务按请求构造」就等于**完全没有重放防护**（每次到达都是新实例）。
+  本片把台账提到 `mc-composio::state` 的进程级静态，并**专门写了一条反例用例**
+  （`the_replay_ledger_is_process_wide_not_per_signer`）把这个陷阱钉死。**同类判据**：任何
+  「一次性 token / 幂等键 / 限流窗」的实现，先问「它的生命周期是否 ≥ 保护对象的生命周期」。
+- **[lesson·一个进程级注入槽 + 一把带身份的 key = 零竞态的替身]** M8-1/M8-2 的 `set_*_api_base`
+  是按用例 set/reset（并行用例之间有窗口）。本片改成：base **只注入一次**（`OnceCell`），
+  替身**按请求的 `x-api-key` 分派行为**，而 key 里嵌着**本用例自己的 user id**
+  （`ak_<variant>_<uuid>`）⇒ 替身既能答出「谁在调」也能答出「该走哪个分支」，用例之间
+  **零共享可变状态**、可以任意并行。代价是替身要多一次 key 解析。
+- **[lesson·门 ⑩ 对「上游 1,050 行 Go + 本仓文档密度」同样是必然触发]** 与 §21.4 同款：本片两处越线
+  （864 / 869）在**写之前**就该由体量判死。**本仓的成熟手法**是「`#[cfg(test)] mod tests` 拆到
+  `src/<mod>/tests.rs`」—— 它比拆实现更便宜，因为 Rust 2018 的路径规则允许 `src/client.rs` 与
+  `src/client/tests.rs` 共存，**连 `mod.rs` 都不用碰**（§22.1.1）。
+- **[lesson·上游注释与上游实现打架时，以**实现**为准并登记]** `router.go` 的注释写
+  「composio 的 4 条返回 503」，而 `integrations_composio.go` 的文件头写「a non-retryable 403,
+  not a transient 503」、代码是 `writeFeatureDisabled` = 403 —— 计划书 `docs/61` §2.5 抄的是前者。
+  M8-1/M8-2/M8-6 三片独立撞上同一格并做了同一选择（照实现 + 登记 D5）。**判据**：`docs/61` 里
+  逐端点的状态码格子在派发前值得用上游源码复核一遍。
+
+### 22.5 交接（给 M8-7 / 未来碰这条路的切片）
+
+1. **M8-7（INT）请收口六件事**：
+   1. **R-M8-9 尾账（本片最大的缺口）**：`attach_runtime_mcp_overlay`（`mc-repos/src/task/overlay.rs`）
+       仍是 `todo!()`，3 处 enqueue 接线点逐字 =
+       `mc-repos/src/task/store.rs:216`、`mc-repos/src/chat_task/send.rs:136`、
+       `mc-autopilot/src/autopilot/run.rs:575`。本片把**取数口**（`create_mcp_session`）与**构建**
+       （`build_task_overlay`）都交付到了「可注入」，接线本身只在那一处。接上之前
+       `runtime_mcp_overlay` **恒 `NULL`**（登记过的缺口，不是遗漏）。
+   2. **D12**：接线时把 `x-api-key` 从 `ComposioClient::auth_headers()` 取出来补进 overlay 的
+       server 条目（合并契约不允许**顶层**多键，但 server **条目**里加 `headers` 是允许的 ——
+       上游 `composioMCPServer` 就是这么带的）。不补的话，daemon 侧的 MCP 客户端拿不到认证头。
+   3. **D8**：是否把 auth-config 目录缓存做成**跨请求**（需要进程级服务槽；必须同时解决
+       `api_base` 注入面与测试隔离，本片刻意不做）。若不做，请在 INT 的缺口清单里写明
+       「每个 settings 请求各解析一次 `/auth_configs`」。
+   4. **D5 的收口**：`owners.M8 = 0` 之后的 ⑦ 基线刷新（`--write-baseline` **406 → 458**）是
+       M8-7 的**唯一**一次刷新职责（本片未跑）。若 M8-7 决定把「未配置」改回 503，必须
+       **三片一起改**（M8-1 的 repositories / M8-2 的 VCS / 本片的 composio），否则同一波里
+       会同时存在 403 与 503 两种语义。
+   5. **文案债（1 行）**：`crates/mc-composio/src/lib.rs` 的文件头仍写着
+       「`service.rs` / `state.rs` / `catalog.rs` / `overlay.rs` 是**桩**（签名 + `todo!()`）」——
+       那是 anchor 冻结文件的过期文案（本片按 §21.5 的先例**不**改冻结文件，只登记）。
+       顺手改这一行即可（`lib.rs` 的 `pub mod` / `pub use` 一行都不用动）。
+   6. **缺口清单**：`ComposioKeys` 仍没有独立的 **frontend base**（回调重定向走
+       `MULTICA_APP_URL` → `FRONTEND_ORIGIN` → 相对路径，与上游 `appURLFromEnv()` 逐字一致）；
+       `user_composio_connection` 的 `expired` 状态**没有任何写入者**（上游也没有 —— 过期靠
+       Composio 侧，本仓只写 `active` / `revoked`）。
+2. **未来任何碰 composio 的切片**：`client.rs` 720 / `service.rs` 639 都离 800 还有余量，但
+   `tests/composio/support.rs` 594 已经接近 —— 新增真库用例请按现有轴分流
+   （门面矩阵 → `gating.rs`；回调四态 → `callback.rs`；链路与目录 → `flows.rs`；替身道具 → `support.rs`）。
+   ⚠️ 替身是**一个 base 服务整个二进制**：新分支请走**新的 `x-api-key` variant**，不要按用例
+   set/reset base（那会把 §22.4 那条 lesson 的坑重新挖出来）。
+3. **未来任何碰 `mc-composio::state` 的切片**：nonce 台账是**进程级**的（D4），TTL 是
+   上游的 5 分钟；改台账粒度前先读 `the_replay_ledger_is_process_wide_not_per_signer` 的注释。
