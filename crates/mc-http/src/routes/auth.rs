@@ -700,13 +700,10 @@ pub struct GoogleLoginResponse {
 /// - 错误体是嵌套 envelope（本仓 M1 约定），`code` 字符串一致；
 /// - `token` 是 session id 而非 JWT；
 /// - `user` 是本仓 `UserView`（字段少于上游 `UserResponse`）；
-/// - `account_disabled` / `signup_prohibited` / `email_not_allowed` 三条 403 在本仓
-///   **不可达**：M1 没有 signup 白名单与禁用邮箱的配置面（上游是
-///   `ALLOW_SIGNUP` / `ALLOWED_EMAILS` / `ALLOWED_EMAIL_DOMAINS` +
-///   `auth.IsTemporarilyDisabledUserEmail`）；
-/// - 不签发上游 `SetAuthCookies` 附带的 CF region cookie；
-/// - 上游这条路由有 Redis 支持的 per-IP 限流（`RATE_LIMIT_AUTH`，默认 5/min），
-///   本仓 M1 无 per-IP 限流设施。
+/// - `account_disabled` / `signup_prohibited` / `email_not_allowed` 三条 403 在本仓不可达
+///   （M1 无 signup 白名单与禁用邮箱配置面）；
+/// - 不签发上游 `SetAuthCookies` 的 CF region cookie，也无上游的 per-IP 限流
+///   （`RATE_LIMIT_AUTH`，默认 5/min）。
 // 逐条对齐上游 11 步流程与错误码；拆函数会把「步骤 ↔ 状态码」的对应关系割裂。
 #[allow(clippy::too_many_lines)]
 async fn google_login(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
@@ -1045,6 +1042,9 @@ mod tests {
             plugin_surface_origin: None,
             // M7 anchor（LUM-1765）：渠道部署密钥显式未配置（口径见 `state.rs`）。
             channel_keys: ChannelKeys::default(),
+            github_keys: crate::state::integrations::GithubKeys::default(),
+            vcs_keys: crate::state::integrations::VcsKeys::default(),
+            composio_keys: crate::state::integrations::ComposioKeys::default(),
         };
         Arc::new(state)
     }

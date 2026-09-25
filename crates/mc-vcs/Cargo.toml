@@ -1,0 +1,46 @@
+[package]
+name = "mc-vcs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M8 anchor scaffold 占位 — VCS provider 抽象（Provider trait / registry / forgejo + gitlab / 两种验签方案）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M8-0 anchor（`LUM-1797` / `docs/61-M8-PLAN.md` §2.2 / §5）：依赖边**一次接好**，
+# 此后 M8-2 的写者**不得**再新增三方依赖（要加走 `docs/15` §8.4 仲裁）。
+# 全部是 workspace 既有依赖 ⇒ `Cargo.lock` 只多一个成员 crate，**零新外部包**。
+#
+# 依赖方向（无环，见 `docs/61` §2.2 的判据）：`mc-vcs` → `mc-core` / `mc-errors` /
+# `mc-secrets` / `mc-telemetry`（+ `reqwest` / `hmac` / `sha2` / `hex` / `url` / `http`）。
+# ⚠️ **`mc-vcs` 不知道 GitHub**（`docs/61` §2.7 第 1 条）：不依赖 `mc-vcs-github`，
+# `Provider` trait 的 6 个方法里也不得出现 `github` 字样。
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+http = { workspace = true }
+url = { workspace = true }
+# 验签：HMAC-SHA256（Forgejo/Gitea 的 `X-Gitea-Signature`）用 `hmac` + `sha2`，
+# 十六进制比较用 `hex`；GitLab 的 `X-Gitlab-Token` 是**明文常量时间比较**（`signature.rs`）。
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-errors = { path = "../mc-errors" }
+# 每连接的 PAT / webhook secret 的封装盒（`mc_secrets::secretbox`，M7-0 建、**M8 只读**）。
+# 本 crate 不新增第二份实现（`docs/61` §7.1.2b）。
+mc-secrets = { path = "../mc-secrets" }
+mc-telemetry = { path = "../mc-telemetry" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

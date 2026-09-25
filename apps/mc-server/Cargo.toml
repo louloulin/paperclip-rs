@@ -56,3 +56,8 @@ chrono = { workspace = true }
 # 要拿到 `Registry` 与五个 `register()`，并把 `SupervisorHandle` 挂进停机链 ——
 # 这是让「渠道运行时真的被链进二进制」的唯一手段（同 M5-9 给 mc-scheduler 补边的手法）。
 mc-channel = { path = "../../crates/mc-channel" }
+# M8-0 anchor（docs/61-M8-PLAN.md §3.1 / §5）：代码与制品面的后台宿主（`src/integrations.rs`）
+# 要拿到 `ghsnapshot::Manager` 与 `GithubAppConfig`，并把停机句柄挂进停机链 ——
+# 这是让「PR 刷新宿主真的被链进二进制」的唯一手段（同 M5-9 / M7-0 的手法）。
+mc-vcs-github = { path = "../../crates/mc-vcs-github" }
+mc-composio = { path = "../../crates/mc-composio" }

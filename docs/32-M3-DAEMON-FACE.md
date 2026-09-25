@@ -919,3 +919,124 @@ bash scripts/gates.sh --with-db      # 10/10
 3. **`group-routes` 必须保持不存在**（`GET /api/workspaces/:id/dingtalk/group-routes` 返回 404）——
    M7 波唯一一条**反向**验收（`docs/60` §1.6），另一条 `GET /api/agents/:id/dingtalk/groups`
    挂在既有 agents 子路由内部、由 M7-9 注册（不在 `mount.rs` 的合并点）。
+
+## 11. M8-0 anchor（`LUM-1797`）：文件→写者表与偏离登记
+
+`docs/61-M8-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
+（含锚点期做的七处归位判断）。M8 后续切片按本表认领写集，**不得**编辑左列之外的共享文件
+（`Cargo.toml` 根 / `Cargo.lock` / 各 `lib.rs` / `routes/{mod,mount}.rs` / `routes/{github,vcs,mcp,composio}/mod.rs` /
+`state.rs` + `state/integrations.rs` / `routes/auth.rs` / `routes/issues/mod.rs` /
+`apps/mc-server/src/{main.rs,integrations.rs}` / ⑦ 基线 / `slash-alias-allowlist.tsv` 全部由锚点冻结）。
+
+> **号段复核（正文里的「§9.12」是计划期占位号）**：`docs/32` 的 `## 9.` 是 M6-0 anchor
+> （`LUM-1665`）、`## 10.` 是 M7-0 anchor（`LUM-1765`）⇒ 本节取 **`## 11.`**。这正是
+> `docs/61` §5 要求「号段起手复核」的原因：计划文书写的号在 M7-0 合并后已过期。
+
+### 11.1 锚点冻结的聚合/共享文件（M8 各片只读，写各自子文件）
+
+| 冻结文件 | 谁写 | 说明 |
+| --- | :-: | --- |
+| `crates/mc-http/src/routes/mount.rs` | anchor | 加 `mount_slice_code_artifacts()` + `.merge(...)` 一行；锚点期**只贡献 1 条注册键**（搬运的 501 占位） |
+| `crates/mc-http/src/routes/mod.rs` | anchor | 声明 `github` / `vcs` / `mcp` / `composio` **四个**面 |
+| `crates/mc-http/src/routes/{github,vcs,mcp,composio}/mod.rs` | anchor | 四份路由账（逐条带 `router.go` 行号）+ 子模块声明 + 子 router 的 `merge` 点 |
+| `crates/mc-http/src/state.rs` | anchor | `github_keys` / `vcs_keys` / `composio_keys` 三字段 + `AppState::new` 内读 env（**不新增参数**） |
+| `crates/mc-http/src/state/integrations.rs` | anchor | 三组部署密钥的**拆分读取口**（R-M8-7：`state.rs` 已超 620 行阈值） |
+| `crates/mc-http/src/routes/auth.rs` | anchor | 测试里唯一的 `AppState { … }` 字面量补三字段（**压缩注释回基线 1704**，见 11.2 第 5 条） |
+| `crates/mc-http/src/routes/issues/mod.rs` | anchor | **搬运**（不是删除）`/api/issues/:id/pull-requests` 的 501 占位 → `routes/github/issue_pr.rs` |
+| `crates/mc-core/src/{vcs,github,mcp,composio}.rs` + `mcp/overlay.rs` | anchor | 跨 crate 的领域层：4 个模块的**完整类型形状** + overlay 纯函数签名 |
+| `crates/mc-vcs/**` / `crates/mc-vcs-github/**` / `crates/mc-composio/**` | anchor | 三个新 crate 的骨架（`port.rs` / `app.rs` 的 RS256 是**完整实现**，其余是签名 + `todo!()`） |
+| `crates/mc-repos/src/lib.rs` + `{vcs,github,mcp,composio}/mod.rs` + `task/{mod.rs,overlay.rs}` | anchor | 模块树 + 14 张表 → 子文件的归属表 + overlay 写入原语桩 |
+| `apps/mc-server/src/integrations.rs` + `main.rs` | anchor | PR 刷新宿主位 + 停机链的一行（**先停渠道 → 再停 PR 刷新 → 再停调度器 → 最后停 actor**） |
+| `Cargo.toml`（根）+ `Cargo.lock` | anchor | 唯一新增外部直连边 = `ring`（已在 lock 里）；lock 只重新生成（见 11.5） |
+
+### 11.2 锚点期**归位判断**（七处，`docs/61` §5 原表未覆盖或写法不同）
+
+| 事项 | 原表 | 本锚点落点 | 理由 |
+| --- | --- | --- | --- |
+| `crates/mc-core/src/mcp/overlay.rs` | 写者记 **M8-3**（§3.3） | anchor **建桩**（`merge_task_overlay` 签名 + `todo!()`），M8-3 原地填充 | `mcp.rs` 是 anchor 冻结的文件而 overlay 是它的子模块 ⇒ 若 anchor 不声明 `pub mod overlay;` 并落桩文件，crate **编译不过**；若留给 M8-3 声明，M8-3 就得改 anchor 冻结文件。M7-0 对 `engine/{router,supervisor,resolvers}.rs` 是同一处理（本片是它的第二次应用） |
+| `crates/mc-repos/src/{vcs,github,mcp,composio}/` 的子文件（`connection.rs` 等 10 个） | 各面切片写者（§3.3） | anchor 建为 **doc-only 桩**（只 `pub mod` + 表说明，无代码） | 同上：`mod.rs` 声明子模块就必须有文件。逐字复刻 M7-0 对 `mc-repos/src/channel/` 8 个文件的做法（每个 13 行 doc-only） |
+| `crates/mc-http/src/routes/{github,vcs,mcp,composio}/` 的 12 个子文件 | 各面切片写者（§3.3） | anchor 建为**空 `Router::new()` 桩**（`github/issue_pr.rs` 例外：承接搬运的占位） | 同上的模块树闭合；且这正是 `mount.rs` 「anchor 期零新注册键」的形态证据 |
+| `mc-telemetry::redact::SENSITIVE_KEYS` 是否补 `*token` / `*secret` / `app_private_key` / `x-api-key` | §2.4 第 4 条说「anchor 一次性补齐」 | anchor **不动** `crates/mc-telemetry/src/redact.rs`（**不在本片写集**），把裁定写在这里 | 逐条实测：现有 `SENSITIVE_KEYS` 已覆盖 `token` / `secret` / `key` 子串 ⇒ `app_private_key`（含 `key`）、`x-api-key`（含 `key`）、`*token` / `*secret` 全部命中。补 `app_private_key` 会把 `app_key` 这类**客户端标识**也抹掉（上游刻意把标识明文入日志） |
+| 根 `Cargo.toml` 的 `ring` 直连边 | §3.1 / §5 说「最多新增一条」 | 落 `[workspace.dependencies]` 的 `ring = "0.17"`，由 `mc-vcs-github` 以 `{ workspace = true }` 消费 | R-M8-8：`ring 0.17.14` **已在** `Cargo.lock`（传递依赖）⇒ **零新外部包**；与 M7-0 把依赖面一次定死同款 |
+| `crates/mc-http/src/state.rs` 的行预算 | §6.3 预飞给两条分支（>620 则拆 `state/integrations.rs`） | 实测起手 `state.rs` = **640 行**（M7-0 后） ⇒ **拆**：读 env + 构造下放 `state/integrations.rs`，`state.rs` 只加三字段 + 三行构造 | R-M8-7 的预设阈值（620）**已被触发**；不拆则 `state.rs` 逼近门 ⑩ 的 800 行上限且会把余量吃光 |
+| `tests/` 里 `AppState` 字面量（`routes/auth.rs`） | 「唯一字面量构造点补字段」 | 补三字段的同时**压缩同文件的注释**（`google_login` 的偏离登记 3 行 → 2 行），把行数**压回基线 1704** | 门 ⑩ 的基线 `crates/mc-http/src/routes/auth.rs 1704` **只允许变短**（M6-0 / M7-0 的同一手法）。⇒ **任何后续切片都不要再往 `auth.rs` 加行** |
+
+### 11.3 `mc-core` 的三个**不做什么**（登记为偏离，避免两处定义漂移）
+
+1. **`vcs` 与 `github` 两套并列，不合并**（`docs/61` §1.6）：`github_pull_request` 没有
+   `connection_id` / `additions` 而有 `installation_id` 与快照管道；把 `VcsProviderKind` 扩成含
+   GitHub 的枚举会让 `Provider` trait 长出只有 1/3 实现者用得上的方法。
+2. **`from_str` 刻意不实现 `std::str::FromStr`**：上游语义是「未知值 ⇒ 不认识的 kind」，
+   必须显式处理；`FromStr` 的错误类型会诱导调用侧用 `?` 掩盖它。6 个 `from_str` 都带
+   `#[allow(clippy::should_implement_trait)]`（理由写在源码里，不是为了躲 lint）。
+3. **`WorkspaceMcpServer` 的 `config` 手写脱敏 `Debug`**：它是含第三方凭证的 JSONB
+   （`headers` / `env` 的值）⇒ `Debug` 只列 transport 与 `created_by`，**绝不**整体打印；
+   `finish()` 用到全部字段以满足 `clippy::missing_fields_in_debug`。
+
+### 11.4 依赖与工具链偏离
+
+| 事项 | 落法 | 为什么 |
+| --- | --- | --- |
+| 根 `Cargo.toml` | **只加一行** `ring = "0.17"`（`members` 是 glob，不动） | R-M8-8；`ring` 已在 lock |
+| `mc-vcs` 的三方依赖 | 全部 workspace 既有版本（`tokio` / `async-trait` / `serde` / `serde_json` / `thiserror` / `tracing` / `reqwest` / `http` / `url` / `hmac` / `sha2` / `hex`） | 零新外部包；锚点把依赖面一次定死 |
+| `mc-vcs-github` | 追加 `mc-repos` / `base64` / `ring` | 同上（`ring` 是唯一新增直连边） |
+| `mc-composio` | 追加 `mc-repos` / `base64` / `url` / `hex` | 同上 |
+| 新增两条 `path` 边（app 侧） | `apps/mc-server → mc-vcs-github`、`apps/mc-server → mc-composio` | 与 M5-9 / M7-0 同手法：让宿主**真的被链进二进制** |
+| 新增三条 `path` 边（http 侧） | `mc-http → mc-vcs` / `mc-vcs-github` / `mc-composio` | 否则 M8-1..M8-6 会各自回来改共享 manifest |
+| `mc-vcs-github → mc-vcs` **不建** | 无这条边；`mirror.rs` 用本 crate 的 `payload::PullRequestWebhookPayload` | 保持 `docs/61` §2.2 声明的依赖方向（GitHub 面不依赖 VCS provider 抽象） |
+| PKCS#1 PEM（`BEGIN RSA PRIVATE KEY`）**不收** | `app::pkcs8_der_from_pem` 只认 PKCS#8（`BEGIN PRIVATE KEY`） | `ring` 的 `RsaKeyPair::from_pkcs8` 只吃 PKCS#8；转 PKCS#1 需要 `rsa` crate，而本片刻意只接**一条**直连边。上游 `jwt.ParseRSAPrivateKeyFromPEM` 两种都收 ⇒ 这是**登记过的收缩** |
+
+### 11.5 本锚点的门禁读数（逐字取自当轮日志）
+
+```
+①fmt 0 · ②build 0 · ③clippy 0 · ④clippy-test-util 0 · ⑤test 0 · ⑦route-parity 0
+⑨conformance 0 · ⑩file-size 0                              ⇒ 8/8 PASS / 122s
+（⑥db / ⑧schema-drift 未跑：本机无 PostgreSQL 服务；本片 0 迁移、0 DB 触碰 ⇒ 归 M8-7 跑一次）
+```
+
+- ⑦（**当场实测，本片不刷基线**）：`upstream 456 (commit f41fae6b08fb) | local 406 registered |
+  baseline 406`、`implemented 326 real + 4 placeholder = 330 / 456`、`known_gap 126`、
+  `unclaimed 0`、`regression 0`、`local_only 9`、`gaps by owner: M9=33 M7=24 M8=24 M3+=16
+  M2-A=13 M3=11 M10=5` —— 与 `docs/61` §6.1 的 M8-0 行**逐字相同**（这是**第二个不刷 ⑦ 基线的
+  anchor**：本波**没有** M0 占位可删，唯一动作是 1 条 501 占位**原地搬运** ⇒ 注册键集合与
+  `implemented_placeholder` 计数都不变，机制与 M7-0 的「零删除」不同）。
+- ⑦ 第二条（形态）：`slash_alias_audit.py --quiet` = exit 0（M8 `dual-form required: 0`，
+  **没有** allowlist 退路）。
+- ⑩：0 违规；`scripts/file_size_baseline.tsv` **未动**（`routes/auth.rs` 压回 1704 = 基线）。
+- ⑨：`report matches crates/mc-conformance/report.json`（本片零 fixture 改动 ⇒ 未漂移）。
+- `cargo metadata`：workspace 成员 **36**（M7-0 时 33 ⇒ **+3**），三个新 crate 全在内。
+- `Cargo.lock`：`+77 行` = 三个 `[[package]]`（`mc-vcs` / `mc-vcs-github` / `mc-composio`）
+  + 依赖边；**零新外部包**（`ring` 原本就在 lock 里，只多一条 `mc-vcs-github` → `ring` 的边）。
+- 本片自测（anchor 的三类测试）：`mc-vcs` 的 `signature` 三条（HMAC 往返 + 差分反例 +
+  常量时间比较）、`mc-vcs-github` 的 `app` 三条（**RS256 签发→验证往返** + JWT 三段/claims +
+  非 PKCS#8 拒绝）、`port` 三条、`ghsnapshot::client` 一条、`rest`/`dto` 各一条、
+  `mc-composio` 的 client/service/state 三条、`mc-http::state::integrations` 五条、
+  `mc-server::integrations` 两条 —— **全部通过**。
+
+### 11.6 风险登记（承接 `docs/61` §8；R-M8-1…R-M8-10 由**本 anchor 一次落**）
+
+| ID | 内容 | 锚点落法 / 归属 |
+| --- | --- | --- |
+| **R-M8-1** | 平台不可真连（GitHub API/GraphQL、composio、自建 Git） | 替身接缝已由 anchor **物理落定**：`mc_vcs_github::rest::GithubClient::api_base`、`ghsnapshot::Client::with_api_base`、`mc_composio::ComposioClient::with_api_base`、VCS 的 per-connection `instance_url`；替身三条纪律写进各片 DoD（`docs/61` §4.2） |
+| **R-M8-2** | 凭据面最大（4 类部署密钥 + 3 种密钥形态） | 读取口**唯一**：`state::integrations::{GithubKeys,VcsKeys,ComposioKeys}`；三者的 `Debug` 全部手写脱敏 + 5 条用例断言「值不出现」；VCS 明文入库即失败（M8-2 的 DoD） |
+| **R-M8-3** | installation token 刷新竞态 | `token_cache.rs` 的 `InstallationTokenCache` + `get_or_fetch`（单飞）已定形状；实现归 M8-1（并发 8 请求只换 1 次的 DoD） |
+| **R-M8-4** | webhook 重放与验签（三种方案） | 常量时间原语已落 `mc_vcs::signature`（`verify_hmac_sha256_hex` / `verify_plaintext_token` / `constant_time_eq`），带差分反例用例；GitHub 的 `webhook.rs` 验签归 M8-4。**不做**时间戳窗口（上游也没做，等价而非缺口） |
+| **R-M8-5** | ghsnapshot 限流/退避；worker 跨副本语义 | 与 R-M7-1 同源：本仓无 Redis ⇒ **单副本部署契约**；三级退避（`rateLimitPause` / `deferActive` / `scheduleRetry`）归 M8-5 |
+| **R-M8-6** | MCP 条目 write-only，但 `config` 是 JSONB | 领域层 `WorkspaceMcpServer` 的 `Debug` 已脱敏；`McpTransport` 三值校验给 M8-3 一个单一判据（响应不含值字段是 M8-3 的 DoD） |
+| **R-M8-7** | `state.rs` 逼近 ⑩ 硬限 | **已触发并处理**：起手 640 行 > 620 ⇒ 拆 `state/integrations.rs`（见 11.2 第 6 条）；`state.rs` 收尾 665 行 |
+| **R-M8-8** | 无 `jsonwebtoken`，RS256 要选实现 | **已裁定并实测**：选 `ring 0.17`（`RSA_PKCS1_SHA256`），零新外部包，签发→验证往返 + 3 条反例全部通过（见 11.4 / 11.5） |
+| **R-M8-9** | composio overlay 只交付到「可注入」 | `mc-core/src/mcp/overlay.rs`（合并纯函数，M8-3）+ `mc-repos/src/task/overlay.rs`（写入原语，anchor 建桩）；「3 处 enqueue 接线」**不在本波写集**，由 M8-7 登记尾账 ⇒ `runtime_mcp_overlay` 恒 `NULL` 在本波后**仍然成立**（登记过的缺口） |
+| **R-M8-10** | `docs/32` 是 M7/M8 唯一共享文档写点 | M7-0 已合 ⇒ 本节（`## 11.`）与 M7 各片的 `§9.x` / `§10.x` 不同段；同轮若有冲突由后合者 rebase 保留两段 |
+
+### 11.7 交接给 M8 各片的四条硬约束（逐条可测）
+
+1. **四份路由账是唯一真值**：`routes/{github,vcs,mcp,composio}/mod.rs` 各自逐条带 `router.go`
+   行号；各片只填自己那一份**子文件**，**不新增文件、不改 `mod.rs`、不改 `mount.rs`**。
+2. **形态只有一种**：`dual-form required: 0` ⇒ 只注册上游字面量那一形态；补尾斜杠 = `EXTRA_ALIAS`，
+   漏 = `MISSING_EXACT`，**没有 allowlist 退路**。路径参数写 `:name`（`{name}` 恒 404）。
+3. **`pull-requests` 路由必须保持存在**（M8-4 把 `github/issue_pr.rs` 的 501 占位换成真实现，
+   **不能删**）；公开块 4 条（`github/setup` / `webhooks/github` / `webhooks/vcs/:connectionId` /
+   `composio/callback`）**不得**挂会话 middleware（`docs/61` §2.7 第 4 条）。
+4. **凭据只经 `secretbox` 或 `state::integrations`**：任何 handler / DTO 不得有明文 secret 的
+   `Debug` / `Display` / 日志插值；其余面（`mc-mcp` / `mc-daemon/src/mcp/**` /
+   `mc-repos/src/plugin/**`）是**只读**的，不得重复实现（`docs/61` §2.3）。

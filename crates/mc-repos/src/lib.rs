@@ -39,6 +39,14 @@
 //! ⚠️ 两个模块名与 `mc-core` 的同名模块**不冲突**：`mc_repos::skill` 是**表访问**（`skill` /
 //! `skill_file` / `agent_skill` / `skill_to_label`），`mc_core::skill` 是**列投影**；既有的每一波
 //! 都是这样一层对一层（`mc_repos::autopilot` ↔ `mc_core::autopilot`），不要为了「名字重复」改名。
+//!
+//! M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.3）：M8 的 4 个模块一次性声明 ——
+//! `vcs`（3 文件 / 4 张表）、`github`（4 文件 / 7 张表）、`mcp`（2 文件 / 2 张表）、
+//! `composio`（1 文件 / 1 张表）。**本文件自本片起对 M8 是只读的**：M8-1..M8-7 只填自己那格
+//! 的文件（各文件的写者在各 `mod.rs` 的表里），不再编辑本 `lib`。
+//! 表清单与「write-only / 凭据不得明文入库」的口径见各 `mod.rs`。
+//! ⚠️ `mc_repos::mcp`（workspace 服务器库）与 `mc_repos::plugin::mcp_approval`（插件远程 MCP）
+//! 是**两张不同面**，**不得**合并（docs/61 §2.3）。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -57,13 +65,16 @@ pub mod chat_quick_action;
 pub mod chat_session;
 pub mod chat_task;
 pub mod comment;
+pub mod composio;
 pub mod daemon;
+pub mod github;
 pub mod inbox;
 pub mod invitation;
 pub mod issue;
 pub mod issue_status;
 pub mod issue_table;
 pub mod label;
+pub mod mcp;
 pub mod member;
 pub mod pat;
 pub mod plugin;
@@ -78,6 +89,7 @@ pub mod squad;
 pub mod subscriber;
 pub mod task;
 pub mod user;
+pub mod vcs;
 pub mod verification_code;
 pub mod wakeup;
 pub mod workspace;

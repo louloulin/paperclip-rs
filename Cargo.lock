@@ -2454,6 +2454,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-composio"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
+ "mc-core",
+ "mc-errors",
+ "mc-repos",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "mc-config"
 version = "0.1.0"
 dependencies = [
@@ -2611,6 +2635,7 @@ dependencies = [
  "mc-autopilot",
  "mc-channel",
  "mc-chat",
+ "mc-composio",
  "mc-config",
  "mc-core",
  "mc-daemon-proto",
@@ -2628,6 +2653,8 @@ dependencies = [
  "mc-squad",
  "mc-storage",
  "mc-task",
+ "mc-vcs",
+ "mc-vcs-github",
  "mc-ws",
  "parking_lot",
  "pretty_assertions",
@@ -2838,6 +2865,7 @@ dependencies = [
  "mc-auth",
  "mc-autopilot",
  "mc-channel",
+ "mc-composio",
  "mc-config",
  "mc-core",
  "mc-db",
@@ -2851,6 +2879,7 @@ dependencies = [
  "mc-secrets",
  "mc-storage",
  "mc-telemetry",
+ "mc-vcs-github",
  "mc-ws",
  "serde",
  "serde_json",
@@ -2950,6 +2979,54 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "mc-vcs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "hmac 0.12.1",
+ "http 1.5.0",
+ "mc-core",
+ "mc-errors",
+ "mc-secrets",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "mc-vcs-github"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
+ "http 1.5.0",
+ "mc-core",
+ "mc-errors",
+ "mc-repos",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

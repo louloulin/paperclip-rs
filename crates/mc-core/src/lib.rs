@@ -30,8 +30,20 @@ pub mod autopilot_quota;
 pub mod channel;
 pub mod chat;
 pub mod comment;
+// M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.1 / §5）：M8 的四个领域面一次性声明，
+// 让 M8-1..M8-7 不再同时编辑本文件。四个模块的**完整类型形状**在 anchor 落定（各切片的
+// 运行时/仓储/HTTP 面只读引用）：
+// - `vcs`：`VcsProviderKind` / `VcsConnection` / `VcsPullRequest` / `VcsCommitStatus`；
+// - `github`：`GitHubInstallation` / `GitHubPullRequest` / `IssuePrLink` / `PullRequestSnapshot`；
+// - `mcp`：`WorkspaceMcpServer` / `McpTransport` / `McpBinding` + `mcp::overlay`（M8-3 填）；
+// - `composio`：`ComposioConnection` / `ComposioToolkit`。
+// ⚠️ `vcs` 与 `github` **两套并列、不合并**（docs/61 §1.6）；MCP 面**复用** daemon 侧语义、
+// **不**与 `mc-mcp`（remote MCP 客户端）混同（docs/61 §2.3）。
+pub mod composio;
+pub mod github;
 pub mod inbox;
 pub mod issue;
+pub mod mcp;
 pub mod member;
 pub mod plugin;
 pub mod project;
@@ -39,6 +51,7 @@ pub mod runtime;
 pub mod skill;
 pub mod squad;
 pub mod user;
+pub mod vcs;
 pub mod wakeup;
 pub mod workspace;
 
