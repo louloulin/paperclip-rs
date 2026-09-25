@@ -4088,6 +4088,204 @@ unclaimed 0 | regression 0 | local_only 9   unclaimed 0 | regression 0 | local_o
 
 ---
 
+## 32. M7-13（`LUM-1778`）：lark 出站 / 回复 / 会话桥（**0 路由**）
+
+> **号段说明**：派发描述 rev 4 定 `## 32.`。落笔前实测 base `6af3fb3d` 的
+> `docs/32-M3-DAEMON-FACE.md` 号段现状 = `## 24.`(M7-9) / `## 25.`(M7-10) / `## 26.`(M8-7) /
+> `## 27.`(M5-D8) / `## 28.`(M7-11) / `## 29.`(M7-12) / **`## 31.`(M7-15)** / **`## 33.`(M7-16)** ——
+> `## 32.` **不在 base 上**，`## 30.` 归在派的 M7-14（`LUM-1779`，按**派发顺序**预留）。
+> ⇒ 本片按 §29 立下的「号段插中段、别尾行追尾」纪律**插在 §31 与 §33 之间**。
+
+**口径**：本节一切落点、偏离与读数都在上游 `f41fae6b08fb` 与**本片实测树**上核对。
+
+- **起手 base**：`6af3fb3d`（当轮 `git fetch` 后 `git rev-parse origin/feat/multica-rs-initial`
+  实测；= `9b97f824`（M7-12 合并树）+ 一个 docs-only cycle 提交）。与 rev 4 的 `9b97f824` 差一个
+  docs 提交，代码面**逐字相同**。
+- **提交身份**：`git config --worktree user.name devbox5` / `user.email devbox5@multica.local`。
+- **在飞交集**：起手 `pulls?state=open` 认证查询 = 0；本轮与本片同飞的是 `LUM-1782`（M7-17 wecom）
+  —— `crates/mc-channel/src/wecom/**` 与本片写集逐文件 **∅**（且 `lark/mod.rs` 是**本片独占**追加）。
+- **上游只读副本**：克隆进**自己的** workdir（`<workdir>/multica`），钉 `f41fae6b08fb`。
+- **硬前置 M7-12 的可观测判据（当轮逐条 `git cat-file -e HEAD:<path>` 实测）**：
+  `lark/{feishu_channel,enricher,resolvers,media,content_flatten}.rs` **五个全部 EXISTS** ⇒ 许可起手。
+
+### 32.1 落点（写集 + 因门 ⑩ 而必需的子文件）
+
+`docs/60` §3.3 给 M7-13 的格子是 6 个文件；rev 2 追加了 `lark/mod.rs`；**实际落地 24 个新文件 +
+`mod.rs` 一段追加**，多出来的全是**门 ⑩（800 行硬限）**的拆分（同 M7-3 / M7-4 / M7-11 / M7-12 先例），
+切点一律取上游自己的边界（**不是**凑行数）：
+
+| 本地文件（逐字） | 行数 | 上游 | 说明 |
+| --- | --: | --- | --- |
+| `crates/mc-channel/src/lark/store.rs` | 559 | `store.go` 306 | 扁平值形状 + **两族表的 config 边界**（本片把"两套并存"讲清楚的唯一一处） |
+| `crates/mc-channel/src/lark/channel_store.rs` | 588 | `channel_store.go` 429 | 六个薄端口 + 桥 `LarkChannelStore`（四个端口由它实现） |
+| `crates/mc-channel/src/lark/channel_store/repos.rs` | 410 | 同上 | **门 ⑩** 拆分：「端口 ∥ 生产适配器」 |
+| `crates/mc-channel/src/lark/audit.rs` | 255 | `audit.go` 45 | 丢弃审计写入面（平台原生字段那一形状） |
+| `crates/mc-channel/src/lark/typing.rs` | 602 | `typing_indicator.go` 282 | 打字指示生命周期（贴 / 撤 / 太老 / 快照回落） |
+| `crates/mc-channel/src/lark/replier.rs` | 740 | `outcome_replier.go` 446 | 判决回复器 + 装配降级判据 |
+| `crates/mc-channel/src/lark/replier/text.rs` | 138 | 同上 | **门 ⑩** 拆分：「投递 ∥ 文案（纯函数）」 |
+| `crates/mc-channel/src/lark/outbound.rs` | 645 | `outbound.go` 745 | 端口 `PatcherQueries` + 出处词表 + `LarkOutboundDelivery` |
+| `crates/mc-channel/src/lark/outbound/cards.rs` | 394 | 同上 | **门 ⑩** 拆分：卡片词表 / 渲染器 / 卡片 patch 生命周期 |
+| `crates/mc-channel/src/lark/outbound/reply.rs` | 256 | 同上 | **门 ⑩** 拆分：`@` 目标 / 三档回复目标 / 分类过的会话层回落 |
+| `crates/mc-channel/src/lark/mod.rs` | 82（+16） | —— | **仅追加** 6 行 `pub mod` + 注释 + 一行 `mod tests;`；anchor 的 `register()` **一行未动** |
+| 用例文件 13 个 | 5,021 | 上游对应 `*_test.go` | 见下表 |
+
+**用例分布**（拆分同样只为门 ⑩）：
+
+| 用例文件 | 行数 | 覆盖 |
+| --- | --: | --- |
+| `store/tests.rs` | 475 | 密文边界（含 MIME 包装）/ `config` 边界 / 投递行↔绑定行的互补 / 卡片状态词表 / 六个扁平行投影 / 空串落 `NULL` |
+| `channel_store/tests.rs` | 575 | 桥的逐方法行为 / **两族表各一张**（`both_generations_can_hold_a_row_…`）/ D11 的幂等补写 / D2 的出处判决 / 表族常量 |
+| `audit/tests.rs` | 216 | 元数据形状逐列 / 空串落 `NULL` / **写入形状没有可承载正文的列** / 链路失败 → `Infra` / `Debug` 脱敏 |
+| `typing/tests.rs` | 656 | 2 分钟边界的**注入时钟** / 空 id / 太老 / 失败不记状态 / 两次贴 = 两条状态 / 幂等撤 / 备忘解密一次 / **快照回落** / 端口脱离任务 |
+| `replier/tests.rs` + `replier/tests/text.rs` | 616 + 213 | 降级判据四格 / noop 的词表 / 五条状态文案逐字 / 绑定卡与私聊不可达回落 / **消毒顺序** / 深链只认 `issue_identifier` / 三档回复目标 |
+| `outbound/tests.rs` + `outbound/tests/cards.rs` | 751 + 526 | wire 形态先于提及 / 空正文静默丢弃 / 八条 `SkipReason` 各自的失败关闭 / 分类过的回落三档 / **`update_multi` 每一种变体 / 整卡 patch / 终态不再 patch** |
+| `tests.rs` + `tests/round_trip.rs` + `tests/round_trip/harness.rs` | 11 + 442 + 423 | **端到端收发回路**（见 §32.3） |
+| `tests/support.rs` + `tests/support/store.rs` | 578 + 361 | 装置：`FakeApi`（逐字段调用日志）/ `FakeMinter` / `MemoryStore`（两族各一张表） |
+
+### 32.2 与上游的偏离（**逐条登记**，不许默默略过）
+
+- **D1 `Patcher::Register(bus)` 不落**：上游订阅进程内事件总线；本仓**没有**该总线（M7-6 / M7-8 先例）
+  ⇒ 上游 `processEvent` 的判决搬进三个**显式**方法 `on_chat_done` / `on_task_failed` /
+  `on_task_cancelled`。**接线点**（谁在任务终态时调它们）是交接项 H1。上游 `PatcherQueries` 里
+  `GetChatSession` 是**死接口成员**（非测试代码里零调用点）⇒ 不落。
+- **D2 输入出处只落一半（**放宽**，交接项 H2）**：上游要 `GetAgentTask(chat_input_task_id)` +
+  `TaskHasChannelIngestedMessages` 两样，**都在 `mc-repos` 的任务面**，而那里两个查询都没有
+  （`mc_repos::agent::tasks` 只有 `list_tasks`/`cancel_tasks`/`task_snapshot`/`run_counts_*`，
+  **没有** `get(task_id)`；`chat_message` 也没有按任务查批次的查询）—— M7-2 的
+  `engine::commands::task_input_is_channel_ingested` 文档把同一条登记成缺口。
+  ⇒ 本片把它做成**可注入端口** `PatcherQueries::task_origin`（返回
+  `TaskOrigin { chat_input_task_id, batch_has_channel_ingested_messages }`，判决仍走 M7-2 的纯函数），
+  生产默认值是上游 MUL-4988 **之前**的行为：**有投递行 ⇒ 属于渠道**（`chat_input_task_id = None`
+  ⇒ 判决恒真）。差一个"web 任务复用 lark 会话但输入不是渠道消息"的场景 ⇒ 那种情形下会多投一条
+  回复（**投递而非丢失**）。补两条 `mc-repos` 查询即可收紧，端口形状不变。
+- **D3 `events.Event` 的 `any` 载荷 → 强类型形参**：上游从载荷里 `type switch` 出
+  `ChatDonePayload` / `map[string]any`（`chatDoneContent` / `errorMessageFromPayload`）；本仓两个入口
+  直接收 `&str` ⇒ 那两个取值函数**不必存在**（载荷形状是**发布方**的事）。
+- **D4 `renderNoticeCard` 的 `error` 返回不落**：上游那个 `error` 是 `json.Marshal` 的形状；本仓用
+  `serde_json::Value` 直接构造 ⇒ 没有错误路径（签名返回 `String`）。
+- **D5 卡片行生命周期**补上**上游缺失的那一半**：上游注释逐字地写着 `thinking → streaming → final`
+  已被缩减（*The error path is the one survivor of card rendering*），但 `PatcherQueries` 上仍留着
+  `Create…` / `Update…` / `Get…OutboundCardByTask` 三个方法且**零调用点**（死接口）。`docs/60` §6.5 的
+  M7-13 行要求的正是「卡片 patch（`message_edit` 能力位）与打字指示的生命周期」，且
+  `FeishuChannel::capabilities()` 已声明该位 ⇒ 本片把 `LarkCardPatcher`（`begin` / `patch`）落成
+  **真的可调用、可测**的一段。
+- **D6 「消息太老」用注入的**墙上**时钟**：上游 `time.Since(time.UnixMilli(ms))` 读墙上时间
+  （`create_time` 是纪元毫秒），与 M7-12 的 `enricher::Clock`（**单调**毫秒）**不是一回事** ⇒
+  `typing::WallClock` 单独一个口，用例注入 `ManualWallClock` 即可钉住 2 分钟边界，**不睡真觉**。
+  （不复用那个 trait：复用会把"单调"与"纪元"两个语义混在一个类型上。）
+- **D7 同步端口 + 脱离任务**：`TypingNotifier` / `OutboundReplier`（M7-1 定的）都是**同步**方法，
+  而上游直接阻塞着发 HTTP ⇒ 同步方法只推一个脱离任务，真正的工作在 `add_now` / `clear_now` /
+  `reply_now` 里（与 `slack::replier` 逐字同款）。⇒ 打字指示的**状态表必须是
+  `Arc<Mutex<…>>`**（脱离任务与本体共用同一张表）；每代 `clone` 一份会让"抄近路的 add ↛ 看得见的
+  clear"。
+- **D8 上游的 `log *slog.Logger` 字段不落**：本仓日志一律走 `tracing::*`，不把 logger 当字段。
+- **D9 `audit.rs` 与 M7-12 的 `ChannelAuditor::lark` 并存（**不是**重复实现）**：M7-12 给 engine 的
+  `Auditor` 端口接的是 `ChannelAuditor::lark`（**流水线内部**的丢弃记账，入参是归一化后的
+  `InboundMessage`）；本片落的是上游 `AuditLogger` 这**另一条**形状（入参是**平台事件的原生字段**：
+  `event_type` / `drop_reason` / `chat_id` / `lark_event_id` / `lark_message_id`）。两者写**同一张遗留表**，
+  入口与入参形状不同 ⇒ 各自留住。
+- **D10 行落在哪一族表（**本片最要紧的一处**）**：上游 `f41fae6b08fb` 的 `channel_store.go` 自己写着
+  *this store reads and writes only `channel_*`, never `lark_*`*（`lark_*` 按迁移 124 的 ROLLOUT 注释
+  保留一版）。**但本仓合并树**（`mc-repos/src/channel/installation.rs` 的硬约束，M7-1 **W**；M7-12 的
+  `resolvers.rs` 也建在它上面）把 lark 定成走**遗留 `lark_*`**、不得并进 `channel_*`。
+  ⇒ 本片**服从合并树**（那是编译单元与 e2e 唯一能跑起来的事实），并把两族的边界落在一张表里
+  （`store.rs` 的模块文档 + `channel_store.rs` 的表名常量）：
+  安装行 / 用户绑定 → **遗留**；会话绑定 → **两族都在**（入站写泛化，遗留面由本片补写，见 H3）；
+  任务投递 / 出站卡片 → **只有泛化**（没有 `LarkOutboundCardRepo`）。
+  `docs/60` §6.4 那句"上游同时在用两套表"的**取证口径需修正**：那 25 处 `lark_installation` 命中
+  **全是注释**（`grep -rn 'lark_installation' --include=*.go server/internal/integrations | grep -v _test`
+  逐条看过），不是查询。这是本片交给 M7-21 的一条**口径更正**。
+- **D11 `store.rs` 的 `decode_secret` 与 `feishu_channel/credentials.rs` 的同名私有函数重复**：
+  上游只有一份（在 `store.go`）。M7-12 的写集里没有 `store.rs` ⇒ 它落了一份私有同款。本片按上游
+  文件名把**边界那一份**落在 `store.rs`。两份共用同一判据（先剥 ASCII 空白再 base64）与同一个错误
+  分类（只报长度）⇒ 行为一致；**这是一处重复**，M7-21 若要合并，`store.rs` 是存留点。
+
+### 32.3 门禁与读数（**本片树上实测**）
+
+`bash scripts/gates.sh --with-db`（**10/10**；DoD 第 1 条）：
+
+```
+  ①  fmt                   0     3s  PASS
+  ②  build                 0    25s  PASS
+  ③  clippy                0    17s  PASS
+  ④  clippy-test-util      0     1s  PASS
+  ⑤  test                  0    42s  PASS
+  ⑥  db                    0   221s  PASS  (migrate=0, e2e=0)
+  ⑧  schema-drift          0    27s  PASS
+  ⑦  route-parity          0     1s  PASS
+  ⑨  conformance           0     5s  PASS
+  ⑩  file-size             0     0s  PASS
+```
+
+- **真库**：PG 16 本机 5432，**当轮新建** `multica_lum1778` + 角色 `mc_lum1778`（建时就带
+  `CREATEDB`，否则门 ⑧ 会 `exit 2`）。
+- **⚠️ 门 ⑥ 的瞬时红（本轮实测 1 例，已复验绿）**：第二次全量跑时 ⑥ 在 **7s** 以 `e2e=101` 红，
+  紧接着 `--only db` **单跑 61s 转绿**。判据：`mc-scheduler` 在 ⑥ 的包集里，而 `docs/32` §26.4 的
+  **(b) `mc-scheduler/tests/jobs_issue_wakeup.rs:312`（≈17%）** 正在那一侧 ⇒ **先按既有 flake 归因、
+  单跑复验**，别整轮重跑。
+- ⑦（本片 **0 路由** ⇒ 与派发 rev 4 的当轮值**逐字相同**，实测**逐字相同**）：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 469 registered | baseline 458
+  implemented  383 real +   3 placeholder =  386 / 456   known_gap   70   unclaimed    0   regression   0   local_only    9
+  gaps by owner: M9=33  M3+=16  M3=11  M10=5  M7=5
+```
+
+- **不变式**：`implemented + known_gap == 456` ✓、`regression == 0` ✓、`unclaimed == 0` ✓、
+  `local_only == 9` ✓、`owners.M7 == 5`（**本片不动**：0 路由 ⇒ 这正是「0 路由片 = 读数正面控制组」）。
+- **形态门（⑦ 第二条）**：`python3 scripts/slash_alias_audit.py` ⇒
+  `registered upstream-key literals: 469` / `shapes OK` / `0 defect(s) from findings, 0 warning(s)`，
+  **exit 0**；`docs/fixtures/slash-alias-allowlist.tsv` **未加行**。
+- **⑨**：`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`
+  ⇒ `report matches`；`crates/mc-conformance/report.json` 的 blob 仍是 **`fa53d084`**，在 `git status`
+  里**未出现**（lark 的 7 条 `actor=anonymous` fixture 归 **M7-14**，本片不动一格）。
+- **⑩**：`file_size_check: limit=800 scanned=1071 baseline=10 violations=0`；
+  **未动** `scripts/file_size_baseline.tsv`。本片 24 个新文件最大 **751** 行（`outbound/tests.rs`）。
+  ⚠️ `scanned` 必须在 **`git add` 之后**取（§29.5 的 R1：门 ⑩ 只扫 `git ls-files`）。
+- **端到端收发回路（`docs/60` §4.2 的替身纪律三条，逐条落）**：`tests/round_trip.rs` 的三段回路 ——
+  ① 未绑定发件人 → 真 Router 判决 `NeedsBinding` → 真回复器 → 替身收到**发往 `ou_sender` 私聊**的
+  绑定卡（URL 含令牌）；② 已绑定 ⇒ `Ingested` → **打字指示先贴上** → agent 回复按**触发那条消息**
+  回帖（群里 `@` 发件人、非话题时 `in_thread=false`）；③ 失败卡 + 卡片 patch 的 `update_multi` 位。
+  入站那一半（WS 替身 + `/callback/ws/endpoint` 引导）是 **M7-11 / M7-12 的**（本片写集之外，
+  `ws_connector/tests/harness.rs`）⇒ 本片从"信封已完整"处接手，走的是**真**解码器
+  （`LarkJsonFrameDecoder`）、**真**归一化、**真**解析器、**真** Router 判决、**真**出站面；
+  只有**别的片**的端口（去重 / 会话 / 触发）与平台 wire 是替身。**真 DB** 那一半由门 ⑥ 承担
+  （泛化 `channel_*` 仓储在 `crates/mc-http/tests/channels/*`；本 crate 没有 `sqlx` 依赖）——
+  这条分工与 slack M7-4 的模块文档逐字同款。
+
+### 32.4 交接给后续片（M7-14 / M7-21 的可用面）
+
+- **H1（宿主 / INT 的接线项）** 三个生命周期入口是 `LarkOutboundDelivery::{on_chat_done,
+  on_task_failed, on_task_cancelled}`（D1）。谁在任务终态时调它们，就是上游 `Patcher::Register`
+  那一步 —— 本片**不擅自扩写集**。
+- **H2（`mc-repos` 任务面）** 补齐 `TaskOrigin` 的两半（任务行的 `chat_input_task_id` + 批次的
+  `channel_ingested` 戳）即可把 D2 的放宽收紧成上游当前口径；端口形状不变。
+- **H3（M7-14 安装面）** `LarkChannelStore::bridge_session_binding` 是 D11 交接的**遗留会话绑定行**
+  的**唯一**写入点（幂等：已有行 ⇒ 返回既有行、不重写游标）。M7-14 的安装 / 绑定面若也要写
+  `lark_chat_session_binding`，**走这一个出口**（或明确登记第二个写者）。
+- **H4（M7-14 的 5 条路由 + 注册工厂）** `lark/mod.rs` 的 `register()` **一行未动**（仍是 anchor 的
+  空实现）。本片新增的 `pub mod` 是 `store` / `channel_store` / `audit` / `typing` / `replier` /
+  `outbound`（外加一行 `#[cfg(test)] mod tests;`）。
+- **H5（M7-21 / INT）** 两个回填与口径：① §32.2 的 **D10** 是 `docs/60` §6.4 的**取证口径更正**
+  （25 处命中全是注释）；② §32.2 的 **D11** 是一处可合并的重复（`decode_secret`）。
+  快照三件套本片**一格未动**（0 路由 ⇒ ⑦/⑨/⑩ 逐字不变）。
+
+### 32.5 观察项与风险（登记，不实现）
+
+- **R1（`cargo fmt` 会让行数读数过期 —— §28.5 / §29.5 的同型教训，本次**第 3 次**实测）**：
+  `replier/tests.rs` 在写完用例时 792 行，`cargo fmt` 之后 **809** ⇒ 越门 ⑩。
+  **顺序：写完 → `cargo fmt` → 量行数 → 写文档**；拿 fmt 之前的读数去判门必假绿。
+- **R2（门 ⑥ 的瞬时红与"整轮重跑"陷阱）**：见 §32.3 的 ⚠️ —— 7s 内 `e2e=101` 是**既有 flake**
+  的形状（`mc-scheduler` 在 ⑥ 的包集里）；**单跑 `--only db` 复验**，别整轮重跑（那会掩盖归因）。
+- **R3（门 ⑩ 的读数必须在 `git add` 之后取）**：§29.5 的 R1 在本片再次成立 —— 本轮先 `git add`，
+  `scanned=1071` 才是真读数。
+- **R4（「两套表并存」的**可执行**判据）**：`channel_store/tests.rs` 的
+  `both_generations_can_hold_a_row_for_the_same_session` 同时持有泛化行与遗留行，并断言
+  **本片不改写泛化行**。将来若有人想"把两族合并成一张表"，这条用例会先红。
+- **R5（上游的死接口）**：`PatcherQueries` 的 `GetChatSession` **不落**（零调用点）；
+  `Create/Update/Get…OutboundCard` 三个**落了**（D5 补上了调用方）。这是两次**方向相反**的裁量，
+  理由都写在 §32.2。
+
 ## 33. M7-16（`LUM-1781`）：wecom WS 帧与发送（**0 路由**）
 
 > **号段说明**：base `c08f36db` 实测 `docs/32` 末号 = **`## 31.`**（M7-15）；29 / 30 / 32 已按
