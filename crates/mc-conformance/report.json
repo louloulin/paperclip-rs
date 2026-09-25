@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 5,
+    "pass": 6,
     "mismatch": 23,
-    "unmounted": 31,
+    "unmounted": 30,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -18,8 +18,8 @@
       },
       "anonymous": {
         "mismatch": 23,
-        "pass": 5,
-        "unmounted": 31
+        "pass": 6,
+        "unmounted": 30
       },
       "member": {
         "unevaluable": 293
@@ -28,8 +28,9 @@
     "by_via": {
       "handler": {
         "mismatch": 23,
+        "pass": 1,
         "unevaluable": 280,
-        "unmounted": 28
+        "unmounted": 27
       },
       "router": {
         "pass": 5,
@@ -40,17 +41,17 @@
     "tiers": {
       "stateless": {
         "mismatch": 23,
-        "pass": 5,
+        "pass": 6,
         "unevaluable": 306,
-        "unmounted": 31
+        "unmounted": 30
       }
     }
   },
-  "contract_equivalence_rate": 0.0136986301369863,
-  "mounted_equivalence_rate": 0.17857142857142858,
+  "contract_equivalence_rate": 0.01643835616438356,
+  "mounted_equivalence_rate": 0.20689655172413793,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 5
+    "pass": 6
   },
   "fixtures": [
     {
@@ -5630,12 +5631,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/telegram_test.go:21",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "workspaces/TestMembershipCache_InvalidatedOnDeleteWorkspace@server/internal/handler/daemon_test.go:4169#10",
