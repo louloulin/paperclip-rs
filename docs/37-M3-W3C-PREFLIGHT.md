@@ -11556,3 +11556,10 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - **门 ⑥ 判据（已重定，§130.6）**：旧名录**只作「再红则判本片回归」的参照**，**不再**是「红了也正常」的理由；新基线从 `#373`（`067329b6`，含 8 条修复）起算，**需 ≥3 个连续 run 才能改判**；红时先查 `df`（`os error 28`）+ 换**当轮新建库**。
 - **槽位链（勿抄旧行）**：`1784` 终 ⇒ 判据链合入 ⇒ 空位 ⇒ **`LUM-1785`**（M7-20 rev 7；**必须在 1784 合入之后**，同写 `wecom/mod.rs` 追加段 —— 是**语义**写者链，不是文本冲突）⇒ 之后 **`LUM-1786`**（M7-21 INT rev 8；`owners.M7 = 0` 已成立，唯一一次 `--write-baseline`；与 M9-INT `LUM-1825` **不得同轮**）⇒ 之后 **`LUM-1815`**（M9-0 anchor）。
 - **回收预告**：`LUM-1784` 一合 ⇒ 其 **18G** `target/` 四判据齐即可整删（下一轮最大单块）。
+
+### §130.12 轮内 ISR 回填：`#373`（含 8 条修复的第一棵树）**逐用例转绿**；门 ⑥ 新基线第 1 个数据点
+
+- `#373`（head `067329b6`，23:28:36Z 起、**23:34:09Z 完成**）⇒ **`success`**，三个 job **全绿**（`fast` / `db` / `contract`）。
+- 🔴 **不是只看 run 结论，而是逐用例核对**（`actions/jobs/108288154853/logs`，2543 行，`FAILED` 出现 **0** 次）：§130.6 表里三个红点——`telegram::binding_redeem_is_idempotent_and_classifies_three_failures`、`telegram::install_list_revoke_and_reinstall`、`real_db_the_loop_delivers_each_schedule_bucket_exactly_once`——**当轮逐一打印 `... ok`**（23:32:34Z / 23:32:34Z / 23:33:32Z）。
+- ⇒ **`LUM-1980` 的 8 条修复在 CI 上成立**（至少一次），且**红→绿的对应关系是逐用例可追的**（不是「换个 run 就绿了」这种弱结论）。门 ⑥ 新基线：`#373` = 第 **1** 个数据点（≥3 个连续 run 才改判，见 §130.6）。
+- ⚠️ 顺带：本 run 的 §130 直推 **`3385d7d5` 又触发了一个 run（`#374`，23:36:09Z）** —— 每次 docs-only 直推都会起一个 CI run（成本 ≈ 10 分钟 × 3 job）；这不影响判据链（走「合并树同树 `--with-db`」那条离线路即可）。
