@@ -2113,6 +2113,38 @@ bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:54
   编译。**判据**：门禁日志出现这一行**不是**本片红灯，但不能据此提前报数 —— `ps` 看着自己的
   `gates.sh` PID 还活着就等它。本片两次全量跑：9/10 / 695s（含等待）与 10/10 / 360s。
 
+#### 19.4.1 合并树上的重跑（base 前进到 `5b1028e1` 之后）
+
+```
+bash scripts/gates.sh --with-db --db-url 'postgres://mc_lum1801:…@127.0.0.1:5432/multica_lum1801'
+  ①3s · ②182s · ③102s · ④65s · ⑤82s · ⑥250s · ⑧35s · ⑦1s · ⑨74s · ⑩2s
+  ⇒ overall: PASS — 10/10 gate(s) green in 796s
+```
+
+- **合并**：`origin/feat/multica-rs-initial` 在飞期间前进到 `5b1028e1`（M7-6 的 `56a63d88` +
+  三轮 cycle docs）⇒ 就地真合并。**一处冲突**：`docs/32` —— M7-6 先占了 `## 18.`，
+  本片让号改 `## 19.`（**D 编号与内容一字未动，只有节号平移**；本片代码注释里的
+  `docs/32` §18.x 自引用同步改为 §19.x）。除本片 19 个文件外**零改动**
+  （`git diff --stat origin/feat/multica-rs-initial` 逐条比对过；M7-6 的
+  `mc-channel/src/telegram/**` 与 `mc-repos/src/channel/**` 与本片 base 逐字相同）。
+- ⚠️ **首跑 8/10（`gates-m8-4c.log`），两条红**，**都不是代码缺陷**，而是**磁盘耗尽**：
+  ④ 报 `couldn't create a temp dir: No space left on device (os error 28)`；
+  ⑥ 的红是 `telegram::revoke_is_admin_only_and_workspace_scoped` 拿到
+  `409 telegram_bot_owned_by_another_workspace` —— **复用同一个测试库**跨多轮跑留下的行。
+  **处置**：① 删掉本 workdir 的 `target/`（当时 19G，磁盘 100% / 仅剩 142M）；
+  ② `DROP DATABASE` + 重建 + 让门 ⑥ 自己迁移 ⇒ 干净库；③ 重跑 = 上表的 10/10。
+- **【lesson·同 workdir 的 target 是 ENOSPC 的第一来源】** 本片 target 单轮涨到 `19–21G`，
+  把工作区磁盘顶到 **100%**。⇒ 与 `CARGO_INCREMENTAL=0` **同一理由**，本轮门禁额外带
+  `CARGO_PROFILE_DEV_DEBUG=0`（只去掉 debug info，**不改任何门禁命令、不影响任何门禁的
+  判定**：fmt/build/clippy/test/route-parity/schema-drift/conformance/file-size 都不读它，
+  只有 panic 的 backtrace 会少符号）。**这是一条偏离，登记在案**：`gates.sh` 的默认环境没有
+  这个变量，本节的读数是在「增量关闭 + debug info 关闭」下达成的 —— 与 §16.4 的
+  `CARGO_INCREMENTAL=0` 读数同性质。
+- **【lesson·测试库要每轮重建，别复用】** 本片第一次全量跑（10/10）与合并后重跑用的是
+  **同一个** `multica_lum1801`；第二轮起 telegram 面就出现「bot 已连到别的 workspace」的
+  409 —— 那是**上一轮遗留行**，与代码无关。⇒ 门 ⑥ 自己会 `mc-migrate run`，但**不会**清库；
+  凡是「唯一约束 + 跨 workspace 归属」这类断言，跨轮复用同一个库就会假红。
+
 ### 19.5 交接（给 M8-5 / M8-7 / 未来碰这条路的切片）
 
 1. **M8-5（ghsnapshot 管道）—— 本片给你留了一个**装配点**，请接上**：`routes/github/webhook.rs`
