@@ -1,8 +1,11 @@
-//! 渠道面（slack）的四条路由端到端测试（M7-4 / `LUM-1769`）。
+//! 渠道面（slack / telegram）的端到端测试。
 //!
-//! 覆盖 `docs/60-M7-PLAN.md` §1.1 里属于 M7-4 的 **4** 条注册键：
-//! `GET|DELETE /api/workspaces/{id}/slack/installations[/{installationId}]`、
-//! `POST …/slack/install/byo`、`POST /api/slack/binding/redeem`。
+//! `docs/60-M7-PLAN.md` §1.1 的 24 条注册键里，已落地平台各自的 4 条在这里各有一份文件：
+//!
+//! - `channels/slack.rs`：**M7-4**（`LUM-1769`）—— `GET|DELETE /api/workspaces/{id}/slack/installations[/{installationId}]`、
+//!   `POST …/slack/install/byo`、`POST /api/slack/binding/redeem`；
+//! - `channels/telegram.rs`：**M7-5**（`LUM-1770`）—— `GET|DELETE …/telegram/installations[/…]`、
+//!   `POST …/telegram/install`、`POST /api/telegram/binding/redeem`。
 //!
 //! 全部 `#[ignore]`：需要真库（`MULTICA_TEST_DATABASE_URL`，门 ⑥ 用 `-- --ignored` 拉起）。
 //!
@@ -11,9 +14,11 @@
 //! ```
 //!
 //! 文件布局（门 ⑩ 单文件 800 行硬上限）：
-//! - `channels/support.rs`：连接 / `AppState` 字面量 / 种子 / Slack 替身 starter / 请求
-//! - `channels/slack.rs`：四条路由的「未配置 + 未授权」矩阵 + BYO 装/撤 + 绑定兑换幂等
+//! - `channels/support.rs`：连接 / `AppState` 字面量 / 种子 / 请求 / 替身 starter
+//! - `channels/slack.rs`：Slack 四条路由的「未配置 + 未授权」矩阵 + BYO 装/撤 + 绑定兑换幂等
+//! - `channels/telegram.rs`：Telegram 四条路由的同名矩阵 + Bot API 替身
 #![cfg(feature = "test-util")]
 
 mod slack;
 mod support;
+mod telegram;
