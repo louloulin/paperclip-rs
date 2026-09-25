@@ -9292,3 +9292,5 @@ gaps by owner: M9=33  M3+=16  M7=16  M3=11  M10=5  M8=5          （和 = 86 ✓
 - **`LUM-1745`（M5-D8，rev 4）**：零共享文件片（写集已去掉 `state.rs`）⇒ 与任意片可并飞，槽位一空可插。
 - **两片 INT 不得同轮**跑 `--write-baseline`（同一份 `docs/fixtures/route-parity-baseline.json`）：`LUM-1786`（M7-21）等 `owners.M7 → 0`，`LUM-1804`（M8-7）等 `owners.M8 → 0`。
 - **起手必验（每轮重取，不照抄本节）**：`df -h /`（连采两次，≥12G 才开 `--with-db`）/ `git ls-remote` / 认证 GH `pulls?state=open` / daemon **逐 PID + `.managed_env.json.issue_id` 核 `project_id`**；⑦ 前 `git rev-parse HEAD` 必须逐字等于当轮 base。
+
+> **勘误/补记（本 cycle 自己的提交）**：§105.7 写的 `b76b9b32` 是**合并 #97 之后的代码 base**；本 cycle 的 §105 docs 提交本身也直推 base ⇒ **下一轮起手实测 base = `a75f81a5`**（= `b76b9b32` + 本 §105，docs-only、与两片零交集）。起手一律 `git rev-parse` 实测，不照抄本行。
