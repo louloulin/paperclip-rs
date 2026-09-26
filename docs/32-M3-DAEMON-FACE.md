@@ -806,6 +806,36 @@ bash scripts/gates.sh --with-db      # 10/10
    `main.rs` 的 `AppState` 持有，而调度循环拿不到它（D6）⇒ 若将来要给 hook job 单独关开关，
    需要把目录也传给 `scheduler::start`（那要动 `main.rs`，本片不改）。
 
+### 9.12 M10-3（`LUM-2105`）：realtime 指标探针 `GET /health/realtime` 的偏离登记（**索引段**）
+
+> **本段为什么存在**：切片描述与 cycle 的号段账（`docs/37` §139.9 / §140）都把 M10-3 的登记号
+> 记为 **`### 9.12`**，而 §41 / §42 已按「该系列自 M7-0 起未再使用」的裁定把 M10 各片的登记
+> 落在自己的 `## N.` + `### N.x`。为**同时**满足两者，本节只做**索引**：偏离的**唯一一份完整
+> 登记**在 **`## 43.`（43.1–43.7）**，此处只列判据与标题，不复制正文。⇒ 后一片若仍要续
+> `### 9.13`，请先读 §41 的裁定与 `docs/37` §139.9（`### 9.13` 被 M9-0 与 M10-2 同时授权那次）。
+
+**契约（四态）**：200（token + 正确 `Bearer`：`application/json` + `Cache-Control: no-store` +
+13 个 realtime 顶层键 + `daemonws{14}`）/ 401（`WWW-Authenticate: Bearer realm="metrics"` +
+`unauthorized\n`）/ 200（无 token + 直连 loopback + 无转发头）/ **404**（无 token + 非 loopback
+**或任一** `X-Forwarded-*`/`Forwarded`）。
+
+**登记的偏离（7 条，全文见 §43.3）**：D-1 装配期读 env（本地 router 构建期读，测试走注入）；
+D-2 `TrimSpace` + 非空判分支；D-3 常量时间比较；D-4 Go `json.Encoder` 的尾换行/`Content-Length`；
+D-5 `RemoteAddr` 用 `Option<ConnectInfo>` 且缺失 ⇒ fail closed；D-6 逐字复刻两个纯文本 body；
+D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面，连接四则在两个子对象里同步变化。
+
+**口径更正（1 条）**：`redis` 子树上游实测 **20 个键**、`last_error` 是 Go `string` 零值 `""`
+（不是切片描述/`docs/64` §2.3 写的 16 键 / `null`）⇒ 按上游键数与值形态照发，**不删键**。
+
+**结构性为 0 / 未接线（逐条 + 接线点，全文见 §43.4）**：`inbound_too_large_total`（接线点
+`crates/mc-ws/src/pump.rs`，不在本片写集）；`subscribes_total` / `unsubscribes_total` /
+`subscribe_denied_total` / `active_scope_rooms`（本仓 daemon ws 无运行期订阅协议面）；
+`redis{20}` 与 6 个 relay 发布/接收键（本仓无 Redis ⇒ 单副本缺省，**接不接线是裁定**）。
+
+**门禁**：`bash scripts/gates.sh --with-db` **10/10 PASS / 1164s**；⑦ `local 474 → 475`、
+`implemented 392 → 393`、`known_gap 64 → 63`、`owners.M10 4 → 3`、`baseline 473` 不动、
+`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**（该路径无 fixture ⇒ `report.json` 未动）；
+⑩ `scanned 1181 → 1183 / violations 0`。逐字读数见 **§43.6**。
 
 ---
 
@@ -6250,8 +6280,10 @@ MULTICA_TEST_DATABASE_URL=postgres://…  cargo bench -p mc-bench          # 判
 > 已合）⇒ 本节取 **`## 43.`**。**跨分支复核**（`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`
 > 后逐个远端分支取 `docs/32` 的 `grep -n '^## ' | tail -1`）：**137 个远端分支里没有任何一个**
 > 到 `## 43.` 或更高 ⇒ 无争号。GH `pulls?state=open` = **0**。`### 9.x` 末号仍是 `### 9.11`（M6-8）
-> —— 该系列**自 M7-0 起未再使用**（§41 开头已就同一问题裁定），本节按同一裁定走自己的
-> **`### 43.x`**；切片描述里的「§9.14」/「§9.12」都是计划期占位号。
+> —— 该系列**自 M7-0 起未再使用**（§41 开头已就同一问题裁定），本节按同一裁定把**完整的**偏离
+> 登记落在 **`### 43.x`**；同时为满足切片描述的号段（`### 9.12`）与 cycle 的号段账，在 `## 9.`
+> 末尾补了一段**索引式**的 `### 9.12`（只列判据与标题 + 指向本节，不复制正文）—— 两处号都落，
+> 正文唯一一份在这里。
 
 **本片是上一个 run 的续做**：`01a0dbc8-3836-7862-93c5-84cca3cd907a` 于 03:48:40Z 死于
 `525 status code (no body)`（provider 侧，**与本片代码无关**，零提交、零评论）。cycle 已把现场
