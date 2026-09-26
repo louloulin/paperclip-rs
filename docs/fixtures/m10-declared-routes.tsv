@@ -1,0 +1,48 @@
+# m10-declared-routes.tsv — M10（W10 收尾/终波）的 **A 面（路由面）声明路由**，5 条。
+#
+# 用途：M10 切片**派发前**的形态预判，喂给门 ⑦ 的第二条命令的预测模式：
+#
+#     python3 scripts/slash_alias_audit.py --declared docs/fixtures/m10-declared-routes.tsv
+#
+#   它回答「这些路径只按上游字面量注册之后，哪些键还缺另一种形态（MISSING_ALIAS）」——
+#   也就是本波**必须两形态一起注册**的键（实测：0 个，见下）。
+#   与 docs/fixtures/{m3-6,m4,m5,m6,m7,m8,m9}-declared-routes.tsv 同性质：这是**输入**，
+#   不是本地已注册路由的快照。本地实际形态看无参调用 `python3 scripts/slash_alias_audit.py`。
+#
+# 数据源：docs/fixtures/upstream-routes.tsv 的 **owner=M10 行**（method + path + router.go 行号，
+#   5/5 实测逐条相等）。上游路由表改动时两张表要一起动。
+#   行部分可复算（表头手工维护）：
+#
+#     awk -F'\t' '!/^#/ && $3=="M10"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv
+#
+#   ⇒ 与下表**排序后**比较应为空：
+#
+#     diff <(awk -F'\t' '!/^#/ && $3=="M10"{print $1"\t"$2}' docs/fixtures/upstream-routes.tsv | sort) \
+#          <(grep -v '^#' docs/fixtures/m10-declared-routes.tsv | tail -n +2 | sort)   # ⇒ 空
+#
+# ⚠️ **本波只有 5 条路由，但本波不是一个"5 条路由的普通波"**：`plan1.md` §5 给 W10 的内容是
+#   「前端兼容验证、性能 bench、双跑对账、发布（helm/镜像/CLI 分发）」，路由面只占其中一格。
+#   本文只声明**路由面**这 5 条；交付物面的切片（bench / 对账 / 发布 / 停止条件）与
+#   **尾账 B 面**（owner=`M3+` 的 17 行）见 `docs/64-M10-PLAN.md` §4。
+#
+# 字段：METHOD<TAB>PATH（上游形态逐字：带不带尾斜杠是**语义**差异，见 docs/37 §14.2）。
+#   **本波 5 键上游全部是 plain 注册（0 个带尾斜杠）** ⇒ 预测模式实测
+#   `declared 5 / dual-form required: 0`（M4 15 / M5 7 / M6 5 / M7 0 / M8 0 / M9 3 的对照见
+#   `docs/64-M10-PLAN.md` §1.4）⇒ 本波**形态欠账为 0**：只注册上游字面量那一形态，
+#   多注册一条尾斜杠形态就是 `EXTRA_ALIAS`（门 ⑦ 的第二条命令判缺陷，且本波
+#   `docs/fixtures/slash-alias-allowlist.tsv` 是 0 数据行、没有豁免退路）。
+#   证据：上游 5 条全是 `r.Get("/a/b", h)` 形式（router.go:1399/1400/1401/1412/1478），
+#   **不在** `r.Route("/x", …) + r.Get("/")` 的 chi Mount 形态里 ⇒ chi 只服务无尾斜杠那一种。
+#
+# 归属（每行恰好一片；M10-0 anchor 期**一条都不注册**——见 docs/64 §3.1 的「anchor 不注册占位」纪律）：
+#   M10-1 live 探针 1（/health）· M10-2 ready 探针 2（/healthz、/readyz）·
+#   M10-3 realtime 指标探针 1（/health/realtime）· M10-4 UI 启动配置 1（/api/config）。
+#   路由账 1+2+1+1 = 5 ✓
+METHOD	PATH
+# —— 探针面（4）：三条挂在根路径（**不在 /api 前缀下**），一条在 /health 子树 ——
+GET	/health
+GET	/healthz
+GET	/readyz
+GET	/health/realtime
+# —— UI 启动配置（1）：公开面（无会话），web 应用登录前就要读到它 ——
+GET	/api/config
