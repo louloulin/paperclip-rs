@@ -6072,3 +6072,174 @@ M10-1 的格子里**，`live.rs` 是 anchor 期就建好的原地填充位（§3
   若**将来有人**把探针面的装配改成"惰性 / 每请求重建 router"，`started_at` 会漂到重建时刻、
   判据退化。`started_at_is_process_scoped_not_request_scoped` 的断言 ④（两个不同 router 实例
   取值相同）正是为锁住这一点而写。
+
+## 42. M10-6（`LUM-2108`）：性能 bench `crates/mc-bench`（**0 路由 / 0 生产代码改动**）
+
+> **号段复核**：起手（base `dd0e8c51`）实测 `grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` =
+> `## 39.`。**测量与交片期间 base 前移了三次**：`4dc89f8a`（M7-21 INT 占 `## 40.`）→ `924c966d`
+> （M10-1 占 `## 41.`）→ 交片 base **`b92b3367`**（docs §138）。⇒ 本节按「号由落地顺序占」取
+> **`## 42.`**（判据是当轮实测末号 = `## 41.`）。⚠️ 同轮在飞的 **M10-3** 若先落地并占用 `## 42.`，
+> 按先例（`LUM-2102` 的 `## 38.`→`## 39.`、`LUM-1786` 的 `## 40.`）本片改号 **`## 43.`**。
+> `### 9.x` 末号仍是 **`9.11`**（那套号自 M7-0 起未再往下用；`docs/64` §3.1 写的「§9.14」是计划期占位号）。
+
+本片把 `plan1.md` §3.6 点名的三条上游热点做成**可判定的 bench**：issue 列表 / facets / inbox 游标；
+外加 `R10`（Go 的 `database/sql` 自带 prepared statement cache，`sqlx` 需显式持久化）。
+**0 路由、0 生产代码改动**（写集见 §42.1），因此 ⑦/⑨/⑩ 的位移**全部**归别的片（§42.6 逐条归因）。
+
+### 42.1 写集审计（两类）
+
+| 类 | 逐字路径 | 说明 |
+| :-: | --- | --- |
+| ① 新文件 | `crates/mc-bench/Cargo.toml` | 新 crate；`crates/*` glob 自动成为 workspace 成员 ⇒ **根 manifest 的 `members` 行未动** |
+| ① 新文件 | `crates/mc-bench/src/{config,conn,dataset,hotspots,report}.rs` | 口径常量与阈值表 / 连接与 R10 / 固定数据集 / 三条热点的调用 / 报告与判定 |
+| ① 新文件 | `crates/mc-bench/benches/{issue_list,facets,inbox_cursor}.rs` | 三个 `harness = false` + `test = false` 的 bench target（7 个 case） |
+| ① 新文件 | `crates/mc-bench/benches/common/mod.rs` | 三个 target 共用的 harness（建库/建数据集/R10 断言/criterion 档位/收尾） |
+| ① 新文件 | `docs/fixtures/bench-baseline.json` | 冻结基线（含 `base_sha` 与 R10 证据） |
+| ② 既有文件 | `Cargo.toml`（根） | `[workspace.dependencies]` 的 `criterion` 一行：`"0.7"` → `{ version = "0.7", features = ["async_tokio"] }`（**唯一**一处既有行改动，理由 = D5） |
+| ② 既有文件 | `Cargo.lock` | 重新生成（**本波唯一**一次 `Cargo.lock` 改动 ⇒ 与 M9-0 不得同轮，`docs/64` §7.1 第 4 条） |
+| ② 既有文件 | `docs/32`（本节） | 偏离登记 |
+
+### 42.2 三条纪律（逐条落到代码）
+
+1. **`[[bench]]` 必须 `harness = false` 且 `test = false`**：`crates/mc-bench/Cargo.toml` 三个 `[[bench]]`
+   都写了两个键。`harness = false` 只解决「criterion 自带 main 不被 libtest 吞掉」；`test = false`
+   才解决 cargo 的 **target 选择** —— 否则门 ⑤ `cargo test --workspace` 会把整个 benchmark 当测试跑。
+   本片实测：门 ⑤ 全程 **58s**（13 个 target 一个都没进 bench target）。
+2. **无库即红**：缺 `MULTICA_TEST_DATABASE_URL` 时 `conn::database_url()` 直接 panic（不静默跳过）。
+3. **`criterion` 必须 `0.7`**：`0.8.2` 的 `rust_version = 1.86` > 本仓 `1.80`；`0.7.0` 的 MSRV 恰好 `1.80`。
+
+**R10 的可判用例**（`conn::assert_statement_cache_reuse`，**三个 target 每次 `cargo bench` 都跑**）：
+同一连接上把同一条语句执行两次，`pg_prepared_statements` 里该**语句文本**的行数必须是 `1`
+（第二次没有 `Parse`）；**反例对照**是同一段代码配 `capacity = 0` ⇒ 必须是 `2`（反例必须为真，
+否则这个判据根本没在观察 `Parse`）。当轮实测（三个 target 各一次，逐字相同）：
+
+```
+R10 statement_cache_capacity=128 reuse: cached_rows=1 (expect 1) · control capacity=0 uncached_rows=2 (expect 2)
+```
+
+### 42.3 阈值：**相对**（判回归）+ **绝对**（判塌方）
+
+* **相对**：`p95(本次) ≤ 1.25 × p95(bench-baseline.json)`，由 `MC_BENCH_BASELINE` 指向基线时逐条判定。
+  基线文件存在但读不动 / 缺该 bench / 缺该 case ⇒ **panic**（不许静默跳过 —— 基线给歪了会让整条相对
+  阈值失效而报告仍是「绿」，正是本仓两次「绿是空跑」的形态）。
+* 🔴 **绝对上界按起手实测修订**（`docs/64` §2.5 的第一版估值在本仓**不成立**，它没有从本 dataset 推出来）：
+
+| bench | 第一版（`docs/64` §2.5） | 起手实测 p95（本片） | **修订后** | 规则 |
+| --- | :-: | :-: | :-: | --- |
+| `issue_list` | 5 ms | 10.041 / 2.289 / 11.018 | **17.0 ms** | `ceil(1.5 × max p95)` = 16.53 |
+| `facets` | 20 ms | 17.417 / 3.577 | **27.0 ms** | 26.13 |
+| `inbox_cursor` | 2 ms | 13.568 / 12.668 | **21.0 ms** | 20.35 |
+
+  **1.5 倍**对应「给 p95 自身的跑动噪声留余量」；真正的**回归**闸门是相对阈值。修订只发生这一次，
+  之后**只允许带理由改**（本表的三个数 = `config::ABSOLUTE_P95_BUDGETS`，与代码逐字对应）。
+  注：上表的「起手实测」是**未清库**那一轮的读数（`facets` 偏保守）；清库后的冻结基线见 §42.6，
+  三个 bench 的实测 p95 分别是 10.42 / 11.71 / 12.32 —— 修订后的预算对**更紧的那组**同样是 1.6–1.8 倍余量。
+
+### 42.4 数据集确定性：两处**计划级**的可复现性坑（都实测，都修了）
+
+1. **「有库就复用」会让读数取决于上一个 target 有没有清库**：`cargo bench -p mc-bench` 依次跑
+   `facets` → `inbox_cursor` → `issue_list`（字母序），每个 target 收尾清库。若播种做成「计数对得上就
+   复用」，第一个 target 测的可能是**别人留下的旧库**（死元组 / 页填充 / 统计新鲜度都不同）——
+   实测 `facets/table_facets_all5_with_total` 的 p95 **17.417ms（复用旧库）vs 12.371ms（重建）**，差
+   **29%**。⇒ 改成**每次重建**：`reset → VACUUM (ANALYZE) → seed → ANALYZE`（`VACUUM` 走
+   `sqlx::raw_sql` 的简单协议：utility 语句进不了扩展协议的 prepared statement）。
+2. 🔴 **外来的行会通过规划器统计把读数带跑**（比死元组更隐蔽）：本 dataset 里 `inbox_item` 只有 1 个
+   `workspace_id` / 1 个 `recipient_id`（`n_distinct = 1`）。门 ⑥ 的 e2e 用例在同一张表里留下
+   36 issue / 48 inbox_item（别的 workspace）后，`n_distinct` 变大 ⇒ PostgreSQL 对**泛化计划**的估行
+   从 ~5000 掉到 **7** ⇒ 改选 `idx_inbox_recipient_archived_created` 的索引扇出，而实际返回 5000 行：
+
+   | 计划 | 节点 | buffers | `archived_page_first` p95 |
+   | --- | --- | :-: | :-: |
+   | custom（`force_custom_plan`） | `Seq Scan on inbox_item` + `hashed SubPlan` + top-N heapsort | **850** | 12.4 ms |
+   | generic（`plan_cache_mode=auto` 第 6 次起） | `Index Scan using idx_inbox_recipient_archived_created` | **30 511** | **21.8 ms** |
+
+   ⇒ 加了闸门 [`assert_clean_database`]：三个受测表里除本 dataset 外**不得有任何行**，否则 panic 并
+   给出重建库的命令（实测：插 **1** 行外来行即 `exit 101` + 指名表与行数；删掉后立刻转绿）。
+   与「缺库即红」同一款纪律 —— **默默拿一份不可复现的读数才是真正的失败**。
+   ⚠️ 顺带得到一条产品侧事实：多租户统计下泛化计划更差（§42.7 发现 1）。
+
+### 42.5 偏离登记
+
+* **D1（构建图）**：`crates/mc-bench` 给 `mc-db` 打开 `test-util` ⇒ **全 workspace 构建**里 `mc-db` 都带上它。
+  该 feature 只**新增两个 pub 构造函数**（`Db::from_pool` / `Db::placeholder`），不改任何既有语义。
+  理由：把裸池交给 `IssueRepo` / `IssueTableRepo` 的**唯一**公开入口是 `mc_db::Db::from_pool`，而 bench
+  必须自己建池才能在 `PgConnectOptions` 上显式 `.statement_cache_capacity(n)`（R10）。
+* **D2（口径替换）**：`plan1.md` §5 的 W10 门禁「与 Go 版并行双跑」在本仓**不可执行**（`which go` 为空、
+  无前端资产）⇒ 由本片的相对/绝对阈值 + M10-5 的冻结 golden 取代。`docs/64` §9.6 已登记该口径修订，
+  本片**引用**它，**不改** `docs/64`（不在本片写集）。
+* **D3（测库层，不测 HTTP 层）**：三条热点都直接调仓储层（不经 `axum`）—— `plan1.md` §3.6 把热点定义在
+  数据访问层，HTTP 层开销不在本片预算内。
+* **D4（相对阈值在本片的取值）**：本片 0 生产代码改动 ⇒ 基线与「本片结果」测的是**逐字节相同**的生产
+  代码，相对阈值是**恒等断言**；它的价值是给**后续切片**一份可机器比对的冻结参照。
+* **D5（`criterion` 的 `async_tokio` feature）**：`docs/64` 只写「`criterion = "0.7"`」一行，本片在根
+  manifest 上加了 `features = ["async_tokio"]`。理由：三条热点的被测入口是 `async fn`，只有它能让
+  `b.to_async(&runtime)` 直接 measure「future 完成」，而不是「`block_on` 套壳 + future 完成」。该
+  feature 只引入 `tokio`（**已在** workspace 依赖里），不改任何既有产物。
+* **D6（数据集每次重建 + 清库闸门）**：见 §42.4 的两处实测（29% 与 ×1.76）。这不是「优化」，是让读数
+  可复现的**必要条件**；代价是每个 target 多 ~1s（`VACUUM (ANALYZE)` + 播种）。
+
+### 42.6 当轮读数（base **`b92b3367`**）与复算命令
+
+**门禁**：`bash scripts/gates.sh --with-db` ⇒ **10/10 PASS / 748s**
+（①fmt 3s ②build 174s ③clippy 80s ④clippy-test-util 55s ⑤test 58s ⑥db 270s(`migrate=0,e2e=0`)
+⑧schema-drift 25s ⑦1s ⑨82s ⑩0s）—— 默认 8 门（①②③④⑤⑦⑨⑩）是它的**子集且同一批命令**，同一 run 内逐项 PASS。
+
+**⑦**（`python3 scripts/route_parity.py --json`）：
+`upstream 456 (f41fae6b08fb) | local 474 registered | baseline 473 | implemented 389 real + 3 placeholder = 392 |
+known_gap 64 | unclaimed 0 | regressions 0 | local_only 8 (1 placeholder)`；
+`owners = { M9 33, M3+ 16, M3 11, M10 4 }`（和 = 64 ✓）。
+不变式：`implemented + known_gap == 456` ✓ · `unclaimed == 0` ✓ · `regressions == 0` ✓ · `local_only` 8（未增）✓。
+
+**⑨**（`cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`）：
+`fixtures 365 | pass 15 | mismatch 23 | unmounted 21 | placeholder 0 | unevaluable 306`；
+契约等价率 `15/365 = 4.1%`、已接入 `15/38 = 39.5%`、离线可判定 `15/59`；`report matches report.json` ✓。
+
+**⑩**：`scanned 1181 | baseline 10 | violations 0`；`scripts/file_size_baseline.tsv` **未动**；
+新文件最长 `crates/mc-bench/src/report.rs` = **320** 行（< 800）。
+
+**三条热点的读数**（同一 workdir / 同一 PG `:5432` / 干净库 / criterion `warm_up 3s` + `measurement 10s`
++ `sample_size 100`）：
+
+| bench / case | 基线 p50 | 基线 p95 | 基线 p99 | 绝对预算 | 本片结果 p95 | 比值 |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: |
+| `issue_list/list_limit50_updated_desc` | 8.870 | 8.995 | 9.467 | 17.0 | 9.294 | **1.033x** |
+| `issue_list/list_limit50_filtered` | 1.860 | 2.019 | 2.156 | 17.0 | 2.036 | **1.009x** |
+| `issue_list/list_with_total_limit50` | 9.430 | 10.422 | 11.205 | 17.0 | 11.186 | **1.073x** |
+| `facets/table_facets_all5_with_total` | 10.584 | 11.708 | 12.491 | 27.0 | 11.813 | **1.009x** |
+| `facets/table_facets_status_priority` | 2.922 | 3.176 | 3.238 | 27.0 | 3.069 | **0.967x** |
+| `inbox_cursor/archived_page_first` | 10.822 | 11.151 | 11.223 | 21.0 | 11.547 | **1.036x** |
+| `inbox_cursor/archived_page_cursor` | 10.964 | 12.319 | 13.517 | 21.0 | 11.421 | **0.927x** |
+
+基线列 = `MC_BENCH_REPORT_OUT=docs/fixtures/bench-baseline.json`（run A，`base_sha` 写的就是 `b92b3367`）；
+「本片结果」列 = 紧接着用 `MC_BENCH_BASELINE=<同一文件>` 再跑一遍（run B）。两次 run 的最大比值 **1.073**
+（≤ 1.25），同 case 跑动噪声 ≤ 7.3%。两 run 均 `exit 0`，三个 target 各产出一份报告
+（`target/mc-bench/{issue_list,facets,inbox_cursor}.json`）。
+
+复算命令：
+
+```text
+MC_BENCH_BASE_SHA=$(git rev-parse <base>) \
+MC_BENCH_REPORT_OUT=$PWD/docs/fixtures/bench-baseline.json \
+MULTICA_TEST_DATABASE_URL=postgres://…  cargo bench -p mc-bench          # 写基线
+MC_BENCH_BASELINE=$PWD/docs/fixtures/bench-baseline.json \
+MULTICA_TEST_DATABASE_URL=postgres://…  cargo bench -p mc-bench          # 判相对阈值
+```
+
+**EXPLAIN 旁证**（证明读数在测什么）：
+* `issue_list` 的**逐字**语句（15 个绑定参数）`EXPLAIN (ANALYZE, TIMING OFF) EXECUTE` = **8.435 ms** 服务端
+  执行 ⇔ criterion 基线 p50 8.870 ms ⇒ 读数 **95% 在 DB 侧**。计划 = `Seq Scan on issue`（10000 行）+
+  `top-N heapsort`。
+* `archived/page`：同一 `PREPARE`、同一组实参，`plan_cache_mode=auto` 下第 1 次（custom plan）**6.5 ms**、
+  跑 6 次后 **auto 切到泛化计划 20.4 ms**（`force_generic_plan` 20.4 / `force_custom_plan` 5.9 ms）。
+
+### 42.7 发现（跨片待办；本片**不改**生产代码）
+
+1. 🔴 **`archived/page` 的「泛化计划」比 custom plan 差 3.1 倍**：sqlx 的连接级语句缓存（正是 R10 要求
+   显式打开的那条）让同一条 prepared statement 反复执行 ⇒ PG `plan_cache_mode=auto` 在第 6 次执行后切到
+   泛化计划（`IS NULL` 过滤形态下估行失准）：实测 5.9–6.5 ms → **20.4 ms**；**多租户统计下更差**
+   （§42.4 的 30 511 buffers 一栏）。⇒ 后续波次若要优化这条路径，方向是应用级 `plan_cache_mode` 或改写
+   该 `IS NULL` 过滤形态；本片只把「它可判定」交付出来。
+2. **`issue` 上没有 `(workspace_id, updated_at DESC)` 索引**：默认排序（`updated_at DESC, number DESC`）
+   每次都要 `Seq Scan` 10000 行 + top-N heapsort（8.4 ms）。上游是 Go 侧索引，本仓缺 —— 登记为缺口。
+3. **本 bench 的读数对「库是否干净」是硬依赖（不是噪声）**：见 §42.4，闸门已把它变成**红的**，而不是
+   悄悄变慢的一个数。

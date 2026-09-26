@@ -1,0 +1,152 @@
+{
+  "absolute_p95_budget_ms": [
+    {
+      "bench": "issue_list",
+      "case": "list_limit50_updated_desc",
+      "p95_ms": 17.0
+    },
+    {
+      "bench": "issue_list",
+      "case": "list_limit50_filtered",
+      "p95_ms": 17.0
+    },
+    {
+      "bench": "issue_list",
+      "case": "list_with_total_limit50",
+      "p95_ms": 17.0
+    },
+    {
+      "bench": "facets",
+      "case": "table_facets_all5_with_total",
+      "p95_ms": 27.0
+    },
+    {
+      "bench": "facets",
+      "case": "table_facets_status_priority",
+      "p95_ms": 27.0
+    },
+    {
+      "bench": "inbox_cursor",
+      "case": "archived_page_first",
+      "p95_ms": 21.0
+    },
+    {
+      "bench": "inbox_cursor",
+      "case": "archived_page_cursor",
+      "p95_ms": 21.0
+    }
+  ],
+  "base_sha": "b92b33678c8c4ffed60c1a61d293b71681ca035b",
+  "benches": {
+    "facets": {
+      "cases": [
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 27.0,
+          "case": "table_facets_all5_with_total",
+          "criterion_median_ms": 10.5843268,
+          "p50_ms": 10.5843268,
+          "p95_ms": 11.707584635,
+          "p95_ratio": null,
+          "p99_ms": 12.491285241,
+          "samples": 100
+        },
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 27.0,
+          "case": "table_facets_status_priority",
+          "criterion_median_ms": 2.9216077549342105,
+          "p50_ms": 2.9216077549342105,
+          "p95_ms": 3.175841136194779,
+          "p95_ratio": null,
+          "p99_ms": 3.2379646712844745,
+          "samples": 100
+        }
+      ]
+    },
+    "inbox_cursor": {
+      "cases": [
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 21.0,
+          "case": "archived_page_first",
+          "criterion_median_ms": 10.8216109,
+          "p50_ms": 10.8216109,
+          "p95_ms": 11.150676290000002,
+          "p95_ratio": null,
+          "p99_ms": 11.223382740000003,
+          "samples": 100
+        },
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 21.0,
+          "case": "archived_page_cursor",
+          "criterion_median_ms": 10.9642764,
+          "p50_ms": 10.9642764,
+          "p95_ms": 12.3187107,
+          "p95_ratio": null,
+          "p99_ms": 13.517189252,
+          "samples": 100
+        }
+      ]
+    },
+    "issue_list": {
+      "cases": [
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 17.0,
+          "case": "list_limit50_updated_desc",
+          "criterion_median_ms": 8.869805625,
+          "p50_ms": 8.869805625,
+          "p95_ms": 8.994966387500002,
+          "p95_ratio": null,
+          "p99_ms": 9.466947048333333,
+          "samples": 100
+        },
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 17.0,
+          "case": "list_limit50_filtered",
+          "criterion_median_ms": 1.8595829516064257,
+          "p50_ms": 1.8595829516064257,
+          "p95_ms": 2.0191015046016485,
+          "p95_ratio": null,
+          "p99_ms": 2.1558657685384617,
+          "samples": 100
+        },
+        {
+          "baseline_p95_ms": null,
+          "budget_p95_ms": 17.0,
+          "case": "list_with_total_limit50",
+          "criterion_median_ms": 9.429582272727272,
+          "p50_ms": 9.429582272727274,
+          "p95_ms": 10.422189245454545,
+          "p95_ratio": null,
+          "p99_ms": 11.204535420000001,
+          "samples": 100
+        }
+      ]
+    }
+  },
+  "criterion": {
+    "measurement_secs": 10,
+    "sample_size": 100,
+    "warm_up_secs": 3
+  },
+  "dataset": {
+    "comments": 5000,
+    "inbox_items": 5000,
+    "issues": 10000,
+    "user_id": "b0e0c4a0-0000-4000-8000-00000000a002",
+    "workspace_id": "b0e0c4a0-0000-4000-8000-00000000a001"
+  },
+  "r10": {
+    "cached_rows": 1,
+    "capacity": 128,
+    "uncached_rows": 2
+  },
+  "relative_p95_slack": 1.25,
+  "schema_version": 1,
+  "statement_cache_capacity": 128,
+  "tool": "mc-bench"
+}
