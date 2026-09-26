@@ -12413,3 +12413,109 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 - `docs/32-M3-DAEMON-FACE.md` 的 `### 9.x` 号空间当轮实测末号 = **`9.11`**，而 `9.13` 现在有**两个**授权来源：① **`M9-0`（`LUM-1815`）**—— 本片正文自己写的就是「偏离登记写进 §9.13」，§139.5 的 rev 3 也照此复核为「空且可用」；② **`M10-2`（`LUM-2104`）**—— `§138.4` 的号段顺延把它写成 `## 43.` / `### 9.13`，§140（并发 cycle `LUM-2147`）的勘误又把 `M10-2` 订正为 `## 44.` / `### 9.13`。
 - **裁定（按既有「落地顺序保号」定式）**：`M9-0` **本轮已在飞**（run `01a0dc00`，04:36:26Z 起），`M10-2` 仍 `backlog`、未派 ⇒ **`M9-0` 先落地则保 `### 9.13`，`M10-2` 改 `### 9.14`**（`## 44.` 不受影响）。下一轮 cycle 在**派 `M10-2` 之前**必须把它的描述改成 `### 9.14`（它的正文/附录里现在写的是 `9.13`）；若两者同时落地，按「先落地者保号」现场处置并把改号写进后落地者的 PR 描述。
 - **定式**：`docs/32` 有**两套**号空间（顶层 `## N.` 与 `### 9.x`），派发时**必须逐套对账**；同一号**不得同时写进两个未落地片的描述** —— 顺延链（`§138.4`：M10-3 取 `## 42.` ⇒ M10-2 顺延 `## 43.`）在 `M10-6` **先落地占走 `## 42.`** 之后会让下游两个号空间各自再移一位，`§139.5` 与 `§140` 都只改了顶层那一套。**判据化动作**：写号之前 `git show <base>:docs/32-M3-DAEMON-FACE.md | grep -n '^## \|^### 9\.' | tail -4`，**两套一起看**。
+
+## §141 05:00 cycle（`LUM-2151`，05:00Z 触发）—— **零派发轮**（daemon `3/3` 里已含 cycle 自身）：🔴 新族「给在飞全量门禁**提前止血**」= 回收 8.6G **停用单元** incremental；⑨ 门输入恒等第 9 次；号段裁定回写描述 ×2
+
+### §141.1 起手读数与「零派发」判定
+
+- base **`f1f2c272`**（= `bd5be9ac` + `§139.9`）；认证 GH `pulls?state=open` ⇒ **0 open PR**；`df` 起手 40G used / **6.8G avail**。
+- daemon `running_task_count` = **3** = 本 cycle ∥ **`M10-3`（`LUM-2105`）**（run `01a0dbfe…`，04:34:17Z 起）∥ **`M9-0`（`LUM-1815`）**（run `01a0d569…`，04:36:26Z 起）⇒ **切片位 2/2 满、零空位**。
+- 🔴 **口径订正（本轮第二次踩到）**：daemon 的 `running_task_count` **把 cycle 自己算 1** ⇒ 「一次最多三个任务」的实操含义 = **cycle + ≤2 切片**；`SCRATCHPAD` 里那条旧「cycle 自身不占切片位（§35.5）」只是**计划期**口径（用于排波次），**判空位只认 `daemon status` + 从 `/` 逐 PID 读 `/proc/*/cwd`**，不认看板也不认计划。本轮若派 `M10-2` 即 **4/4**。
+- `multica repo checkout` 落 **`main` 线第 8 次**（`4fc96f30`，与 `feat/multica-rs-initial` 无共同祖先）⇒ `git checkout -B agent/devbox5/016a39409aa5 origin/feat/multica-rs-initial`。**它一次都不报错。**
+
+### §141.2 🔴 本轮关键动作：给「在飞全量门禁」提前止血（6.8G → 14.4G avail）
+
+- 现场：05:00:34Z `df` 6.75G avail；45s 后 6.02G ⇒ **drain ≈ 560 MB/min**（两条在飞片同时在编译）。全仓唯一大物 = 在飞 `M10-3` 的 `target/` **27875 MB**（`deps` 18438 / `incremental` 9692，4055 个文件）；`M9-0` `target/` 2300 MB（`incremental` 961 / `deps` 1424，正跑 clippy）；其余 30+ 个 workdir 全部 <300 MB。
+- 判据（**只删非活跃单元**）：`find target/debug/incremental -maxdepth 1 -mindepth 1 -mmin +3 -type d` ⇒ `M10-3` **287 个目录 / 8557 MB**、`M9-0` **20 个 / 498 MB**。同一个 crate 的多个哈希目录是**不同 feature/unit 的编译会话**，`-mmin +3` 把**正在写的那一个**排除在外。
+- **为什么零风险**：cargo 的 fresh 判据是 `target/debug/.fingerprint/` + dep-info，**不读** `incremental/` 内容 ⇒ 删它**既不触发重编、也不影响最终产物**（真删了要重编的只是该单元下次再编译时的增量加速）。
+- 结果：**回收 8573 MB**，`df` **6.8G → 13.7G avail（72%）**；两条在飞 run 无中断 —— `M10-3` 于 **05:04:34** 起新命令、`M9-0` 仍在 `cargo test`/`rustc`。
+- 🔴 **口径修订（把两件事分开）**：旧纪律「别在活片身上动 `target`」指的是 **①整删 `target/`、②删 `deps/` 的陈旧哈希副本**（后者会打掉 cargo 指纹仍引用的 `libcrate-<hash>.rlib` ⇒ **真红**，且这正是本仓既往「ENOSPC 伪装成代码红」的来源之一）；**停用单元的 `incremental/*` 不属于此列** —— 它是**唯一**可以在片活着时安全回收的面。**判据化动作**：当「有在飞全量门禁（`--with-db`）∧ `df avail < 8G`」时，**第一动作 = 删非活跃 incremental**，然后再谈别的（含派发）。
+- **事后核对（不许自欺）**：`M10-3` 的门禁 **在本次手术前 90 秒已自然收场**（`/tmp/gates-lum2105.log` mtime `05:01`）⇒ 本轮手术**不是**在替它擦 ENOSPC，而是给它的**第二轮**（修完 ③④ 重跑 10 门）留出余量。**其门禁读数 = 8/10 / 699s**：③ clippy 红（`crates/mc-ws/src/hub/metrics.rs:647` `int_plus_one`）、④ clippy-test-util 红（`crates/mc-http/src/routes/probes/realtime/tests.rs:360` `useless_format` 等 4 条）——**两条都在本片自己新写的文件里**，其余 8 门（含 ⑥ `migrate=0,e2e=0` 292s / ⑧ 29s / ⑨ 59s）全绿 ⇒ **非 ENOSPC 形态**（`os error 28` 全程 0 命中）。
+
+### §141.3 当轮读数（base `f1f2c272`，纯只读复采）
+
+- ⑦ `upstream 456 (f41fae6b08fb) | local 474 registered | baseline 473`；`implemented 389 real + 3 placeholder = 392 / 456`、`known_gap 64`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner {M9 33, M3+ 16, M3 11, M10 4}`（和 = 64 ✓）。**与 §140 落库后逐字相同**（`f1f2c272` 只多 docs）。
+- ⑦b `470 literals / shapes OK / 0 defect / 0 warning`（`slash_alias_audit.py`）；⑩ `scanned 1181 / baseline 10 / violations 0`。
+- ⑨ **不冷编**（「门输入恒等」第 **9** 次生效）：`crates/mc-conformance/report.json` blob **`db173fe8…`**、`crates/mc-conformance` 树 **`6a3984fe…`**、`docs/fixtures` 树 **`e331e706…`** 三个与 §140 逐字相同 ⇒ totals `365/15/23/21/0/306` 由**字节恒等推出**，不是猜的。
+- 形态前置：`git diff --name-only 4681aba9 f1f2c272` = **只有 `docs/37`**（+128 行 = §139 / §139.8 / §139.9 / §140）⇒ 在飞 `M10-3` 的起手点 `4681aba9` 相对当轮 base 的**前进段非 docs = 0**（形态②的「尾提交 docs-only」那一半成立；**同轮若先合入任何代码片即失效**，到时按形态③真合 + 同树重跑）。
+
+### §141.4 号段裁定落地（把 `§139.9` 的裁定**回写进描述**，不是只写在文档里）
+
+- `docs/32-M3-DAEMON-FACE.md` 当轮实测：顶层末号 = **`## 42.`**（`M10-6` 已落地）、`### 9.x` 末号 = **`9.11`**。授权表（按落地顺序）：`M10-3` `## 43.`/`9.12`（在飞）、`M9-0` `### 9.13`（在飞）、`M10-2` `## 44.`/`### 9.14`、`M10-4` `## 45.`/`### 9.15`。
+- **已落地动作**：① `LUM-2104`（M10-2，`backlog` rev 3 → **4**）追加「起手补充 4」把 `### 9.13` **订正为 `### 9.14`**（`§139.9` 明确要求「派 M10-2 之前必须改」）+ 补当轮 base / 读数 / 三条派发前置；② `LUM-2106`（M10-4，`backlog` rev 1 → **2**）追加「起手补充」——它 rev 1 正文是**计划期**读数（号位停在 `## 37.`）且第 7 条写的 `§9.14` **已被 M10-2 占** ⇒ 订正为顶层 `## 45.` / `### 9.15`，并写明「⑨ 位移按 `docs/32` §41.4 由它自己刷 `report.json`、不碰基线」。
+- **定式复核**：第五类预飞检查（号段对账）本轮命中 **2 条**，**两条都只在描述里、不在树上**（树上 `9.12`/`9.13`/`9.14` 都还空着）⇒ **「描述里的号位必须按最新裁定回写」是派发前的必做项**，反过来「树上空着」**不**证明描述没冲突。写描述仍守 `§140.6` 定式：**同一条命令内重读 → patch → 写回**，写完 `issue get` 复核内容 diff（本轮两次回显 `revision` 都是自己的当刻值，仍以回读为准）。
+
+### §141.5 槽位 / 冷建预算 / 下一轮起手
+
+- **在飞形态**：`M10-3`（工作树 = `crates/mc-http/src/routes/probes/realtime.rs` + `.../realtime/tests.rs` + `crates/mc-ws/src/hub/metrics.rs`；**1 提交 `56fc2397`，父 = `4681aba9`**（= 它在**新 base 上重做了抢救提交**，老抢救提交 `2daadb13` 的父是 `b92b3367`）；3 项未提交；**分支 `agent/devbox5/7c93af9013c5` 未推、无 PR**）∥ `M9-0`（0 提交、**19 项未提交**含 `Cargo.lock` 与新增 `crates/mc-cloud/**`、clippy/`cargo test` 段）。
+- ⇒ 本轮**零派发**（不是「无片可派」而是**无位可派**：切片位 2/2）。递补链不变：`M10-3` 终 ⇒ PR ⇒ 判据链；`M9-0` 终 ⇒ PR ⇒ **M9 波开闸**（stage 2 `LUM-1816/1817/1818/2116`）；**两者都终态后** `M10-2`（`LUM-2104`，现 rev 4）才可派（与 `M9-0` 同争 `Cargo.lock`）。
+- **冷建预算（本轮实测，取代旧口径）**：一片全量冷建 ≈ **18.4G `deps` + 数 G incremental**（`M10-3` 实测 peak 27.9G）⇒ **派片前置 = 可用 ≥ 20G**；05:04Z 实测可用 **11G** ⇒ **本轮即使有位也不得派**。
+- **下一轮起手**：`df -h /` 连采两次 → `git rev-parse` 对 `ls-remote origin feat/multica-rs-initial`（checkout 落 `main` 第 9 次）→ 认证 GH `pulls?state=open` → 从 `/` 逐 PID `/proc/*/cwd` → `issue runs` 逐片 status/error → **先看 `/tmp/gates-lum2105.log` 的 ③④ 是否已转绿**（它以 8/10 收场、正修 clippy）→ 判据链 → **回收：`M10-3` 终态后其 28G `target/` 是最大死物**（终态即满足四判据，但**先证据后回收**）。
+
+## §142 13:30 cycle（`LUM-2155`，05:30Z 触发）—— **零派发轮（切片位 0/2）**：🔴 第六类预飞**第二例**（M10-4 的 YAML 解析器不在依赖图内）⇒ 两份描述的正典写集补齐；磁盘**提前止血第 2 次**（3.0G → 9.9G）；⑨ 门输入恒等第 10 次
+
+### §142.1 起手三连与在飞面（逐 PID 实测）
+
+- **base**（`git rev-parse` 对 `ls-remote origin feat/multica-rs-initial`）= **`857865ee`**（= `§141` 的 docs-only 提交；checkout 落 `main` 线后 `git checkout -B agent/devbox5/4f9bc738c33c origin/feat/multica-rs-initial` 已纠正，**第 9 次**）。
+- **GH**：`pulls?state=open` = **0**。
+- **daemon `running_task_count` = 3**，逐 PID `/proc/*/cwd` 拆解后**三笔全部是本项目**（无并发 cycle、无 chat 占位）：`345` = `M9-0`（`lum-1815-37ae144ddd42`）、`64797` = `M10-3`（`lum-2105-7c93af9013c5`）、`51811` = 本 cycle。⇒ **切片位 0**（上限 3 含 cycle 自身）⇒ 本轮**零派发**。
+- **df**：起手连采两次 **18G / 63%**；见 §142.6（两条在飞片同时在跑全量 `--with-db`，30 分钟内掉到 3.0G）。
+
+| 片 | run | 起手点 / merge-base | 提交 | 未提交 | 在飞的命令 | 终态？ |
+| --- | --- | --- | :-: | :-: | --- | --- |
+| `M10-3`（`LUM-2105`） | `01a0dbfe…`（04:34:17Z）`running` | `4681aba9` | **2**（`56fc2397` 抢救 + `5c8c6383`） | **0** | `gates.sh --with-db` **第 4 轮**（`/tmp/gates-lum2105-run4.log`） | 否 |
+| `M9-0`（`LUM-1815`） | `01a0dc00…`（04:36:25Z）`running` | `f1f2c272`（落后 base 1 个 docs 提交） | 0 | **47** | `gates.sh --with-db`（`/tmp/gates-full2.log`） | 否 |
+
+- `M10-3` 第 4 轮门禁**中段全绿**：① fmt 0 / ② build 0 / ③ clippy 0 / ④ clippy-test-util 0 / ⑤ test 0 / ⑥ db-migrate 0（§141 记的 ③ `metrics.rs:647 int_plus_one` 与 ④ `realtime/tests.rs:360 useless_format` **已自修**）⇒ 它在⑥/⑧段。
+- `M9-0` 仍是 ③ clippy 101 / ④ clippy-test-util 101（自己新写的 `crates/mc-cloud/**` + `entitlement.rs`），⑤/⑥ 已过 ⇒ 迭代中，**不介入**。
+
+### §142.2 当轮读数（就在这个 base 上当场跑）
+
+- ⑦ `route_parity.py --quiet`：`upstream 456 | local 474 | baseline 473`、`implemented 389 real + 3 placeholder = 392 / 456`、`known_gap 64`、`unclaimed 0`、`regression 0`、`local_only 8`；`gaps by owner: M9=33 M3+=16 M3=11 M10=4`（和 = 64 ✓）。**九个数与 §141 逐字相同**（两片都在飞、都未落地）。
+- ⑦b `slash_alias_audit.py`（带/不带 allowlist 两次）：`registered upstream-key literals 470`、`0 defect / 0 warning`。
+- ⑩ `file_size_check.py`：`limit=800 scanned=1181 baseline=10 violations=0`。
+- ⑨ **不冷编（门输入逐 blob 恒等，第 10 次）**：`report.json` = `db173fe8409d…`、`docs/fixtures` 树 = `e331e706ac95…`、`mc-conformance` 树 = `6a3984fee898…`，三者与 §141 验证树 `f1f2c272` **逐一相同**（`f1f2c272..857865ee` 只动 `docs/37`）⇒ 继承 totals `365 / 15 / 23 / 21 / 0 / 306`。
+
+### §142.3 🔴 第六类预飞**第二个真实例**：`M10-4` 的解析器不在依赖图里
+
+§138 在 `M10-2` 身上逮到第六类（「DoD 里要复用的目标不在消费者的依赖图内」）时，把它当成孤例；本轮在**下一片**身上复现：
+
+- `LUM-2106`（M10-4）的 DoD 要求读可选 `MULTICA_FEATURE_FLAGS_FILE`（YAML 规则文件），**但本片写集里的两个 crate 都没有 YAML 解析器**：`serde_yaml` 全仓只出现在 `[workspace.dependencies]`（根 `Cargo.toml:67`）与 `crates/mc-skill/Cargo.toml:21`；`crates/mc-feature-flags/Cargo.toml`（8 条三方依赖）与 `crates/mc-http/Cargo.toml`（`serde`/`serde_json` 而已）**都没有这条边**。
+- 而 `§141` 的补充**据此把它写成「零 manifest 片」**（并把它和 `M10-2` 的串行关系建在这个前提上）⇒ 若照旧起手，它会**物理上实现不了自己的 DoD**，或者被迫在起手时临时扩写集（正是我们禁止的「临场改计划」）。
+- **处置（本轮已做）**：把两条路径写进**正典「逐字写集」**（`crates/mc-feature-flags/Cargo.toml` +1 行 `serde_yaml = { workspace = true }`、根 `Cargo.lock` 重新生成；`serde_yaml` 已是 lock 内 package ⇒ 无新 package），并在 `LUM-2106` 追加**「起手补充 2」**明确**订正「零 manifest 片」**；串行关系不变（仍 **M10-2 先派**）。
+- 同时把 `LUM-2104`（M10-2）那条**只写在散文节**里的 `crates/mc-http/Cargo.toml` + `Cargo.lock` 搬进**正典写集**（补 **「起手补充 5」**）。依据 = §131.4 定式：**预飞只认正典写集，散文补充不算** —— 这两片各自都有一条「散文写了、正典没写」的边。
+- ⇒ **第六类预飞的取值法（本轮定式）**：对 DoD 里每一句「复用/读取 X」，**在该消费者 crate 的 `Cargo.toml` 里 `grep` 一遍**；空 ⇒ 写集缺项。**族内两例已足够说明这不是偶发**，应并入每轮预飞清单。
+
+### §142.4 号段对账（第五类预检）
+
+- `docs/32` 顶层：base 末号 `## 42.`（M10-6）；在飞的 `M10-3` 树里**只有 `## 43.`**（新节「realtime 指标探针」），`LUM-2104` = `## 44.`、`LUM-2106` = `## 45.` ⇒ **无冲突**。
+- `### 9.x`：base 末号 `9.11`；`M10-3` 的树**没有** `### 9.12`（正文与 §141 都授权它取 `9.12`，它只登记了 `## 43.`）⇒ **`### 9.12` 空置**；`M9-0` 取 `9.13`（§139.9 裁定）、`M10-2` = `9.14`、`M10-4` = `9.15`。**空号不影响唯一性与单调性 ⇒ 只登记，不重排**（重排会再产生一次跨 run 描述写回，收益为零、风险非零）。
+- `docs/37`：末号 = `§141` ⇒ 本节 = **`§142`**（无并发 cycle 抢号）。
+
+### §142.5 `M10-3` 的判据链**预置**（③ 步已可先算）
+
+- 形态判定：`merge-base(857865ee, 5c8c6383)` = **`4681aba9`**（= 它的 fork 点）⇒ **非祖先形态**（base 前进段 = `§139`/`§139.8`/`§139.9`/`§140`/`§141`，**全部是 `docs/37`**）。
+- 🔴 **`git diff <当前 base>..<片 head>` 的假象第 N 次复现**：它显示 `docs/37-M3-W3C-PREFLIGHT.md | 128 ----------`（看着像删了 `§139`/`§140`）—— 实测 `git diff 4681aba9..5c8c6383 -- docs/37` = **空**（片**根本没碰** `docs/37`），128 行是**陈旧 fork 点**造成的。**判切片是否动共享文件只看 `merge-base..head`**（老坑，`§131`/`§137` 已记，本轮再次命中）。
+- 片的自身 delta（`4681aba9..5c8c6383`）= **5 文件 +1928/−16**：`probes/realtime.rs`(+252/−?) / `probes/realtime/tests.rs`(+701) / `mc-ws/src/hub/metrics.rs`(+714) / `mc-ws/src/hub/mod.rs`(+99) / `docs/32`(**+178**，= `## 43.`)。
+- 预置读数：`git merge-tree --write-tree 857865ee 5c8c6383` = **`7cc6ecd412db7c46c0ccbff8ebdd19cc4370237f`**（**只在 base 仍是 `857865ee` 时有效**；base 一前进即作废，判据链每步仍须重取）。
+- ⇒ `M10-3` 终态后的链：① numstat（`merge-base..head`）== PR API 逐字 → ② 前进段非 docs？**否**（含 5 个代码文件）⇒ 必须**真合 + 在它自己的热 target 上重跑 `--with-db` 10/10**（其热 target 在 `lum-2105-7c93af9013c5`，**勿清**）→ ③ 三哈希等式 → ④ 证据 → ⑤ 钉 40 位 sha。
+
+### §142.6 磁盘：**「给在飞全量门禁提前止血」第 2 次**（本轮唯一实质动作）
+
+- 起手 18G（63%）⇒ 两条在飞片**同时**进全量 `--with-db` 后 **30 分钟内掉到 3.0G（94%）**（实测 ≈1.5G/min，两片各自把 `mc-http`/`mc-server`/全部测试 target 重编一遍）。
+- 动作 = §141 新族的**外科切停用单元**：`find <wd>/target/debug/incremental -maxdepth 1 -mindepth 1 -type d -mmin +1` → **逐个 `/proc/*/fd` 复核**（活跃的 `mc_http-2t926uqahske8` / `mc_http-0lyt5yo66e5ki` 被 PID `23725`/`23999` 持有 ⇒ **跳过**）→ `rm -rf` 其余。
+- 结果：**315 个单元 / 7560 MB 实删**，`df` **3.0G → 9.9G**（`du` 与 `df` 差 = 并发写盘），两条在飞 run **全程无中断**。`deps/` 一字节未动（陈旧哈希副本会打掉指纹引用的 `rlib` ⇒ 真红）。`M10-3` 侧 `incremental` 只有 4.0K（它的门禁命令带 `CARGO_INCREMENTAL=0`）⇒ 它的 8.2G 全在 `deps/`，**不可回收**。
+
+### §142.7 下一轮起手（禁抄本行，两读数当场取）
+
+1. `df -h /` **连采两次**（两条在飞片仍在吃盘；`--with-db` 全量需 ≈18G 余量）→ 2. `git rev-parse` 对 `git ls-remote origin feat/multica-rs-initial` → 3. 认证 GH `pulls?state=open` → 4. **从 `/` 起手**逐 PID `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）→ 5. `multica issue runs` 逐片 `status`/`error`（**PR 开出 ≠ run 终态**）→ 6. 形态判定（**merge-base..head**，不是 base..head）。
+- 递补链：`M10-3` 终 ⇒ 判据链（预期 ⑦ `local 474→475 / implemented 392→393（390 real + 3 ph）/ known_gap 64→63 / owners.M10 4→3`、baseline 不动、⑨ 逐字不变）；`M9-0` 终 ⇒ 判据链（0 路由 ⇒ ⑦ 逐字不变；**M9 波开闸** ⇒ stage 2 `LUM-1816/1817/1818/2116`）；**两片都终态**才是 `M10-2`（`LUM-2104`，rev 5）的起手窗口，其后 `M10-4`（`LUM-2106`，rev 3）。
+- 回收第一优先级：`M10-3` 终态后的 `target/`（近 8.2G）；`M9-0` 的 13.7G 次之 —— 两者都要**先取证再回收**（四判据：PR 已合 ∧ run 终态 ∧ `/proc` 逐 PID 零命中 ∧ `porcelain` 空）。
+
+### §142.6b 止血**第二轮**（同轮实测补记）：302M 触底后回升，两条门禁**都活着**进了测例段
+
+- 第一次止血（§142.6，`3.0G → 9.9G`）后 4 分钟又降到 **301M（100%）** —— 两条门禁同时把 `mc-http`/`mc-server`/全部测试 target 重编一遍，**流失率 ≈1.5G/min 与在建目标的体量无关，只与「几条全量门禁同时在跑」有关**。
+- 第二轮同样只切停用单元：**22 个 / 1476 MB** ⇒ `301M → 1.7G`；两轮合计 **≈8.9G**。复核 `/proc/*/fd` 后**活跃单元一律跳过**（第一轮跳了 `mc_http-2t926uqahske8`/`mc_http-0lyt5yo66e5ki`，第二轮它们已编译完、其单元被第二轮收走）。
+- **`deps/` 是本轮唯一不可动的大块**：`M10-3` 17.2G（`deps` 16.9G）、`M9-0` 16.9G（`deps` 同量级）——「每个 stem 只留最新」的老口径（`§123`）与 `§141` 的禁令冲突时**以禁令为准**：在**正在跑门禁**的片上删 `deps` 里的哈希产物会打掉同一次构建里已解析的输出路径 ⇒ 变成真红，比 ENOSPC 更糟。
+- 全盘结构（实测，作下一轮的量纲参考）：`multica_workspaces 37.4G`（其中两个在飞 workdir **34.3G**）+ `/usr 1.0G` + `.cargo 1.7G`（共享 registry，**不可动**）+ `.cache/ms-playwright 658M`（**非 run 自有，本轮未动**）+ 其余 <300M。⇒ **49G 的盘装不下两条并发全量门禁的 peak**（单片 peak 记录 27.9G）；`incremental` 是**唯一**可反复外科回收的面。
+- 结果：两条门禁**全程无中断**（PID `345`/`64797` 一直 `Sl`，05:42 各自日志仍在增长、已进测例段），两片 ⑥ 段未出现 `os error 28` / `no space left on device`。**下一轮若见到门 ⑥/⑧/⑨ 的 `exit 101` 或「`migrate=0,e2e=101`」形态，先 `grep -c 'no space left'` 排 ENOSPC**（本仓第 5 次口径，`docs/37` §131.4）。
