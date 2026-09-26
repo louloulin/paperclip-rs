@@ -792,6 +792,174 @@ bash scripts/gates.sh
 
 ---
 
-## 11. M7-INT 落地记录（占位，由 M7-21 填写）
+## 11. M7-INT 落地记录（`LUM-1786`，**0 代码**）
 
-（待 M7 波次收口后由 `M7-21` 填写：⑦/⑨/⑩ 快照刷新读数、baseline 344→430 的实测、剩余缺口逐个登记、以及本波实际未落地的项。）
+> **本节由 M7-21（`LUM-1786`）填写**（§4.1 的 stage 9 / §6.5 的 M7-21 行）。
+> **起手 base = `dd0e8c51`**（= M10-0 的 `4f11bb7f` + 09:30 cycle `LUM-2122` 的 `docs/37` §134 docs-only 直推）；
+> 全波 **1 anchor + 20 代码片**全部合入 ⇒ 头号硬前置 **`owners.M7 = 0` 当场成立**（判据 = `owners` 字典里**没有 `M7` 键**）。
+> 本节每个数都在**当轮**实测（命令见 §11.9）；**§6.1 的计划期预测值一律标为过期**。
+> 详细段落：偏离表收口见 `docs/32` §40、口径表收口见 `docs/37` §135。
+
+### 11.1 ⑦（路由对齐）：终点读数与硬前置
+
+```
+$ python3 scripts/route_parity.py
+upstream 456 (commit f41fae6b08fb) | local 473 registered | baseline 473
+  implemented  388 real +   3 placeholder =  391 / 456   known_gap   65   unclaimed    0   regression   0   local_only    8
+  gaps by owner: M9=33  M3+=16  M3=11  M10=5
+OK: every upstream route is either implemented or owned
+```
+
+* **硬前置（当轮实测）**：`owners` 里**没有 `M7` 键** ⇒ 24 条 M7 上游路由**全部落地**（`docs/fixtures/m7-declared-routes.tsv` 的 24 行逐条对上 `implemented`，**缺 0** —— 复算见 §11.9 命令 3）。
+* **不变式**：`implemented + known_gap = 391 + 65 = 456` ✓；`unclaimed 0` ✓；`regression 0` ✓。
+* `files_scanned 206`（M7-0 起手时 201 ⇒ 本波新增 5 个 `crates/mc-http/src` 文件 = `routes/channels/{mod,slack,lark,dingtalk,wecom}.rs` 一族；其中 `wecom.rs` 由 M7-15 建、其余四片各追加自己的平台段）。
+
+### 11.2 与 §6.1 计划表的偏差（逐项，一处不抹平）
+
+| 项 | §6.1 的计划（`2394bfcc` 计划期） | 当轮实测（交付树） | 差异与原因 |
+|---|---:|---:|---|
+| `local` | 430 | **473** | **+43**：§6.1 只算 M7 自己那本账（405 → 430），而 base 上还有**别波的合法增量**（M8 全波 + M10-0 的 −1 幽灵占位）⇒ `430` 是「M7 一家」的数，`473` 是「全仓」的数 |
+| `implemented` | 354（全 real） | **391 = 388 real + 3 placeholder** | **+37 real**：同样是全仓口径（含 M8/M9）；**M7 自己的 24 条全部是 real（0 占位）** |
+| `known_gap` | 102 | **65** | `M7` 键**消失**；余下的 `{M9 33, M3+ 16, M3 11, M10 5}` 全属别的波 |
+| `owners.M7` | 0 | **0（键不存在）** | ✓ 唯一逐字命中的一项 |
+| `baseline` | `344 → 430` | **`457 → 473`（+16）** | 见 §11.3：`344` 是计划期值，`457` 是 **M10-0 的删键型最小刷新**之后的当轮**片前值** |
+| `local_only` | 9 | **8** | **−1 不是 M7 的回归**：M10-0（`LUM-2102`）预删幽灵占位 `GET /api/feature-flags`（上游**无**此键）⇒ `local_only 9 → 8` ⇒ **§6.5 第 2 条的 `local_only == 9` 这条不变式从 M10-0 起就已过期** |
+
+⇒ **§6.1 整张表只能作"形态预测"读**（每片的 ⊿、`owners.M7` 单调递减到 0、`--write-baseline` 由 INT 独占、`regressions/unclaimed` 恒 0）；**任何绝对读数都必须在当轮重取**。这一波为此留下了 **5 个修订版**（issue 的 rev 2 → rev 16），最后一次作废的是 `baseline 458` / `local 474` 这一对。
+
+### 11.3 `--write-baseline`：**`457 → 473`**（本波唯一一次）
+
+* **片前值 = `457`** = 当轮 `baseline` 字段的实测值。`344`（计划期）/ `406`（M8-INT 前）/ `430`（计划预测）/ `458`（M8-INT 后）**都已过期**。`457` 的来处 = M8-7 INT（`LUM-1804`）的整树刷新 `406 → 458` **再减** M10-0 的删键型最小刷新（`458 → 457`，只删幽灵占位一键）。
+* **片后值 = `473` = 当轮 `local` 的实测值**（`local` 数的是**未折叠的注册点**：`/x` 与 `/x/` 各算一条，`docs/37` §95 的先例 ⇒ **不许**按折叠键推算）。`+16` **逐条都是 M7 自己的渠道键**：M7-9 dingtalk 7 + M7-14 lark 5 + M7-15 wecom 4；三片落地（`32def21a` 09-25 13:33 / `c45a5881` 09-25 22:02 / `0fad9de7` 09-25 16:45）**都晚于** M8-7 的最后一次整树刷新 `f3e9794e`（09-25 13:18），逐条取证见 `docs/32` §39.3。
+* **幂等已由本片独立复核**：在**交付树**上再跑一次 `python3 scripts/route_parity.py --write-baseline`，产出与文件**逐字节相同**（`git diff` 空、两版 JSON 归一后 `a == b`、键数都 473）⇒ 这次刷新的语义就是「把基线对齐到当轮 live 集」，**没有人手改格式**。
+* **与别的基线写者不同轮**：M8-INT 的配额已用掉；**M9-INT（`LUM-1825`）与 M10-9 INT 都未起手** ⇒ 本轮**唯一**刷这个文件的片就是本片。
+* **形态门没有退路**：`docs/fixtures/slash-alias-allowlist.tsv` 是 **0 数据行**（M7 的 24 键上游全是 plain 注册，§1.4 实测双形态 0 键）⇒ `MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` 任一出即红。当轮：`0 defect(s) / 0 warning(s)`；`registered upstream-key literals = 470`（= 469（`c23fcfad` 实测）+ 1：M10-0 的 `crates/mc-http/src/routes/config.rs` 里的 `/api/config` 字面量，**不是** M7 加的）。
+
+### 11.4 门 ⑨（契约等价）：**本片不动**，只核对
+
+* 当轮：`report.json` blob `3eb0430a39c8cf6c50ccafe626542abba3eaa0d4`；totals `fixtures 365 / pass 14 / mismatch 23 / unmounted 22 / placeholder 0 / unevaluable 306`（`contract_equivalence_rate 0.038356` / `mounted_equivalence_rate 0.378378`）；门 ⑨ **绿**（`report matches`）。
+* **M7 面的 12 条**（按 §6.2 的 24 条路由过滤）实测 = **8 `pass` + 4 `unevaluable`**：
+  * **8 条 `pass`** = §6.2 承诺的那 8 条（lark 7 + telegram 1）—— **已由 M7-14 随 PR #111 刷进快照**（`pass 7 → 14` / `unmounted 29 → 22`），本片**核对**、**不重复刷**；
+  * **4 条 `unevaluable`**（全是 `GET …/dingtalk/groups`，`actor=member`、`via=router|handler`）= §6.2 那 4 条 dingtalk 三方 scope 矩阵 fixture ⇒ **本波结束时仍是 `unevaluable`**（承诺原文只承诺"转 evaluable + 给实测结论"）⇒ 如实登记为缺口 **G-4**。
+* **wecom 的 fixture = 0 条**（**阴性对照组**，连续第 6 轮）：M7-20 是 0 路由片 ⇒ wecom 面**不该**动 ⑨，实测也确实没动。
+* **本片不刷 `report.json`**：M7 面没有新的「`unmounted` ⇒ 可判定」位移。下一批归 **M10-INT（`LUM-2111`）**（`/api/config` 17 条 + `/health` 1 条 = 18 条 `unmounted` ⇒ 离线可判定）。
+
+### 11.5 门 ⑩（文件大小）
+
+* 当轮 `scanned 1170 / baseline 10 / violations 0`；`scripts/file_size_baseline.tsv` **未动、未缩**（该表只剩 10 个存量条目，**M7 写集里没有任何文件在表内** ⇒ §6.3 的预飞成立）。
+* **本波 0 新超限**。各片自报的最长新文件（`docs/32` §NN 的 ⑩ 行）：M7-16 **775**（`stream_store/tests.rs`）、M7-17 **705**（`relay/dispatch.rs`）、M7-18 **784**（`outbound_media.rs`）、M7-19 **773**（`wecom_channel/inbound.rs`）、M7-20 **738**（`trace.rs`）⇒ 全波最大值 **784 ≤ 800** ✓。
+* ⚠️ 本波两次实测到门 ⑩ 的读数坑（§6.3 已记）：它只扫 `git ls-files` ⇒ **未 `git add` 的新文件它看不见**（M7-19 的 `round_trip.rs` 820 行而门报绿、M7-15/M7-18 也各中一次）。
+
+### 11.6 五渠道端到端回路（§4.2 的验收判据）—— 取证位置
+
+§4.2 的判据是「**每渠道至少 1 条真实收发回路**：替身造帧 → 真入站 → 真 DB → 真出站 → 帧回替身，中间零 mock」。当轮逐渠道取证（`git ls-files` + 用例名）：
+
+| 渠道 | 承担片 | 取证文件（逐字路径，当轮实测存在） | 证据形态 | 判定 |
+|---|---|---|---|---|
+| slack | M7-4 | `crates/mc-channel/src/slack/tests.rs`（`the_slack_round_trip_closes_on_a_local_platform_stand_in` + 重放/断连两条反例）+ `crates/mc-http/tests/channels/slack.rs`（672 行，真库路由面） | **两级**：WS 替身回路（进程内）+ 真库 HTTP 面 | ✓ |
+| telegram | M7-6 | `crates/mc-http/tests/channels/telegram_round_trip.rs`（616 行：`BotState` 真方法名替身 + `drive_inbound` = 真 `TelegramChannel` + 真 engine `Router` + 5 个真 PG 端口 + `drive_streaming_delivery`） | **单文件整链**（收 + 判决 + 发 + 流式），最完整 | ✓ |
+| dingtalk | M7-8 | `crates/mc-channel/src/dingtalk/stream/tests.rs`（Stream 帧 + 四份 `testdata/*.json` golden）+ `dingtalk/outbound/tests/http.rs`（出站帧字段级）+ `crates/mc-http/tests/channels/dingtalk.rs`（563 行，真库 7 路由） | **三段**：帧编解码 ∥ 出站帧 ∥ 真库路由 | 部分（见下） |
+| lark | M7-13 | `crates/mc-channel/src/lark/tests/round_trip.rs`（442 行：`a_bound_turn_lights_the_indicator_then_answers_in_thread` 等 9 条） | 收 + 判决 + 发（进程内 WS 替身 + 真端口） | ✓ |
+| wecom | M7-19 | `crates/mc-channel/src/wecom/wecom_channel/tests/round_trip.rs`（554 行：`a_bound_text_message_travels_the_whole_pipeline` / `a_duplicate_frame_is_dropped_without_an_error`） | 收 + 判决 + 发（自造帧 + 真端口） | ✓ |
+
+* **一处需要如实说的边界**（**不是**假绿，也不抹平）：五条回路的「真」**都是进程内的** —— `mc-channel` 里没有 `sqlx`（§36.5 R1 的边界）⇒「收 → 判决 → 发」与「仓储」分处两套证据（前者在 `mc-channel` 的替身 + 端口，后者在 `mc-http` 的真库 e2e）。**跨这两半的整链**只在 telegram（真库 + 真端口 + 真 channel 的单文件）与 dingtalk（真库 7 路由 + 出站帧替身，三点分散）上有证据；slack/lark/wecom 的「真库那一半」在 `mc-http/tests/channels/**` 有，但没有与帧回路合成一条用例。
+* **更大的那一处**：这五条回路**没有任何一条**被**生产宿主**跑起来 —— 见 §11.8 的掉棒 **D-1**。
+
+### 11.7 缺口登记（**本波实际未落地的项**，逐条；"归属"写的是**谁该做**，不是谁写了）
+
+| # | 缺口 | 当轮证据 | 归属 / 处置 |
+|---|---|---|---|
+| **G-1** | **无 Redis**：上游 4 处跨副本协调（WS 租约 CAS / 入站去重 / 安装会话 / 出站重投递）**全部**换成**进程内替身** | 根 `Cargo.toml` 与 `crates/**/Cargo.toml` **零** `redis` 依赖；替身落点 = `engine/lease.rs` 的 `InProcessLeaseStore`、`wecom/dedupe.rs`（M7-20）、M7-11 的进程内安装会话表、`wecom/relay/**` 的进程内重投递 | **登记不实现**（R-M7-1）：生产部署契约 = **单副本**，或"渠道连接只在一个副本上开"。接真 Redis 属**收敛票**，不在 M7 写集内 |
+| **G-2** | `secretbox` **两份实现**：`mc-plugin-host::credentials::SecretBox`（M6 面，已合、**冻结**）与 `mc-secrets::secretbox`（M7-0 新开） | 两份都是 AES-256-GCM + `nonce‖ct‖tag`，**签名不同**（M6 面 `seal(plaintext, rng)`；M7 面 `seal` 自取 nonce、另给 `seal_with_nonce` 做可复现向量） | **登记不实现**（R-M7-4 / R-M7-11）：收敛票**不在 M7 写集内**（改 `mc-plugin-host` 会动已冻结的 M6 面）。方向 `mc-plugin-host → mc-secrets` ⇒ `mc-secrets` **不能**复用它（成环） |
+| **G-3** | 渠道面**读侧**有一条不属 M7：`GET /api/chat/history`（上游 owner = `M4`） | 当轮 ⑦ 实测该键在 `implemented` 里（`router.go:2373`）⇒ **M4 侧已落地**；M7 只提供它读的数据（`channel_chat_session_binding` 等表），**不重实现** | **R-M7-6 = 闭**（不是缺口）。口径一条：**"M7 全绿" ≠ "渠道面全绿"**（渠道出入站大多不在 456 条路由表里，§1.5） |
+| **G-4** | **4 条 dingtalk 群 scope 矩阵 fixture 仍是 `unevaluable`**（`actor=member`） | 当轮 ⑨ M7 面 12 条 = `8 pass + 4 unevaluable`；`mc-conformance` 的 stateless 层没有 member 会话 ⇒ 这 4 条连"转 evaluable"都没做到 | **登记为缺口**（承诺原文只承诺"转 evaluable + 给结论"）：要**真库 + 多 actor**，属 **⑨ 工具面**（`mc-conformance` 的 harness），不在 M7 写集 |
+| **G-5** | `channel_outbound_message` **没有** `channel_context_revision` 列 ⇒ slack history 读面用「按 `(binding_id, route_revision)` 列出的出站行」**近似** | `migrations/upstream/425_channel_outbound_message.up.sql` 只有 `route_revision`；迁移 `377` 补的是 `chat_message` / `agent_task_queue` / `channel_chat_session_binding` 三张表 | **登记为缺口**（`docs/32` §15.2 D6(a)）：方向是**多**放行同代际内早前轮次的本 bot 消息（**不会少放行**）⇒ 是上游列缺失下的**近似**，不是"漏实现" |
+| **G-6** | `mc-telemetry` 的 `Redactor::is_sensitive` **未覆盖渠道键名**：`app_key` / `appkey` / `aeskey` / `dingkey` / `encrypt_key` **五个**不在 `SENSITIVE_KEYS` 的子串表里 | 当轮逐名实测：`app_secret` / `app_secret_encrypted` / `corpsecret` / `bot_token` / `app_token` / `verification_token` / `signing_secret` / `tenant_access_token` **已被**子串覆盖（表里 `secret`/`token`/`apikey` 三条兜住绝大部分）；上列五个**未覆盖**。**可达性**：`redact_log` 全仓唯一消费者是 `mc-autopilot/src/credential.rs`（autopilot 凭据路径）；M7 代码**零** `redact_log` 调用、**零** `tracing::*` 凭据插值 ⇒ **当前不可达** | **登记为缺口 + 具体洞清单**：`crates/mc-telemetry/**` **不在本片写集**（本片 0 代码）⇒ 见 §11.8 的**转派**。`aeskey` / `dingkey` / `encrypt_key` 是最容易漏的三个 |
+| **G-7** | **宿主装配**（`apps/mc-server/src/channels.rs`）停在 M7-0 anchor 形态 | 见 §11.8 掉棒 **D-1**（四条实证） | **掉棒**：`apps/mc-server/src/channels.rs` 是 §3.1 的**共享锚点、其余片只读** ⇒ 全波**没有任何片**的写集包含"把 5 条 `register_with` 接上"这一步 |
+| **G-8** | wecom BYO 安装的**凭据探针**在生产接线里仍是 `PendingWsTransport` ⇒ 该端点**永远回 503**（`docs/32` §31 的 D9 的待办） | `crates/mc-http/src/routes/channels/wecom.rs:158` + `:172-190`（当轮实测；M7-16 的 `ws_frame.rs`/`ws_sender.rs` 已在，但**接线那一行未换**） | **掉棒 D-2**（§11.8）：`routes/channels/wecom.rs` 是 **M7-15 的写集**而驱动它的传输是 **M7-16 的写集** ⇒ 两片都不具备改对方的授权 |
+
+**三类"登记不实现"的裁决**（上游自身不闭合，照抄并标出，**不是缺口**）：`docs/32` §34.5 R2（`errStreamAckTimeout` 的分类 + `Resolve(absent)` 不设围栏）+ §38.5 R2（`traceOutFields` 只读 `markdown.content`，流帧正文不进 trace）。改它们会让两个部署的读数漂开 ⇒ 上游照抄 + 各一条用例钉住现状。
+
+**其余已逐条登记的"观察项/收敛项"**（`docs/32` §40.4 收齐，这里只点名出处）：M7-8 §22.2 D12（`reply_source` 的**写入点仍缺**）、§24.2 D2 + §22 的 D4（`Decrypter` 三分法的**同一张收敛票**）、§32.2 D11（`decode_secret` 的重复实现）、§34.4 H1（`on_chat_done/on_task_failed/on_task_cancelled` 的**调用点**）、§38.4 H1（两份 `task_address` 的收敛票）、§29.5 R5（= G-6）。
+
+> 🔴 **§31 D9 的复核（结论是"**未**转绿"，不是"已绿"）**：M7-15 的 D9 写「wecom BYO 安装得到 **503 `wecom_credentials_unverifiable`** 且一行都不写，等 **M7-16 落传输**、**M7-21 复核该端点转绿**」。**当轮复核 = 该端点仍回 503**：`crates/mc-http/src/routes/channels/wecom.rs:158` 的生产接线仍是 `HandshakeProbe::new(Arc::new(PendingWsTransport))`，而 `PendingWsTransport::subscribe_ack` 永远回 `TransportError::Failed { stage: "ws-transport-not-wired" }`（`wecom.rs:172-190`）。M7-16 **确实落了**传输（`crates/mc-channel/src/wecom/{ws_frame.rs,ws_sender.rs,stream_store.rs}` 三个文件在），但**没有人把 `wecom.rs:158` 那一行换掉** —— 因为 `routes/channels/wecom.rs` 是 **M7-15 的写集**（§3.3），M7-16 的写集只有 `crates/mc-channel/src/wecom/**`。⇒ D9 与 **D-1 是同一族**（接线点在**已冻结的写集**里）⇒ 登记为本波**第二项掉棒 D-2**（§11.8）。
+
+### 11.8 跨波掉棒审计（照 `docs/57` §9.8 的做法）
+
+**结论：本波有 2 项掉棒（**同一族**：接线点落在**已冻结的写集**里 —— 一边改了，另一边没人有权改）；另有 1 项被"归本片"但本片写集做不到的事，如实转派。**
+
+| 项 | 裁定出处 | 裁定归谁 | 该片实际交付 | 判定 |
+|---|---|---|---|---|
+| **D-1** 五渠道**生产装配**（`register_with` × 5 + `resolver_set` / `senders` / `TypingIndicator` / `Supervisor::spawn` / `InstallationStore`+`LeaseStore` 的生产实现 + `main.rs` 的 `deps` 非 `None`） | `docs/60` §2.4 与 §3.1「宿主（`apps/mc-server/src/channels.rs`，anchor 写集）」；`docs/32` §13.5 #2 / §17.4 #1 / §18.4 #1 / §19.4 #4 / §24.4 #3 / §31 #3 / §36.4 H2 等**逐片都写"装配归宿主"** | 「宿主」= **M7-0 的写集**，而 M7-0 **早已合入**（`ab998afe`） | M7-0 只落了**宿主位**（`start(keys, deps)` 骨架 + 停机链），并把 `deps` 定为 `None` 的**显式空跑**；此后**没有任何片**被授权改这个文件 | **掉棒** |
+| **D-2** wecom BYO 安装的**凭据探针接线**（把 `wecom.rs:158` 的 `PendingWsTransport` 换成 M7-16 的真传输） | `docs/32` §31.2 **D9** 逐字写「M7-16 落传输、**M7-21 复核该端点转绿**」 | 上半场归 **M7-16**（写集 = `crates/mc-channel/src/wecom/{ws_frame,ws_sender,stream_store}.rs`），下半场归 **M7-21**（本片） | M7-16 **落了传输**（三个文件在），但**接线那一行在 `crates/mc-http/src/routes/channels/wecom.rs`**（= **M7-15 的写集**）⇒ 两个片都没有改动它的授权；本片 **0 代码**也改不了 | **掉棒**（本片只能**如实登记"未转绿"**） |
+
+**D-1 的四条实证（逐条可复算）**：
+
+1. `git log --oneline -1 -- apps/mc-server/src/channels.rs` = **`ab998afe`**（M7-0 anchor 的提交）⇒ 该文件**全波未再被碰过**（198 行，与 anchor 逐字相同）。
+2. `apps/mc-server/src/main.rs:184` = `channels::start(&channel_keys, None)` —— **`None` 是硬编码**，不是"端口还没实现"（`InstallationStore` / `LeaseStore` / `InboundHandler` 三件套的实现**早已存在**）。
+3. `grep -rn 'register_with' apps crates/mc-http --include=*.rs` = **0 个生产调用点**（五个 `pub fn register_with` 全在 `mc-channel` 内，只有各自的 `#[cfg(test)]` 用）。
+4. `grep -rn 'Supervisor::spawn' apps crates --include=*.rs` = **0 个生产调用点**（`supervisor.rs:354` 的实现**已成**；`channels.rs:157` 的注释仍写「`Supervisor::spawn` 现在仍是 `todo!()`」⇒ **注释也已过期** —— `grep -c 'todo!' crates/mc-channel/src/engine/supervisor.rs` = **0**）。
+
+**D-2 的两条实证**：① `crates/mc-http/src/routes/channels/wecom.rs:158` 当轮仍 = `Arc::new(HandshakeProbe::new(Arc::new(PendingWsTransport))) as Arc<dyn CredentialProbe>`；② `PendingWsTransport::subscribe_ack` 的返回值恒为 `Err(TransportError::Failed { stage: "ws-transport-not-wired" })`，而 `routes/channels/wecom/tests/db.rs:293` 的 `#[ignore]` 真库用例（`byo_answers_503_while_the_probe_transport_is_not_wired`）就把 `wecom_credentials_unverifiable` 钉成**当前期望**（`assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE)` + 「一行都不写」） ⇒ 该用例**在当前形态下是绿的**，但它是"未接线"的绿，不是"已转绿"。
+
+**处置**（照 §9.8.3 的执行规则）：本片**只登记**（写集不含 `apps/**` 与 `crates/mc-http/src/**`，且本片 0 代码），**不**顺手改。**建议**：开一片 M7-FU 切片，写集 = `apps/mc-server/src/{main.rs,channels.rs}` + `crates/mc-http/src/routes/channels/wecom.rs`。**该片交付时的可见判据**：ⓐ`main.rs` 传 `Some(deps)`、`channels.rs` 对每个已配置平台调 `register_with`（`SecretBox` 由 `ChannelKeys::get(kind)` 解出）、`Supervisor::spawn` 的返回值进 `ChannelHandles::supervisors`，并写一条「配了密钥 ⇒ `has_connections() == true`」的用例；ⓑ `wecom.rs` 的 `PendingWsTransport` 换成真传输、把 `tests/db.rs:293` 那条用例从「期望 503」改成「期望 201 + 落行」。
+
+**转派项（不是掉棒）**：`docs/32` §29.5 的 **R5**（`mc-telemetry` 的 `SENSITIVE_KEYS` 补齐）在第 29 节里被**归给 M7-21（INT）**，但 §4.1 给本片的写集是 `docs/32` / `docs/37` / `docs/60 §11` / `docs/fixtures/route-parity-baseline.json`（**0 代码**）⇒ 这条裁定**在写集上不可执行**。本片按 §9.8.3 的执行规则 1 把它**转派成 G-6**（带具体洞清单 + 可达性取证），**不**沉默跳过。
+
+### 11.9 复算命令（逐字）
+
+```bash
+# 0. 起手：base 当轮重取（`multica repo checkout` 会落 main 线 ⇒ 先切分支）
+git fetch origin feat/multica-rs-initial
+git checkout -B agent/devbox5/<suffix> origin/feat/multica-rs-initial
+git rev-parse origin/feat/multica-rs-initial        # ⇒ dd0e8c51
+
+# 1. 硬前置：owners 里没有 M7 键
+python3 scripts/route_parity.py | grep -A1 'gaps by owner'   # ⇒ M9=33 M3+=16 M3=11 M10=5
+
+# 2. ⑦ 九个数 + 不变式
+python3 scripts/route_parity.py
+
+# 3. 24 条声明路由逐条对 implemented（应缺 0）
+python3 - <<'PY'
+import json,subprocess
+d=json.loads(subprocess.run(['python3','scripts/route_parity.py','--json'],capture_output=True,text=True).stdout)
+impl={(r['method'],r['path'].rstrip('/')) for r in d['implemented']}
+decl=[l.rstrip('\n').split('\t') for l in open('docs/fixtures/m7-declared-routes.tsv') if l.strip() and not l.startswith('#')][1:]
+print(len(decl),'declared;',sum((m,p.rstrip('/')) not in impl for m,p in decl),'missing')
+PY
+
+# 4. --write-baseline 的幂等复核（片前 457 已在 base；片后 = local 实测）
+cp docs/fixtures/route-parity-baseline.json /tmp/before.json
+python3 scripts/route_parity.py --write-baseline
+git diff --stat -- docs/fixtures/route-parity-baseline.json      # ⇒ 空（幂等）
+python3 -c "import json;a=json.load(open('/tmp/before.json'))['routes'];b=json.load(open('docs/fixtures/route-parity-baseline.json'))['routes'];print(len(a),len(b),a==b)"
+
+# 5. 形态门（M7 无 allowlist 退路）
+python3 scripts/slash_alias_audit.py                                   # ⇒ 0 defect(s), 0 warning(s)
+python3 scripts/slash_alias_audit.py --declared docs/fixtures/m7-declared-routes.tsv   # ⇒ exit 0
+
+# 6. ⑨（本片不动，只核对）+ M7 面 12 条的拆分（应 8 pass / 4 unevaluable）
+cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
+
+# 7. ⑩ + 全量门禁（0 代码 ⇒ 无需 --with-db）
+python3 scripts/file_size_check.py            # ⇒ scanned=1170 baseline=10 violations=0
+bash scripts/gates.sh                         # ⇒ 8/8
+
+# 8. 掉棒 D-1 的四条实证
+git log --oneline -1 -- apps/mc-server/src/channels.rs        # ⇒ ab998afe（M7-0）
+grep -n 'channels::start' apps/mc-server/src/main.rs          # ⇒ None 硬编码
+grep -rn 'register_with' apps crates/mc-http --include=*.rs   # ⇒ 0 个生产调用点
+grep -rn 'Supervisor::spawn' apps crates --include=*.rs       # ⇒ 0 个生产调用点
+```
+
+### 11.10 门禁读数（交付树）
+
+```
+① fmt 0 · ② build 0 · ③ clippy 0 · ④ clippy-test-util 0 · ⑤ test 0 · ⑦ route-parity 0 · ⑨ conformance 0 · ⑩ file-size 0   ⇒ 8/8
+```
+
+* ⑥/⑧ 需要真 PostgreSQL；本片 **0 代码 / 0 迁移** ⇒ 按 §6.5 与 `docs/57` M6-10 的先例**只跑离线 8 门**（触碰 DB 的 10/10 那条不适用）。
+* 逐门耗时（交付树当场跑）：① 3s · ② 212s · ③ 88s · ④ 49s · ⑤ 59s · ⑦ 0s · ⑨ 88s · ⑩ 0s ⇒ **总 500s**；日志与逐门 `GATE_*_EXIT` 见交付 PR 的描述。
+
+**§11 一句话**：M7 的**代码面**（24 条路由 + 48,366 行上游对应物 + 5 条进程内端到端回路）**全部落地**，⑦/⑨/⑩ 三件套**已收口**；**未落地的是两处接线**（掉棒 **D-1** = 长连接进生产宿主、**D-2** = wecom 凭据探针接线）与 6 条已登记的缺口（G-1…G-6）—— 本节把它们逐条写清，**不留"看起来完成了"的假绿**。
