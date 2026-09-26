@@ -1013,6 +1013,40 @@ D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面
 
 ---
 
+### 9.14 M10-2（`LUM-2104`）：ready 探针 `GET /healthz` + `GET /readyz` 的偏离登记（**索引段**）
+
+> **本段为什么存在**：切片描述（`docs/64` §6.5 第 7 条）与 cycle 的号段账都把 M10-2 的登记号记为
+> **`## 44.` / `### 9.14`**，而 §41 / §42 / §43 已按「该系列自 M7-0 起未再使用」的裁定把 M10 各片的
+> 登记落在自己的 `## N.` + `### N.x`。为**同时**满足两者，本段只做**索引**：偏离的**唯一一份完整
+> 登记**在 **`## 44.`（44.1–44.7）**，此处只列判据与标题，不复制正文。`### 9.x` 系列的末号自此为
+> **`### 9.14`**（下一片要用请取 `### 9.15`，并先读 §41 的裁定与 `docs/37` §139.9）。
+
+**契约（三态 + 200）**：200 `{"status":"ok","checks":{"db":"ok","migrations":"ok"}}` /
+503 `db=error`+`migrations=unknown`（`Ping` 失败）/ 503 `db=ok`+`migrations=error`（清单读不出）/
+503 `db=ok`+`migrations=out_of_date`（记账不齐 —— 含**乱序补丁漏记账**）。两条路径是**同一个
+handler + 同一份缓存**（3s TTL + 单飞）。
+
+**登记的偏离（6 条，全文见 §44.3）**：D-1 上游 `h.db == nil` 分支本地**无对应物**（`AppState.db`
+不是 `Option`，结构性不可达）；D-2 迁移清单来源 = **运行时 env**（上游编译期嵌入），且
+**空清单 + 空记账 ⇒ 200**（上游 `len(required)==0` 是显式报错）；D-3 `missing_tables` **参与**判定
+（本地比上游**严**）；D-4 探针缝 `ReadinessProbe`（上游 `readinessDB` 接口的等价物，替身**只**在
+测试里）；D-5 `Ping` 复用 `mc_db::health::check`、迁移面复用 `mc_migrate::verify()` ⇒ 本片
+**零新增 SQL**；D-6 Go `writeJSON` 的尾换行 / `Content-Length`。
+
+**未接线 / 结构性为 0（全文见 §44.4）**：`h.db == nil`；`readinessCacheTTL` **不是**运行时配置
+（`router_with_probe` 私有，生产唯一调用点传常量 3s ⇒ 只有测试能换 TTL）。
+
+**判据有牙的证据（3/3 变异测试，全文见 §44.6）**：删第二道 `load_cached` ⇒ 单飞用例红；判定
+只剩 `pending` ⇒ 缺表用例红；`Ping` 失败报 `error` 而非 `unknown` ⇒ 分支 2 用例红。
+
+**门禁**：`bash scripts/gates.sh --with-db` **10/10 PASS**；⑦ `local 475 → 477`、
+`implemented 393 → 395`（**两片都是 real**）、`known_gap 63 → 61`、`owners.M10 3 → 1`、
+`baseline 473` 不动、`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**（该路径无 fixture ⇒
+`report.json` 未动）；⑩ `scanned 1228 → 1229 / violations 0`（最大新文件 738 行）。
+逐字读数见 **§44.5**。
+
+---
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -6641,3 +6675,160 @@ an open connection`（全是与本片写集**无关**的路径；PG 侧无 `too 
   （含四个 `miss` 早退）都记一次，与上游逐字同。
 * **R-6（`inbound_too_large_total` 的接线点）**：见 §43.4 —— `crates/mc-ws/src/pump.rs` 不在本片
   写集，登记给后续片（与 `docs/64` §6.5 的"未接线项要登记"一致）。
+
+---
+
+## 44. M10-2（`LUM-2104`）：ready 探针 `GET /healthz` + `GET /readyz`（2 路由）的落点与偏离登记
+
+> **号段复核（两个号空间，当轮实测，base `cd355186`）**：`## ` 末号 = **`## 43.`**（M10-3 / PR #120
+> 已合）⇒ 本节取 **`## 44.`**；`### 9.x` 末号 = **`### 9.13`**（M9-0 / PR #121 已合）⇒ 本片取
+> **`### 9.14`**（索引段见上）。**跨分支复核**：`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`
+> 后逐个远端分支取 `docs/32` 的 `grep -n '^## [0-9]\+\.' | tail -1` —— **139 个远端分支里没有一个**
+> 到 `## 44.`，`### 9.x` 最高的两个是 `### 9.12`（M10-3）与 `### 9.13`（M9-0）⇒ **两个号都无争号**。
+> GH `pulls?state=open` = 0。另对四个写集文件（`probes/ready.rs` / `crates/mc-http/Cargo.toml` /
+> `Cargo.lock` / `docs/32`）逐个未合入分支做了 `git diff --name-only` 复核：**零命中**
+> （唯一命中的 `origin/feat/multica-rs-m1` / `pr110merge` 属 pc-* 世代的旧分支，与
+> `feat/multica-rs-initial` 无共同祖先）。
+
+**本片是 W10 A 面 stage 2 的三片之一**（与 M10-1 / M10-3 同 stage）。硬前置 M10-0（`LUM-2102`，
+anchor 骨架）与三条派发前置在起手时**全部满足**：base `cd355186` 已含 PR #120（M10-3）与
+PR #121（M9-0）两次合并；`df -h /` 起手连采两次 = **36G 可用**（≥20G）。
+
+### 44.1 写集审计两类（`docs/64` §6.5 第 6 条）
+
+* **① 新建文件在不在 anchor 骨架内**：`crates/mc-http/src/routes/probes/ready/tests.rs` 是
+  `probes/ready/` 下的**第二个**文件（与 `probes/live/tests.rs`、`probes/realtime/tests.rs` 同构），
+  由 `ready.rs` 末尾**既有**的 `#[cfg(test)] mod tests;` 加载（那一行 anchor 期已写好，**未改**）。
+* **② 为让实现成立，改了哪些既有文件（逐字）**：
+
+  | 既有文件 | 改动 | 位置（`git diff` 的 hunk 头） |
+  | --- | --- | --- |
+  | `crates/mc-http/src/routes/probes/ready.rs` | anchor 期的空 `Router::new()`（11 行）→ 实现（358 行） | 全文件 |
+  | `crates/mc-http/Cargo.toml` | **+1 条依赖边** `mc-migrate = { path = "../mc-migrate" }`（含 5 行注释说明） | `@@ -48,6 +48,12 @@`（`mc-db` 之后） |
+  | `Cargo.lock` | **+1 行**（`mc-http` 的 `dependencies` 数组新增 `"mc-migrate"`）；**无新 package** | `@@ -2810,6 +2810,7 @@` |
+  | `docs/32-M3-DAEMON-FACE.md` | 本节 + `### 9.14` 索引段 | — |
+
+* 🔴 **一字节未动**：`crates/mc-http/src/routes/probes/mod.rs`（M10-0 冻结；`pub mod ready;` 与
+  `ready::router()` 的 `merge` 在 anchor 期已接好 ⇒ 写集审计第 ② 类里"**为让新文件可见**"的部分
+  = **0**，本片唯一的既有文件改动就是上面那条依赖边）、`routes/mod.rs`、`routes/mount.rs`、
+  `state.rs`、`migrations/**`、`scripts/file_size_baseline.tsv`、`contracts/**`、
+  `crates/mc-conformance/report.json`。
+* **行数（门 ⑩）**：`ready.rs` **358**、`ready/tests.rs` **738**（≤ 800，余量 **62**）。
+  🔴 **交片前先 `git add` 再自查 ⑩**：该门只扫 `git ls-files` ⇒ 未跟踪的新文件**它看不见**
+  （本片实测：staged 前 `scanned=1228`、staged 后 **1229**）。首次交片时 `tests.rs` 是 **799** 行
+  （贴着 800）⇒ 已按"去掉一个重复覆盖的用例 + 收敔注释 + 把三个大而全的单测参数化"压到 **738**。
+
+### 44.2 可判定契约（三态 + 200，逐条用例）
+
+| # | 上游分支（`health.go` L131-176） | 状态码 | `status` | `checks.db` | `checks.migrations` | 本片用例 |
+| :-: | --- | :-: | --- | --- | --- | --- |
+| 1 | `h.db == nil` | 503 | `not_ready` | `error` | `unknown` | **本地无对应分支**（D-1） |
+| 2 | `Ping` 失败 | 503 | `not_ready` | `error` | `unknown` | `not_ready_when_the_database_ping_fails`（零库）+ `the_production_router_serves_both_paths_and_reports_db_error`（生产装配 + 全量 router） |
+| 3 | 清单读不出 / 为空 | 503 | `not_ready` | `ok` | `error` | `not_ready_error_when_the_migration_manifest_is_unreadable` + `a_reachable_database_with_an_unreadable_manifest_reports_migrations_error`（⑥ 真库） |
+| 4 | 记账查询失败 | 503 | `not_ready` | `ok` | `error` | 同 #3（本地两者同为 `verify()` 的 `Err`；上游 `initErr` 与查询错误也属同一格） |
+| 5 | 记账不齐 | 503 | `not_ready` | `ok` | `out_of_date` | `not_ready_out_of_date_when_a_lower_numbered_patch_is_unrecorded` + `not_ready_out_of_date_when_required_tables_are_missing` + `out_of_order_ledger_hole_is_detected_on_a_real_database`（⑥ 真库，三相） |
+| 6 | 其余 | **200** | `ok` | `ok` | `ok` | `ready_paths_answer_200_with_the_three_ok_checks` + `a_real_database_with_the_real_migration_tree_is_ready`（⑥ 真库） |
+
+* **乱序补丁漏记账**（`docs/64` §6.5 的 M10-2 专属验收点）：真库用例三相共用一份**隔离 schema** ——
+  第 1 相（记账 `100_alpha`,`300_gamma`；清单 `100`,`**200_beta**`,`300` ⇒ 503）打死"只看有没有最新
+  一行"的实现（**更高的** `300` 在、**更低的** `200` 缺）；第 2 相（同库同 schema，只把清单里的
+  `200` 去掉 ⇒ **200**）是**唯一变量对照**；第 3 相（记账 `100`,`200`,`999_extra`；清单
+  `100`,`200`,`300` ⇒ 503）打死"没有 `WHERE version = ANY($1)` 的 `COUNT(*)`"（**行数 3 == 清单 3**）
+  —— 后者正是 DoD 里"**禁止**在路由里另写一份 `SELECT COUNT(*)`"禁的那个形态。
+  隔离 schema 里把 `DEFAULT_REQUIRED_TABLES` 的 14 张表建成**零列表**（`CREATE TABLE x."user" ()`）
+  ⇒ `to_regclass` 命中、`missing_tables` 为空 ⇒ 判据只剩 `pending`；跑完 `DROP SCHEMA … CASCADE`
+  （实测跑后 `pg_namespace` 里 `probe_lum%` = 0），**共享库一字节不动**。
+* **3 秒缓存 + 单飞**（上游 `readinessCacheTTL`）：`the_two_paths_share_one_cache`（两条路径共享一份
+  缓存 ⇒ 3s 内只 `Ping` 一次 —— 这也是"**同一个 handler** 挂两个路径"的可观测证据）、
+  `concurrent_requests_collapse_into_a_single_refresh`（8 并发 ⇒ `ping` 计数 **1**）、
+  `an_expired_entry_is_recomputed`、`a_zero_ttl_never_caches`（上游 `TTL<=0` 直算那一档）、
+  `the_not_ready_verdict_is_cached_too`（**503 也进缓存** —— 故障期不得把库探爆）。
+  时间边界与上游逐字：`expires_at = 持锁后、计算前**的 now** + TTL`（一次慢查询不顺延 TTL），
+  命中条件是 `now < expires_at`。
+* **形态**：`only_the_plain_forms_are_served`（`/healthz` `/readyz` = 200；`/healthz/` `/readyz/` ≠ 200）
+  + ⑦b `slash_alias_audit.py` = `479` literals / `0` defect / `0` warning。
+* **键集**：`readiness_response_serializes_to_exactly_the_upstream_keys`（四个分支的整体 `Value` 相等
+  ⇒ 多键、少键、键名写错都会红）。四个键**都没有** `omitempty` ⇒ 三个值键在任何分支**必现**。
+
+### 44.3 已知差异（D-1…D-6）
+
+| # | 上游 | 本地 | 影响 / 判据 |
+| :-: | --- | --- | --- |
+| **D-1** | `h.db == nil` ⇒ 503 `db=error`/`migrations=unknown` | **无对应分支**：`AppState.db` 不是 `Option`，装配期不存在"没有库" | 不可达库走分支 2（同状态码、同 body）⇒ 可判定射程相同（分支 1 登记为结构性不可达） |
+| **D-2** | 必需版本清单由 `migrations.AllVersions()` 在 `newServerHealth()` **编译期嵌入**一次 | `MULTICA_MIGRATIONS_DIR`（缺省 `migrations`，与 `apps/mc-server/src/main.rs:99-102` **同一个** env 与缺省）在 `ready::router()` 装配时解析**一次** | 🔴 **运维面**：上游二进制自带版本清单，本地要求**运行期迁移目录可读** ⇒ 目录缺失时 `/readyz` 恒 503 `migrations=error`（fail closed，**有意**）。见 §44.7 的 R-4 |
+| **D-3** | 只比 `count(required) < len(required)` | `mc_migrate::verify()` 的两项**都**参与：`pending` 非空 **或** `missing_tables` 非空 ⇒ `out_of_date` | 本地**更严**：记账齐但核心表缺失也判 503。`verify()` 本来就同时回答两个问题，只取一项会丢信息（有专门用例钉住） |
+| **D-4** | 同文件定义 `readinessDB` 接口（`Ping` + `QueryRow`） | 同位置定义 `ReadinessProbe` 接口（`ping` + `verify`），生产实现只有 `PgReadinessProbe` **一处** | 替身**只**出现在 `ready/tests.rs`（与上游为测试而为接口的动机逐字同）；生产路径**零新增 SQL**（见 D-5） |
+| **D-5** | `readinessQuery` = `SELECT COUNT(*) … WHERE version = ANY($1)`；`db.Ping` | `Ping` 复用 `mc_db::health::check`（既有 `SELECT 1`）+ 2s 上限；迁移面复用 `mc_migrate::verify()` → `Migrator::pending`（逐版本差集）+ `missing_tables`（`to_regclass`） | 本片**没有**新增任何 SQL 字面量 ⇒ DoD 那条禁令结构性成立 |
+| **D-6** | `writeJSON` 尾换行 + 显式 `Content-Length` | axum `Json`（无尾换行，length 自动） | `Content-Type: application/json` 一致；本路径 ⑨ **无 fixture** ⇒ 无判据面（与 M10-1 的同款差异一致） |
+
+### 44.4 未接线 / 结构性为 0
+
+* **`h.db == nil`（D-1）**：结构性不可达，**不接线** —— 要给 `AppState.db` 加 `Option` 得动 anchor
+  冻结的 `state.rs`，而收益为零（该分支与分支 2 同状态码、同 body）。
+* **`readinessCacheTTL` 不是运行时配置**：`router_with_probe` 是**私有**函数，生产唯一调用点
+  （`ready::router`）传常量 3s ⇒ TTL 只在测试里可变。若被误当特性，"3 秒"这条判据就失去意义。
+* **迁移目录不进 `AppState` / `mc-config`**：本片按 D-2 读同一批 env，**不**给 `mc-config` 加字段
+  （那会动锚点共享面）；将来若要统一，属 M10-9 的登记面。
+* **⑨ 面**：本波这两条路径 **0 条 fixture**（`grep -rl '"path": "/healthz"\|"path": "/readyz"'
+  contracts/golden/` = **0**）⇒ 按纪律**不刷** `report.json`；字段级证据由 M10-5 的
+  `contracts/golden-local/**` 承担（本片的 body 逐字见 §44.2，供其引用）。
+
+### 44.5 门禁读数（当轮实测，base `cd355186`）
+
+* **`bash scripts/gates.sh --with-db --db-url 'postgres://…/multica_lum2104'`**：**10/10 PASS**，
+  本轮 **643s**（库为起手新建；按 `docs/32` §43.6 的判据化动作，跑 ⑥ 之前**先重建**库）。
+* **⑦ `route_parity.py --quiet`**：`upstream 456 | local 475 → 477`（**+2**）、`baseline 473`（不动）、
+  `implemented 393 → 395`（**392 real + 3 placeholder**，新增的两片都是 **real**）、
+  `known_gap 63 → 61`、`unclaimed 0`、`regression 0`、`local_only 8`（1 placeholder，**不增**）；
+  `gaps by owner`：`M9 33 / M3+ 16 / M3 11 / M10 3 → 1`（和 = 61 ✓）。不变式
+  `implemented + known_gap == 456` ✓。
+* **⑦b `slash_alias_audit.py`**：`479` literals / `0` defect / `0` warning（`--quiet` exit 0；
+  `docs/fixtures/slash-alias-allowlist.tsv` 仍 **0 数据行**）。本片贡献 **+2**（两条路径都只注册
+  **无尾斜杠**形态，与上游 `router.go:1400/1401` 的 plain 注册逐字同）。
+* **⑨ `mc-conformance --no-db`**：`report.json` 的 blob = `67c2b0cd…`，与 base `cd355186`
+  **逐字相同**（本路径 0 fixture）⇒ totals `fixtures 365 / pass 15 / mismatch 23 / unmounted 21 /
+  placeholder 0 / unevaluable 306`，`contract 0.041096 / mounted 0.394737`（**⑨ 逐字不变**）。
+* **⑩ `file_size_check.py`**：`limit=800 scanned=1228 → 1229 baseline=10 violations=0`；
+  最大新文件 **738**（`ready/tests.rs`，staged 后计入）。`scripts/file_size_baseline.tsv` **未动**。
+* **新增用例**：`crates/mc-http` 的 `probes::ready` 共 **18** 例（15 零库 + 3 `#[ignore]` 真库），
+  全部 PASS；真库那 3 例在 ⑦ 号库 `multica_lum2104` 上跑（`--ignored`）。零库那 15 例在**不带**
+  `MULTICA_TEST_DATABASE_URL` 的环境里跑（门 ⑤ 正是如此，`scripts/gates.sh` 在 ⑤ 用 `env -u` 剥掉它）。
+
+### 44.6 判据的**变异测试**（3/3 有牙）
+
+为避免"用例写了但打不死错实现"，本片对三个关键分支各做一次**反向变异**（改完当即恢复，见下表）：
+
+| 变异 | 它代表的错误实现 | 红掉的用例 |
+| --- | --- | --- |
+| 删掉持锁后的**第二道** `load_cached` | 单飞失效（8 并发 = 8 次 `Ping`） | `concurrent_requests_collapse_into_a_single_refresh` |
+| 判定只剩 `pending`（丢掉 `missing_tables`） | 记账齐但核心表缺失 ⇒ 错答 200 | `not_ready_out_of_date_when_required_tables_are_missing` |
+| `Ping` 失败报 `migrations="error"` 而非 `"unknown"` | 把"没问过记账表"说成"记账坏了" | `not_ready_when_the_database_ping_fails` |
+
+（真库三相那一条的判别力不需变异测试：第 2 相就是第 1 相在同一库、同一 schema 上的**唯一变量对照**，
+若第 1 相的 503 不是来自清单差集，第 2 相就不可能拿到 200。）
+
+### 44.7 交接与风险
+
+* **R-1（上游 pin）**：本节的上游引用一律 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`（⑦ 的路由 pin）。
+  本波 §1.6 的**第二个** pin（⑨ 契约 `90e0bdf`）与本片无关：这两条路径在 `contracts/golden/**` 里
+  **0 命中**（实测）⇒ 两个 pin 在这条路径上无差异。
+* **R-2（给 M10-5 的引用面）**：`contracts/golden-local/**` 要覆盖的"三态 + 200"以 §44.2 的表格为准；
+  body 逐字 = `{"status":…,"checks":{"db":…,"migrations":…}}`，四个值域是 `ok`/
+  `error`+`unknown`/`error`/`out_of_date`。本片**不**在 `contracts/**` 里造 fixture（不在写集），
+  ⑨ 的 **365** 分母**不准变**。
+* **R-3（manifest 面已开）**：本片改了 `crates/mc-http/Cargo.toml` + `Cargo.lock` ⇒ `docs/64` §7 原文
+  "`Cargo.toml`/`Cargo.lock` 只被 M10-6 写一次"**作废**（cycle §138 已登记）。后续任何 manifest 写者
+  （M10-B1/B2/B4 若真需要新包）与本片**不同轮**即可 —— 本片交片时已终态。
+* **R-4（D-2 的运维面）**：`MULTICA_MIGRATIONS_DIR` 缺省 `migrations` 是**相对 cwd** 的 ⇒ `mc-server`
+  的部署必须保证该目录可读；否则 `/readyz` 恒 503 `migrations=error`。这是 fail closed 的**有意**一侧
+  （宁可 503，不肯假装就绪），但运维需要知道"503 也可能是迁移目录没挂上"。
+* **R-5（ENOSPC 第 7 次实证）**：本轮 `--with-db` 首跑死在 ⑥ 的链接期（`couldn't create a temp dir:
+  No space left on device (os error 28)`，门 ⑥ = `migrate=0,e2e=101`），此刻 `df -h /` = **100%**。
+  **一键止血**＝① `rm -rf target/debug/incremental`（**4.0G**）② `target/debug/deps` 里**每个 stem
+  只留 mtime 最新**（删 **2679** 个文件、回收 **16.98G**，19G → 1.4G）⇒ 可用 3.5G → **28G**。
+  ⚠️ **本轮新事实**：同机有**另一个 run**（`lum-1816`）在跑全量门禁，它的 `target/` = **14G**
+  ⇒ 起手 `df -h /` 的两次读数会**互相打架**（本轮起手 36G → 门禁中途 0G）。
+* **R-6（门禁日志路径，本轮新 lesson）**：起手把输出重定向到 `/tmp/gates_full.log`，与**另一个 run**
+  **撞名**（它写同名文件）⇒ 我读到的"门禁摘要"是**别人**的（①③④⑥ 红）。**判据化动作**：门禁日志
+  一律落**本 run 的 workdir**（本轮改用 `<workdir>/.logs/`）—— 文件名必须带 workdir 或 PID，
+  `/tmp` 下的固定名在并发 run 下**不可信**。
