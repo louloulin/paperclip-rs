@@ -807,6 +807,180 @@ bash scripts/gates.sh --with-db      # 10/10
    需要把目录也传给 `scheduler::start`（那要动 `main.rs`，本片不改）。
 
 
+
+---
+
+### 9.13 M9-0 anchor（`LUM-1815`）：文件→写者表、归位判断与偏离登记
+
+`docs/62-M9-PLAN.md` §3.1 / §5 的「共享锚点」「逐文件预扩展清单」是**锚点文件集**；本节的表是它
+落地后的**准确版**（含锚点期做的六处归位判断与十一处口径订正）。M9 后续切片按本表认领写集，
+**不得**编辑左列之外的共享文件。
+
+#### 9.13.1 锚点冻结的共享文件（M9-1…M9-11 只读）
+
+| 冻结件（逐字路径） | 锚点期动作 | 后续写者 |
+| --- | --- | --- |
+| `Cargo.toml` / `Cargo.lock` | 只重新生成 lock（+2 成员、**0 条新外部包**） | 只读 |
+| `crates/mc-http/Cargo.toml` | +2 条 `path` 边（`mc-cloud` / `mc-entitlement`） | 只读 |
+| `apps/mc-server/Cargo.toml` | +1 条 `path` 边（`mc-entitlement`） | 只读 |
+| `crates/mc-http/src/state.rs` | +2 字段（`cloud` / `entitlement`）+ `pub mod cloud;` | 只读 |
+| `crates/mc-http/src/state/cloud.rs` | **新建**（读取口 + 两态构造 + 脱敏 `Debug` + 8 用例） | 只读（M9-9 只读它） |
+| `crates/mc-http/src/routes/mod.rs` | +8 个 `pub mod`（末段，逐字见文件内注释） | 只读 |
+| `crates/mc-http/src/routes/mount.rs` | +`mount_slice_commercial()` + `mount_slice_cloud_runtime()` | 只读 |
+| `crates/mc-http/src/lib.rs` | +`pub mod actor_guard;` | 只读 |
+| `crates/mc-core/src/lib.rs` | +4 个 `pub mod`（`cloud` / `dashboard` / `notification` / `onboarding`） | 只读 |
+| `crates/mc-repos/src/lib.rs` | +6 个 `pub mod`（单文件面） | 只读 |
+| `crates/mc-repos/src/agent.rs` | +`pub mod mika;`（**不是** `agent/mod.rs`，见 9.13.3） | 只读 |
+| `apps/mc-server/src/main.rs` | +`mod entitlement;` + 第 8.5 步 + 停机链一行 | 只读 |
+| `crates/mc-http/src/routes/issues/mod.rs` | **删** 1 行（timeline 占位搬运出去） | 只读 |
+| `crates/mc-http/src/routes/auth.rs` | 测试字面量 +2 字段（**净零行**，见 9.13.5） | 只读 |
+
+#### 9.13.2 锚点新建成/桩（各自的唯一写者）
+
+| 逐字路径 | 锚点期状态 | 写者 |
+| --- | --- | --- |
+| `crates/mc-cloud/{Cargo.toml,src/lib.rs,src/error.rs,src/config.rs,src/transport.rs,src/transport/tests.rs}` | **完整实现**（24 用例） | **M9-0（冻结）** |
+| `crates/mc-cloud/src/{billing.rs,subscriptions.rs,webhook.rs,runtime.rs}` | 空桩（模块头 = 路径表与纪律） | M9-1 / M9-2 / M9-6 / M9-11 |
+| `crates/mc-entitlement/{Cargo.toml,src/lib.rs,src/types.rs}` | **完整类型形状**（12 用例） | **M9-0（冻结）** |
+| `crates/mc-entitlement/src/{cache.rs,client.rs}` | 常量 + 端点路径（无 `todo!()`，见 9.13.6） | M9-9 |
+| `crates/mc-entitlement/src/stub.rs` | 可用的最小替身（3 用例） | M9-9（可扩） |
+| `crates/mc-core/src/{cloud.rs,onboarding.rs,notification.rs,dashboard.rs}` | **完整类型形状**（32 用例） | **M9-0（冻结）** |
+| `crates/mc-http/src/routes/{cloud,dashboard,onboarding}/mod.rs` | 聚合（子 router 全空） | **M9-0（冻结）** |
+| `crates/mc-http/src/routes/cloud/{billing.rs,subscriptions.rs,webhook.rs}` | 空 `Router::new()` | M9-1 / M9-2 / M9-6 |
+| `crates/mc-http/src/routes/dashboard/{usage.rs,runtime.rs,failures.rs}` | 空 `Router::new()` | M9-4 |
+| `crates/mc-http/src/routes/onboarding/{profile.rs,shim.rs,cloud_waitlist.rs}` | 空 `Router::new()` | M9-3 |
+| `crates/mc-http/src/routes/{notification_preferences.rs,feedback.rs,contact_sales.rs}` | 空 `Router::new()` | M9-5 |
+| `crates/mc-http/src/routes/timeline.rs` | **承接搬运的 501 占位** | M9-8 |
+| `crates/mc-http/src/routes/cloud_runtime.rs` | 空 `Router::new()`（**预声明升级**，见 9.13.4） | M9-11 |
+| `crates/mc-http/src/actor_guard.rs` | **完整实现**（7 用例，含 2 条端到端） | **M9-0（冻结）**；M9-1/M9-2 挂载 |
+| `crates/mc-repos/src/{onboarding.rs,notification_preference.rs,feedback.rs,contact_sales.rs,dashboard.rs,timeline.rs,agent/mika.rs}` | 桩（`Repo` + `new` + `RepoWithDb`） | M9-3 / M9-5 / M9-4 / M9-8 / M9-7 |
+| `apps/mc-server/src/entitlement.rs` | 诚实空跑（**不装平面**） | M9-9 |
+
+#### 9.13.3 口径订正（十一处，逐条可复核）
+
+1. **写集路径勘误（`docs/62` §3.3）**：`crates/mc-repos/src/agent/mod.rs` **不存在** —— 本仓的
+   `agent` 模块是「`agent.rs` + `agent/` 子目录」（`env.rs` / `labels.rs` / `tasks.rs`），
+   `mika.rs` 是它的**第四个兄弟**，声明写在 `crates/mc-repos/src/agent.rs` 里。
+   ⇒ `M9-7` 的写集应列 `crates/mc-repos/src/agent.rs`（+1 行）。
+2. **用户列表数订正（`docs/62` §9.7）**：与本波有关的 `"user"` 列是 **5 个**，不是 6 个：
+   `onboarded_at`(050) / `onboarding_questionnaire`(051+094) / `cloud_waitlist_email`(052) /
+   `cloud_waitlist_reason`(052) / `starter_content_state`(054+095)。计划里的第 6 个
+   `onboarding_runtime_choice`(098) 是**不存在的列** —— `098_user_onboarding_runtime_choice.up.sql`
+   只做 DROP（`onboarding_runtime_skipped` / `onboarding_runtime_id` / 一条 check 约束），
+   那两列的设计后来移到前端 transient store。
+3. **`?days=` 非法值不报 400（`docs/62` §6.5 的 M9-4 行）**：上游 `parseDaysCutoff` 逐字是
+   `if err == nil && parsed > 0 && parsed <= 365 { days = parsed }` ⇒ 非法 / 越界**静默回落到默认 30**，
+   没有 400 分支。本仓按上游实现（`mc_core::dashboard::resolve_days` + 用例钉住），
+   `M9-4` 的 DoD 若按计划写「非法值 400」会与上游背离。
+4. **§2.6 的「5xx ⇒ 502」行在实现上是「透传」而不是 502**：上游 `cloudruntime.doInner` 对**任何** HTTP 状态
+   都返回 `(Response, nil)`，只有**传输层**失败才是 error（`writeCloudRuntimeResponse` 把云侧 5xx
+   原样写回）。本仓 `mc_cloud::transport::Client::send` 同款，并有专门用例
+   （`upstream_5xx_is_passed_through_not_turned_into_an_error`）。
+5. **`CloudError` 有第五类 `InvalidHeader`**（本仓新增）：调用方给了 http 层无法表示的出站头
+   （非法头名 / 非 ASCII 头值）。Go 侧这个错误由 `net/http` 在**写请求**时报出；
+   本仓在**拼头**时报出（提前、且**不静默丢头** —— 静默丢掉 `Stripe-Signature` 会让云侧回 401，
+   故障点离病因很远）。落点同 §2.6 的「其他」行：**502**。
+6. **线上的出站头名是小写**（`stripe-signature`），Go 侧是规范大小写（`Stripe-Signature`）。
+   HTTP/1.1 头名大小写不敏感 ⇒ 语义等价。上游的「先删同名、再逐值 add」语义**完整保留**
+   （这是 `Accept` 可被覆盖、`X-User-ID` 不可被覆盖的机制，也有用例）。
+7. **`AppState { … }` 字面量构造点有 10 个（不是 1 个）**（`docs/62` §5 写「`routes/auth.rs`
+   测试里唯一一处」）。实测：`crates/mc-http/src/routes/auth.rs` + `crates/mc-http/src/routes/channels/{dingtalk,wecom,lark}/tests.rs`
+   + `crates/mc-http/tests/{github_webhook,vcs,composio,mcp,github,channels}/support.rs`。
+   它们**不用** `..Default::default()`（`AppState` 无法 derive `Default`：`Db` 没有）⇒ 每加一个字段
+   就要同步这 10 处（本片全部已补）。
+8. **`mc-cloud` 不接 `mc-errors` 边**（`docs/62` §2.2 的草图列了它）：§2.6 的四条映射各带**自定义
+   code**（`cloud_runtime_not_configured` / `cloud_runtime_misconfigured` / …），`mc_errors::Error`
+   没有能承载自定义 code 的变体 ⇒ 接一条用不上的边不如不接。同理 `mc-entitlement` **不接**
+   `mc-autopilot`（方向反转，`docs/62` §9.8 的裁定原文）。
+9. **`Provider` 无 `ctx`**（`docs/62` §2.1 只说「`Provider` trait」）：上游是
+   `Gate(ctx, workspaceID, name) Decision`，本仓是 `gate(&self, workspace_id, name) -> Decision`
+   —— 必须与**既有接缝** `mc_autopilot::quota::QuotaPolicyProvider`（模块头逐字「实现者必须**同步、
+   无 IO**」）同形，否则 M9-9 的适配器要写两层。超时/取消由 client 自己的「单飞 + 3s 超时」承担。
+10. **`Action::Observe` 不是线上取值**：上游 `normalizeGate` 只接受 `off` / `enforce`；
+    `observe` 是**本地**在「策略已陈旧」时对 `enforce` 的**降级**（`decisionFromEntry` 的
+    `stale && ActionEnforce ⇒ ActionObserve`）。本仓把它写进类型文档 + `Gate::downgraded_when_stale`
+    与用例（`Action::parse_wire("observe")` 返回 `None`）。
+11. **`mc_http` 的 `state/cloud.rs` 里有 `pub use mc_cloud::CLOUD_URL_ENV`**：`apps/mc-server` 的
+    `entitlement.rs` 需要那个 env 名，而它**不依赖** `mc-cloud`（第 8 条的同一取舍）⇒ 经 `mc-http` 再导出。
+
+#### 9.13.4 归位判断（六处）
+
+1. **`state.rs` 超阈值 ⇒ 下放**：起手实测 `crates/mc-http/src/state.rs` = **665 行**
+   （R-M9-3 的判据是「>620 就下放到 `state/cloud.rs`」）⇒ 本片把「读 env + 构造」放在
+   `crates/mc-http/src/state/cloud.rs`，`state.rs` 只加 2 字段 + `pub mod cloud;`（落地后 **691 行**，
+   仍远低于门 ⑩ 的 800）。与 M8-0 的 `state/integrations.rs` 同判例。
+2. **`auth.rs` 净零行**（门 ⑩ 的「baselined 文件只允许变短」）：`scripts/file_size_baseline.tsv`
+   把 `crates/mc-http/src/routes/auth.rs` 钉在 **1704** 行。加 2 个字段必然 +2 行 ⇒ 按 **M7-0 / M8-0
+   的既有定式**在同一文件内压缩两处注释（`google_error` 的 8 行文档 → 5 行、本片自己那处 5 行
+   注释 → 1 行）把净增量抵成 **0**（落地后仍 **1704**）。门 ⑩ 绿。
+3. **`cloud/mod.rs` 不放 `pub mod runtime;`**、改为按 M9-11 的实际落点预声明
+   （见第 4 条）—— `docs/64` §5.2 的请求原文写的是 `routes/cloud/runtime.rs`，
+   而 `LUM-2116` 自己的写集点名的文件是 `crates/mc-http/src/routes/cloud_runtime.rs`（**顶层单文件**）。
+4. **预声明升级**（对 `docs/64` §5.2 追加请求的裁定：**部分接受**）：
+   - ✅ **接受** `crates/mc-cloud/src/runtime.rs`（空桩）+ `crates/mc-cloud/src/lib.rs` 的
+     `pub mod runtime;` —— 这两件是 M9-11 明确点名要的；
+   - ✅ **额外接受**（升级）：`crates/mc-http/src/routes/cloud_runtime.rs`（空 `Router::new()`）+
+     `routes/mod.rs` 的 `pub mod cloud_runtime;` + `mount.rs` 的 `mount_slice_cloud_runtime()`。
+     判据：`LUM-2116` 自己的写集**已经**列了 `routes/mod.rs`（+1 行）与 `mount.rs`（+2 行）的追加，
+     若 anchor 只按 `routes/cloud/runtime.rs` 预声明，M9-11 **仍然**要回来改两个 frozen 文件
+     （预声明就白做了），同时 `routes/cloud/` 里会留一个**永远没人填**的模块（第二个真相源）。
+     这三处**没有任何其他写者候选** ⇒ 纯收益。⇒ **M9-11 现在一行 frozen 文件都不用碰**；
+   - ❌ **不接受** `docs/64` §5.2 原文里的 `crates/mc-http/src/routes/cloud/mod.rs` 的
+     `pub mod runtime;`（理由见上一条）。⇒ 该行由本片**裁定拒绝**，`M9-11` 也**不需要**补它。
+5. **`agent/mika.rs` 的模块声明落在 `agent.rs`**（第 9.13.3 条第 1 项的落地形态），
+   且用 `pub mod mika;` 而不是与 `env`/`labels`/`tasks` 一致的「私有 `mod` + `pub use`」
+   —— 判据：M9-7 是**另一个写者**，它往 `mika.rs` 里加第二个类型时不该回来改 `agent.rs`。
+6. **`apps/mc-server/src/entitlement.rs` 不装平面**（诚实空跑）：配了 `MULTICA_CLOUD_URL` 也
+   **只 warn 不装**。🔴 理由是**配额面**特有的：装一个替身平面会让 `quota::is_enabled()` 变成
+   `true`、`GET /api/autopilots/usage` 开始报 `action=enforce` 并**真的拦住** autopilot
+   —— 那是生产事故而不是"接线完成"。本片为此写了**回归保护的用例**
+   （`quota_plane_is_still_the_default_after_starting_the_host`），谁装替身平面它立刻红。
+
+#### 9.13.5 锚点期**未接线项**（如实登记，不是缺口）
+
+1. 🔴 **`actor_guard` 的效力待 W1 盖章链接线**：上游 `X-Actor-Source` 是**服务端盖章**的
+   （`auth.go` 先 `Del` 再按分支 `Set`），本仓 `routes/auth_user.rs` 的 `AuthUser` 只读
+   `X-Multica-User-Id`（M1 dev-mode 契约，模块头逐字「只信任 header」）⇒ 今天这个闸**形状正确、
+   三态用例全绿**，但它挡的是「显式带了 `X-Actor-Source: task_token` 的请求」，
+   挡不住"伪造 `X-Multica-User-Id` 且不带 actor-source"的请求 —— 后者本来就被 M1 dev-mode 放行。
+   补它要动 `crates/mc-http/src/middleware/authn.rs` 的整条盖章链（W1 面），**不属本片写集**。
+2. **`mc-entitlement` 的策略客户端不存在**（M9-9）：本片的 `client.rs` **故意不写** `todo!()`
+   的 `pub fn`（编译期看着接好、运行期 panic 的那类"静默假接入"）⇒ 只有端点路径常量可用，
+   任何路径都走不进未实现的代码。
+3. **`mc-cloud` 的请求体**不设上限：上游只限**响应**体（1 MiB），请求体的 1 MiB 上限
+   在 handler 的 `MaxBytesReader`（`cloud_runtime.go:31`）⇒ 本客户端**不**加第二处上限。
+4. **重定向策略保持 reqwest 默认**（最多 10 跳），与上游 `http.Client{}` 一致；
+   **不跟随跨源重定向**是 `mc-entitlement` 那一侧的事（上游 `CheckRedirect`）。
+5. **`docs/fixtures/route-parity-baseline.json` 本片不动**（本仓第三个不刷基线的 anchor）：
+   `local 474` / `baseline 473` / `implemented 389 real + 3 placeholder` 逐字不变。
+6. **下列登记项转交**：`internal/seatcapacity`（909 行）无主缺口（R-M9-6）、
+   `activity_log` 写入面覆盖率（R-M9-4）、`/api/cloud-runtime` 11 条的 owner 迁移
+   （`docs/62` §9.2，执行点 = M9-10）、`task_usage_dashboard_*` legacy 表存留口径（§9.6）
+   —— 一律由 **M9-10（`LUM-1825`）** 收口，本片只把判据写进各文件的模块头。
+
+#### 9.13.6 锚点期门禁读数（逐字取自当轮日志）
+
+`bash scripts/gates.sh --with-db` ⇒ **10/10 绿 / 527s**（真库 `multica_lum1815`，角色带 `CREATEDB`
+⇒ ⑧ 不假红）。逐项：① `fmt` 0 / ② `build` 123s / ③ `clippy` 5s / ④ `clippy-test-util` 1s /
+⑤ `test` 56s / ⑥ `db` 242s（`migrate=0, e2e=0`）/ ⑧ `schema-drift` 25s / ⑦ `route-parity` 1s /
+⑨ `conformance` 71s / ⑩ `file-size` 0s。
+
+- **⑦**：`upstream 456 (f41fae6b08fb) | local 474 | baseline 473 | implemented 389 real + 3 placeholder = 392 | known_gap 64 | unclaimed 0 | regression 0 | local_only 8`（**与起手逐字相同**）；
+- **⑦ `gaps by owner`**：`M9 33` · `M3+ 16` · `M3 11` · `M10 4`（和 = 64 ✓，**未变**）；
+- **⑦b `slash_alias_audit.py --quiet`**：exit 0（`slash-alias-allowlist.tsv` 仍 0 数据行）；
+- **⑨**：不冷编（门输入与上一轮逐 blob 恒等）；
+- **⑩**：`limit=800 scanned=（含本片新文件）baseline=10 violations=0`（最大新文件 663 行）；
+- **`Cargo.lock`**：只多 2 个成员（`mc-cloud` / `mc-entitlement`）、**0 条新外部包**（`reqwest` 等早已在 lock 里）；
+- **新用例**：mc-cloud 24 / mc-entitlement 12 / mc-core 32（新增）/ mc-http `actor_guard` 7 / `state/cloud` 8 / mc-telemetry +2 / mc-server `entitlement` 2。
+
+> 🔴 **ENOSPC 第 6 次实证（本轮两连发）**：第一次 `--with-db` 跑到 ③ 时 `os error 28`
+> 伪装成**三条门同时红**（③④⑨；② 虽过但后续 `couldn't create a temp dir`），
+> `⑧` 的 `CREATE DATABASE` 报 `could not create directory "base/…"`。
+> **一键止血**（判据化）：`rm -rf target/debug/incremental`（**6.0G**）+ `target/debug/deps` 里
+> **每个 stem 只留 mtime 最新**（两次分别删 2489 / 2821 个文件、回收 **3.75G / 21.2G**）。
+> **定式**：起手 `df -h /` **连采两次**（并发 run 会让读数在两次之间摆动 20G 级），
+> 且 `--with-db` 全量一轮实测吃 **≈30G**（官方文档写的 18G 是"构建产物已完整"时的值）。
+
 ---
 
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记

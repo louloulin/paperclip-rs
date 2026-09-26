@@ -47,6 +47,15 @@
 //! 表清单与「write-only / 凭据不得明文入库」的口径见各 `mod.rs`。
 //! ⚠️ `mc_repos::mcp`（workspace 服务器库）与 `mc_repos::plugin::mcp_approval`（插件远程 MCP）
 //! 是**两张不同面**，**不得**合并（docs/61 §2.3）。
+//!
+//! M9 anchor scaffold（LUM-1815 / docs/62-M9-PLAN.md §3.3）：M9 的 **6 个单文件模块**
+//! 一次性声明（空 stub，与 M2/M3/M4/M5/M6/M7/M8 同手法）——`contact_sales` /
+//! `dashboard` / `feedback` / `notification_preference` / `onboarding` / `timeline`。
+//! **本文件自本片起对 M9 是只读的**：M9-3..M9-8 只填自己那格的文件，不再编辑本 `lib`。
+//! ⚠️ **第 7 个格是 `agent/mika.rs`**（M9-7）：它的模块声明在 `crates/mc-repos/src/agent.rs`
+//! （`agent` 是「文件 + 子目录」模块），**不在**本文件 —— 计划文本写的
+//! `crates/mc-repos/src/agent/mod.rs` 不存在（勘误登记 `docs/32` §9.13）。
+//! 表清单与各自的口径见各文件的模块头。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -66,7 +75,13 @@ pub mod chat_session;
 pub mod chat_task;
 pub mod comment;
 pub mod composio;
+// M9 anchor scaffold（LUM-1815 / docs/62-M9-PLAN.md §3.3）：M9 的 6 个单文件模块。
+pub mod contact_sales;
 pub mod daemon;
+// M9-4（LUM-1819）的 dashboard 六条只读聚合。
+pub mod dashboard;
+// M9-5（LUM-1820）的 feedback 写入。
+pub mod feedback;
 pub mod github;
 pub mod inbox;
 pub mod invitation;
@@ -78,6 +93,10 @@ pub mod issue_view;
 pub mod label;
 pub mod mcp;
 pub mod member;
+// M9-5（LUM-1820）的通知偏好读写。
+pub mod notification_preference;
+// M9-3（LUM-1818）的 onboarding user 列读写。
+pub mod onboarding;
 pub mod pat;
 // M2-A 尾片（LUM-1691）：`pinned_item` 侧栏钉住项（上游 `038` + `270`）。
 pub mod pin;
@@ -100,6 +119,8 @@ pub mod squad_evaluation;
 pub mod stats;
 pub mod subscriber;
 pub mod task;
+// M9-8（LUM-1823）的 issue timeline 两个半边合并。
+pub mod timeline;
 pub mod user;
 pub mod vcs;
 pub mod verification_code;

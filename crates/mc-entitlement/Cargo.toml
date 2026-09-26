@@ -1,0 +1,37 @@
+[package]
+name = "mc-entitlement"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica entitlement 策略客户端（Gate / Action / Reason / Provider + 有界缓存）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M9-0 anchor（`LUM-1815` / `docs/62-M9-PLAN.md` §2.2 / §9.8）：依赖边**一次接好**，
+# 此后 M9-9 的写者**不得**再新增三方依赖。
+#
+# 依赖方向（无环，`docs/62` §2.2 判据 1）：`mc-entitlement` → `mc-core` / `mc-telemetry`
+# （+ `reqwest` / `serde` / `serde_json` / `url` / `thiserror` / `tracing`）。
+# 🔴 **不依赖 `mc-autopilot`**：消费者（`mc-autopilot` 的 quota 接缝、`mc-http` 的
+# `limit-usage`）依赖本 crate，反向依赖会成环 —— 适配器落在组合根
+# `apps/mc-server/src/entitlement.rs`（`docs/62` §9.8 的裁定）。
+# ⚠️ 也**不落** `mc-authz`：那是**无 IO 的纯策略** crate（无 `reqwest`），把网络客户端
+# 塞进去会让每一个 authz 消费者都被拖上 `reqwest`（`docs/62` §9.8 判据 ②）。
+# 全部是 workspace 既有依赖 ⇒ `Cargo.lock` 只多一个成员 crate、**零新外部包**。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-telemetry = { path = "../mc-telemetry" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

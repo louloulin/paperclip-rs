@@ -61,3 +61,8 @@ mc-channel = { path = "../../crates/mc-channel" }
 # 这是让「PR 刷新宿主真的被链进二进制」的唯一手段（同 M5-9 / M7-0 的手法）。
 mc-vcs-github = { path = "../../crates/mc-vcs-github" }
 mc-composio = { path = "../../crates/mc-composio" }
+# M9-0 anchor（LUM-1815 / docs/62-M9-PLAN.md §3.1 / §5）：组合根的 entitlement 适配器
+# （`src/entitlement.rs`）要读云基址的设置 —— 它**只能**走 `mc-http` 的 `state::cloud`
+# （生产装配点在那里）。本片额外加这一条边是为了让适配器的类型签名不必回退给
+# `mc-http` 做转口；⚠️ **不依赖 `mc-cloud`**（apps/mc-server 不发出站请求）。
+mc-entitlement = { path = "../../crates/mc-entitlement" }

@@ -34,6 +34,14 @@ use crate::{RepoWithDb, Result};
 
 mod env;
 mod labels;
+// M9-0 anchor（`LUM-1815` / `docs/62-M9-PLAN.md` §3.3）：M9-7 的 Mika 供给面。
+//
+// ⚠️ 与 `env` / `labels` / `tasks` 的**风格差异是有意的**：那三个是 `mod` + `pub use`
+// 再导出，而 `mika` 用 `pub mod`。理由：M9-7 是**另一个写者**，它往 `mika.rs` 里加
+// 第二个/第三个类型时不应该回来改本文件（本文件是 anchor 冻结的共享文件之一）。
+// 逐字路径勘误（计划写的是 `crates/mc-repos/src/agent/mod.rs`，那个文件**不存在**）
+// 登记在 `docs/32-M3-DAEMON-FACE.md` §9.13。
+pub mod mika;
 mod tasks;
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,39 @@
+[package]
+name = "mc-cloud"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 云侧出站传输（cloud-runtime / billing / subscriptions / stripe 转发）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M9-0 anchor（`LUM-1815` / `docs/62-M9-PLAN.md` §2.2 / §5）：依赖边**一次接好**，
+# 此后 M9-1 / M9-2 / M9-6 / M9-11 的写者**不得**再新增三方依赖。
+#
+# 依赖方向（无环，`docs/62` §2.2 的判据）：`mc-cloud` → `mc-core` / `mc-telemetry`
+# （+ `reqwest` / `serde` / `serde_json` / `url` / `thiserror` / `tracing`）。
+# **不依赖 `mc-entitlement`**（策略客户端是独立 crate，见 `docs/62` §9.8）；
+# **不依赖 `mc-errors`**：传输的四条错误映射（`docs/62` §2.6）各带**自定义 code**
+# （`cloud_runtime_not_configured` / `cloud_runtime_misconfigured` / …），
+# `mc_errors::Error` 没有能承载自定义 code 的变体 ⇒ 接一条用不上的边不如不接
+# （登记在 `docs/32-M3-DAEMON-FACE.md` §9.13）。
+# 全部是 workspace 既有依赖 ⇒ `Cargo.lock` 只多一个成员 crate、**零新外部包**。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+# redaction：`MULTICA_CLOUD_URL` 非法时的告警必须**不回显**原值（`docs/62` §2.4 判据 ④）。
+mc-telemetry = { path = "../mc-telemetry" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+pretty_assertions = { workspace = true }

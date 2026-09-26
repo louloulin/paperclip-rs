@@ -588,14 +588,11 @@ fn _unused_uuid() -> Uuid {
 // POST /auth/google
 // ============================================================
 
-/// 上游 `writeErrorCode`/`writeFeatureDisabled` 的等价物：
-///
-/// - 状态码由调用方显式给出（本仓 `mc_errors::Error` 的固定映射里
-///   `Upstream` 是 500，而上游 `GoogleLogin` 的 502 必须逐条对齐）；
-/// - 错误体沿用本仓 M1 的嵌套 envelope（`mc_errors::ErrorBody`，与 `ApiError`
-///   的输出逐字段同形）——上游是扁平 `{"error": msg, "code": code}`，
-///   登记在 `docs/29-W1-GOOGLE.md`；
-/// - `code` 用上游的字符串常量（`mc_errors::Error::code()` 只能返回固定映射）。
+/// 上游 `writeErrorCode`/`writeFeatureDisabled` 的等价物。三点：① 状态码由调用方显式给出
+/// （`mc_errors::Error` 的固定映射里 `Upstream` 是 500，而上游 `GoogleLogin` 的 502 必须
+/// 逐条对齐）；② 错误体沿用本仓 M1 的嵌套 envelope（`mc_errors::ErrorBody`，与 `ApiError`
+/// 逐字段同形 —— 上游是扁平 `{"error","code"}`，登记 `docs/29-W1-GOOGLE.md`）；
+/// ③ `code` 用上游的字符串常量（`mc_errors::Error::code()` 只能返回固定映射）。
 fn google_error(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
@@ -1045,6 +1042,9 @@ mod tests {
             github_keys: crate::state::integrations::GithubKeys::default(),
             vcs_keys: crate::state::integrations::VcsKeys::default(),
             composio_keys: crate::state::integrations::ComposioKeys::default(),
+            // M9 anchor（`LUM-1815`）：云面两组字段显式未配置（口径见 `state/cloud.rs`；全仓 10 个字面量构造点同步，见 `docs/32` §9.13）。
+            cloud: crate::state::cloud::CloudConfig::from_env_with(|_| None),
+            entitlement: crate::state::cloud::EntitlementConfig::from_env_with(|_| None),
         };
         Arc::new(state)
     }

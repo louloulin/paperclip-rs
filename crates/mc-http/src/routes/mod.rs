@@ -141,13 +141,42 @@ pub mod squad_evaluations;
 // `mount.rs` 已接好 `mount_slice_probes()`（anchor 期四个子 router 全是空 `Router::new()`
 // ⇒ **零注册键**）。
 //
-// 🔴 本波独有纪律（写进 M10-0 的 DoD）：anchor **不得**给这 5 条上游键注册任何 501 占位 ——
+// 🔴 本波独有纪律（写进 M10-0 的 `DoD`）：anchor **不得**给这 5 条上游键注册任何 501 占位 ——
 // ⑦ 会把它算成 `implemented_placeholder`（`owners.M10` 假清零），而 ⑨ 会从 `unmounted` 变成
 // **`mismatch`**（期望 200 / 得到 501 ⇒ `mismatch 23 → 41`）。
 // 形态纪律（docs/64 §1.4 实测 `dual-form required: 0`）：5 条全是上游 `r.Get("/a/b", h)` 的
 // **plain** 注册 ⇒ 只注册**无尾斜杠**那一形态（补尾斜杠 = `EXTRA_ALIAS`）。
 pub mod config;
 pub mod probes;
+
+// M9 anchor scaffold（`LUM-1815` / `docs/62-M9-PLAN.md` §3.1 / §5）：**八个**面一次性声明，
+// 让 M9-1..M9-11 的九个切片不再同时编辑本文件。按形态分两类：
+// - **目录切片**（各自的 `mod.rs` 自己聚合子 router）：`cloud`（3 子文件）、
+//   `dashboard`（3）、`onboarding`（3）；
+// - **单文件切片**：`notification_preferences` / `feedback` / `contact_sales`（M9-5）、
+//   `timeline`（搬运承接的 501 占位，M9-8）、`cloud_runtime`（M9-11 的
+//   `/api/cloud-runtime/*` 11 条 —— 预声明升级，见那个文件的模块头）。
+//
+// `mount.rs` 已接好 `mount_slice_commercial()`（前七个合并点）与
+// `mount_slice_cloud_runtime()`（第八个）⇒ anchor 期**全为空** `Router::new()`，
+// **注册键贡献 = 0**。唯一"看得见的"变化是 `timeline` 那一条 501 占位从
+// `routes/issues/mod.rs` **原地搬运**过来（handler 名仍是 `not_implemented`）⇒
+// **注册键集合与占位计数逐字不变**（这是本仓**第三个**不刷 ⑦ 基线的 anchor，
+// 前两个是 M7-0 / M8-0；`docs/62` §6.1 的 M9-0 行）。
+//
+// 形态纪律（`docs/62` §1.4 实测 `declared 34 / dual-form required: 3`）：本波**只有**
+// `/api/notification-preferences` 那 3 条要补尾斜杠形态（两个都要注册、不得进 allowlist）；
+// 其余一律**只按上游字面量注册那一形态**（补尾斜杠 = `EXTRA_ALIAS` 硬失败，
+// 漏字面量 = `MISSING_EXACT`）。路径参数必须写 `:name`（matchit 0.7 把 `{name}` 当字面量
+// ⇒ 编译通过且恒 404）。
+pub mod cloud;
+pub mod cloud_runtime;
+pub mod contact_sales;
+pub mod dashboard;
+pub mod feedback;
+pub mod notification_preferences;
+pub mod onboarding;
+pub mod timeline;
 
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)

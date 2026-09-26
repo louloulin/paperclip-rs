@@ -24,6 +24,20 @@ pub const SENSITIVE_KEYS: &[&str] = &[
     "client_secret",
     "csrf",
     "x-csrf",
+    // M9 anchor（`LUM-1815` / `docs/62-M9-PLAN.md` §2.4 判据 ④）：本波唯一一组"部署密钥"
+    // 是**云侧服务基址**（`MULTICA_CLOUD_URL`）—— 它本身不带凭据（userinfo / query /
+    // fragment 都在校验阶段被 `mc_cloud::config::validate` 拒掉），但它是三类承载物的键名：
+    // - `cloud_url`：基址（非法值的告警走 `Redactor::redact_str` 脱敏，见 `mc-cloud/src/config.rs`）；
+    // - `stripe_signature`：Stripe 的 HMAC（**值**逐字转发给云侧，绝不进日志）；
+    // - `idempotency_key`：幂等键（订阅 checkout / portal / 座位购买三处）。
+    // 三条都是**子串匹配**（既有口径），所以连字符与下划线两种拼法都要列（同 `apikey` /
+    // `api_key` / `api-key` 的既有三写法），且都不在旧名单里（`key` 本身**没有**在名单里）。
+    "cloud_url",
+    "cloud-url",
+    "stripe_signature",
+    "stripe-signature",
+    "idempotency_key",
+    "idempotency-key",
 ];
 
 pub struct Redactor {
@@ -194,5 +208,44 @@ mod tests {
         assert!(r.is_sensitive("API_KEY"));
         assert!(r.is_sensitive("Authorization"));
         assert!(!r.is_sensitive("name"));
+    }
+
+    /// M9 anchor（`LUM-1815`）：本波三个凭据载体的键名必须命中（判据 ④）。
+    ///
+    /// 这三条覆盖的是**两类**东西：云侧基址（`cloud_url`）与它的两类转发物
+    /// （`stripe_signature` / `idempotency_key`）。它们此前**都不**在名单里。
+    #[test]
+    fn m9_credential_carriers_are_sensitive() {
+        let r = Redactor::default();
+        for key in [
+            "cloud_url",
+            "CLOUD_URL",
+            "MULTICA_CLOUD_URL",
+            "stripe_signature",
+            "Stripe-Signature",
+            "stripe-signature",
+            "idempotency_key",
+            "Idempotency-Key",
+        ] {
+            assert!(r.is_sensitive(key), "{key} 必须是敏感键");
+        }
+        // 不误伤：这三个词不是凭据载体本身。
+        for key in ["interval", "additional_seats", "failure_reason", "date"] {
+            assert!(!r.is_sensitive(key), "{key} 不应被 redact");
+        }
+    }
+
+    /// 判据 ④ 的端到端形态：非法 `MULTICA_CLOUD_URL` 的告警形态被整段替换。
+    ///
+    /// 这条用例钉住 `mc-cloud` 的 `CloudSettings::from_env_with` 与 `mc-telemetry` 的
+    /// 契约 —— 只改一边（比如把告警里的 `cloud_url` 换成 `url`）就会红。
+    #[test]
+    fn cloud_url_warning_shape_is_redacted_end_to_end() {
+        let line = "MULTICA_CLOUD_URL=https://leaked-user:leaked-pass@cloud.test/x";
+        let redacted = redact_log(line);
+        assert!(!redacted.contains("leaked-user"), "{redacted}");
+        assert!(!redacted.contains("leaked-pass"), "{redacted}");
+        assert!(!redacted.contains("cloud.test"), "{redacted}");
+        assert!(redacted.contains("[REDACTED]"), "{redacted}");
     }
 }

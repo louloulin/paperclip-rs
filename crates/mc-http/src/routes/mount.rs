@@ -124,6 +124,17 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 🔴 若 anchor 先注册 501 占位，⑦ 会把 `owners.M10` 假清零，而 ⑨ 会从 `unmounted`
         // 变 **`mismatch`**（期望 200 / 得到 501 ⇒ `mismatch 23 → 41`）—— 这是本片的红线。
         .merge(mount_slice_probes(state.clone()))
+        // ----- M9 anchor scaffold（LUM-1815 / docs/62-M9-PLAN.md §3.1） -----
+        // ⚠️ anchor 期：七个合并点全为**空** `Router::new()`，**唯一**那条非空的注册键是
+        // `timeline` 搬运承接的 501 占位（它同时从 `mount_slice_issue()` 里**减一**）
+        // ⇒ **注册键集合与占位计数逐字不变**（`docs/62` §6.1 的 M9-0 行：`local 474` 不动，
+        // 本仓第三个不刷 ⑦ 基线的 anchor）。
+        .merge(mount_slice_commercial())
+        // M9-11（`LUM-2116`）的 `/api/cloud-runtime/*` 11 条：**预声明升级**（anchor 期空，
+        // 零注册键）。为什么不与上一行合并：它是**单文件**切片、写者是 M9-11，
+        // 而上一行的七个合并点分属 M9-1..M9-8 —— 分开追加的理由与
+        // `mount_slice_squad_evaluation()` 同款（一片一行，互不叠写）。
+        .merge(mount_slice_cloud_runtime())
 }
 
 /// workspace + member + me 切片。
@@ -527,4 +538,32 @@ fn mount_slice_probes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .merge(super::probes::router(state.clone()))
         .merge(super::config::router(state))
+}
+
+/// M9 商业面的七个合并点（`docs/62-M9-PLAN.md` §3.1 / §5）：
+/// `cloud`（16 条=8+7+1）/ `dashboard`（6）/ `onboarding`（1+2+1）/ `notification_preferences`
+/// （3 个方法 × 2 形态）/ `feedback`（1）/ `contact_sales`（1）/ `timeline`（1，**搬运**）。
+///
+/// anchor 期：前六个是空 `Router::new()`，`timeline` 承接那一条从
+/// `mount_slice_issue()` 搬过来的 501 占位 ⇒ **本函数对注册键集合的净贡献 = 0**。
+fn mount_slice_commercial() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::cloud::router())
+        .merge(super::dashboard::router())
+        .merge(super::onboarding::router())
+        .merge(super::notification_preferences::router())
+        .merge(super::feedback::router())
+        .merge(super::contact_sales::router())
+        .merge(super::timeline::router())
+}
+
+/// M9-11（`LUM-2116`）的 `/api/cloud-runtime/*` 11 条切片。
+///
+/// **这是 M9-0 的预声明升级**：`docs/64-M10-PLAN.md` §5.2 请求 M9-0 预声明那两行，好让
+/// M9-11 不必对 anchor 冻结文件做"最小破例"；而 M9-11 自己的写集点名的路由文件是
+/// `crate::routes::cloud_runtime`（**顶层单文件**）⇒ 这里按**它的实际落点**预声明
+/// （本行 + `routes/mod.rs` 的一行 + `mc-cloud` 的两处），**零注册键**。
+/// 两条判据与裁定见 `crates/mc-http/src/routes/cloud_runtime.rs` 的模块头与 `docs/32` §9.13。
+fn mount_slice_cloud_runtime() -> Router<Arc<AppState>> {
+    Router::new().merge(super::cloud_runtime::router())
 }

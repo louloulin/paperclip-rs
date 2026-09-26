@@ -29,6 +29,16 @@ pub mod autopilot;
 pub mod autopilot_quota;
 pub mod channel;
 pub mod chat;
+// M9 anchor scaffold（LUM-1815 / docs/62-M9-PLAN.md §2.1 / §5）：M9 的四个领域面一次性声明，
+// 让 M9-1..M9-11 不再同时编辑本文件。四个模块的**完整类型形状**在 anchor 落定
+// （各切片的仓储/HTTP 面只读引用）：
+// - `cloud`：云侧四个请求 DTO + 口径常量（**没有**响应结构体 —— billing/subscriptions 是
+//   纯出站代理，云侧响应原样透传，建了就是第二个真相源）；
+// - `onboarding`：完成路径 / 问卷答案（含 `stringOrSlice` 宽容）/ 5 个上游列的投影；
+// - `notification`：通知偏好分组词表（7 组 × 2 值，上游 `validNotifGroups`）；
+// - `dashboard`：dashboard 6 条的**行形状**与 cutoff/tz/days 口径。
+// ⚠️ `mc_core::cloud` 与 `mc_repos::cloud`（后者本波不建）不是一回事：本波 cloud 面无表。
+pub mod cloud;
 pub mod comment;
 // M8 anchor scaffold（LUM-1797 / docs/61-M8-PLAN.md §3.1 / §5）：M8 的四个领域面一次性声明，
 // 让 M8-1..M8-7 不再同时编辑本文件。四个模块的**完整类型形状**在 anchor 落定（各切片的
@@ -40,11 +50,16 @@ pub mod comment;
 // ⚠️ `vcs` 与 `github` **两套并列、不合并**（docs/61 §1.6）；MCP 面**复用** daemon 侧语义、
 // **不**与 `mc-mcp`（remote MCP 客户端）混同（docs/61 §2.3）。
 pub mod composio;
+// M9-1（LUM-1816）的 dashboard 6 条行形状（见文档：`mc_core::dashboard` 的模块头）。
+pub mod dashboard;
 pub mod github;
 pub mod inbox;
 pub mod issue;
 pub mod mcp;
 pub mod member;
+// M9-3（LUM-1818）的 onboarding 形状。
+pub mod notification;
+pub mod onboarding;
 pub mod plugin;
 pub mod project;
 pub mod runtime;

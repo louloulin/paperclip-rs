@@ -2588,6 +2588,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-cloud"
+version = "0.1.0"
+dependencies = [
+ "mc-core",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "mc-composio"
 version = "0.1.0"
 dependencies = [
@@ -2721,6 +2737,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-entitlement"
+version = "0.1.0"
+dependencies = [
+ "mc-core",
+ "mc-telemetry",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "mc-errors"
 version = "0.1.0"
 dependencies = [
@@ -2769,11 +2800,13 @@ dependencies = [
  "mc-autopilot",
  "mc-channel",
  "mc-chat",
+ "mc-cloud",
  "mc-composio",
  "mc-config",
  "mc-core",
  "mc-daemon-proto",
  "mc-db",
+ "mc-entitlement",
  "mc-errors",
  "mc-feature-flags",
  "mc-mcp",
@@ -3003,6 +3036,7 @@ dependencies = [
  "mc-config",
  "mc-core",
  "mc-db",
+ "mc-entitlement",
  "mc-errors",
  "mc-feature-flags",
  "mc-http",

@@ -74,6 +74,9 @@ fn state_with_db(channel_keys: ChannelKeys, db: mc_db::Db) -> Arc<AppState> {
         github_keys: crate::state::integrations::GithubKeys::default(),
         vcs_keys: crate::state::integrations::VcsKeys::default(),
         composio_keys: crate::state::integrations::ComposioKeys::default(),
+        // M9 anchor（LUM-1815）：云面两组字段显式未配置（口径见 `state/cloud.rs`）。AppState 的字面量构造点**全部**在这里补，因为它们不用 `..Default::default()`（见 docs/32 §9.13 的写集扩展登记）。
+        cloud: crate::state::cloud::CloudConfig::from_env_with(|_| None),
+        entitlement: crate::state::cloud::EntitlementConfig::from_env_with(|_| None),
     })
 }
 
