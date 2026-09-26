@@ -12651,3 +12651,100 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
    这正是 anchor 预声明的**全部收益**，收益只有在**派发前**把清单改对时才兑现。
 4. **零空位 ≠ 无事可做，也 ≠ 必须回收**：本轮可切面只有 1.75G 活物（新 run 刚起的冷建）⇒ 回收量为 0 是**正确结论**，不是遗漏。
    递补片读数刷新 + 预飞对账 = 本轮的实质产出（4 片 rev bump / 2 条写集订正）。
+
+## §145 07:30Z cycle（`LUM-2171`，07:30Z / 15:30 触发）—— **零派发轮（切片位 0/2）**：🔴 第七类预飞首次逮到**「冻结表 ↔ 正典写集」直接矛盾 + 3 条「接线只在散文里」**（M10 B 面四片，`docs/32` §39.1 逐字禁止非 anchor 片编辑 `routes/{mod,mount}.rs`）；🔴 B2/B4 的 ⑦ 增量**互换一行**（合计正确 ⇒ 单看总数查不出）；⑨ 门输入恒等第 12 次；零回收
+
+### §145.1 起手读数（三连 + 逐 PID）
+
+| 读数 | 当轮实测 |
+| --- | --- |
+| base | **`7c7198ec`**（`git rev-parse origin/feat/multica-rs-initial`；`multica repo checkout` 落 `main` 线**第 10 次** ⇒ 起手一律 `git checkout -B <br> origin/feat/multica-rs-initial`） |
+| GH open PR | **0**（认证 API `pulls?state=open` ⇒ `[]`） |
+| daemon | `running_task_count = 3 / active_task_count = 3` = cycle ∥ `LUM-2104`（M10-2，pid 53762，workdir `lum-2104-6bd9f408ea20`）∥ `LUM-1816`（M9-1，pid 53868，`lum-1816-119164a9efe3`） |
+| 切片位 | **0/2**（口径不变：`running_task_count` **含 cycle 自身** ⇒ 可派 = 3 − 1 − 2 = 0）⇒ 本轮**零派发** |
+| 磁盘 | 起手 **13G / 74%**（连采两次一致）⇒ 收尾 12G；两片在飞 target 13G + 11G 且 **`incremental` 均为空**（4.0K）⇒ **零回收**（唯一可切面全在活物里） |
+| 并发 cycle | **无**（连续第 23 轮）；积压 `todo` cycle 单只登记不动状态 |
+| 两片状态 | `HEAD` 均 = `cd355186`（= base 的**父**提交）、**提交 0**、分支**未推**、无 PR ⇒ 无判据链可走 |
+
+- **判活三件套各取三件**：`LUM-2104` = pid 53762 活 + session `20260926T062340`（**1.18M**，07:31 仍在写）+ `porcelain` 5 项（`M Cargo.lock` / `M mc-http/Cargo.toml` / `MM routes/probes/ready.rs` / `AM routes/probes/ready/tests.rs` / `M docs/32`）+ target **13G**；
+  `LUM-1816` = pid 53868 活 + session `20260926T062408`（**1.66M**，07:31 仍在写）+ `porcelain` 3 项（`mc-cloud/src/billing.rs` / `routes/cloud/billing.rs` / `routes/cloud/billing/tests.rs`）+ target **11G**。
+  两片起手 06:23:40Z / 06:24:08Z ⇒ 至起手已 ~68 分钟，都在编译/自测段（`porcelain` 面已收敛到各自写集内）⇒ **不介入**。
+
+### §145.2 ⑦/⑦b/⑩ 在 base 上当场重跑；⑨ 按「门输入恒等」继承（**第 12 次**）
+
+- ⑦ = `upstream 456 (commit f41fae6b08fb) | local 475 registered | baseline 473`、`implemented 390 real + 3 placeholder = 393 / 456`、`known_gap 63`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner: M9=33  M3+=16  M3=11  M10=3` —— 与 §143/§144 **逐字相同**（`--json` 的 `counts` 逐键核对）。
+- ⑦b = `registered_keys 477` / `allowlist_rows 0` / `findings 0` / `stale 0` ⇒ **0 defect**。
+- ⑩ = `limit=800  scanned=1228  baseline=10  violations=0`。
+- ⑨ 三个门输入与 §143 验收树**逐 blob 恒等**（`crates/mc-conformance/report.json` = `db173fe8409d514fc6d52b1f7844d7b051916e0a`、`docs/fixtures` tree = `e331e706ac95d84dd9a47061efe5065e12ef6a24`、`crates/mc-conformance` tree = `6a3984fee8985cb0405dfe73c656e58d5ab0db06`）⇒ 主动**不冷编**，继承 `365 fixtures / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`。
+- 代价 = 0.5s（两个纯 Python 门 + 一次 `git rev-parse`）。
+- **不变式复核**：`implemented + known_gap = 393 + 63 = 456` ✓；`regressions 0` ✓；`unclaimed 0` ✓；`baseline 473` 未动 ✓。
+
+### §145.3 🔴 第七类预飞：「冻结件写者表 ↔ 正典写集」对账 —— **首次出现「两来源直接矛盾」+ 3 条「接线只在散文里」**
+
+§144 的第七类检查逮到的两条都是**单向**的（漏项 / 已预声明）。本轮把它套到 **M10 B 面（尾账 `M3+`，17 行 / 4 片）** 上，得到**两个新形态**：
+
+**来源 A（汇总表）**：`docs/32` §39.1（M10-0 anchor 的文件→写者表）逐字写着
+「M10 后续切片按本表认领写集，**不得**编辑左列之外的共享文件：`crates/mc-http/src/routes/{mod,mount}.rs`、`crates/mc-http/src/routes/probes/mod.rs`、`docs/fixtures/route-parity-baseline.json` 全部由**本锚点冻结**」；
+`docs/64` §3.3 的对应两格也写 `crates/mc-http/src/routes/mod.rs` ⇒ **M10-0**、`mount.rs` ⇒ **M10-0**。
+**来源 B（逐字契约 / 模块头）**：`crates/mc-http/src/routes/mod.rs:136-146` 只声明 `pub mod config;` + `pub mod probes;`；`mount.rs:121-126` + `:509-540` 只接 `mount_slice_probes()`。
+**base 实测（`7c7198ec`）**：`ls crates/mc-http/src/routes/attachments/` = 不存在；`grep -c` 于 `routes/mod.rs` / `mount.rs` 对 `attachments|uploads|quick_actions|avatars|sub_issues` **全部为 0** ⇒ B 面的**五个新面在 anchor 里一条也没预声明**（B 面不在 M10-0 的委托范围：`docs/64` §4.1 A 面 vs §4.2 B 面是两张表）。
+
+四条发现（全部回写描述）：
+
+| # | 片 | 形态 | 事实 |
+| :-: | --- | --- | --- |
+| 1 | `LUM-2112`（M10-B1，6 行） | **两来源直接矛盾** | 散文段「写集审计两类」写对了「需要 anchor 之外的第二处接线」并逐字点出 `routes/mod.rs` +1 / `mount.rs` +1，但 `docs/32` §39.1 **逐字禁止**非 anchor 片编辑这两个文件 ⇒ 按现状派发，片会在「遵守冻结表」与「遵守自己的写集」之间二选一。**裁定 = 授权最小破例**（各只加自己的行、不改既有行），并要求逐字登记。 |
+| 2 | `LUM-2113`（M10-B2，2 行） | **接线只在散文里** | 正典「逐字写集」**只有 1 个新文件**（`uploads.rs`）；接线（`routes/mod.rs` +1、`routes/mount.rs` +1）只在「写集审计两类」的散文里。**这正是 §131 的lesson 的形状：预飞只认正典写集 ⇒ 已提升进正典。** |
+| 3 | `LUM-2114`（M10-B3，6 行） | 同上 | 正典写集只有 4 个新 `quick_actions/*`；接线在散文里 ⇒ 已提升进正典。 |
+| 4 | `LUM-2115`（M10-B4，3 行） | 同上 + **一个第三处** | 正典写集只有 3 个新文件；接线在散文里（`routes/mod.rs` **+2**（`avatars` / `ws`）、`routes/mount.rs` **+2**、`crates/mc-http/src/routes/comments/mod.rs` **+2**）⇒ 已提升。**`comments/mod.rs` 不属 M10-0 冻结面**（是 M2-B 的文件，§39.1 未列）⇒ 那里**不是破例**，但要登记 ⑩ 余量：该文件 **728 / 800 行 ⇒ 只剩 72 行**。 |
+
+- **正例（反向核对）**：M10 **A 面** 5 条（`probes/{live,ready,realtime}.rs` + `config.rs`）**全部**由 anchor 预声明（§39.1 两张表 + 模块头逐字都在）⇒ **零破例**。⇒ 同一个 anchor 的「预声明」在 A 面做尽、在 B 面一条没做，**分界线是 M10-0 的委托范围**，不是「B 面忘了」。
+- **🔴 另一条独立发现（⑦ 增量互换一行）**：以 `docs/fixtures/upstream-routes.tsv` 实测的 `M3+` **17 行**为权威账，
+  逐片 = **B1 6 行（5 缺口 + 1 占位升级）/ B4 3 行 / B3 6 行 / B2 2 行** ⇒ `6+3+6+2 = 17` ✓、缺口 `5+3+6+2 = 16` ✓。
+  但 B2 的「专属验收」写 `local 483 → 486`（= **+3**）、B4 写 `local 492 → 494`（= **+2**）⇒ **两片各错一行、方向相反、合计仍是 494**（单看总数或单看 `owners.M3+` 终值都查不出来）。已在两片描述里改为**增量式**陈述（`+2` / `+3`），并注明以 §4.2 的**订正账**为准。
+- **口径（本轮定型）**：第七类预飞的三步 = ① 读 anchor 写者表（汇总表 + 模块头，两处都读）；② 读片的**正典**写集（**只认「逐字写集」段，散文段不算**）；③ **先判「这条接线在不在 anchor 的委托范围里」** —— 在范围内 ⇒ 划掉（§144 的 `LUM-2116`）；范围外 ⇒ **授权最小破例 + 要求逐字登记**（本轮 4 条）。范围外的**漏项**最危险：片连提都没提（本轮 3 条）。
+
+### §145.4 ⑨ 快照写者的冲突面：逐 fixture `outcome` 核实（**0 成本证伪**）
+
+`crates/mc-conformance/report.json` 有两个互相矛盾的写者裁定：`docs/64` §3.3 说「**M10-9 唯一**」；`docs/32` §41.4（既有裁决 + 4 个先例）说「**产生位移的那片自己刷**」。两者**只在「两个加路由片同飞」时冲突** ⇒ 本轮按候选片逐 fixture 核 `outcome`（纯读 JSON，代价 0）：
+
+| 候选片 | 该面 fixture 数 | 现 `outcome` | ⇒ 注册后 ⑨ 是否位移 |
+| --- | :-: | --- | --- |
+| `LUM-2112`（M10-B1，attachments） | 2 | **`unevaluable`**（member / handler） | **否**（其描述的主张成立 ✓） |
+| `LUM-1817`（M9-2，cloud-subscriptions） | 6 | **`unevaluable`** | **否** |
+| `LUM-2116`（M9-11，cloud-runtime） | 4 | **`unevaluable`** | **否** |
+| `LUM-1816`（M9-1，cloud/billing） | 1 | **`unevaluable`** | **否** |
+| `LUM-1818`（M9-3，onboarding） | **0** | — | **否** |
+| `LUM-2106`（M10-4，`/api/config`） | **17** | **全 `unmounted`** | **是** ⇒ 必须自己刷（§41.4） |
+
+⇒ **近期待派集里只有 `LUM-2106` 是 `report.json` 写者** ⇒ `docs/64` §3.4 的 `M10-4 ∥ M10-B1` **不冲突**（stage 3 的三片同飞成立）。⇒ §3.3 与 §41.4 的矛盾在近期不会触发，**暂不需要**owner 裁定；一旦出现第二片会位移，按下表仲裁。
+
+### §145.5 递补片 rev bump（M10 B 面四片；其余四片**故意不 bump**）
+
+| 片 | rev | 号段 | 补充内容 |
+| --- | --- | --- | --- |
+| `LUM-2112`（M10-B1） | 1 → **2** | `## 50.` + `### 9.20` | 当轮读数 + **冻结破例授权（`routes/mod.rs` +1 / `mount.rs` +1，逐字锚点 + 登记段号）** + 号段订正（`§9.14` / `## 37.` / `9.11` 三处全过期）+ **增量式预测** |
+| `LUM-2113`（M10-B2） | 1 → **2** | 起手末号 +1（预计 `## 51.`） | 同上 + **正典写集补 2 项接线** + ⑦ `+2`（订正原 `+3`） |
+| `LUM-2114`（M10-B3） | 1 → **2** | 起手末号 +1（预计 `## 52.`） | 同上 + **正典写集补 2 项接线** |
+| `LUM-2115`（M10-B4） | 1 → **2** | 起手末号 +1（预计 `## 53.`） | 同上 + **正典写集补 4 项接线**（含 `comments/mod.rs`，⑩ 余量 72 行）+ ⑦ `+3`（订正原 `+2`） |
+
+- **其余四片（`LUM-1817` / `LUM-1818` / `LUM-2116` / `LUM-2106`）不 bump，判据**：`git diff --name-only cd355186 7c7198ec` = **只有 `docs/37-M3-W3C-PREFLIGHT.md` 一个文件** ⇒ 码树逐字未动 ⇒ §144 的「起手补充」**就是当轮值**（`⑦/⑦b/⑩/⑨` 四组读数逐字相同，已在 §145.2 复采证明）。
+  ⇒ **口径**：§121 的「只读轮要把递补片读数刷新到当轮」成立于 **base 有代码位移**时；base 只差 docs 时刷新 = 无信息量的 rev 噪声。**判据 = `git diff --name-only <上轮 base> <当轮 base>` 是否只有 docs。**
+- 写入纪律（本轮全部遵守）：`update --description-file`（文件在 run workdir 内）→ 写入前重取 `revision`、写入后**回读自己那一段做 diff**；本轮**无并发 cycle**（连续第 23 轮）⇒ 无跨 run 写竞争。
+
+### §145.6 递补链（槽位一空即派）
+
+- **`LUM-2112`（M10-B1，rev 2）本轮起可派**：它与两片在飞（`LUM-2104` 写 `Cargo.lock` / `mc-http/Cargo.toml` / `probes/ready*`；`LUM-1816` 写 `mc-cloud/src/billing.rs` / `routes/cloud/billing*`）以及与 `LUM-2106`（M10-4，写 `config.rs` / `mc-feature-flags/*` / `Cargo.lock`）**文件交集全为 ∅**；硬前置 = M10-0（已落地）⇒ **空位一出现即可派**（唯一前置 = `df` 余量 ≥ 18G：07:30Z 实测全仓可用 **12G**，须等两片在飞释放一份 target）。
+- `LUM-2104`（M10-2）终态 ⇒ 判据链合入（预期 `local 475 → 477`、`implemented 393 → 395`（`392 real + 3 ph`）、`known_gap 63 → 61`、`owners.M10 3 → 1`；`baseline` 不动）⇒ 其后 **`LUM-2106`（M10-4）** —— 必须等 M10-2 终态（同 `Cargo.lock` / manifest 面）。
+- `LUM-1816`（M9-1）终态 ⇒ 判据链合入（预期 `local 483`、`implemented 401`、`known_gap 55`、`owners.M9 33 → 25`）⇒ 其后 M9 stage 2 余片**三片零交集**（`LUM-1817` ∥ `LUM-1818` ∥ `LUM-2116`，均 rev 2 就绪、可直派；⑨ 三片全部**不位移**，见 §145.4）。
+- M10 B 面链：`LUM-2112`（stage 3）⇒ `LUM-2113` / `LUM-2114`（stage 4，`LUM-2113` 硬前置 = B1）⇒ `LUM-2115`（stage 5，`owners.M3+ → 0`）。
+- 两条 INT（`LUM-2111` M10-9 / `LUM-1825` M9-10）**不得同轮刷基线**；普通片一律禁 `--write-baseline`。
+
+### §145.7 lesson
+
+1. 🔴 **第七类预飞的完整形态 = 三步，不是两步**：① 读 anchor 写者表（汇总表 **+** 模块头）；② 读片的**正典**写集（只认「逐字写集」段）；③ **先判「这条接线在不在 anchor 的委托范围里」** —— 范围内 ⇒ 划掉；范围外 ⇒ **授权最小破例 + 逐字登记**。
+   同一个 anchor（M10-0）在 A 面把预声明做尽、在 B 面一条没做，**分界线是它的委托范围**（`docs/64` §4.1 vs §4.2 两张表），不是「忘了」⇒ 检查必须按**范围**分类，否则会把「范围外的必然破例」误判成「漏项」。
+2. **散文 ≠ 正典**（§131 lesson 的第二次实证）：B2/B3/B4 的接线**都写在**「写集审计两类」的散文段里，而**正典「逐字写集」里一条也没有**。⇒ 预飞只认正典；发现不一致时**把正确的搬进正典**（本轮 4 片共补 9 项），而不是在散文里打个勾。
+3. 🔴 **逐步数的错误会互相抵消**：B2 的 ⑦ 写 `+3`（实为 `+2`）、B4 写 `+2`（实为 `+3`）⇒ **合计 494 完全正确**。⇒ **总账/终值对不上不是唯一判据**：逐片预测必须**用自己的权威账（这里是 `upstream-routes.tsv` 的 `M3+` 17 行）重新数**，否则两处错误会长期互相掩护。
+4. **「⑨ 快照写者冲突」可以在 0 成本下证伪**：`report.json` 的 365 条 fixture 每条自带 `outcome` ⇒ 候选片的 fixture 是 `unmounted`（会位移）还是 `unevaluable`/不存在（不位移）**一眼可判**，不必先跑再发现。本轮据此把「stage 3 三片同飞是否撞 `report.json`」从「待裁定」变成「已证不冲突」。
+5. **读数是时间的函数，不是 base 的函数**：base 只差 docs ⇒ 四组读数逐字不变 ⇒ 本轮**故意不 bump** 那四片。判据化：`git diff --name-only <上轮 base> <当轮 base>` 只有 docs ⇒ 不 bump；有代码位移 ⇒ 必须 bump。
