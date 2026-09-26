@@ -14,7 +14,8 @@
 //! `impl` 续段，但住在子模块 `user_face`：它们与传输核心不同 —— 需要按工作区扇出并**排除
 //! daemon 面连接**（策略），而那套过滤依赖本模块私有的 `notify_frame_filtered`。
 //!
-//! 连接与索引的数据结构在 [`crate::connection`]，读写泵与帧分派在 [`crate::pump`]。
+//! 连接与索引的数据结构在 [`crate::connection`]，读写泵与帧分派在 [`crate::pump`]，
+//! **进程级计数器**（`/health/realtime` 的快照源）在 [`metrics`]。
 //!
 //! # 这个 hub 是「尽力而为的唤醒通道」
 //!
@@ -57,8 +58,15 @@ use crate::frames::{self, HeartbeatHandler, RpcHandler};
 use crate::identity::ClientIdentity;
 use crate::pump::{read_pump, write_pump};
 
+use self::metrics::Metrics;
+
 // 用户面通知（工作区扇出 + 排除 daemon 面连接）—— 见模块头与 `user_face.rs` 的模块文档。
 mod user_face;
+
+// 进程级计数器（M10-3）：`/health/realtime` 的快照源。落独立子模块是为了不让本文件
+// 逼近门 ⑩ 的 800 行上限（`docs/64` §6.3）：计数器字段与键名字面量都住在 `metrics.rs`，
+// 本文件只留**自增点**（一行一个 `record_*` 调用）。
+pub mod metrics;
 
 /// 传输层可调参数 —— **默认值全部等于 [`mc_daemon_proto::rpc`] 里的冻结常量**。
 ///
@@ -149,6 +157,8 @@ pub struct Hub {
 
 struct HubInner {
     config: TransportConfig,
+    /// 进程级计数器（生产装配里就是 [`metrics::process`] 那个单例；测试可注入自己的）。
+    metrics: Arc<Metrics>,
     registry: RwLock<Registry>,
     runtime_gone_dedup: Mutex<DedupCache>,
     rpc: RwLock<Option<RpcHandler>>,
@@ -171,10 +181,24 @@ impl Hub {
     /// 用自定义参数建 hub（测试用；线上应走 [`Hub::new`]）。
     #[must_use]
     pub fn with_config(config: TransportConfig) -> Self {
+        Self::build(config, metrics::process().clone())
+    }
+
+    /// 用**注入的**计数器集合建 hub（测试用）——
+    /// 让「跑一条真连接 ⇒ 某个计数器增长」能在**只属于本条用例**的集合上断言，
+    /// 而不去看进程级单例（那里别的用例的连接会互相干扰读数）。
+    #[must_use]
+    pub fn with_metrics(metrics: Arc<Metrics>) -> Self {
+        Self::build(TransportConfig::default(), metrics)
+    }
+
+    /// 唯一的装配点（两个构造函数都走它，免得 `HubInner` 的字面量出现两份）。
+    fn build(config: TransportConfig, metrics: Arc<Metrics>) -> Self {
         Self {
             inner: Arc::new(HubInner {
                 runtime_gone_dedup: Mutex::new(DedupCache::new(config.runtime_gone_dedup_capacity)),
                 config,
+                metrics,
                 registry: RwLock::new(Registry::default()),
                 rpc: RwLock::new(None),
                 heartbeat: RwLock::new(None),
@@ -313,6 +337,8 @@ impl Hub {
             registry.insert(Index::User, &user_id, id);
             registry.clients.len()
         };
+        // 上游 `daemonws/hub.go:867`（realtime 面的同款自增见 `metrics.rs` 模块头）。
+        self.inner.metrics.record_connect();
         info!(
             daemon_id = %conn.identity().daemon_id,
             user_id = %user_id,
@@ -347,6 +373,9 @@ impl Hub {
             registry.remove(Index::User, &user_id, &id);
             registry.clients.len()
         };
+        // 上游 `daemonws/hub.go:921`：只在**真的**移除了一条时计（上面那个 `return`
+        // 就是幂等保护 —— 慢客户端驱逐与读泵收尾会各调一次）。
+        self.inner.metrics.record_disconnect();
         conn.close();
         info!(
             daemon_id = %conn.identity().daemon_id,
@@ -369,7 +398,11 @@ impl Hub {
         let Some(text) = frames::encode_text(&frame) else {
             return DeliveryOutcome::miss();
         };
-        self.notify_frame(Index::Runtime, runtime_id, &text, "")
+        let outcome = self.notify_frame(Index::Runtime, runtime_id, &text, "");
+        self.inner
+            .metrics
+            .record_wakeup_delivered(outcome.delivered, outcome.deduped);
+        outcome
     }
 
     /// 上游 `service/task.go:7076` `notifyTasksFinished`：批量终态之后的**合并唤醒**。
@@ -438,7 +471,11 @@ impl Hub {
         let Some(text) = frames::encode_text(&frame) else {
             return DeliveryOutcome::miss();
         };
-        self.notify_frame(Index::Runtime, runtime_id, &text, "")
+        let outcome = self.notify_frame(Index::Runtime, runtime_id, &text, "");
+        self.inner
+            .metrics
+            .record_wakeup_delivered(outcome.delivered, outcome.deduped);
+        outcome
     }
 
     /// 上游 `Hub.NotifyRuntimeGone`（`hub.go:474`）：runtime 行已删除，把它从每条连接的
@@ -451,7 +488,11 @@ impl Hub {
         let Some(text) = frames::encode_text(&frame) else {
             return DeliveryOutcome::miss();
         };
-        self.invalidate_runtime(runtime_id, &text, "")
+        let outcome = self.invalidate_runtime(runtime_id, &text, "");
+        self.inner
+            .metrics
+            .record_runtime_gone_delivered(outcome.delivered, outcome.deduped);
+        outcome
     }
 
     /// 上游 `hub.go:577` `DeliverDaemonRuntime`：处理从 relay（Redis 回环）回来的帧。
@@ -461,6 +502,36 @@ impl Hub {
     /// 帧是**原样转发**的（上游把 `[]byte` 直接投递），所以这里也把 `frame` 原文再送一次，
     /// 不做重编码。
     pub fn deliver_daemon_runtime(
+        &self,
+        scope_id: &str,
+        frame: &str,
+        event_id: &str,
+    ) -> DeliveryOutcome {
+        // 帧面自增集中在这里（**含**解不出的帧与四个 `miss` 早退）：上游 `DeliverDaemonRuntime`
+        // 在每条出口上都记一次，包一层就不必改下面 `switch` 里那 5 个分支。
+        // `runtime_gone` 判定要多解一次码（下面 `deliver_daemon_runtime_relayed` 还会解）——
+        // 只发生在 relay 回环这条离线路径上，本地无 Redis ⇒ 平时不走。
+        let runtime_gone =
+            frames::decode(frame).is_ok_and(|msg| msg.kind == events::DAEMON_HEARTBEAT_ACK);
+        let outcome = self.deliver_daemon_runtime_relayed(scope_id, frame, event_id);
+        self.inner.metrics.record_wakeup_received(runtime_gone);
+        if runtime_gone {
+            self.inner
+                .metrics
+                .record_runtime_gone_delivered(outcome.delivered, outcome.deduped);
+        } else {
+            self.inner
+                .metrics
+                .record_wakeup_delivered(outcome.delivered, outcome.deduped);
+        }
+        outcome
+    }
+
+    /// [`Hub::deliver_daemon_runtime`] 的分派体（上游 `DeliverDaemonRuntime` 的 `switch`）。
+    ///
+    /// 拆出来的原因：计数器要在**每一条**出口（含四个 `miss` 早退）上都记一次，而自增只需要
+    /// 在**一个**地方写 —— 包一层就不必改 `switch` 里那 5 个分支。
+    fn deliver_daemon_runtime_relayed(
         &self,
         scope_id: &str,
         frame: &str,
@@ -546,6 +617,7 @@ impl Hub {
             return DeliveryOutcome::miss();
         }
         let mut outcome = DeliveryOutcome::default();
+        let mut sent = 0_usize;
         let mut slow: Vec<ConnectionRef> = Vec::new();
         {
             let registry = lock_read(&self.inner.registry);
@@ -563,11 +635,20 @@ impl Hub {
                     }
                     if conn.try_send(data) {
                         outcome.delivered = true;
+                        sent += 1;
                     } else {
                         slow.push(conn.clone());
                     }
                 }
             }
+        }
+        if sent > 0 {
+            self.inner
+                .metrics
+                .record_sent(metrics::event_kind(data).as_deref(), sent);
+        }
+        if !slow.is_empty() {
+            self.inner.metrics.record_evictions(slow.len());
         }
         for conn in &slow {
             warn!(
@@ -613,6 +694,7 @@ impl Hub {
         lock_mutex(&self.inner.runtime_gone_dedup).mark_seen(event_id);
 
         let mut outcome = DeliveryOutcome::default();
+        let mut sent = 0_usize;
         let mut slow: Vec<ConnectionRef> = Vec::new();
         for conn in connections {
             if !conn.mark_seen(event_id) {
@@ -621,9 +703,18 @@ impl Hub {
             }
             if conn.try_send(data) {
                 outcome.delivered = true;
+                sent += 1;
             } else {
                 slow.push(conn);
             }
+        }
+        if sent > 0 {
+            self.inner
+                .metrics
+                .record_sent(metrics::event_kind(data).as_deref(), sent);
+        }
+        if !slow.is_empty() {
+            self.inner.metrics.record_evictions(slow.len());
         }
         for conn in &slow {
             warn!(
