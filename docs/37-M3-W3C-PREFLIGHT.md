@@ -11612,3 +11612,76 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - ⇒ 下一轮（或 `LUM-2092` 收尾后）**第一顺位 = `LUM-1785`**（M7-20），其 rev 7 描述里的「硬前置六条 MISSING」**已作废**，起手那刻会读到 present。
 - **回收 = 0**：`LUM-1784` 的 **18G** `target/` 是**活物**（它的 run 仍在跑 clippy）⇒ 四判据的第一条（run 终态）不成立，**一字节不动**；`LUM-2092` 刚起手。⇒ 本轮回收仍只有 §130.5 的 +40 MB。
 - ⚠️ **并发 cycle 的避让（沿用 §128 的结论）**：本轮**已经**做完了不可重复的动作（合并 `#113`）；剩下的 docs 直推是本 run **唯一还剩的写动作**，故**立刻推**（避免两个 cycle 同时 append `docs/37` 造成非快进）。
+
+### §131 08:00 cycle（`LUM-2092`，00:00Z）：并发 cycle 交付后接手 —— 独立复采全部读数 + 派 `LUM-1785`（M7-20）+ 回收 19.3 GB
+
+**起手三连（逐条实测，00:00:32Z）**：`df --output=avail -m /` = **19152 MB**（19G / 60% used）｜`git rev-parse origin/feat/multica-rs-initial` = **`8c254fa6`**｜认证 GH `pulls?state=open` = **0**｜daemon `running_task_count = 2`。
+
+**base `8c254fa6` 的来路（三段，逐条可追）**：`db5713cf`（= `PUT /pulls/113/merge`，23:59:38Z，树 `6f1c2e45…`）→ `b1531118`（§130.13–§130.15）→ `8c254fa6`（§130.13 去重）。⇒ 本轮起手时 **`LUM-1784`（M7-19）已在 base 里**、`docs/32` 末号已是 `## 37.`。
+
+### §131.1 这是「并发 cycle」的第 2 次相遇：本轮是**让位者**，接手的是**可重复动作 + 空位派发**
+
+| 时刻（Z） | `LUM-2087`（07:30 cycle，pid 6755） | 本 run（`LUM-2092`，pid 45648） |
+| --- | --- | --- |
+| 23:59:38 | **判据链合并 PR #113**（不可重复动作） | —— |
+| 23:59–00:01 | 写 §130.13–§130.15 + 去重 + 把 `LUM-1785` bump 到 **rev 8** | 起手三连 + 逐 PID 扫 `/proc` |
+| 00:03:08 | —— | **派 `LUM-1785`**（run `01a0db05-d786`，workdir `lum-1785-b224e1bb1b2b`） |
+| ≈00:05 | **进程消失**（`/proc/6755` 不再存在） | 回收 19.3 GB + 本 §131 |
+
+- ⇒ **让位定式（§128）本轮执行结果**：先到者拿了「合并 + 写本窗口 §130」，后到者拿「**空位派发 + 独立复采 + 回收 + 自己的 §131**」。两者**零写冲突**（两个 cycle 各写自己连续的一段，且 §130 已推完才轮到 §131）。
+- 🔴 **空位的读数时效以秒计（新 finding，第 2 次现场）**：`LUM-2087` 在 §130.15 记的是「00:00:0xZ ⇒ daemon **3/3**、空位 0」（它把 `LUM-1784` 的**未终态 run** 也算了一格），本 run 在 **00:00:32Z** 实测 `running_task_count = 2` ⇒ **1 个切片位**。两次读数**都对**，差的就是 `LUM-1784` 的 run 在中间那 20 秒内终态。
+  ⇒ **纪律**：`空位 = 3 − (在飞 cycle 数) − (在飞切片数)`，三个数**必须当轮当场读**（`daemon status` + `/proc/*/cwd` 逐 PID），**禁抄上一轮 next-cycle 行**，**禁把「同轮刚合并、但 run 未终态」的片算成永久占位**。
+
+### §131.2 独立复采（本轮的「可重复动作」）：⑦/⑦b/⑩/⑨ 与硬前置六条 —— 与 rev 8 **逐字相同**
+
+| 项 | 本轮实测（base `8c254fa6`） | 与 rev 8 / §130.13 对比 |
+| --- | --- | --- |
+| ⑦ `route_parity --quiet` | `upstream 456 \| local 474 registered \| baseline 458` / `implemented 388 real + 3 ph = 391 / 456` / `known_gap 65` / `unclaimed 0` / `regression 0` / `local_only 9` | **逐字相同** ✓ |
+| ⑦ `gaps by owner` | `M9=33 M3+=16 M3=11 M10=5`（和 = 65 ✓，**无 `M7` 键**） | **逐字相同** ✓ |
+| ⑦b `slash_alias_audit --quiet` | exit 0 | ✓ |
+| ⑩ `file_size_check` | `scanned 1147 / baseline 10 / violations 0` | **逐字相同**（1130 是 #112 前的过期值）✓ |
+| ⑨ 三输入 | `report.json` blob `3eb0430a39c8…`／`docs/fixtures` tree `5e44cecd…`／`crates/mc-conformance` tree `f696e5cc…` | **SAME** ⇒ totals `365 / 14 / 23 / 22 / 0 / 306` 继承，**不冷编** ✓ |
+| 硬前置六条 | `git cat-file -e HEAD:crates/mc-channel/src/wecom/{wecom_channel,resolvers,inbox_message,markdown,seal,stream_store}.rs` | **六条全 PRESENT** ✓ |
+| 号段 | `docs/32` 末号 = **`## 37.`** | ⇒ `LUM-1785` 取 **`## 38.`** ✓ |
+
+⇒ 本轮**不刷任何快照、不跑任何构建门**（0 路由片前基线，⑨ 三输入恒等）；**禁跑 `--write-baseline`** 仍归 `LUM-1786`（M7-21 INT）。
+
+### §131.3 `LUM-1785` 派发（rev 8 → **rev 9**）：正典写集修正 = 「同一类第 16 次」
+
+- 🔴 **修正内容**：正文「## 写集」原本只有 5 个新文件；`crates/mc-channel/src/wecom/mod.rs` 只存在于 rev 2 的**散文补充**里 ⇒ 本轮把它**正式加进正典写集**（**仅追加** `pub mod typing;` / `rate_limit;` / `senders;` / `dedupe;` / `trace;` 五行，**不得重排他人刚加的行**）。
+- **依据（当轮实测）**：base 的 `crates/mc-channel/src/wecom/mod.rs` = **106 行 / 26 个 `pub mod`**；写集里那 5 个文件 `git ls-tree` **全 MISSING** ⇒ 不声明就**不进编译单元**（连 `dead_code` 都不报，整片等于没写）。这与 `docs/32` 的 D1（M7-18）/ D12（M7-17）/ §37（M7-19）**同款**。
+- **派发两步（逐字）**：`multica issue update LUM-1785 --description-file …`（rev 9，15854 字符）→ `assign --to-id 3c6087f9-f768-45a0-9b07-979f7d4fabf5 --no-start` → `status todo` ⇒ run **`01a0db05-d786`** 于 **00:03:08Z** 起手（`issue runs` 实测 `running`，daemon 由 2 → 3 后回落 2）。
+- **同轮第二槽刻意留空**：可派面只剩 `LUM-1786`（M7-21 INT，**须 `LUM-1785` 合入**）与 M9 波（`LUM-1815` M9-0，须 **M7 全合 + M8 全合**）⇒ **无可派片**，不派。
+
+### §131.4 回收 **19.3 GB**：`LUM-1784` 的 `target/` 按四判据整删（本轮最大单块）
+
+| 判据 | 实测 |
+| --- | --- |
+| ① run 终态 | PR #113 已合 23:59:38Z，issue 已 `in_review`，`/proc` 无其 pi 进程 |
+| ② 交付已在 base | `git merge-base --is-ancestor db5713cf HEAD` = **真** ✓ |
+| ③ `/proc/*/cwd` 逐 PID 零命中 | 从 `/` 起手扫（`lum-1784-80429b9e50ef` 零命中）✓ |
+| ④ `git status --porcelain` 为空 | **0 行** ✓ |
+
+- **量**（只认 `df` 前后差）：`19152 MB → 38448 MB` ⇒ **+19296 MB**（`du -sm target` = 19264 MB，两者差 32 MB —— 与 §130.5「量只认 `df` 差」口径一致）⇒ 磁盘 **38G / 20%**。
+- ⏱ **时点**：本轮起手 3 分钟就满足四判据 ⇒ **立刻回收**，正好赶在 `LUM-1785` 冷建之前（否则 19G 活物 + 新片冷建 = 必撞 ENOSPC）。
+
+### §131.5 M8 侧收口确认（给 M9-0 的第二个硬前置）
+
+- **M8-7 INT（`LUM-1804`）的 PR #100 于 2026-09-25T13:41:18Z 合并**（`merged: true`，3 文件）⇒ **`owners.M8 = 0` 早已成立**，且 ⑦ 的 `gaps by owner` 里已无 `M8` 键。
+- ⇒ `LUM-1815`（M9-0 anchor）的两个硬前置里 **M8 那一条成立**，**只差 M7 全合**（`LUM-1785` → `LUM-1786`）。
+
+### §131.6 槽位链与 next cycle 起点（08:30 / 00:30Z）
+
+- **base**（本轮收尾）= `8c254fa6` + 本 §131 docs-only 直推（起手一律 `git rev-parse` 实测）；GH **0 open PR**；daemon = 本 cycle ∥ `LUM-1785`（`lum-1785-b224e1bb1b2b`，00:03:08Z 起）⇒ **1 个切片位**。
+- **起手第一动作**：① `df -h /` **连采两次**（本轮收尾 38G；新片冷建 ≈1.2G/min）② `git rev-parse HEAD` **对** `git ls-remote origin feat/multica-rs-initial` ③ 认证 GH `pulls?state=open` ④ 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）⑤ 逐片「run 终态 ∧ 形态判定」，**终态才进判据链**。
+- **判据链铁律（沿用 §129.8 / §130.11）**：① 预检 `merge-base..head` numstat == PR API 逐字 ② 形态两半（`merge-base == base` ∧ 尾提交 docs-only）⇒ 否则真合 + 在片自己的热 target 上重跑 `--with-db` 10/10 ③ 三/四读数（`merge-tree --write-tree` == rehearsal `write-tree` == `refs/pull/N/merge^{tree}` == 落地 `^{tree}`）④ 证据两条路任一（head CI 3/3 绿 **或** 合并树同树 `--with-db` 10/10）⑤ API 钉 40 位 sha + `merge_method=merge` ⑥ 落地树逐字 + `git diff` 空。
+- **预置预测（供判据链直接引用，勿当结论）**：`LUM-1785` 是 **0 路由**片 ⇒ 合入后 ⑦ 九个数**应逐字不变**（`local 474 / implemented 391 / known_gap 65 / owners 无 M7`），但 **`wecom/mod.rs` 会变长**（本片再追加 5 行 + 注释）⇒ **⑩ `scanned 1147` 不变、行数下限变**。它**不刷** ⑨（wecom fixture = 0，阴性控制组）。
+- **槽位链（勿抄旧行）**：`LUM-1785` 终 ⇒ 判据链合入 ⇒ 空位 ⇒ **`LUM-1786`**（M7-21 INT，`owners.M7 = 0` 已成立，**唯一一次 `--write-baseline`**，预测 `baseline 458 → ≈474`；**与 M9-INT `LUM-1825` 不得同轮刷基线**）⇒ 之后 **`LUM-1815`**（M9-0 anchor）。`LUM-1786` 的正文读数**已过期 4 轮**（仍写 `344→430`）⇒ **派前必须补「起手补充」**。
+- **回收预告**：`LUM-1785` 的 `target/` 是本轮之后的下一块死物（一合 + run 终态 + `/proc` 零命中 + porcelain 空 ⇒ 整删）。
+
+### §131.7 lesson
+
+1. 🔴 **空位读数以秒计**（§131.1）：同一分钟内「3/3 无空位」与「2/2 有空位」可以**都成立** ⇒ 空位**只认当轮当场读数**；「同轮刚合并但 run 未终态」的片会让**前一个 cycle 判成满位**、**后一个 cycle 判成有空位** —— 两者不矛盾，是时间差。
+2. 🔴 **并发 cycle 的正确分工 = 先到者做不可重复动作，后到者做可重复动作 + 空位派发**（§131.1 实测成立）：两个 cycle 都**各自写自己连续的一段**，且**先到者推完再推**（本轮 `LUM-2087` 23:59–00:01 推完 §130，本 run 才 append §131）⇒ 零写冲突、零非快进。
+3. **写集漏项的本质是「正典写集」与「散文补充」不一致**（§131.3，第 16 次）：散文中写了「补进你的写集」**不等于**正典写集里有 ⇒ cycle 的预飞应当**以正典写集为唯一判据**，不一致即**修描述**（而不是指望片去读散文）。
+4. **回收排在「新片冷建」之前**（§131.4）：本轮起手 3 分钟就满足四判据 ⇒ 立刻放掉 19.3 GB；否则 19G 活物遗留 + 新片冷建必撞 ENOSPC（本仓已 4 次把 ENOSPC 伪装成门红，见 §129.6 / §130.9）。
