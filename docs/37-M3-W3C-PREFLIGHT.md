@@ -12115,3 +12115,83 @@ M7-21 的 DoD 逐字要求「`--write-baseline` 的**片前值** = 当轮 `basel
 ### §136.8 门 ⑥ 的新基线（承 §130.6，本轮复核后仍成立）
 
 `LUM-1980` 的 8 条测试侧修复随 **PR #112** 落地（`b248e02b`）；**`#373`（含修复的第一棵树）逐用例转绿** ⇒ 门 ⑥ 的判据基线**自 `#373` 起算**。⇒ 后续轮次若 ⑥ 红：先判「红点是否在**修复前**的旧名录里」∧「与本片写集是否零交集」—— 两条都真才可按"已知"登记（并换**当轮新建库**单跑 `--only db`、逐字登记用例名 + 行号 + 交集 ∅）；**不在名录里 ⇒ 按本片回归处理**。⚠️ 旧名录**不再**是"红了也正常"的理由。
+## §137 11:00 cycle（`LUM-2134`，03:00Z 触发）：判据链合并 **PR #117（M7-21 INT）** ⇒ **`owners.M7 = 0`**；派 **M10-1**；立项 **M7-FU** 接线片；回收 **13.8 GiB**；🔴 新 finding：在飞片的「跨 run 硬编码路径轮询」自锁 38 分钟
+
+### §137.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` 连采两次：**19.6 GiB / 58%**（健康带内，未回收）；base（`git rev-parse`）= **`cbdf9cf9`**（对上 `ls-remote origin feat/multica-rs-initial`）；GH **1 open PR = #117**；daemon **2/3** = cycle ∥ `LUM-2108`（M10-6 bench）⇒ **1 个切片位**；**无并发 cycle**。
+- 🔴 `multica repo checkout` 落 **`main` 线第 5 次**（`4fc96f30`，与 `feat/multica-rs-initial` 无共同祖先）⇒ `git checkout -B agent/devbox5/9f402f0984f0 origin/feat/multica-rs-initial`。**它一次都不报错，只是让整轮读数对着错误的树。**
+- 终态判定第 0 步 = `multica issue runs <issue-id>`（含**每一片**）：`LUM-1786` 的 rerun `01a0db91-688e-…bb256dfecac8` = **`completed`**（02:35:35 → **02:57:37**，`error=null`）；`LUM-2108` 的 rerun `01a0db91-68f3-…27863331c524` = **`running`**。
+
+### §137.2 判据链合并 PR #117（M7-21 INT，0 代码 / 0 路由）
+
+| 步 | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API files **逐字** | 4 文件 `+436/−3` **逐项相等**（按 filename 排） |
+| ② | 形态 | `merge-base == base == cbdf9cf9` ⇒ **形态②**（base 是 head 祖先；head 自己带了 merge 提交 `d0b626a2`） |
+| ③ | **四读数** | `head^{tree}` = `merge-tree --write-tree` = `refs/pull/117/merge^{tree}` = **`38b1ac8e2610ec883a7b16f39a8efcda2dfab86c`**；且 `refs/pull/117/merge^1` = 当前 base |
+| ④ | 证据 | head **CI 3/3 全绿**（`contract` / `fast` / `db`，02:56:10–17Z 起跑）⇒ 与②合并 ⇒ **零门禁重跑** |
+| ⑤ | API 钉 sha | `d0b626a219e858706ed81fbbc69376856e0fa2ed` + `merge_method=merge` ⇒ 落地 **`3d446c568dab028fbfb696f9a2b08f5d3a35be34`** |
+| ⑥ | 落地树 | `^{tree}` = **`38b1ac8e…`** 逐字命中预测，`git diff <landed> <head>` **0 行** |
+
+**⑦ 基线写者复核（本片是唯一一次 `--write-baseline` 的片 ⇒ 合并后当场重跑）**：`python3 scripts/route_parity.py` ⇒ **`local 473 / baseline 473`**（`473 → 473`，片前值即 `--write-baseline` 的产物）⇒ **`baseline == 片后 local` 成立**，`gaps by owner` 里**已无 `M7` 键** ⇒ **`owners.M7 = 0`**（M7 波代码面全收口）。
+
+### §137.3 零构建复采（base `3d446c56`）
+
+- **⑦** = `local 473 / baseline 473 / implemented 391 = 388 real + 3 placeholder / known_gap 65 / unclaimed 0 / regression 0 / local_only 8`；`owners = {M9 33, M3+ 16, M3 11, M10 5}`（和 = 65 ✓，无 M7）。
+- **⑦b** = `registered upstream-key literals 470`、`0 defect / 0 warning`（exit 0）。
+- **⑩** = `scanned 1170 / baseline 10 / violations 0`。
+- **⑨（不冷编）**：三输入 = `report.json` blob `3eb0430a39c8`（与 §134/§135 恒等）+ `docs/fixtures` tree `573ad03b6e1e`（**变了**，因 `route-parity-baseline.json` 被 M7-21 刷新）+ `crates/mc-conformance` tree `f696e5ccd520`（恒等）⇒ `mc-conformance` 对 `docs/fixtures/**` **零读**（§133 已 `grep` 取证）⇒ **读数继承** totals `365 / 14 / 23 / 22 / 0 / 306`。
+- 号段（起手实测）：`docs/32` 末号 **`## 40.`**（M7-21）、`§9.x` 末号 `9.11`；`docs/37` 末号 `§136` ⇒ 本 **§137**。
+
+### §137.4 派发：**M10-1（`LUM-2103`）**（rev 1 → 2，含「起手补充」）
+
+- 空位 = 3 − 1(cycle) − 1(`LUM-2108`) = **1**。候选判定（当轮实测）：`M10-0`（anchor）**已合入** ⇒ **`M10-1 ∥ M10-2 ∥ M10-3` 的硬前置成立**（`docs/64` §7.1 第 2 条）；三片写集 = `probes/{live,ready,realtime}.rs` + `mc-ws`，**与在飞 `M10-6`（`crates/mc-bench/**` + `Cargo.toml`/`Cargo.lock`）逐字零交集** ⇒ 可同飞；**`M9-0`（`LUM-1815`）不可派** —— `docs/64` §7.2 的唯一硬规则「`M10-0` / `M9-0` / `M10-6` 三者两两不得同轮」：`M10-6` 正在飞、`M9-0` 争 `Cargo.lock` ⇒ **必须等它终态**。
+- 派 `LUM-2103`（stage 2 第一片）⇒ `update --description-file` → `assign --to-id … --no-start` → `status todo` ⇒ run 起手，workdir **`lum-2103-7f117acf4c53`**、pid 9518，daemon **3/3**。
+- **描述追加的「起手补充」**（rev 2，覆盖正文里**全部过期绝对读数**）：base `3d446c56`；⑦ 当轮九个数；片后预测（`local 474 / implemented 392 = 389 real + 3 ph / known_gap 64 / owners.M10 5 → 4`、**不得刷基线**）；⑨ 目标 fixture `contracts/golden/health/001-TestHealth-L212.json` ⇒ `pass 14 → 15 / unmounted 22 → 21`；⑩ `1170/10/0`；**第二类漏项 = 0**（`probes/mod.rs` 已有 `pub mod live;`，anchor 冻结、本片不得改）；在飞片与禁改清单；号段 `## 41.` / `9.12`。
+
+### §137.5 立项 `LUM-2136`（**M7-FU 接线片**，`backlog`、stage 10、parent `LUM-1764`）
+
+M7-21 INT 登记的**两项掉棒**（`docs/60` §11.8，同族 = 「接线点落在已冻结的写集里」）在本轮落成一张 issue，**只建不晋级**：
+
+- **D-1 五渠道生产装配**（`register_with` × 5 + `Supervisor::spawn` 各 **0 个生产调用点**、`main.rs:184` 硬编码 `None`、`channels.rs` 自 `ab998afe` 未被碰过）；
+- **D-2 wecom BYO 凭据探针**（`routes/channels/wecom.rs:158` 仍 `PendingWsTransport` ⇒ 恒 503；`tests/db.rs:293` 的 `#[ignore]` 用例把「未接线」钉成期望）。
+- 写集 = `apps/mc-server/src/{main.rs,channels.rs}` + `crates/mc-http/src/routes/channels/wecom.rs`；可见判据 ⓐ「配了密钥 ⇒ `has_connections() == true`」ⓑ 那条用例从「期望 503」改成「期望 201 + 落行」。**`M7` 的缺口账已在 ⑦ 归 0，这两项不产生新缺口键**（是本波自身的接线欠账）。
+
+### §137.6 回收 **13.8 GiB**
+
+`lum-1786-c95b99fea078/workdir/paperclip-rs/target`（**14181 MB**）四判据**逐条实测**齐：① PR 已合（head `d0b626a2` **是** base 的祖先，`merge-base --is-ancestor` = 真）；② run **终态**（`completed` 02:57:37）；③ `/proc/*/cwd` **逐 PID 零命中**；④ `git status --porcelain` **空**。⇒ 整删，`df` **20593616 → 35114820 KB**（**+13.8 GiB**，收尾 **34 GiB / 28%**）。时点 = 新片 `M10-1` 冷建**之前**。
+
+### §137.7 🔴 新 finding：在飞片的「跨 run 硬编码路径轮询」自锁 38 分钟
+
+`LUM-2108`（M10-6）的 rerun 本轮**看起来在跑、实际上空转**：其 session jsonl **自 02:44 起零写入**（21 分钟），唯一活跃子进程（pid 33355，ppid = 该 run 的 pi）是一条**前台** bash 轮询循环：
+
+```
+cd <旧失败 run 的 workdir>/paperclip-rs && LOG=$(ls -t <同一旧路径>/.pi/tasks/*/b817619b2.output | head -1)
+for i in $(seq 1 460); do grep -qE "BUILD_OK|…" "$LOG" && break; sleep 5; done
+```
+
+而它的 `bg_run` 产物**实际在**发起 run 自己的 workdir：`lum-2108-27863331c524/workdir/.pi/tasks/01a0db91-73e5-…/b817619b2.output` —— **那份日志早已 `BUILD_OK 02:45:50`**。⇒ `grep` 恒失败 ⇒ 循环跑满 `460 × 5s ≈ 38 min`（至 ≈03:22 自解），期间**零产出**。
+
+**判据化动作（三条）**：
+
+1. **轮询路径必须当轮现场求值并 echo 出来** —— 若 `echo "LOG=$LOG"` 打出空串，那条循环就是**必然空转**；`ls -t`/`find` 的路径里**不得**出现另一个 run 的 workdir（本轮那条是从**失败 run 的 workdir** 复制来的）。
+2. **别把轮询循环放在前台**：`bg_run` 的完成通知本来就会唤醒（`notifyOnCompletion` 默认开），前台 `sleep` 循环把整轮 turn 钉死。
+3. `bg_wait` **看不见** `bg_run`（该片实测回 "No active async runs or registered provider work"）⇒ `bg_run` 的等待路径只有**完成通知**或 `bg_status`/`bg_logs` 的**点查**。
+
+**处置口径**：本 cycle **不介入**（那是另一个 run 的进程，且它 03:22 自解）—— 只登记。**该片的工作面并未丢失**：`crates/mc-bench` 的 3 个 bench + `src/{config,conn,dataset}.rs` 已在工作树里（release 构建 `BUILD_OK`）。
+
+### §137.8 下一轮起点与槽位链
+
+- 收尾 base = 本节的提交（cycle 的 docs-only 直推）；GH **0 open PR**（#117 已合）；daemon **3/3** = cycle ∥ `LUM-2108`（M10-6）∥ `LUM-2103`（M10-1）。
+- **`LUM-2108` 终** ⇒ 判据链合入 ⇒ 递补 **`M10-4`（`LUM-2106`）/ `M10-B1`（`LUM-2112`）/ `M10-1/2/3` 的余片**（stage 3 与 stage 2 同为「零交集」面；`M10-2`（`LUM-2104`）、`M10-3`（`LUM-2105`）**rev 仍 1、绝对读数过期 ⇒ 派前必须补「起手补充」**）。同时 **`M9-0`（`LUM-1815`）的两硬前置（M7 全合 + M8 全合）本轮已全部成立** ⇒ **`M10-6` 一终态即可单独派它**（anchor 不并行；它争 `Cargo.lock`）。
+- **`LUM-2103` 终** ⇒ 递补 `M10-2` / `M10-3`（同 stage、零交集）。
+- **禁同轮**：三个基线写者（`LUM-2111` M10-9 INT / `LUM-2136` 无 / M9-INT `LUM-1825`）—— 现只剩 `LUM-2111` 与 `LUM-1825` 两个在计划中，**不得同轮**；普通片一律禁跑 `--write-baseline`。
+- **回收最高优先级** = `M10-6` 的 `lum-2108-3a8eabef12b3`（3177 MB）+ 其新 workdir 的 target（终态后按四判据整删）。
+
+### §137.9 lesson（四条）
+
+1. 🔴 **「跨 run 硬编码路径」是新的自锁族**（§137.7）：`bg_run` 产物落在**发起 run 自己**的 `.pi/tasks/<task-id>/` 下，任何写死另一个 workdir 的轮询都是**必然空转**；而它**不报错**，只是把一片的整轮 turn 钉死几分钟到几十分钟。**判据 = 那条 `echo "LOG=$LOG"` 打出空串。**
+2. **`delivered_comment_ids=[]` 不等于「没交付」**：`LUM-1786` 的 rerun 终态记录里 `delivered_comment_ids` 是空的，而**评论其实已发出**（`01a0dba4`，02:56:57）、PR **已开**（#117）。终态判定要**三件一起看**：`status` / 工作树（`porcelain` + 提交 + 分支是否已推）/ issue 上的 `type: comment` 与 `type: system` 评论。
+3. **`--write-baseline` 片合并后必须当场重跑 ⑦**（0 构建、<1s）复核 `baseline == 片后 local` —— 本轮 `473 == 473`，这是**基线写入**这一步唯一的独立证据；顺带把 `owners` 无 `M7` 键也一并钉住。
+4. **回收四判据的第 ①/② 条要升级成「**合并后**的形式」**：本轮 ④② 用的是 `merge-base --is-ancestor <head> <landed base>`（比「分支已推」「PR 已开」更强 —— 它同时证明**内容已进 base**）；顺序仍是「**先回收再派新片**」（本轮把 13.8 GiB 在 `M10-1` 冷建之前放掉）。
