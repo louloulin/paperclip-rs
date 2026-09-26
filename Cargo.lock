@@ -2810,6 +2810,7 @@ dependencies = [
  "mc-errors",
  "mc-feature-flags",
  "mc-mcp",
+ "mc-migrate",
  "mc-openapi",
  "mc-plugin-host",
  "mc-realtime",
