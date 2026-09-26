@@ -12511,3 +12511,11 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 1. `df -h /` **连采两次**（两条在飞片仍在吃盘；`--with-db` 全量需 ≈18G 余量）→ 2. `git rev-parse` 对 `git ls-remote origin feat/multica-rs-initial` → 3. 认证 GH `pulls?state=open` → 4. **从 `/` 起手**逐 PID `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）→ 5. `multica issue runs` 逐片 `status`/`error`（**PR 开出 ≠ run 终态**）→ 6. 形态判定（**merge-base..head**，不是 base..head）。
 - 递补链：`M10-3` 终 ⇒ 判据链（预期 ⑦ `local 474→475 / implemented 392→393（390 real + 3 ph）/ known_gap 64→63 / owners.M10 4→3`、baseline 不动、⑨ 逐字不变）；`M9-0` 终 ⇒ 判据链（0 路由 ⇒ ⑦ 逐字不变；**M9 波开闸** ⇒ stage 2 `LUM-1816/1817/1818/2116`）；**两片都终态**才是 `M10-2`（`LUM-2104`，rev 5）的起手窗口，其后 `M10-4`（`LUM-2106`，rev 3）。
 - 回收第一优先级：`M10-3` 终态后的 `target/`（近 8.2G）；`M9-0` 的 13.7G 次之 —— 两者都要**先取证再回收**（四判据：PR 已合 ∧ run 终态 ∧ `/proc` 逐 PID 零命中 ∧ `porcelain` 空）。
+
+### §142.6b 止血**第二轮**（同轮实测补记）：302M 触底后回升，两条门禁**都活着**进了测例段
+
+- 第一次止血（§142.6，`3.0G → 9.9G`）后 4 分钟又降到 **301M（100%）** —— 两条门禁同时把 `mc-http`/`mc-server`/全部测试 target 重编一遍，**流失率 ≈1.5G/min 与在建目标的体量无关，只与「几条全量门禁同时在跑」有关**。
+- 第二轮同样只切停用单元：**22 个 / 1476 MB** ⇒ `301M → 1.7G`；两轮合计 **≈8.9G**。复核 `/proc/*/fd` 后**活跃单元一律跳过**（第一轮跳了 `mc_http-2t926uqahske8`/`mc_http-0lyt5yo66e5ki`，第二轮它们已编译完、其单元被第二轮收走）。
+- **`deps/` 是本轮唯一不可动的大块**：`M10-3` 17.2G（`deps` 16.9G）、`M9-0` 16.9G（`deps` 同量级）——「每个 stem 只留最新」的老口径（`§123`）与 `§141` 的禁令冲突时**以禁令为准**：在**正在跑门禁**的片上删 `deps` 里的哈希产物会打掉同一次构建里已解析的输出路径 ⇒ 变成真红，比 ENOSPC 更糟。
+- 全盘结构（实测，作下一轮的量纲参考）：`multica_workspaces 37.4G`（其中两个在飞 workdir **34.3G**）+ `/usr 1.0G` + `.cargo 1.7G`（共享 registry，**不可动**）+ `.cache/ms-playwright 658M`（**非 run 自有，本轮未动**）+ 其余 <300M。⇒ **49G 的盘装不下两条并发全量门禁的 peak**（单片 peak 记录 27.9G）；`incremental` 是**唯一**可反复外科回收的面。
+- 结果：两条门禁**全程无中断**（PID `345`/`64797` 一直 `Sl`，05:42 各自日志仍在增长、已进测例段），两片 ⑥ 段未出现 `os error 28` / `no space left on device`。**下一轮若见到门 ⑥/⑧/⑨ 的 `exit 101` 或「`migrate=0,e2e=101`」形态，先 `grep -c 'no space left'` 排 ENOSPC**（本仓第 5 次口径，`docs/37` §131.4）。
