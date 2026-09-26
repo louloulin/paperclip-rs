@@ -12519,3 +12519,55 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 - **`deps/` 是本轮唯一不可动的大块**：`M10-3` 17.2G（`deps` 16.9G）、`M9-0` 16.9G（`deps` 同量级）——「每个 stem 只留最新」的老口径（`§123`）与 `§141` 的禁令冲突时**以禁令为准**：在**正在跑门禁**的片上删 `deps` 里的哈希产物会打掉同一次构建里已解析的输出路径 ⇒ 变成真红，比 ENOSPC 更糟。
 - 全盘结构（实测，作下一轮的量纲参考）：`multica_workspaces 37.4G`（其中两个在飞 workdir **34.3G**）+ `/usr 1.0G` + `.cargo 1.7G`（共享 registry，**不可动**）+ `.cache/ms-playwright 658M`（**非 run 自有，本轮未动**）+ 其余 <300M。⇒ **49G 的盘装不下两条并发全量门禁的 peak**（单片 peak 记录 27.9G）；`incremental` 是**唯一**可反复外科回收的面。
 - 结果：两条门禁**全程无中断**（PID `345`/`64797` 一直 `Sl`，05:42 各自日志仍在增长、已进测例段），两片 ⑥ 段未出现 `os error 28` / `no space left on device`。**下一轮若见到门 ⑥/⑧/⑨ 的 `exit 101` 或「`migrate=0,e2e=101`」形态，先 `grep -c 'no space left'` 排 ENOSPC**（本仓第 5 次口径，`docs/37` §131.4）。
+
+## §143 06:00Z cycle（`LUM-2159`，06:00Z / 14:00 触发）—— **非只读轮**：判据链合并 **#120（M10-3）+ #121（M9-0 anchor）** ⇒ base `8a147abe` → `2b8a9411` → `cd355186`；派 **M10-2（`LUM-2104`）+ M9-1（`LUM-1816`）**；回收 ≈40G（含 228 个**派生测试二进制 23.4G**）
+
+### §143.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` 起手 **20G（59%）** → `git rev-parse HEAD` 对 `git ls-remote origin feat/multica-rs-initial`（**checkout 落 `main` 线第 8 次**）→ 认证 GH `pulls?state=open` = **2**（**#120** / **#121**）→ 从 `/` 起手逐 PID `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）→ daemon `running_task_count = 2` = cycle ∥ `M9-0`（`LUM-1815`，pid 345）。
+- **`M10-3`（`LUM-2105`）已终态**：`.gc_meta.json` `completed_at 05:51:00Z`、pid 消失、`porcelain` 0、PR #120 已开 ⇒ 四判据齐，直接进判据链。
+- cycle 自身首次动作前先写 `status in_progress --no-start`（§110 第 2 次自查的同一条纪律）。
+
+### §143.2 合并 **#120**（M10-3，1 路由）—— 形态②（base 前进段非 docs = 0 ⇒ 可引用 head 证据）
+
+| 步 | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head`（`4681aba9`..`d38d8873`）== PR API 逐字 | **5 文件 `+1974 −16`** ✓ |
+| ② | `4681aba9..8a147abe` 非 docs 路径 = 0 | 7 个提交**全是 docs** ✓ |
+| ③ | 四读数 | `merge-tree --write-tree` == rehearsal `write-tree` == `refs/pull/120/merge^{tree}` = **`6272a08e…`**；合并树 vs head 树 `diff-tree` **只差 1 个 docs 文件** |
+| ④ | 证据（head CI 3/3） | `db`/`fast`/`contract` **全 success**（05:51:33–05:55:48Z） |
+| ⑤ | 钉 sha + `merge_method=merge` | `d38d887340…` ⇒ 落地 **`2b8a9411`** |
+| ⑥ | 落地 `^{tree}` == 预测、`diff` 空 | **`6272a08e…`**，0 行 ✓ |
+
+- 合并后 ⑦ 当场跑（新 base）**逐字命中 §141 的预测**：`local 475 / baseline 473 / implemented 390 real + 3 placeholder = 393 / known_gap 63 / unclaimed 0 / regression 0 / local_only 8`、`owners {M9:33, M3+:16, M3:11, M10:3}`；⑩ `scanned=1228 / baseline=10 / violations=0`；⑦b `registered upstream-key literals 477 / 0 defect`。
+
+### §143.3 合并 **#121**（M9-0 anchor，0 路由）—— 形态③（**真合 base + 同树重跑**）
+
+- 片的起手点 `8a147abe`，在飞期自己并过一次 base（`ac1c1fa0`）；**cycle 的新 base `2b8a9411` 含 M10-3 代码** ⇒ 形态③，不能用片自报读数。
+- **写集交集取证**（先算再合）：M10-3 的 5 文件 ∩ M9-0 的 71 文件 = **只有 `docs/32-M3-DAEMON-FACE.md`**（**代码交集 ∅**）。
+- **真合**（在片自己的 workdir、**热 `target/`**）：预检 `merge-tree --write-tree` = `7c158aa5…` == 实合 `write-tree` ⇒ 无冲突、`porcelain` 0，合并提交 `7b8f27d9` 推回同一分支（PR #121 自动更新）。
+- **门禁 = 同一棵树 `7c158aa5…` 上 10/10**：第一轮 **8/10**（①②③④⑤⑧⑦⑩ 绿；⑥⑨ 红是 **ENOSPC**：`couldn't create a temp dir … os error 28` ×4）⇒ 回收后 `--only db,conformance` 第二轮 **⑥ PASS 188s（`migrate=0,e2e=0`）/ ⑨ PASS 82s**。**两轮读数可合并的唯一条件 = 树哈希前后逐字相同**（`7c158aa5…` ✓）。
+- 预检 ① 逐字：71 文件 **`+6653 −10`** == PR API（按 filename 排）；**五读数全等 `7c158aa5…`**：base 树 == head 树 == `merge-tree --write-tree` == `refs/pull/121/merge^{tree}` == 落地 `^{tree}`。
+- ⑤ 钉 `7b8f27d9…` ⇒ 落地 **`cd355186`**；⑥ `diff-tree` 0 行 ✓。
+- ⑦ 逐字不变（0 路由，符合其声明）：`local 475 / baseline 473 / implemented 393 / known_gap 63`、`owners.M9 33`。⑨ 当场跑：`report matches`（fixtures `365`、`pass 15 / mismatch 23 / unmounted 21 / ph 0 / unevaluable 306`，与 §141 逐字同）。
+
+### §143.4 派发（**M10-2 + M9-1**，两片互斥面已裁定）
+
+- **`LUM-2104`（M10-2，rev 5）**：三条派发前置本轮**全成立**（① `M9-0` 终态 ✓ ② `M10-3` 终态 ✓ ③ `df` 远高于阈值）⇒ `assign --to-id` + `status todo`（workdir `lum-2104-6bd9f408ea20`）。写集 = `probes/ready.rs` + `probes/ready/tests.rs` + `crates/mc-http/Cargo.toml`（+`mc-migrate` 边）+ 根 `Cargo.lock`（重生成）。
+- **`LUM-1816`（M9-1，rev 1 → **rev 2**）**：先补「起手补充」再 `status todo`（workdir `lum-1816-119164a9efe3`）。补的是**当轮事实**：base `cd355186`、当轮 ⑦ 实测、⑨ 预期与三条不变式、号段 `## 46.` + `### 9.16`、真库 `multica_lum1816`、**anchor 已接线 ⇒ 零注册键·零 manifest**（禁碰 `routes/{mod,mount}.rs`、`routes/cloud/mod.rs`、任何 `Cargo.toml`/`Cargo.lock`）。
+- **互斥裁定**：M10-2 = **manifest 面**（`mc-http/Cargo.toml` + `Cargo.lock`）；M9-1 = `crates/mc-cloud/src/billing.rs` + `crates/mc-http/src/routes/cloud/billing.rs` ⇒ **与 M10-2 零文件交集**，可同飞。`M10-4`（`LUM-2106`，**同一 manifest 面**）**必须等 M10-2 终态**；M9 stage 2 余片 `1817/1818/2116` 与之零交集，但本轮槽位满（3/3）。
+- **M9 stage 2 的「第二类漏项」已消失**：M9-0 的 anchor 把整波 M9 的**注册面**一次性预声明（`routes/cloud/{mod,billing,subscriptions,webhook}.rs`、`routes/cloud_runtime.rs`、`mount_slice_commercial()` / `mount_slice_cloud_runtime()`、`crates/mc-http/Cargo.toml` 的 `mc-cloud` 边）⇒ 四片**零注册键改动**，派发前只需补读数、不必补写集。
+
+### §143.5 回收（三段，≈40G；量只认 `df` 前后差）
+
+1. **M10-3 死物**：四判据齐 ⇒ 整删 `lum-2105-7c93af9013c5` 的 `target/` = **2876 MB**。
+2. **给在飞门禁止血**（本轮唯一新面）：`target/debug/deps` 里的**无扩展名派生产物 = 228 个测试二进制 / 23.4G** ⇒ 删后 **9G → 30G（+21G）**，随后 ⑥/⑨ 只 relink 自己需要的部分并**全绿**。
+3. **M9-0 死物**：四判据齐 ⇒ 整删 `lum-1815-37ae144ddd42` 的 `target/` = **16G** ⇒ 收尾 **35–36G（23%）**。
+
+### §143.6 lesson
+
+1. 🔴 **`deps` 的「孤儿判定」有了新法（`.fingerprint` 哈希集），结论与老定式相反**：把 `deps/*-<16hex>*` 的哈希与 `target/debug/.fingerprint/<pkg>-<hash>/` 的哈希求差 ⇒ 本 workdir 4859 个带哈希产物**全部**在指纹集内、**孤儿 = 0**。根因：产物名里的哈希是**单元元数据**（features/flags/target）的函数、与源码内容无关 ⇒ 「同一个 stem 的多个哈希」不是陈旧副本，而是 `--all-targets` + 双 feature 变体（`mc-http/test-util`）的**并存单元**。⇒ §123 那条「每个 stem 只留最新」在本 target 上**不成立**（会砍掉并存变体、触发整段重编）。**真正可切的大块是无扩展名的派生产物（测试二进制）**：纯派生、可重建，且 ⑤ 的读数已在当轮日志里 ⇒ 删它**零证据损失**。
+2. **止血排序升级**：① 停用单元 `incremental`（§141）→ ② **死物 `target/` 整删** → ③ 盘紧且**自己**要跑门禁时，**派生测试二进制**（对「在飞」也安全，是唯一这种量级的面）；`deps` 的 `rlib`/`rmeta` / `.fingerprint` **始终不可动**。
+3. **ENOSPC 第 6 次伪装**：同一轮里 `os error 28` 同时打红 ⑥ 与 ⑨（汇总 `8/10`、`migrate=0,e2e=101`）⇒ 判据 = `grep -c 'No space left'`；处置 = 回收后 `--only <红门>` 单跑，**两轮读数合并的准入 = 树哈希逐字相同**。
+4. **五读数定式（形态③）**：`base^{tree}` == `head^{tree}` == `merge-tree --write-tree` == `refs/pull/N/merge^{tree}` == 落地 `^{tree}`（本轮五者全等 `7c158aa5…`）。两点细节：`merge-tree` 必须**自己算**（GH 的 merge ref 只对「它算出来的那个 base」有效），且 `refs/pull/N/merge` **合并后即消失** ⇒ 只在合并前取。
+5. **「预检 == PR API」的算法随形态而变**：真合 base 之后，PR 的 diff 从 `merge-base..head` 变成 **`base..head`**（本轮 71 文件），此时按 merge-base 算会得到 76 文件（多算 base 前进段的 docs/32 与 M10-3 的 5 个文件），口径必须跟着形态走。
