@@ -1,4 +1,15 @@
-//! `/api/health` + 通用 placeholder。
+//! `/api/health` / `/api/health/db` —— 本仓**自造**的两个探针（`local_only` 登记项）。
+//!
+//! 保留理由（`docs/64` §9.3，两条）：① `GET /api/health` **不是**上游 `/health` 的别名 ——
+//! 它的语义是「服务 + DB 综合」，而上游 `/health` 是**纯 liveness**（不触库）；把它改成上游语义
+//! 会破坏 `apps/mc-cli` 的探针与 `mc-openapi` / `mc-conformance` 的两个既有测试。
+//! ② `local_only` 是**登记项**（`route_parity.py:20` 逐字：*registered here, absent upstream
+//! (informational)*）、**不进任何门的分子分母** ⇒ 收敛的收益为 0、代价是牵连 4 处。
+//!
+//! M10-0（`LUM-2102`）删除了本文件的 `placeholder`：它的**唯一**调用者是 `mount.rs` 里那条
+//! 幽灵占位 `GET /api/feature-flags`（上游根本没有这个键），该占位由本片预删
+//! （`docs/64` §9.3）⇒ 函数留在原地就是死代码、会让门 ③ `-D warnings` 红。
+//! 上面两条路由**逐字不动**。
 
 use std::sync::Arc;
 
@@ -46,13 +57,5 @@ pub async fn db_health(State(state): State<Arc<AppState>>) -> ApiResult<Json<DbH
         status: format!("{:?}", h.status).to_lowercase(),
         latency_ms: h.latency_ms,
         message: h.message,
-    }))
-}
-
-/// Placeholder：路由已注册但 handler 暂未实现；返回 501。
-pub async fn placeholder() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "code": "not_implemented",
-        "message": "this route is reserved; implementation lands in a later milestone",
     }))
 }
