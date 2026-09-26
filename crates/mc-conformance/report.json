@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 14,
+    "pass": 15,
     "mismatch": 23,
-    "unmounted": 22,
+    "unmounted": 21,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -18,8 +18,8 @@
       },
       "anonymous": {
         "mismatch": 23,
-        "pass": 14,
-        "unmounted": 22
+        "pass": 15,
+        "unmounted": 21
       },
       "member": {
         "unevaluable": 293
@@ -33,25 +33,25 @@
         "unmounted": 20
       },
       "router": {
-        "pass": 6,
+        "pass": 7,
         "unevaluable": 26,
-        "unmounted": 2
+        "unmounted": 1
       }
     },
     "tiers": {
       "stateless": {
         "mismatch": 23,
-        "pass": 14,
+        "pass": 15,
         "unevaluable": 306,
-        "unmounted": 22
+        "unmounted": 21
       }
     }
   },
-  "contract_equivalence_rate": 0.038356164383561646,
-  "mounted_equivalence_rate": 0.3783783783783784,
+  "contract_equivalence_rate": 0.0410958904109589,
+  "mounted_equivalence_rate": 0.39473684210526316,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 14
+    "pass": 15
   },
   "fixtures": [
     {
@@ -2447,12 +2447,12 @@
       "via": "router",
       "status_expected": 200,
       "source": "server/cmd/server/integration_test.go:212",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "inbox/TestArchivedInboxPageAndFacetsThroughRouter@server/cmd/server/inbox_archive_test.go:25#1",
