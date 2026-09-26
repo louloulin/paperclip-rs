@@ -1,0 +1,54 @@
+[package]
+name = "mc-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multica 性能 bench（W10）：issue 列表 / facets / inbox 游标三条上游热点 + 连接池与语句缓存口径"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-repos = { path = "../mc-repos" }
+# 🔴 `test-util` 是**故意**打开的（本片唯一一处跨 crate 的构建图影响，已登记在
+# `src/lib.rs` 的「偏离登记」里）：bench 必须**自己**建连接池才能在
+# `PgConnectOptions` 上显式 `.statement_cache_capacity(n)`（R10），而把裸池交给
+# `mc_repos::IssueRepo` / `IssueTableRepo` 的唯一公开入口是 `mc_db::Db::from_pool`，
+# 它只在该 feature 下可见。`test-util` 只**新增两个 pub 构造函数**
+# （`Db::from_pool` / `Db::placeholder`），不改任何既有语义。
+mc-db = { path = "../mc-db", features = ["test-util"] }
+
+[dev-dependencies]
+# 🔴 版本由根 `[workspace.dependencies]` 钉在 `0.7`（MSRV 1.80）。见根 manifest 的注释块。
+criterion = { workspace = true }
+
+# 🔴 三个 bench **必须** `harness = false` **且** `test = false`：
+#   * `harness = false` —— criterion 自带 main，libtest 的 harness 会把它吞掉；
+#   * `test = false`    —— 否则门 ⑤ `cargo test --workspace` 会把整个 benchmark 当**测试**跑
+#                          （`cargo test` 会执行所有 `test = true` 的 target，含 bench），
+#                          把 40 分钟的 CI 拖成小时级。`harness = false` 不解决 target 选择。
+[[bench]]
+name = "issue_list"
+harness = false
+test = false
+
+[[bench]]
+name = "facets"
+harness = false
+test = false
+
+[[bench]]
+name = "inbox_cursor"
+harness = false
+test = false

@@ -124,6 +124,14 @@ opentelemetry_sdk = "0.24"
 opentelemetry-otlp = "0.17"
 tracing-opentelemetry = "0.25"
 
+# 性能 bench（M10-6 / `LUM-2108` / `docs/64` §2.5）。
+# 🔴 版本**必须** `0.7`：`criterion` newest 是 `0.8.2`，其 `rust_version = 1.86` > 本仓
+# `[workspace.package] rust-version = "1.80"`（实测 crates.io）；`0.7.0` 的 MSRV 恰好 `1.80`。
+# 选库闸门（`plan1.md` §4：活跃维护 + >1M 月下载）实测通过：总下载 2.90 亿 /
+# 近 90 天 5,968 万。**不要**在后续切片里顺手升到 0.8.x。
+# 唯一消费者是 `crates/mc-bench`（dev-dependency）。
+criterion = "0.7"
+
 # Test
 proptest = "1"
 mockall = "0.13"
