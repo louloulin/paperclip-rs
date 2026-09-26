@@ -9,6 +9,8 @@
 //! 6. 装配 axum 路由（mc-http）
 //! 7. 启动渠道长连接宿主（mc-channel：五个 IM 平台的出站长连接，缺部署密钥则不装配）
 //! 8. 启动代码与制品面后台宿主（mc-vcs-github：GitHub PR 快照刷新；缺 App 凭据则不装配）
+//!
+//! 8.5 装配 entitlement 平面（M9 anchor：配了云基址也**不装**平面 —— 客户端归 M9-9）
 //! 9. 启动调度循环（mc-scheduler：autopilot 计划派发 + issue wakeup 派发）
 //! 10. 启动 webhook 投递 worker 池（mc-autopilot：`1s` ticker + `Notify` + 4 并发）
 //! 11. 监听 / graceful shutdown（先停渠道连接，再停 PR 刷新，再停投递 worker，再停调度器，
@@ -31,6 +33,10 @@ mod channels;
 // M8 anchor（LUM-1797 / docs/61-M8-PLAN.md §2.6）：代码与制品面的后台宿主位
 // （ghsnapshot 的 PR 刷新 worker）。与 `channels` / `scheduler` 同造型。
 mod integrations;
+// M9 anchor（LUM-1815 / docs/62-M9-PLAN.md §2.1 / §9.8）：entitlement 平面的**组合根适配器**
+// 宿主位。它必须在 `apps/mc-server`（唯一同时看得见 `mc-entitlement` 与本仓
+// `mc_autopilot::quota` 接缝的地方）。与 `channels` / `integrations` / `scheduler` 同造型。
+mod entitlement;
 mod scheduler;
 // M5-D8（LUM-1745 / docs/54-M5-5-WEBHOOK-INGRESS.md 的 D8 行）：webhook 投递 worker 的
 // 轮询循环宿主。此前 `process_next_delivery*` 在**生产路径上零调用点** ⇒ 入站落下的 `queued`
@@ -169,6 +175,10 @@ async fn main() -> anyhow::Result<()> {
     let channel_keys = state.channel_keys.clone();
     // M8 anchor（`LUM-1797`）：GitHub App 的部署密钥也 clone 一份（同一理由）。
     let github_keys = state.github_keys.clone();
+    // M9 anchor（`LUM-1815`）：entitlement 面的部署事实也 clone 一份（同一理由）——
+    // 第 8.5 步的适配器要在 `with_state(state)` **之后**才跑，而那一步已经把
+    // `Arc<AppState>` 移进 router 了。
+    let entitlement_config = state.entitlement.clone();
     // M5-D8（`LUM-1745`）：第 9 步的投递 worker 池要 `realtime` 出口（与入站面共用同一条
     // 事件总线 —— B 段派发 `dispatch_run` 会广播 `task.queued` / `task.available`，不能另建）。
     let realtime = state.realtime.clone();
@@ -201,6 +211,19 @@ async fn main() -> anyhow::Result<()> {
         wired = integration_handles.is_wired(),
         pr_refresh = integration_handles.pr_refresh().is_some(),
         "integration host started"
+    );
+
+    // 8.5 装配 entitlement 平面（M9 anchor / `LUM-1815`）：云基址的**部署事实**经
+    //     `AppState::entitlement` 进来（生产只有一处 env 解析）。
+    //     🔴 anchor 期**配了也不装平面**（策略客户端归 M9-9）—— 装一个替身平面会让
+    //     quota 从 `off` 变成有策略并**真的拦住** autopilot，那是生产事故而不是接线完成。
+    //     装机点在**调度器之前**：调度器与 HTTP 面读的是同一个进程级平面，
+    //     第一轮 tick 之前就必须定下来（`install_policy_provider` 是**一次性**的）。
+    let entitlement_handles = entitlement::start(&entitlement_config);
+    tracing::info!(
+        configured = entitlement_handles.is_configured(),
+        wired = entitlement_handles.is_wired(),
+        "entitlement host started"
     );
 
     // 9. 启动调度循环（M5-9 / `docs/48` §7.1）：两个 job 在 `spawn` 前注册，第一轮 tick 立刻跑，
@@ -246,6 +269,10 @@ async fn main() -> anyhow::Result<()> {
     // **最后停 actor 池**。
     channel_handles.shutdown().await;
     integration_handles.shutdown().await;
+    // entitlement 面没有后台生命周期（上游逐字「no goroutines or background
+    // lifecycle」）⇒ 这一步现在只关掉自己的记账；顺序放在**调度器之前**，
+    // 与「消费者先于生产者停」的既有纪律一致。
+    entitlement_handles.shutdown().await;
     webhook_handles.shutdown().await;
     scheduler_handle.shutdown().await;
     actors.shutdown().context("shutdown actors")?;

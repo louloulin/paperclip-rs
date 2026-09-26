@@ -188,7 +188,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/issues/:id/comments/trigger-preview",
             post(not_implemented),
         )
-        .route("/api/issues/:id/timeline", get(not_implemented))
+        // M9 anchor（LUM-1815）：`/api/issues/:id/timeline` 的 501 占位已**原地搬运**
+        // 到 `crate::routes::timeline`（handler 名仍是 `not_implemented`）——
+        // 注册键与占位计数**逐字不变**，只是归属从 issue 子路由换到 M9 的商业面聚合
+        // router。这样 M9-8 把占位换成真实现时不再改本文件（docs/62 §3.1）。
         .route("/api/issues/:id/attachments", get(not_implemented))
         // M8 anchor（LUM-1797）：`/api/issues/:id/pull-requests` 的 501 占位已**原地搬运**
         // 到 `crate::routes::github::issue_pr`（handler 名仍是 `not_implemented`）——

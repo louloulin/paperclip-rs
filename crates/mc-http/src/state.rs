@@ -14,6 +14,10 @@ use serde::Serialize;
 // composio 三组部署密钥的**读取口**拆到独立文件（`state.rs` 已被两个 anchor 追加过，
 // M7-0 落地后 640 行 > 620 的预设阈值 ⇒ 不再往本文件堆 env 解析）。
 pub mod integrations;
+// M9 anchor scaffold（LUM-1815 / docs/62-M9-PLAN.md §8 的 R-M9-3）：云面两组字段
+// （`cloud` / `entitlement`）的**读取口与构造**拆到独立文件 —— 同一判例：M9-0 起手
+// 实测本文件 **665 行**（> 620 的预设阈值）⇒ 不再往本文件堆 env 解析。
+pub mod cloud;
 
 /// 配置快照 —— M3 anchor scaffold（LUM-1406 / docs/15 §7.2 第 6 项）点名的**共享锚点**之一。
 ///
@@ -441,6 +445,24 @@ pub struct AppState {
     /// 第四个条件是 feature flag（`mc-feature-flags`）；四者缺一 ⇒ 4 条会话路由 503
     /// （`docs/61` §2.5 的 composio 行）。
     pub composio_keys: integrations::ComposioKeys,
+    /// 云面出站配置 + 客户端（M9 anchor / `LUM-1815` / `docs/62` §2.4）。
+    ///
+    /// **全部三个面共用这一个基址**（cloud-runtime / billing / subscriptions /
+    /// stripe 转发是同一份上游客户端 `cloudruntime.Client`），所以本字段是
+    /// M9-1 / M9-2 / M9-6 / M9-11 四片的**唯一**出站入口。
+    ///
+    /// 三态（`docs/62` §2.5 / §2.6）：未配置 ⇒ 代理路由 **403**
+    /// `cloud_runtime_not_configured`；配了但非法 ⇒ **500** `cloud_runtime_misconfigured`；
+    /// 合法 ⇒ 可出站。`Debug` 已手写脱敏（URL 不进日志）。
+    pub cloud: cloud::CloudConfig,
+    /// entitlement 面的**部署事实**（M9 anchor / `LUM-1815`）。
+    ///
+    /// ⚠️ 这里**不**放策略平面本身：平面是进程级单例
+    /// （`mc_autopilot::quota::install_policy_provider`），由组合根
+    /// `apps/mc-server/src/entitlement.rs` 在 `AppState::new` **之后**安装
+    /// （`docs/62` §9.8）⇒ 本字段只回答「本部署的云基址合不合法」，
+    /// 消费者读策略一律走 `mc_autopilot::quota::policy_for(workspace_id)`。
+    pub entitlement: cloud::EntitlementConfig,
 }
 
 impl AppState {
@@ -472,6 +494,10 @@ impl AppState {
             github_keys: integrations::GithubKeys::from_env(),
             vcs_keys: integrations::VcsKeys::from_env(),
             composio_keys: integrations::ComposioKeys::from_env(),
+            // M9 anchor（LUM-1815）：两组云面字段都在构造体内读 env ⇒
+            // `AppState::new` 的**签名与参数个数不变**（21 个调用点一个不动）。
+            cloud: cloud::CloudConfig::from_env(),
+            entitlement: cloud::EntitlementConfig::from_env(),
         }
     }
 }

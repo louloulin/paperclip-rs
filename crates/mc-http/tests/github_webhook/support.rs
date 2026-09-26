@@ -85,6 +85,9 @@ pub(crate) fn build_state(db: Db, github_keys: GithubKeys) -> Arc<AppState> {
         github_keys,
         vcs_keys: mc_http::state::integrations::VcsKeys::default(),
         composio_keys: mc_http::state::integrations::ComposioKeys::default(),
+        // M9 anchor（LUM-1815）：云面两组字段显式未配置（口径见 `state/cloud.rs`）。AppState 的字面量构造点**全部**在这里补，因为它们不用 `..Default::default()`（见 docs/32 §9.13 的写集扩展登记）。
+        cloud: mc_http::state::cloud::CloudConfig::from_env_with(|_| None),
+        entitlement: mc_http::state::cloud::EntitlementConfig::from_env_with(|_| None),
     })
 }
 
