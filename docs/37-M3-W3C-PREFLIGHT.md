@@ -12285,3 +12285,70 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 2. 🔴 **「判据链的第②步」不是「base 必须是 head 的祖先」，而是「前进段非 docs 路径 = 0」**：本轮 base 前进了一整个提交（§137）却只动 `docs/37` ⇒ 形态③仍可零门禁重跑。**两半都要算**，只看祖先关系会把这类片误判成「必须真合 + 重跑 10/10」。
 3. **回收要在「新片冷建」之前完成，而不是本轮收尾时**：本轮 18 GiB 在派发后 2 分钟内放掉（16.7G → 34.7G），若等到收尾再删，两个 `--with-db` 片已经把盘吃回去。**四判据里最强的两条是「`merge-base --is-ancestor <head> <landed base>`」与 `/proc` 逐 PID 零命中**。
 4. **终态判定看 `multica issue runs` 的 `status` + `error`，不看 issue 的 `status`**：`LUM-2103` 的 issue 早已 `in_review`，但它的 run 是 03:28:35Z 才真终态（PR 03:26:58Z 开、CI 03:31:29Z 才全绿）。**PR 开出 ≠ run 终态 ≠ CI 绿**，三步各有自己的时刻。
+
+---
+
+## §139 12:00 cycle（`LUM-2143`，04:00Z 触发）：抢救静默死亡 run 的 **M10-3**（`525` / provider 侧）并重派；判据链合并 **PR #119（M10-6 bench，0 路由）** ⇒ base **`4681aba9`**；**M9-0（`LUM-1815`）两硬前置当轮成立 ⇒ 同轮起手**（M9 波开闸）；回收 **20 GiB**
+
+### §139.1 起手（三连 + 逐 PID 拆槽 + 终态第 0 步）
+
+- `df -h /` 连采两次：**29G used / 18G avail（62%）**（收尾 11G used / **37G avail**）；`git rev-parse HEAD` 对 `git ls-remote origin feat/multica-rs-initial` ⇒ base = **`b92b3367`**；认证 GH `pulls?state=open` ⇒ **0 open PR**；daemon `running_task_count` = **2** = cycle ∥ `LUM-2108`（M10-6 bench，pid 27540）⇒ **1 个切片位**；**无并发 cycle**（连续第 22 轮）。
+- 🔴 `multica repo checkout` 落 **`main` 线第 7 次**（`4fc96f30`，与 `feat/multica-rs-initial` 无共同祖先）⇒ `git checkout -B agent/devbox5/8578aec3ed1b origin/feat/multica-rs-initial`。**依旧一次都不报错**。
+- 终态判定第 0 步 = `multica issue runs <issue-id>`：`LUM-2105`（M10-3）的 run `01a0dbc8-3836-7862-93c5-84cca3cd907a` = **`failed`**（03:35:28 → **03:48:40Z**，`error = 525 status code (no body)`、`failure_reason = agent_error.provider_server_error`、**零提交**）；`LUM-2108` 的 run `01a0db91-68f3-…27863331c524` = **`running`**。
+- 本项目 `in_progress` 已按流程在第 0 步写入（`status … in_progress --no-start`）。
+- **`LUM-2108` 判活（三件套取二）**：① `/proc/27540` 存活、`cwd` = 其 run workdir；② session `20260926T023537.526087940.jsonl` 仍在写；③ 有**子进程**在跑 `scripts/gates.sh --with-db`（`/tmp/gates10c.log`），日志已推进到门 ⑨ ⇒ **在飞且在生产，不介入**（它的仓库在**旧** workdir `lum-2108-3a8eabef12b3`，`target` 28G **活物，勿删**）。
+
+### §139.2 抢救 `LUM-2105`（M10-3）—— provider 侧死亡，现场已保全并推送
+
+- 未提交面 **3 文件 `+706/−16`**，按配置顺序保全为唯一提交 **`2daadb13`**，父 = 当轮 base **`b92b3367`**（**无需 rebase**），推 `origin/agent/devbox5/84cca3cd907a`：`probes/realtime.rs`（+256：上游 Go 原文文档 + 四态访问门 + 快照 handler + 常量时间 Bearer + 5 转发头判定）、**新建** `mc-ws/src/hub/metrics.rs`（367 行：13 + 14 键计数器 + `process()` 单例 + `snapshot()`）、`mc-ws/src/hub/mod.rs`（+99：`pub mod metrics;` + `HubInner.metrics` + `with_metrics`/私有 `build()` 唯一装配点 + 两个自增点）。`mc-ws/src/lib.rs` **未动**（符合 §138.3 的写集勘误 1）。
+- 🔴 **现场编译不过**（如实登记）：`probes/realtime.rs:261-262` 已声明 `#[cfg(test)] mod tests;`，而 `probes/realtime/tests.rs` **尚不存在** ⇒ `E0583`。四态用例 + 计数器增长用例 + 全量门禁 + PR 都还没做 —— 这是「跑到一半被打断」，不是「做完了」。
+- **交接**：`LUM-2105` 描述 rev **6 → 7**（追加「下一个 run 起手」节：续做配方 `git fetch origin agent/devbox5/84cca3cd907a` + `checkout -B` 到 `2daadb13`、剩余面四条、⑦ 预测平移、门禁/冻结面/基线禁令）→ `rerun` ⇒ run **`01a0dbfe-167c-796b-af54-7c93af9013c5`**（04:34Z 排队起手）。
+
+### §139.3 判据链合并 PR #119（M10-6 bench，0 路由 / 0 生产代码改动）
+
+| 步 | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API files **逐字** | merge-base = base = `b92b3367`；**15 文件 `+1866/−1`**（`Cargo.lock` 227/1、根 `Cargo.toml` 11/0、`crates/mc-bench/**` 11 个新文件、`docs/32` 171/0、`docs/fixtures/bench-baseline.json` 152/0）**逐项相等**（两侧都按 filename 排） |
+| ② | 形态 | `merge-base == base == PR base sha`、且 base 是 head 的祖先（`merge-base --is-ancestor` 真）⇒ **形态②：合并树 ≡ head 树** |
+| ③ | 三/四读数 | `git merge-tree --write-tree b92b3367 79785c13` = **`69be340e4d7a233732a707b5b1bb60581f8efe55`** == `79785c13^{tree}`（形态②下 `refs/pull/119/merge` 与 rehearsal 必然同值） |
+| ④ | 证据（**不继承片自报**） | 在片自己的热 workdir 上、**当轮新建库** `multica_lum2143`（角色 `mc_lum2143`，带 `CREATEDB`）当场跑 `bash scripts/gates.sh --with-db` ⇒ **10/10 PASS / 150s**（①fmt 3s ②build 1s ③clippy 0s ④clippy-test-util 0s ⑤test 55s ⑥db 58s `migrate=0,e2e=0` ⑧schema-drift 27s ⑦route-parity 1s ⑨conformance 5s ⑩file-size 0s） |
+| ⑤ | API 钉 sha | 合并前**重取** head = `79785c13a1fa7fee20a6d579924b7d930729cbd2`（逐字未动）+ `merge_method=merge` ⇒ 落地 **`4681aba9b9747d94b6ebfad699979b00b1c655ce`** |
+| ⑥ | 落地树 | `origin/feat/multica-rs-initial^{tree}` = **`69be340e…`** **逐字命中**预测；`git diff 79785c13 <落地 base>` **0 行** ⇒ 判据链闭合 |
+
+> 片自报与独立复跑**逐字一致**：⑦/⑨/⑩ 三组读数（见 §139.4）与 PR 描述相同；门的时长不同（片自报收尾热跑 151s，本次 150s）而**门集合与结果相同**。⚠️ **片自报的门可能是「提交前那次」**（本片门禁日志 `/tmp/gates10c.log` 748s 的冷跑早于 04:23:05 的提交）⇒ 形态②下 cycle 仍应**自己跑一遍**再合，本轮已如此。
+
+### §139.4 合并后四门复采（base `4681aba9`，全部当场跑）
+
+| 门 | 读数 |
+|---|---|
+| ⑦ | **`local 474 / baseline 473 / implemented 389 real + 3 placeholder = 392 / known_gap 64 / unclaimed 0 / regression 0 / local_only 8`**（`M10-6` 0 路由 ⇒ 与 §138 收尾值逐字相同） |
+| ⑦ `gaps by owner` | `M9 = 33` · `M3+ 16` · `M3 11` · `M10 4`（和 = 64 ✓，`M10` 仍 4 —— `M10-3` 未合入） |
+| ⑦b | `slash_alias_audit.py --quiet` **exit 0**（allowlist 仍 0 数据行） |
+| ⑨ | `fixtures 365 / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`；门输入 blob：`crates/mc-conformance/report.json` = `db173fe8409d514fc6d52b1f7844d7b051916e0a` |
+| ⑩ | `limit=800  scanned=1181  baseline=10  violations=0`（新文件最长 = bench 的 `report.rs` 320 行） |
+
+### §139.5 槽位与派发（1 个空位 ⇒ 派 **M9-0**，M9 波开闸）
+
+| 候选 | 硬前置（当轮逐字回读） | 裁决 |
+|---|---|---|
+| **`M9-0`（`LUM-1815`）** | 「M7 全合」= `LUM-1786` 落地 **`3d446c56`**（PR #117）⇒ `merge-base --is-ancestor` **真**；「M8 全合」= `LUM-1804` 落地 **`0cb9ff6a`**（PR #100）⇒ **真** | **✅ 派** |
+| `M10-2`（`LUM-2104`） | M10-0 ✓；其 rev 2 的调度约束是「等 `M10-6` 终态」⇒ 本轮**已满足** | 第二顺位（下轮空位即派） |
+| `M10-4`（`LUM-2106`） | M10-0 ✓；rev 1、会位移 ⑨ 17 条 | 暂缓（其描述需补「起手补充」） |
+
+- 🔴 **rev 2 的两条互斥当轮全部解除**（这是 M9-0 能起手的**唯一**原因）：`LUM-2108`（`Cargo.lock` 唯一写者）**已合入 base**；`LUM-1786`（唯一 `--write-baseline` 片）**已合入** ⇒ 全仓当前**没有**别的 `Cargo.lock` 写者、也**没有**基线写者。本轮在飞的 `LUM-2105`（M10-3）写集 = `probes/realtime.rs` + `mc-ws/src/hub/**` ⇒ 与 M9-0 写集**零交集**（M9-0 不碰 `routes/probes/**`）。
+- **裁定依据**：`docs/64` §7.2 R2 表逐字「`M9-0`（若 R1 空着）∥ `M10-1 ∥ M10-2 ∥ M10-3` …… 与 M9-0 无共享文件（`probes/*` + `mc-ws`）⇒ **可同轮**」，且该节「**唯一硬规则**：`M10-0` / `M9-0` / `M10-6` 三者两两不得同轮」—— 其中 `M10-0` 与 `M10-6` **本轮都已合入 base** ⇒ 规则不再拦。`docs/62` §7.2 把 `M9-0` 单列在 R13 是**基线排法**（其「唯一硬规则」只禁止与 `M7-0`/`M8-0` 同飞，两者早已合入）。
+- **派发动作**：`LUM-1815` 描述 rev **2 → 3**（追加「起手补充 rev 3」：① 两硬前置的祖先判定逐字实测；② 当轮 ⑦/⑦b/⑨/⑩ 四组读数 + `local_only` 按 **8** 读；③ rev 2 两条互斥已解除的新状态 + 同轮裁定依据；④ `docs/64` §5.2 的「预声明 2 行」请求**仍有效且做/不做都要写裁定**；⑤ 号段：`### 9.13` 可用、**不要开顶层新节**（顶层末号 `## 42.` 归 M10-6、在飞 M10-3 授权 `## 43.`）、`docs/37` 取 `§140` 起；⑥ 起手纪律三条：`checkout` 落 `main` 线、`--with-db` 需 ≈18G、一次性真库角色带 `CREATEDB`）→ `assign --to-id 3c6087f9… --no-start` → `status todo`。run **`01a0dc00-0a4b-758b-a880-37ae144ddd42`**（04:36:26Z 起）⇒ daemon 回到 **3/3**（cycle ∥ `LUM-2105` ∥ `LUM-1815`）。
+
+### §139.6 回收 20 GiB（`LUM-2108` 的 28G target）
+
+四判据齐（① 其 PR #119 **已合并** ② run `01a0db91` **`completed`**（04:29:39Z）③ 从 `/` 起手逐 PID 扫 `/proc/*/cwd` **零命中** ④ 其工作树 `porcelain` 空、分支已推且已合）⇒ 整删 `lum-2108-3a8eabef12b3/workdir/paperclip-rs/target` ⇒ `df` **17G → 37G**（`2.5G` 的 M10-3 死 run target 也已在抢救后按同样口径删掉，合计净放 ≈20G）。**回收前先给在飞门禁留量**：本轮起手只剩 18G 而 `LUM-2108` 正在跑 `--with-db`（其 `target` 一度从 17G 涨到 28G）。
+
+### §139.7 四条 lesson
+
+1. 🔴 **provider 侧死亡的新形态 = `525 status code (no body)`**（`LUM-2105`，03:48:40Z；此前见过 `502`/`524`/ENOSPC）。**抢救配方不变且本轮第 N 次生效**：保全提交（父 = 当轮 base ⇒ 免 rebase）→ 推保护分支 → 描述追加「下一个 run 起手」节（逐条写清「已完成 / 剩余 / 编译不过的原因」）→ `rerun`。**关键加强**：交接节必须写「当前树**编译不过**」这类否定事实（本片 = `mod tests;` 无文件 ⇒ `E0583`），否则下一个 run 会把它当可交付状态。
+2. 🔴 **`multica issue runs` 的 `delivered_comment_ids` 不是「有没有交付评论」的判据**：`LUM-2108` 的 run `completed` 且 `delivered_comment_ids = []`，但它的顶层交付评论 **04:27:56Z 真在**（`comment list` 可见，含 PR 链接与 8 项证据）。⇒ **判「交付评论是否存在」只认 `multica issue comment list`**；把该字段当否证会误判成「静默死亡」并触发无谓重派。
+3. 🔴 **`pgrep -f` / `pkill -0 -f "<workdir 串>"` 会自我匹配**（发起命令的 `cmdline` 里就含那个串）⇒ 本轮一次假「进程还在」。**判进程存活必须从 `/` 起手逐 PID 读 `/proc/*/cwd`**（老坑第 5 次复现，`docs/37` §79 起已三次记过）。
+4. **在飞片会自己回收磁盘，观察期先别动别人的 `target`**：`LUM-2108` 在自己的门禁段把 `df` 从 **6.8G 拉回 17G**（它删的是自己的 `incremental`）⇒ cycle 的回收应排在「片终态 + PR 已合」之后，而不是「看着紧张就动手」。
+5. **号段对账的时效是「落地顺序」**：`M10-6` 与 `M10-3` 的描述**都被授权取 `## 42.`**（前者按 §138.4 顺延、后者按 §138.3），`M10-6` **先落地** ⇒ 保号 `## 42.`，`M10-3` 改 **`## 43.`**（描述 rev 7 → **8** 只改这一行）。同理「起手补充」里的绝对读数必须每轮重取：`M9-0` 的 rev 2 写于 base `dd0e8c51`，本轮已被 `4681aba9` 取代。
+
+**观察项（第 66 轮）**：`LUM-2126`（10:00 cycle，02:00Z 触发）停在 `in_progress` 但**无进程、无产物**（`issue runs` 无在飞 run）⇒ 只登记不动状态；积压 `todo` cycle issue 依旧只登记；autopilot「同项目存在未终态 cycle issue 时不建新单」护栏**仍未落地**；本轮**无并发 cycle**。
