@@ -86,6 +86,16 @@ pub struct AgentTask {
     /// 这个 task 所属的输入批次（**自动重试**的 clone 指的是它父级的那一个）；
     /// 上游靠它把 origin 门与轮次匹配对齐（`engine::commands` 的同名判据）。
     pub chat_input_task_id: Option<Id>,
+    /// 这个 run 属于哪个 chat session（上游 `AgentTaskQueue.ChatSessionID`）。
+    ///
+    /// 🔴 **端口形状勘误（M7-20 补，同一类第 17 次）**：M7-17 的这一份投影只抽了路由需要的字段，
+    /// 而打字指示的 [`super::super::typing::TypingIndicator::session_for`] 要它 —— 上游
+    /// `typing_indicator.go` 的 `sessionFor` 在信封没盖 `chat_session_id` 时**回查这一列**（上游逐字：
+    /// *the row the round matcher reads to resolve an auto-retry clone*）。
+    /// 少了它，那个兜底只能整个删掉，而"一个一直转圈没人收的气泡是一次**没人报告**的失败"。
+    /// 与 M7-19 给 [`super::super::outbound::events::InboxPush`] 补 `title` / `body` 是**同一类**
+    /// 勘误（`docs/32` §37 的 D2 / D5），逐条登记在 §38 的 D11。
+    pub chat_session_id: Option<Id>,
     /// 入站批次里是否有渠道递进来的消息（上游 `TaskHasChannelIngestedMessages`）。
     pub batch_has_channel_ingested_messages: bool,
 }
