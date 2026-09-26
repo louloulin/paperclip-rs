@@ -608,27 +608,25 @@ impl WecomMediaResolver {
     }
 }
 
-/// 上游 `traceMediaHeaders` 的**本片那一半**。
+/// 上游 `traceMediaHeaders` 的**收敛后**调用点（本片 §35.4 的交接 **H3** 由 M7-20 落地）。
 ///
-/// 上游在 `trace.go`（**M7-20**）里实现它、带一层开关与截断。本片只做最小的一步：
-/// **记一条包含 `Content-Disposition` 原样值与解出来的名字的日志**，因为那两个值并排就是
-/// "文件名看起来不对"的全部诊断依据，而它们**事后无法恢复** —— URL 只活五分钟。
+/// 上游在 `trace.go`（**M7-20**）里实现它、带一层开关与两级截断。本片（M7-18）当初只做了最小的一
+/// 步：记一条**没有开关、也没有截断**的日志，因为那两个值并排就是"文件名看起来不对"的全部诊断依据，
+/// 而它们**事后无法恢复**（URL 只活五分钟）。交接把收敛留给 M7-20 ⇒ 现在这里**只是调用**
+/// [`crate::wecom::trace::trace_media_headers`]：开关、单行化与两级上限**只有一份**实现。
 ///
-/// 交接 H3：M7-20 落地 `trace.rs` 时**收敛**到那个带开关的实现上去。
+/// 本仓比上游多带一格 `installation_id`（那一处的文档说了为什么），它由这个调用点交进去。
 fn trace_media_headers(
     installation: &ResolvedInstallation,
     inbound: &WecomInbound,
     index: usize,
     headers: &MediaHeaders,
 ) {
-    tracing::info!(
-        installation_id = %installation.id,
-        dir = "in.media",
-        msg_id = inbound.msg_id,
+    crate::wecom::trace::trace_media_headers(
+        &inbound.msg_id,
         index,
-        content_disposition = headers.disposition.as_str(),
-        filename = headers.filename.as_str(),
-        "wecom trace"
+        headers,
+        Some(installation.id),
     );
 }
 

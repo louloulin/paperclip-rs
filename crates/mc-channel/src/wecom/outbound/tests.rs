@@ -361,6 +361,7 @@ fn task(task_id: Id) -> AgentTask {
     AgentTask {
         id: task_id,
         chat_input_task_id: Some(task_id),
+        chat_session_id: None,
         batch_has_channel_ingested_messages: true,
     }
 }

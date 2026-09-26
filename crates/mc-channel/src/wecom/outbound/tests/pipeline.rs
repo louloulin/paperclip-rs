@@ -52,6 +52,7 @@ async fn a_run_from_the_web_ui_releases_the_round_and_is_skipped() {
     *queries.task.lock().expect("lock") = Some(AgentTask {
         id: task_id,
         chat_input_task_id: Some(Id::new()),
+        chat_session_id: Some(session),
         batch_has_channel_ingested_messages: false,
     });
     let outbound = Outbound::new(queries as Arc<dyn OutboundQueries>, None)
