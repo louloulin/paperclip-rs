@@ -12195,3 +12195,93 @@ for i in $(seq 1 460); do grep -qE "BUILD_OK|…" "$LOG" && break; sleep 5; done
 2. **`delivered_comment_ids=[]` 不等于「没交付」**：`LUM-1786` 的 rerun 终态记录里 `delivered_comment_ids` 是空的，而**评论其实已发出**（`01a0dba4`，02:56:57）、PR **已开**（#117）。终态判定要**三件一起看**：`status` / 工作树（`porcelain` + 提交 + 分支是否已推）/ issue 上的 `type: comment` 与 `type: system` 评论。
 3. **`--write-baseline` 片合并后必须当场重跑 ⑦**（0 构建、<1s）复核 `baseline == 片后 local` —— 本轮 `473 == 473`，这是**基线写入**这一步唯一的独立证据；顺带把 `owners` 无 `M7` 键也一并钉住。
 4. **回收四判据的第 ①/② 条要升级成「**合并后**的形式」**：本轮 ④② 用的是 `merge-base --is-ancestor <head> <landed base>`（比「分支已推」「PR 已开」更强 —— 它同时证明**内容已进 base**）；顺序仍是「**先回收再派新片**」（本轮把 13.8 GiB 在 `M10-1` 冷建之前放掉）。
+
+## §138 11:30 cycle（`LUM-2139`，03:30Z 触发）：判据链合并 **PR #118（M10-1 live 探针，1 路由）** ⇒ base **`924c966d`**；派 **M10-3**（零 manifest 片）；🔴 新 finding：第二类漏项的新子形态「**复用目标不在依赖图内**」（M10-2 缺 `mc-http → mc-migrate` 边，连带推翻 `docs/64` §7/§9 的「manifest 只被 M10-6 写一次」）；回收 **18 GiB**
+
+### §138.1 起手（三连 + 逐 PID 拆槽）
+
+- `df -h /` 连采两次：**31G used / 17G avail（66%）**；`git rev-parse HEAD` 对 `git ls-remote origin feat/multica-rs-initial` ⇒ base = **`4dc89f8a`**；GH **1 open PR = #118**（`LUM-2103` / M10-1，head `51ca6d8b`，03:26:58Z 开出）；daemon `running_task_count` = **2** = cycle ∥ `LUM-2108`（M10-6 bench）⇒ **1 个切片位**；**无并发 cycle**。
+- 🔴 `multica repo checkout` 落 **`main` 线第 6 次**（`4fc96f30`，与 `feat/multica-rs-initial` 无共同祖先）⇒ `git checkout -B agent/devbox5/ffc59e6af5f1 origin/feat/multica-rs-initial`。**一次都不报错**。
+- 终态判定第 0 步 = `multica issue runs <issue-id>`：`LUM-2103` 的 run `01a0dbab-702f-…7f117acf4c53` = **`completed`**（03:04:01 → **03:28:35Z**，`error=null`，交付说明含 PR 链接与 8 项证据）；`LUM-2108` 的 run `01a0db91-68f3-…27863331c524` = **`running`**（02:35:35Z 起）。
+- 本项目 `in_progress` 状态**已按流程在第 0 步写入**（`status … in_progress --no-start`）—— §130/§131 那两次「从 todo 直接干到 in_review」的自查漏写不再复现。
+
+**`LUM-2108` 判活（三件套取二）**：① `/proc/27540` 存活、`cwd` = 其 run workdir；② session `~/.multica/pi-sessions/20260926T023537.526087940.jsonl` **仍在写**（03:30:39Z 落笔）；③ 写内容 = `cargo clippy -p mc-bench --all-targets` **EXIT=0** 后接 `cargo bench` 基线段 ⇒ **在飞且在生产**，**不介入**（它的仓库在**旧** workdir `lum-2108-3a8eabef12b3`，`target` 3.3G **活物，勿删**）。
+
+### §138.2 判据链合并 PR #118（M10-1 live 探针，1 路由 + ⑨ 快照刷新）
+
+| 步 | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API files **逐字** | merge-base `3d446c56`；4 文件 `+695/−25`（`report.json` 15/15、`probes/live.rs` 167/10、`probes/live/tests.rs` 351/0、`docs/32` 162/0）**逐项相等**（按 filename 排） |
+| ② | 形态 | `merge-base (3d446c56) ≠ base (4dc89f8a)`，而前进段 `3d446c56..4dc89f8a` **只有 `docs/37-…md`** ⇒ 非 docs 路径 **0** ⇒ **形态③（docs-only 前进）** |
+| ③ | **四读数** | `head^{tree}` = `merge-tree --write-tree` = `refs/pull/118/merge^{tree}` = rehearsal `write-tree` = **`e4d696fc8cc5a78d6f367f54a218799bb3915e57`** |
+| ④ | 证据 | head **CI 3/3 全绿**（`contract` ✓ 03:28:43Z / `db` ✓ 03:31:29Z / `fast` ✓）⇒ 与③合并 ⇒ **零门禁重跑** |
+| ⑤ | API 钉 sha | `51ca6d8bb0e7e446c819d9c8560a379664f7d6f6`（合并前重取，逐字未动）+ `merge_method=merge` ⇒ 落地 **`924c966d87b2b1847165f2d348cd8bb2a98c3c44`** |
+| ⑥ | 落地树 | `^{tree}` = **`e4d696fc…`** **逐字命中**预测；`git diff <落地树> <预测树>` **0 行** ⇒ 判据链闭合 |
+
+**⑨ 快照归属（`docs/32` §41.4 的裁决落地）**：本片改了 `crates/mc-conformance/report.json`（`/health unmounted → pass`）。合并后当轮复核 ⑨ totals = **`fixtures 365 / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`** ⇒ 与片自报一致，「产生位移的那片自己刷」这一先例口径在 base 上成立。
+
+**合并后零构建复采（base `924c966d`，四门当场跑）**
+
+| 门 | 读数 |
+|---|---|
+| ⑦ | **`local 474 / baseline 473 / implemented 389 real + 3 placeholder = 392 / known_gap 64 / unclaimed 0 / regression 0 / local_only 8`** |
+| ⑦ `gaps by owner` | `M9=33  M3+=16  M3=11  M10=4`（和 = 64 ✓，`M7` 键仍无） |
+| ⑦b | `slash_alias_audit.py --quiet` **exit 0**（allowlist 仍 0 数据行）；`w3b_premerge_audit.py --merged .` ⇒ **`0 finding(s)`** |
+| ⑨ | `365 / 15 / 23 / 21 / 0 / 306`（见上） |
+| ⑩ | `limit=800  scanned=1171  baseline=10  violations=0` |
+
+### §138.3 槽位选择与派发（1 个空位 ⇒ 派 **M10-3**）
+
+三个候选，逐条用**当轮实测**淘汰：
+
+| 候选 | 硬前置 | 当轮裁决 |
+|---|---|---|
+| **`M10-2`（`LUM-2104`）** | M10-0 ✓ | 🔴 **本片先被 §138.4 的新 finding 挡下**（写集缺 `crates/mc-http/Cargo.toml` 一条依赖边，且该边争 `Cargo.lock` = 在飞的 `M10-6`） |
+| **`M9-0`（`LUM-1815`）** | M7 全合 ✓ + M8 全合 ✓ | 两硬前置**已成立**，但 `docs/64` §7 的硬规则是 `M10-6` ∥ `M9-0` **不得同轮**（同争 `Cargo.lock`）⇒ 在飞 ⇒ **不派** |
+| **`M10-3`（`LUM-2105`）** | M10-0 ✓ | **✅ 派**：零 manifest、零 ⑨ 位移、与在飞片零文件交集 |
+
+**M10-3 预飞（逐文件实测，非抄描述）**：`crates/mc-http/src/routes/probes/mod.rs` 的 `pub mod realtime;` 与 `realtime::router()` merge **都已由 M10-0 接好** ⇒ 写集第 ② 类 = **0**；`mc-ws` 已有 `serde_json` + `axum`、`mc-http` 已有 `mc-ws` 边 ⇒ **零 manifest 需求**；`crates/mc-ws/src/hub/mod.rs` 当轮 **638 行 / 800**（余量 162）。
+
+**派发动作**：描述 rev **1 → 2**（追加「起手补充」：当轮 ⑦/⑦b/⑨/⑩ 四组读数 ⇒ 绝对预测改按当轮 base 平移为 `local 474 → 475 / implemented 392 → 393（390 real + 3 ph）/ known_gap 64 → 63 / owners.M10 4 → 3`；写集两点勘误：`mc-ws/src/lib.rs` 多半**不需要**改（子模块声明落 `hub/mod.rs`）、`hub/mod.rs` 余量 162 行；号段 `## 42.` / `### 9.12`）→ `assign --to-id 3c6087f9… --no-start` → `status todo`。run `01a0dbc8-3836-7862-9…` **03:35:28Z 起** ⇒ daemon 回到 **3/3**。
+
+### §138.4 🔴 计划修正：`M10-2` 的写集缺一条依赖边（`docs/64` §7/§9 的「manifest 只被 M10-6 写一次」作废）
+
+**事实（逐条可复算）**：
+
+1. `docs/64` 三处（§2.1 第 3 行 / §3 第 71 行 / §9 第 563 行）都要求 M10-2 的 `/readyz` 判定**复用 `mc_migrate::verify()`**（`crates/mc-migrate/src/lib.rs:127`，`Readiness{pending, missing_tables}` 在 `:96`）—— 实现确实存在；**但这不等于可达**。
+2. `rg -n mc_migrate crates/mc-http/{src,tests}` ⇒ **零命中**（除 `probes/ready.rs` 的文档注释引用）；`crates/mc-http/Cargo.toml` 的依赖清单里**没有 `mc-migrate`**。
+3. ⇒ M10-2 按现写集**物理上无法**满足自己的 DoD：必须加 `mc-migrate = { path = "../mc-migrate" }`（`mc-migrate` 已是 workspace 成员且在 lock 内 ⇒ **无新 package**，只重新生成 `Cargo.lock`）。
+4. `docs/64` §7 第 301/346 行与 §9 第 421 行写的是「**`Cargo.toml`/`Cargo.lock` 只被 M10-6 写一次**」—— 该断言因此**失效**（同波出现第二个 manifest 写者），且它自带一条调度后果：**M10-2 与 M10-6 不得同轮**。
+
+**处置**：`LUM-2104` 描述 rev **1 → 2**，追加「起手补充」含 ① 扩边内容与「只重新生成、不手工合并」；② 两条调度硬约束（不得与 `M10-6` 同轮；派发顺序改为「先 `M10-3`，`M10-2` 等 `M10-6` 终态」）；③ 增量口径的预测（`local +2 / implemented +2 real / known_gap −2 / owners.M10 −2`，不再写死绝对值）；④ 号段顺延 `## 43.` / `### 9.13`；⑤ 当轮四门读数。**保持 `backlog`，本轮不派。**
+
+**判据化动作（第六类预飞检查：复用目标的依赖可达性）**：对片 DoD 里**每一句**「复用 `X::y()`」，跑两条：
+
+```bash
+rg -n '<消费者目录>' -e "${crate}::" -g '!target'      # 现用方
+grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存在
+```
+
+第二条为空 ⇒ 该片写集必须扩 `<消费者>/Cargo.toml`（+ `Cargo.lock` 重新生成），并据此重算「禁同轮」集合。**先例**：`LUM-1674`（M6-9）在交付时才撞上 `mc-daemon/Cargo.toml` 需要新增两条 path 边（M6D-1 待仲裁）—— 本类漏项在 M6 已经发生过一次，这次是在**派发前**逮到的。
+
+### §138.5 回收（交付当刻，四判据齐）
+
+`lum-2103-7f117acf4c53`（M10-1 的 workdir）：① run **`completed`**（`03:28:35Z`）；② 内容**已进 base**（`merge-base --is-ancestor 51ca6d8b 924c966d` ✓）；③ `/proc/*/cwd` **逐 PID 零命中**；④ `git status --porcelain` **0 行** ⇒ 整删其 `target/`。**`df` 前后差 = 16.7G → 34.7G（≈18 GiB）**，量只认 `df` 差（`du` 报 18G，一致）。
+
+**排序**：本轮把回收排在**新片冷建之前**完成（派发 03:35:28Z ⇒ 回收在 2 分钟内），否则 `LUM-2105` + `LUM-2108` 的 `--with-db`（各需 ≈18G）会立刻撞 ENOSPC。删后全仓只剩**一个** `target/`：`lum-2108-3a8eabef12b3` 的 3.3G（**活物**，属在飞的 `M10-6`）。
+
+### §138.6 下一轮起点与槽位链
+
+- 收尾 base = **本节提交**（docs-only 直推）；GH **0 open PR**（#118 已合）；daemon **3/3** = cycle ∥ `LUM-2108`（M10-6 bench）∥ `LUM-2105`（M10-3）。
+- **`LUM-2105` 终** ⇒ 判据链合入（预期：`local +1`、`implemented +1 real`、`known_gap −1`、`owners.M10 −1`、⑨ **逐字不变**、`baseline` 不动）⇒ 递补顺序：**`LUM-2108` 若已终态 ⇒ `M9-0`（`LUM-1815`，anchor 单独跑，争 `Cargo.lock`）**；否则 **`M10-2`（`LUM-2104`，rev 2 已就绪，仍需等 `LUM-2108` 终态）** 或 **`M10-4`（`LUM-2106`，零 manifest，但 rev 1 ⇒ 派前补「起手补充」；它会位移 ⑨ 的 17 条 fixture ⇒ 按 §41.4 口径由它自己刷 `report.json`）**。
+- **`LUM-2108` 终** ⇒ 判据链合入（它改 `Cargo.lock` ⇒ 若 base 已前进则**真合 + 同树重跑**）⇒ **`M9-0`（`LUM-1815`）两硬前置成立 ⇒ 单独派**（anchor 不并行）。
+- **禁同轮**：`M9-0` ∥ `M10-2`（同争 `Cargo.lock`）；两个 INT（`LUM-2111` M10-9 / `LUM-1825` M9-10）不得同轮；普通片禁跑 `--write-baseline`。
+- **回收最高优先级** = `LUM-2108` 的 `lum-2108-3a8eabef12b3`（3.3G，终态后按四判据）+ 其新 workdir 的 target。
+- 看板（项目内 295）：`in_review 257 / backlog 24 / todo 13 / in_progress 1 / blocked 0`；`todo 13` = 积压 autopilot cycle 单 + 在飞 `LUM-2108`/`LUM-2139`/`LUM-2105`（cycle 用 `status todo` 起 run、片自己不写 `in_progress` ⇒ **判在飞只认 daemon + `/proc`**）。
+
+### §138.7 lesson（四条）
+
+1. 🔴 **新漏项子形态 = 「复用目标不在依赖图内」**：`docs/64` 三处都写了「复用 `mc_migrate::verify()`」，实现也**确实存在**，但 `mc-http` 连那条依赖边都没有 ⇒ 「存在」≠「可达」。**判据** = 对 DoD 里每一句「复用 `X::y()`」跑 `grep -n '<x-crate>' <消费者>/Cargo.toml`；为空即写集缺项。**本类漏项在 M6（`LUM-1674`）已经发生过一次**，这次在派发前逮到。
+2. 🔴 **「判据链的第②步」不是「base 必须是 head 的祖先」，而是「前进段非 docs 路径 = 0」**：本轮 base 前进了一整个提交（§137）却只动 `docs/37` ⇒ 形态③仍可零门禁重跑。**两半都要算**，只看祖先关系会把这类片误判成「必须真合 + 重跑 10/10」。
+3. **回收要在「新片冷建」之前完成，而不是本轮收尾时**：本轮 18 GiB 在派发后 2 分钟内放掉（16.7G → 34.7G），若等到收尾再删，两个 `--with-db` 片已经把盘吃回去。**四判据里最强的两条是「`merge-base --is-ancestor <head> <landed base>`」与 `/proc` 逐 PID 零命中**。
+4. **终态判定看 `multica issue runs` 的 `status` + `error`，不看 issue 的 `status`**：`LUM-2103` 的 issue 早已 `in_review`，但它的 run 是 03:28:35Z 才真终态（PR 03:26:58Z 开、CI 03:31:29Z 才全绿）。**PR 开出 ≠ run 终态 ≠ CI 绿**，三步各有自己的时刻。
