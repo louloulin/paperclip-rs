@@ -806,6 +806,36 @@ bash scripts/gates.sh --with-db      # 10/10
    `main.rs` 的 `AppState` 持有，而调度循环拿不到它（D6）⇒ 若将来要给 hook job 单独关开关，
    需要把目录也传给 `scheduler::start`（那要动 `main.rs`，本片不改）。
 
+### 9.12 M10-3（`LUM-2105`）：realtime 指标探针 `GET /health/realtime` 的偏离登记（**索引段**）
+
+> **本段为什么存在**：切片描述与 cycle 的号段账（`docs/37` §139.9 / §140）都把 M10-3 的登记号
+> 记为 **`### 9.12`**，而 §41 / §42 已按「该系列自 M7-0 起未再使用」的裁定把 M10 各片的登记
+> 落在自己的 `## N.` + `### N.x`。为**同时**满足两者，本节只做**索引**：偏离的**唯一一份完整
+> 登记**在 **`## 43.`（43.1–43.7）**，此处只列判据与标题，不复制正文。⇒ 后一片若仍要续
+> `### 9.13`，请先读 §41 的裁定与 `docs/37` §139.9（`### 9.13` 被 M9-0 与 M10-2 同时授权那次）。
+
+**契约（四态）**：200（token + 正确 `Bearer`：`application/json` + `Cache-Control: no-store` +
+13 个 realtime 顶层键 + `daemonws{14}`）/ 401（`WWW-Authenticate: Bearer realm="metrics"` +
+`unauthorized\n`）/ 200（无 token + 直连 loopback + 无转发头）/ **404**（无 token + 非 loopback
+**或任一** `X-Forwarded-*`/`Forwarded`）。
+
+**登记的偏离（7 条，全文见 §43.3）**：D-1 装配期读 env（本地 router 构建期读，测试走注入）；
+D-2 `TrimSpace` + 非空判分支；D-3 常量时间比较；D-4 Go `json.Encoder` 的尾换行/`Content-Length`；
+D-5 `RemoteAddr` 用 `Option<ConnectInfo>` 且缺失 ⇒ fail closed；D-6 逐字复刻两个纯文本 body；
+D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面，连接四则在两个子对象里同步变化。
+
+**口径更正（1 条）**：`redis` 子树上游实测 **20 个键**、`last_error` 是 Go `string` 零值 `""`
+（不是切片描述/`docs/64` §2.3 写的 16 键 / `null`）⇒ 按上游键数与值形态照发，**不删键**。
+
+**结构性为 0 / 未接线（逐条 + 接线点，全文见 §43.4）**：`inbound_too_large_total`（接线点
+`crates/mc-ws/src/pump.rs`，不在本片写集）；`subscribes_total` / `unsubscribes_total` /
+`subscribe_denied_total` / `active_scope_rooms`（本仓 daemon ws 无运行期订阅协议面）；
+`redis{20}` 与 6 个 relay 发布/接收键（本仓无 Redis ⇒ 单副本缺省，**接不接线是裁定**）。
+
+**门禁**：`bash scripts/gates.sh --with-db` **10/10 PASS / 1164s**；⑦ `local 474 → 475`、
+`implemented 392 → 393`、`known_gap 64 → 63`、`owners.M10 4 → 3`、`baseline 473` 不动、
+`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**（该路径无 fixture ⇒ `report.json` 未动）；
+⑩ `scanned 1181 → 1183 / violations 0`。逐字读数见 **§43.6**。
 
 ---
 
@@ -6243,3 +6273,197 @@ MULTICA_TEST_DATABASE_URL=postgres://…  cargo bench -p mc-bench          # 判
    每次都要 `Seq Scan` 10000 行 + top-N heapsort（8.4 ms）。上游是 Go 侧索引，本仓缺 —— 登记为缺口。
 3. **本 bench 的读数对「库是否干净」是硬依赖（不是噪声）**：见 §42.4，闸门已把它变成**红的**，而不是
    悄悄变慢的一个数。
+
+## 43. M10-3（`LUM-2105`）：realtime 指标探针 `GET /health/realtime`（1 路由）的落点与偏离登记
+
+> **号段复核（两个号空间，当轮实测）**：`docs/32` 的 `## ` 末号 = **`## 42.`**（M10-6 / PR #119
+> 已合）⇒ 本节取 **`## 43.`**。**跨分支复核**（`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`
+> 后逐个远端分支取 `docs/32` 的 `grep -n '^## ' | tail -1`）：**137 个远端分支里没有任何一个**
+> 到 `## 43.` 或更高 ⇒ 无争号。GH `pulls?state=open` = **0**。`### 9.x` 末号仍是 `### 9.11`（M6-8）
+> —— 该系列**自 M7-0 起未再使用**（§41 开头已就同一问题裁定），本节按同一裁定把**完整的**偏离
+> 登记落在 **`### 43.x`**；同时为满足切片描述的号段（`### 9.12`）与 cycle 的号段账，在 `## 9.`
+> 末尾补了一段**索引式**的 `### 9.12`（只列判据与标题 + 指向本节，不复制正文）—— 两处号都落，
+> 正文唯一一份在这里。
+
+**本片是上一个 run 的续做**：`01a0dbc8-3836-7862-93c5-84cca3cd907a` 于 03:48:40Z 死于
+`525 status code (no body)`（provider 侧，**与本片代码无关**，零提交、零评论）。cycle 已把现场
+保全为 `agent/devbox5/84cca3cd907a` 的唯一提交 **`2daadb13`**（父 = 当轮 base `b92b3367`）。
+本 run 在**新 workdir** 里把它 `git rebase origin/feat/multica-rs-initial` 到当轮 base
+**`4681aba9`**（= M10-6 / PR #119 之后）—— **rebase 零冲突**（M10-6 的写集 = `crates/mc-bench/**`
++ 根 manifest + `Cargo.lock`，与本片**零交集**）。
+
+**写集（逐字）**：`crates/mc-http/src/routes/probes/realtime.rs`（把 M10-0 的空桩换成
+handler + 四态访问门）、`crates/mc-http/src/routes/probes/realtime/tests.rs`（**新建**，15 例）、
+`crates/mc-ws/src/hub/metrics.rs`（**新建**：13 + 14 键的计数器集合 + 进程级单例）、
+`crates/mc-ws/src/hub/mod.rs`（字段 + 自增点 + 测试注入点）、`docs/32`（本节）。
+
+### 43.1 写集审计两类（`docs/64` §6.5 第 6 条）
+
+* **① 新建文件在不在 anchor 骨架内**：`probes/realtime/tests.rs` 是 `probes/realtime/` 下的
+  **唯一**文件（与 M10-1 的 `probes/live/tests.rs` 同构）；`mc-ws/src/hub/metrics.rs` 是 `hub`
+  的**子模块**，声明行落在 `hub/mod.rs`。
+* **② 为让新文件可见，改了哪个既有文件**：`crates/mc-ws/src/hub/mod.rs`（`pub mod metrics;`
+  + 字段 + 自增点），**其余一个都没有** —— `crates/mc-http/src/routes/probes/mod.rs`
+  （M10-0 冻结）只读：`pub mod realtime;` 与 `realtime::router()` 的 `merge` 在 anchor 期已接好。
+  🔴 切片描述列的 **`crates/mc-ws/src/lib.rs`（+1 行 `pub mod`）未动**：`metrics` 是 `hub` 的
+  子模块，可见性只需 `hub/mod.rs` 一行 —— 与增补的「写集勘误 1」逐字一致（`lib.rs` 早已有
+  `pub mod hub;`）。
+* **`hub/mod.rs` 的改动面（逐处）**：模块头注释 +1 行；`use self::metrics::Metrics;`；
+  `pub mod metrics;`（3 行注释 + 1 行声明）；`HubInner.metrics` 字段；`Hub::with_metrics`
+  （测试注入点）+ 私有 `build()`（**唯一**装配点，两个构造函数都走它）；`register` / `unregister`
+  各 1 个自增点；`notify_task_available` / `notify_runtime_gone` / `deliver_daemon_runtime`
+  的返回值收口（计数器要在**每条出口**上记一次）；`notify_frame_filtered` / `invalidate_runtime`
+  的 `sent` / `slow.len()` 累计点。
+* **行数（门 ⑩）**：`hub/mod.rs` 起手 **638** → 交片 **729**（≤ 800，余量 71 行）；
+  `metrics.rs` **714**、`realtime.rs` **258**、`realtime/tests.rs` **701**。`scripts/file_size_baseline.tsv`
+  **未动**（本片写集不在白名单内）。
+* `Cargo.toml` / `Cargo.lock` / `migrations/**` **一字节未动**：`mc-ws` 已有 `serde_json` + `axum`，
+  `mc-http` 已有 `mc-ws` 边，四态门的用例靠 `router_with_token` 注入 token、靠
+  `ConnectInfo` 扩展注入伪造 peer 地址（本仓既有手法，见
+  `crates/mc-http/tests/autopilots/webhook_support.rs:95`）⇒ **零 manifest 需求**。
+
+### 43.2 可判定契约（四态 + 字段名逐字）
+
+| # | 情形 | 状态码 | 判据（本片用例） |
+| :-: | --- | :-: | --- |
+| 1 | `REALTIME_METRICS_TOKEN` 已设 + 正确 `Authorization: Bearer <token>` | **200** | `application/json` + `Cache-Control: no-store` + 14 个顶层键（13 realtime + `daemonws`）`state_token_and_valid_bearer_is_200_with_snapshot` |
+| 2 | 已设 token + 缺失 / 错误 / 空白 / 另一方案 | **401** | `WWW-Authenticate: Bearer realm="metrics"` + 纯文本 `unauthorized\n` + `nosniff`；**不产生快照** `state_token_with_missing_or_wrong_bearer_is_401_with_challenge` |
+| 3 | 未设 token + **直连 loopback** 且无转发头 | **200** | `state_no_token_direct_loopback_is_200`（`127.0.0.1` / 127/8 段 / `[::1]`） |
+| 4 | 未设 token + 非 loopback，**或任一** `X-Forwarded-*`/`Forwarded` 存在（哪怕来自 127.0.0.1） | **404** | Go `http.NotFound` 的逐字 body `404 page not found\n` `state_no_token_non_loopback_is_404` / `state_no_token_any_forwarding_header_is_404_even_from_loopback` |
+
+* **13 个顶层键**（上游 `realtime/metrics.go::Snapshot()`，逐字）：`connects_total` /
+  `disconnects_total` / `active_connections` / `slow_evictions_total` / `messages_sent_total` /
+  `messages_dropped_total` / `inbound_too_large_total` / `events_sent_by_type{}` /
+  `subscribes_total{}` / `unsubscribes_total{}` / `subscribe_denied_total{}` /
+  `active_scope_rooms{}` / `redis{…}`；**`daemonws{14}`** 子对象（上游 `daemonws/metrics.go`）。
+  三处键集合都在 `tests.rs::snapshot_key_sets_match_upstream_verbatim` 与
+  `state_token_and_valid_bearer_is_200_with_snapshot` 里逐字断言（含每个计数器的
+  **JSON 整数类型**：`every_counter_is_a_json_integer`）。
+* **`Bearer` 前缀不分大小写**（上游 `strings.EqualFold`）、前缀之后还要 `TrimSpace`
+  （`bearer_prefix_is_case_insensitive_like_upstream`）；比较是**常量时间**的（长度不等直接
+  false，与 `subtle.ConstantTimeCompare` 同侧）。
+* **fail closed**：拿不到 peer 地址（Unix socket / 未注入 `ConnectInfo`）⇒ **404**
+  （`state_no_token_without_peer_address_fails_closed`）——与上游 `net.ParseIP` 返回 nil 同款。
+* **"挂上了但被门拒" 与 "路径根本没注册" 可区分**：两者都是 404，唯一可观测差别是 Go
+  `http.NotFound` 的 body（`mounted_and_unmounted_404_are_distinguishable`）；本片刻意
+  **不**用空 body 回 404。
+* **形态**：上游是 plain `r.Get("/health/realtime", …)`（`router.go:1412`）⇒ 只注册**无尾斜杠**
+  那一形态。运行时对照 `only_the_plain_form_is_served_by_the_full_router` + ⑦b
+  `slash_alias_audit.py`（`declared 5 / dual-form 0 / exit 0`）。全量装配下根路径可达的判据是
+  `realtime_probe_is_mounted_at_the_root_path`（`crate::routes::router` + `ConnectInfo(127.0.0.1)` ⇒ 200）。
+
+### 43.3 与上游的已知差异（逐条登记）
+
+| # | 上游 | 本地 | 为什么可以不同 / 影响 |
+| :-: | --- | --- | --- |
+| D-1 | `os.Getenv("REALTIME_METRICS_TOKEN")` 在 `router.go:1412`（**装配期**）读 | `realtime::router()` 在构建期读同一个 env（`mount_slice_probes` ⇒ `probes::router`）；测试走 `router_with_token` 注入 | 判据相同（改 env 只影响新进程；本仓没有热重载 router）。注入点的存在是**必要的**：env 是进程级的，并发用例之间会互相干扰 |
+| D-2 | `token` 只 `TrimSpace` 一次，`token != ""` 判分支 | `normalize_token`（`TrimSpace` + 非空过滤）**纯函数**，`REALTIME_METRICS_TOKEN="   "` 与"未设"同分支 | 无（`blank_token_env_behaves_exactly_like_unset` 逐条钉住） |
+| D-3 | `subtle.ConstantTimeCompare` | 逐字节 XOR 累加的常量时间比较 | 无（同样在长度不等时立刻 false） |
+| D-4 | `json.NewEncoder` 在 body 末尾补 `'\n'`、显式写 `Content-Length` | axum `Json`（无尾换行，length 自动） | `Content-Type: application/json` 一致；该路径**无** ⑨ fixture ⇒ 无机器判据 |
+| D-5 | `r.RemoteAddr` 由 Go 恒填 | `Option<ConnectInfo<SocketAddr>>`（生产链路 `into_make_service_with_connect_info` 已注入） | 缺失时 **fail closed**（404），见 §43.2 |
+| D-6 | `http.Error` 的 body 是 `unauthorized\n`；`http.NotFound` 是 `404 page not found\n` | 逐字复刻这两个 body（**不**用空 body） | 让"挂上了但被门拒"与"根本没注册"可区分（D-5 的 404 也靠它可观测） |
+| D-7 | 两个**互不相干**的计数器集合（realtime 面 / daemonws 面各有自己的 `register`/`unregister`） | 本仓只有**一条** ws 连接面 ⇒ 连接四则（`connects_total`/`disconnects_total`/`active_connections`/`slow_evictions_total`）在两个子对象里**同步**变化 | 唯一的结构差异。判据（键名 + 状态码）不受影响；这是"本地只有一个 hub"（`docs/32` D-4）的直接后果，**不是漏接线** |
+
+🔴 **口径更正（一处，实测）**：切片描述与 `docs/64` §2.3 写「`redis` 子树 16 个键 +
+`last_error:null`」——上游 `f41fae6b08fb` 的 `Metrics.Snapshot()` **实测是 20 个键**，且
+`last_error` 是 Go `string`（零值 `""`，**不是** `null`）。本实现取**上游的键数与值形态**
+（20 键 / `last_error:""` / `streams:{}`），理由：客户端可能按 key 的**存在性**解析
+（`redis.connected` 判是否多副本、`redis.streams` 判 relay 是否在跑）⇒ **不许删键**。
+断言：`redis_subtree_is_emitted_with_single_replica_defaults`。
+
+### 43.4 结构性为 0 / 未接线项（**不许**靠删键"解决"）
+
+| 键 | 本地为何结构性为 0 / 空 | 接线点（不在本片写集） |
+| --- | --- | --- |
+| `inbound_too_large_total` | 入站读上限由 axum/tungstenite 的 `max_message_size` 拒掉，错误在 `crate::pump::read_pump` 的 `stream.next()` 里浮出 | `crates/mc-ws/src/pump.rs` |
+| `subscribes_total` / `unsubscribes_total` / `subscribe_denied_total` / `active_scope_rooms` | 本仓 daemon ws **没有**"订阅 scope 帧"这个协议面：身份在升级时一次解析成注册表索引（`crate::identity` + `crate::connection::Registry`），没有运行期订阅/退订动作 | 需要先有一份 scope 订阅协议（不属本波） |
+| `redis{20}` 全子树（含 `streams{}` / `last_error`） | 本仓**无 Redis**（`Cargo.toml` 无 redis 边）⇒ 单副本部署缺省 | 不接线是**裁定**（`docs/64` §2.3）；照发零值 |
+| `wakeup_published_total` / `wakeup_publish_errors` / `runtime_gone_published_total` / `runtime_gone_publish_errors` / `wakeup_received_total` / `runtime_gone_received_total` | 上游统计"发到 Redis 让**别的副本**投递"与"从 relay 回环收到"；本仓无 Redis relay | 同上；`notify_*` 的**本地**投递结果落在 `wakeup_delivered_*`（**已接线**，有真连接用例） |
+
+⇒ 全部按**零值照发**（键存在性是冻结契约）。断言：`unwired_counters_are_emitted_as_zero_not_omitted`。
+🔴 `events_sent_by_type` 的实现取舍：上游在各调用点静态传 `eventType`，本地唯一的投递漏斗
+`Hub::notify_frame_filtered` 的签名**不能改**（调用者 `hub/user_face.rs` 不在本片写集）⇒ 帧类型从
+**帧本身**解出来（`metrics::event_kind`），代价是每次投递多一次小 JSON 解析（不是每连接一次）。
+
+### 43.5 计数器的"真连接"证据（专属验收）
+
+`docs/64` §6.5 的 M10-3 专属验收要求「**至少 3 个**计数器有『跑一次**真实连接** ⇒ 值增长』的用例」，
+且**不许**断言进程级单例（别的用例的连接会干扰读数）。落地：`Hub::with_metrics`（注入只属于本条
+用例的集合）+ 真 axum server + 真 `tokio-tungstenite` 客户端（`hub/metrics.rs` 的 `#[cfg(test)] mod tests`，
+装配与 `crates/mc-ws/tests/hub_support/mod.rs` 同款的最小版 —— `mc-ws/tests/**` **不在**本片写集）。
+
+| 用例 | 覆盖的计数器 |
+| --- | --- |
+| `one_real_connection_moves_connect_active_and_disconnect_counters` | `connects_total` / `active_connections` / `disconnects_total` + `daemonws` 面同名 3 个（**6 个计数器 / 1 条连接**） |
+| `notify_task_available_counts_one_sent_frame_per_connection` | `messages_sent_total` + `events_sent_by_type{"daemon:task_available"}`（第二条连接 ⇒ 一次投递记 2） |
+| `wakeup_delivery_hit_and_miss_are_counted_separately` | `daemonws.wakeup_delivered_hit_total` / `..miss_total` |
+| `runtime_gone_delivery_uses_its_own_counter_pair` | `daemonws.runtime_gone_delivered_{hit,miss}_total` |
+| `production_hub_reports_into_the_process_snapshot` | **接线判据**：生产装配 `Hub::new()` 注入的就是 `metrics::process()` 单例 ⇒ 探针读到的就是真正在跑那条 hub 的计数（用单调的 `connects_total` 做断言，不用 gauge） |
+
+### 43.6 门禁读数（逐字取自当轮日志；起手与交片各一次）
+
+**起手（base `4681aba9b9747d94b6ebfad699979b00b1c655ce`，在 `git worktree` 的 base 树上实测）**
+
+```
+⑦  upstream 456 (commit f41fae6b08fb) | local 474 registered | baseline 473
+    implemented 389 real + 3 placeholder = 392 / 456   known_gap 64   unclaimed 0   regression 0   local_only 8 (1 ph)
+    owners {M9 33, M3+ 16, M3 11, M10 4}   files_scanned 207
+⑨  fixtures 365 | pass 15 | mismatch 23 | unmounted 21 | placeholder 0 | unevaluable 306
+    contract 0.0410958904109589 · mounted 0.39473684210526316   （report.json blob db173fe8409d）
+⑩  file_size_check: limit=800  scanned=1181  baseline=10  violations=0
+    hub/mod.rs 638 行（余量 162）
+```
+
+**交片（`bash scripts/gates.sh --with-db --db-url '…/multica_lum2105'` = 10/10 PASS / 1164s）**
+
+```
+① fmt 0(3s) · ② build 0(265s) · ③ clippy 0(150s) · ④ clippy-test-util 0(70s) · ⑤ test 0(77s)
+⑥ db 0(493s, migrate=0,e2e=0) · ⑧ schema-drift 0(28s) · ⑦ route-parity 0(1s) · ⑨ conformance 0(77s) · ⑩ file-size 0(0s)
+⑦  upstream 456 | local 475 registered | baseline 473（**不动**）
+    implemented 390 real + 3 placeholder = 393 / 456   known_gap 63   unclaimed 0   regression 0   local_only 8 (1 ph)
+    owners {M9 33, M3+ 16, M3 11, M10 3}   files_scanned 208
+⑦b registered upstream-key literals: 471（base 470；本片真的多一条注册键）/ 0 defect / 0 warning（exit 0）
+    --declared docs/fixtures/m10-declared-routes.tsv: declared 5 / dual-form 0 / single-form 5（exit 0）
+⑨  fixtures 365 | pass 15 | mismatch 23 | unmounted 21 | placeholder 0 | unevaluable 306
+    contract 0.0410958904109589 · mounted 0.39473684210526316   （与起手**逐字相同**）
+    `--check` = `report matches crates/mc-conformance/report.json`（blob 与起手相同 db173fe8409d）
+⑩  file_size_check: limit=800  scanned=1183  baseline=10  violations=0（`file_size_baseline.tsv` **未动**）
+⑤  新增例：`cargo test -p mc-http --lib routes::probes::realtime` ⇒ **15 passed**；
+    `cargo test -p mc-ws --lib hub::metrics` ⇒ **6 passed**
+```
+
+* 不变式逐条：`implemented + known_gap == 456`（393 + 63 ✓）、`unclaimed == 0`、`regressions == 0`、
+  `baseline` 不动（473）、`local_only` 不增（8 → 8）。**⑦ 的位移与本片预测逐字相符**
+  （`local 474 → 475`、`implemented 392 → 393`、`known_gap 64 → 63`、`owners.M10 4 → 3`）。
+* `local_only` 仍是 **8（1 ph）**：`.route("/health/realtime")` 是**上游键**，不进 `local_only`。
+* 全量门禁的**当轮环境**（如实披露，两件都不改变判据）：① 冷 `target`（起手 `rm -rf target`）
+  且 `CARGO_INCREMENTAL=0`（`docs/64` §6.5 的通用纪律里那条"起手看 `df`"的落地 —— 一次冷全量
+  `--with-db` 实测把 `/` 吃到 **129 MiB 余量**，不这么做会在 ② / ⑥ 处 ENOSPC 伪装成代码红，
+  与 `docs/37` §46 / `docs/32` §37 的第 3、4 次实证同款）；② ⑥ 跑在**重建的**库上（见下）。
+
+📌 **门 ⑥ 的一条环境事实（本片实测，不是本片回归）**：同一条 `--only db` 命令在**复用**的库上
+第二次跑会红 —— `e2e=101`，8 例 `routes::auth::tests::google_login_*` 与
+`routes::channels::lark::tests::db::*` 报 `Connect(PoolTimedOut)` / `pool timed out while waiting for
+an open connection`（全是与本片写集**无关**的路径；PG 侧无 `too many clients`、`max_connections=100`、
+时刻内活动连接仅 6）；在 **`DROP` + `CREATE DATABASE`** 重建的库上跑即绿（本片 3 绿 1 红，
+绿的 3 次全是重建后的库）。⇒ 判据化动作：**跑 ⑥ 之前先重建库**（或别把 ⑥ 连跑两次）。
+根因未定（客户端池超时 vs 复用库里的残留行/统计），登记给工具面，**不建议**在本波改 `scripts/**`。
+
+### 43.7 交接与风险
+
+* **R-1（上游 pin）**：本节的上游引用一律 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`（⑦ 的路由 pin）。
+  本波 §1.6 记的**第二个** pin（⑨ 契约 `90e0bdf`）与本片无关 —— 该路径**零 fixture**
+  （`git grep health/realtime contracts/golden/` = 0），两个 pin 在这条路径上无差异。
+* **R-2（`redis` 子树的 20 键 / `last_error:""`）**：M10-4（`/api/config`）与 M10-9（INT）**不得**
+  按 `docs/64` §2.3 的"16 键 / `null`"去改写这段；以本节 §43.3 的更正为准。
+* **R-3（⑨ 快照）**：本片**没有**位移（`unmounted → pass` 一条都没有）⇒ `report.json` **未动**，
+  与 M10-1 的 41.4 裁决（"产生位移的那片自己刷"）**不冲突**，也不给 M10-9 留步。
+* **R-4（`hub/mod.rs` 的行数余量）**：交片 729 / 800（余量 **71**）。M10-B4（`/ws`）**只读** hub 的
+  公开 API（`docs/64` §4.1），若谁要在 `hub/mod.rs` 里继续加自增点，**先看 `wc -l`**；超余量时按
+  `metrics.rs` 上的 `record_*()` 封装（**不得**把 `metrics` 的实作搬回 `mod.rs`）。
+* **R-5（`hub/mod.rs` 的自增点只能在一处）**：`register`/`unregister` 是连接四则的**唯一**自增点
+  （`unregister` 的 `if registry.clients.remove(&id).is_none() { return; }` 是幂等保护，慢客户端驱逐
+  与读泵收尾各调一次时**只计一次**）。`deliver_daemon_runtime` 的计数器包在**外层**：**每条出口**
+  （含四个 `miss` 早退）都记一次，与上游逐字同。
+* **R-6（`inbound_too_large_total` 的接线点）**：见 §43.4 —— `crates/mc-ws/src/pump.rs` 不在本片
+  写集，登记给后续片（与 `docs/64` §6.5 的"未接线项要登记"一致）。
