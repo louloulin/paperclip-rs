@@ -11563,3 +11563,67 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - 🔴 **不是只看 run 结论，而是逐用例核对**（`actions/jobs/108288154853/logs`，2543 行，`FAILED` 出现 **0** 次）：§130.6 表里三个红点——`telegram::binding_redeem_is_idempotent_and_classifies_three_failures`、`telegram::install_list_revoke_and_reinstall`、`real_db_the_loop_delivers_each_schedule_bucket_exactly_once`——**当轮逐一打印 `... ok`**（23:32:34Z / 23:32:34Z / 23:33:32Z）。
 - ⇒ **`LUM-1980` 的 8 条修复在 CI 上成立**（至少一次），且**红→绿的对应关系是逐用例可追的**（不是「换个 run 就绿了」这种弱结论）。门 ⑥ 新基线：`#373` = 第 **1** 个数据点（≥3 个连续 run 才改判，见 §130.6）。
 - ⚠️ 顺带：本 run 的 §130 直推 **`3385d7d5` 又触发了一个 run（`#374`，23:36:09Z）** —— 每次 docs-only 直推都会起一个 CI run（成本 ≈ 10 分钟 × 3 job）；这不影响判据链（走「合并树同树 `--with-db`」那条离线路即可）。
+
+### §130.13 轮内转非只读：`LUM-1784` 于 23:38:24Z 开 **PR #113**，23:4xZ 自撞「交互式 rebase + 非 TTY `vim`」挂起 ⇒ 自恢复后重跑门禁
+
+**时间线（逐条实测，这是本轮最值得记的一手材料）**：
+
+| 时刻（Z） | 事件 | 实测判据 |
+| --- | --- | --- |
+| 23:31–23:37 | 它在**自己的热 target** 上跑 `bash scripts/gates.sh --with-db`（`timeout 4800`），已进 ⑥ 用例执行段 | `/proc` 逐 PID：`63388 timeout` → `14378 cargo test -p mc-repos …` → `16941 autopilots-dd82…` |
+| **23:38:24** | **PR #113 开出**（head `effc01cb`，base 报 `5340ac06`） | 认证 GH `pulls?state=open` = 1；`refs/pull/113/head` 可得、**`refs/pull/113/merge` 不可得**（有冲突 ⇒ GitHub 拒绝建合并提交） |
+| 23:39–23:46 | 它**自己**发现 base 已前进 ⇒ 起 **interactive rebase** 把 base 并进来并解 `docs/32` 号段 | `rebase-merge/git-rebase-todo` 逐字：`pick effc01cb docs(32-36.3)…` + `pick 172f7755 docs(32-37): 号段重编 —— LUM-1980 的 PR #112 先落地占 ## 36.，本片按号段纪律改为 ## 37.（+10 处自引用）` |
+| 🔴 23:41–23:46 | **挂起**：`git rebase --continue` 用 `-e` 起编辑器 ⇒ `/etc/alternatives/editor → /usr/bin/vim.basic` 以 **`fd0 == fd1 == pipe`** 启动 ⇒ `do_select` 里**死等 EOF** | `ps -o wchan` = `do_select`；`ls -l /proc/21898/fd/0` = `pipe:[…]`；链条 `bash → git rebase --continue → git commit -e → /usr/bin/editor` 全部 `do_wait` |
+| 23:46:36 | 编辑器进程消失（工具调用被上层收掉）⇒ pi 恢复推理 | `vim-hung → vim-gone`；本地 HEAD 仍 `5340ac06`、`rebase-merge/` 仍在 |
+| 23:47–23:5x | **它自己重排并重跑**：本地 HEAD `d31f69ae`（含号段重编提交）⇒ 立刻在**新树**上重跑 `--with-db`（先 `cargo`/`clippy`，后测试二进制 `hub_user_frames`） | `/proc` 逐 PID |
+
+- 🔴 **这就是 MEMORY.md 里那条老坑的再现**（LUM-1392 cycle 记过）：**本仓 worktree 共享裸仓、`user.name/email` 是空串，且 `EDITOR` 默认 `/usr/bin/vim.basic` ⇒ `git rebase`（尤其交互式）在无 TTY 的 agent 环境里必然挂**。解药逐字是 `GIT_COMMITTER_NAME/EMAIL` + **`GIT_EDITOR=true`**（中途失败可 `git commit -C <原commit>` 再 `git rebase --continue`）。
+- **本轮的处置（刻意不越界）**：本 run 在本机**已按同一定式把冲突解好并做成合并提交 `db19f149`（树 `1efb9f0f`）作为预演**，但**没有推送** —— 因为它正在**同一分支**上做同一件事，抢推会让 PR #113 的 head 与 base 分叉、把「谁的解更权威」变成竞态。判据：`git ls-remote refs/heads/agent/devbox5/80429b9e50ef` 仍是 `effc01cb`（它未 force-push）⇒ **让位，等它自己收口**。
+- **预演的独立价值（已产出、可复核）**：① 冲突面**只有 `docs/32` 一个文件**（`git merge-tree --name-only`）；② 解法 = **两侧都保留 + 号段归位**：`## 36.` 归先落地的 `LUM-1980`（PR #112），M7-19 那节连同 **`### 36.1…36.10` 风格的自引用子节**重编号为 `## 37.` / `37.x`（本 run 在预演里把 6 个子节全改了）；③ **22 个文件里 21 个的合并后 blob == `effc01cb` 的 blob（字节相同）**，只有 `docs/32` 是解析结果；④ 合并后相对 base 的 `--numstat` = **22 文件 `+7835 −63`**（比 PR 的 `+7836` 少 1，差的正是分隔行）。
+- **残留（不掩盖）**：`f617bdd8` 的提交正文与 **PR #113 描述**里的「`docs/32` §36 / §36.2 / §36.4」是**重编号前**的自引用 —— 历史提交改不动，PR 描述也可以不改（正文已被 `docs/32` §37.2/§37.4 取代）⇒ 权威落点以 `docs/32` 的 **§37.x** 为准，已在合并提交信息里逐字登记。
+
+### §130.13 轮内转非只读：`LUM-1784` 交 **PR #113** ⇒ 判据链**六步全绿**合并，落地 **`db5713cf`**（树 `6f1c2e45` 四读数 + 同树 10/10）
+
+**时间线（逐条实测 —— 这是本轮最值得留档的一手材料，因为中间夹了一次「自撞编辑器挂起」）**：
+
+| 时刻（Z） | 事件 | 实测判据 |
+| --- | --- | --- |
+| 23:31–23:37 | 它在**自己的热 target** 上跑 `bash scripts/gates.sh --with-db`（`timeout 4800`），已进 ⑥ 的**用例执行段** | `/proc` 逐 PID：`63388 timeout` → `14378 cargo test -p mc-repos …` → `16941 autopilots-dd82…` |
+| **23:38:24** | **PR #113 开出**，head `effc01cb` | 认证 GH `pulls?state=open` = 1；`refs/pull/113/head` 可得而 **`refs/pull/113/merge` 不可得**（有冲突 ⇒ GitHub 拒绝建合并提交） |
+| 23:39–23:46 | 它**自己**发现 base 已前进 ⇒ 起 **interactive rebase** 并入 base 并解 `docs/32` 号段 | `rebase-merge/git-rebase-todo` 逐字：`pick effc01cb …` + `pick 172f7755 docs(32-37): 号段重编 —— LUM-1980 的 PR #112 先落地占 ## 36.，本片按号段纪律改为 ## 37.（+10 处自引用）` |
+| 🔴 **23:41–23:46** | **挂起**：`git rebase --continue` 以 `-e` 起编辑器 ⇒ `/etc/alternatives/editor → /usr/bin/vim.basic` **`fd0 == fd1 == pipe`** ⇒ `do_select` **死等 EOF** | 链条 `bash → git rebase --continue → git commit -e → /usr/bin/editor` 全部 `do_wait`；`wchan=do_select`；`/proc/21898/fd/0 → pipe:[…]` |
+| 23:46:36 | 编辑器进程消失（被上层工具调用收走）⇒ pi 恢复推理 | `vim-hung → vim-gone`；本地 HEAD 仍 `5340ac06`、`rebase-merge/` 仍在 |
+| 23:47–23:56 | **它自己重排并重跑**：本地 HEAD `d31f69ae` ⇒ 在新树上做完**一整轮 `--with-db`** | `/proc` 逐 PID（`cargo` → `clippy` → `python3` → 测试二进制 `hub_user_frames`）|
+| **23:57:59 → 23:58:55** | head 变 `df9fee2a`（`172f7755` + 再次并入 `5340ac06` 的 merge 提交）⇒ **force-push** | 远端 `refs/heads/agent/devbox5/80429b9e50ef` 由 `effc01cb` → **`df9fee2a`** |
+| 23:59:08 | PR 描述更新，自报**同树** `--with-db 10/10 PASS / 610s`、并写明 tree `6f1c2e45…` | `pulls/113` 的 `body` 含「门禁证据与推送头**同一棵树**」 |
+| **23:59:38** | **本 cycle 判据链合并** ⇒ 落地 **`db5713cf`** | `PUT /pulls/113/merge` 返回 `merged: true` |
+
+**判据链（六步，逐条实测）**：
+
+| 步 | 判据 | 本 run 实测 |
+| --- | --- | --- |
+| ① | `merge-base..head` numstat == PR API **逐字** | `git diff --numstat 5340ac06 df9fee2a` = **22 文件 `+7830 −63`**；与 `pulls/113/files` **逐文件逐字相等**（`sort` 后 `diff` 无输出）✓ |
+| ② | 形态判定 | `merge-base` == base（`5340ac06`）⇒ **真合但平凡**（片自己把 base 并了进来）✓；`refs/pull/113/merge` 此时**已存在** |
+| ③ | **四读数** | `head^{tree}` == `git merge-tree --write-tree` == **`refs/pull/113/merge^{tree}`** == **`6f1c2e450e55d3a1fe71d29c7281b9634905c6cf`** ✓ |
+| ④ | 证据（同树） | 它的 `--with-db` **10/10 / 610s** 跑在 `d31f69ae` 的树上，而 **`tree(d31f69ae) == tree(df9fee2a)` == `6f1c2e45…`** ⇒ **同树**（比 §129 的「时间戳法」更硬：直接比 **tree**，不看时间）；另有本 run 的 `/proc` 观测（23:47–23:56 那段门禁就是它）✓ |
+| ⑤ | 钉 sha + 合并 | API `PUT /pulls/113/merge` 带 40 位 `df9fee2a0cd3bed064952705098ad8baf78b2749` + `merge_method=merge` ⇒ 落地 **`db5713cf479ca1ec5cb9e52f783551b41f2af331`** ✓ |
+| ⑥ | 落地验证 | 落地 `^{tree}` == `6f1c2e45…` **逐字命中**；`git diff df9fee2a db5713cf` = **0 行**；⑦ 在落地 base 上当场重跑 **1/1 绿（1s）**、**九个数逐字不变**（0 路由片，与预测一致）；⑩ **`scanned 1130 → 1147`**（= **+17**，正是 §130.2 独立数出来的 17 个新增 `.rs`，**逐字吻合**）；⑨ 三输入 **SAME**（免冷编）✓ |
+
+- **PR 状态**：`state=closed / merged=true / merged_at 23:59:38Z / merge_commit db5713cf`；轮末 GH **0 open PR**。
+- **硬前置解锁实测**：落地 base 上 `crates/mc-channel/src/wecom/{wecom_channel,resolvers,inbox_message,markdown,seal,stream_store}.rs` **六条全 present**（M7-19 五条 + M7-16 一条）⇒ **`LUM-1785`（M7-20）的硬前置六条当轮由 MISSING 变成立**（这是本轮唯一的状态跃迁）。
+- 🔴 **本 run 的「预演合并」`db19f149`（树 `1efb9f0f`）刻意未推送**：23:41 时它正在**同一分支**上做同一件事（rebase 解号段），抢推会让 PR #113 的 head 与 base 分叉、把「谁的解更权威」变成竞态。判据是「`git ls-remote` 仍是 `effc01cb`（未 force-push）」⇒ **让位，等它自己收口**（结果：它 23:58:55 自己交出了 `df9fee2a`，比本 run 的解更完整 —— 它多带了一个 `docs(32-37)` 号段重编提交）。**预演的价值转移为「提前 18 分钟就知道冲突面只有 `docs/32` 一个文件」**（§130.8），而不是「替它合并」。
+
+### §130.14 🔴 新 finding：本仓 worktree 的 `EDITOR` 陷阱（**第二次**在 agent 环境里挂住整片）
+
+- 🔴 **成因链（可复现的四段）**：本仓 worktree 共享裸仓 ⇒ `user.name/email` 为空串（已有对策 `git config --worktree`）；但 **`EDITOR`/`core.editor` 没人管** ⇒ `git rebase --continue`（以及任何带 `-e` 的提交）会拉起 `/etc/alternatives/editor` → **`/usr/bin/vim.basic`**，而在 agent 环境里它的 `fd0 == fd1 == 一个 pipe` ⇒ **vim 在 `do_select` 里死等 EOF，三层父进程全 `do_wait`**。
+- **代价实测**：`LUM-1784` 从 23:41:0x 挂到 **23:46:36**（≈5.5 分钟），期间整片无进展；恢复后它**重做了一遍 rebase + 重跑了一整轮 `--with-db`（610s）** ⇒ 这一挂的直接代价 ≈ **16 分钟**片内工时（更别说它上一轮已经跑过一次同一条门禁）。
+- **对策（逐字，须写进每一片「起手纪律」）**：`GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true git rebase …`（或 `git -c core.editor=true rebase`）；提交身份用 `git config --worktree user.name/user.email`；`git rebase --continue` 中途失败用 `git commit -C <原commit>` 后继续。**MEMORY.md 里 LUM-1392 那条老坑只写了「rebase 另需 `GIT_EDITOR=true`」，但没有落到片描述里 ⇒ 本轮以「片实测挂起」的形式复发。**
+- **纪律建议（第六类预飞检查 = 工具环境）**：凡片描述里出现 `rebase` / `--amend` / `-i`，必须同时给 `GIT_EDITOR=true`；这把「片上挂起」从**随机**变成**不可能**。
+
+### §130.15 槽位：合并后**立刻**被 00:00Z 的并发 cycle 占满（`running_task_count = 3`）
+
+- 本轮**唯一一次**出现并发 cycle：`LUM-2092`（00:00Z / 08:00 Asia 触发）在 **00:00:0xZ** 起手（pid `45648`，cwd `lum-2092-a7d2b145aa90`）。
+- 于是 daemon **3/3**：本 run ∥ `LUM-1784`（**已 `in_review` rev 10、PR 已合，但 run 未终态**，仍在跑 `cargo clippy`）∥ `LUM-2092` ⇒ **空位 = 0**：`LUM-1785` 的硬前置**刚刚成立**，却**没有槽位**（不是「不该派」，是「派不了」）。
+- ⇒ 下一轮（或 `LUM-2092` 收尾后）**第一顺位 = `LUM-1785`**（M7-20），其 rev 7 描述里的「硬前置六条 MISSING」**已作废**，起手那刻会读到 present。
+- **回收 = 0**：`LUM-1784` 的 **18G** `target/` 是**活物**（它的 run 仍在跑 clippy）⇒ 四判据的第一条（run 终态）不成立，**一字节不动**；`LUM-2092` 刚起手。⇒ 本轮回收仍只有 §130.5 的 +40 MB。
+- ⚠️ **并发 cycle 的避让（沿用 §128 的结论）**：本轮**已经**做完了不可重复的动作（合并 `#113`）；剩下的 docs 直推是本 run **唯一还剩的写动作**，故**立刻推**（避免两个 cycle 同时 append `docs/37` 造成非快进）。
