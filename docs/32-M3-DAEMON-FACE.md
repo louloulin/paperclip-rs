@@ -5730,3 +5730,183 @@ dedupe_redis.go(200), trace.go(350)}` = **2,214 行**（非测试口径；逐文
   （`docs/64` §6.5 第 5 条：每条路由至少一条用例，不得用 `health::placeholder`）。
 * **不刷 `mc-conformance/report.json`**：本片未动 ⑨ 的任何一位（sha256 与 base 逐字节相同）⇒ 报告文件的
   刷新**只**归 M10-9（`docs/64` §6.2）。
+
+---
+
+## 40. M7-21 INT（`LUM-1786`）：集成、快照刷新与缺口登记（**0 路由 / 0 代码改动**）
+
+> **号段复核（起手那刻实测）**：`grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` = **`## 39.` M10-0 anchor**（`LUM-2102`）
+> ⇒ 本节取 **`## 40.`**。号由**落地顺序**占；本片起手时 `## 38.`（M7-20）/`## 39.`（M10-0）都已在 base 里。
+> 本片**不**开 `docs/` 新文件（写集逐字：`docs/32` / `docs/37` / `docs/60-M7-PLAN.md` §11 / `docs/fixtures/route-parity-baseline.json`）。
+
+**本片是什么**：M7 波（W7 渠道面）的**收口片** —— 1 anchor + 20 代码片 + 本片 = 22 个 issue 的最后一个（`docs/60` §4.1 / §4.3 的 stage 9）。
+它与 M6-10（`docs/58`）、M8-7（本文件 §26）同族：**0 路由、0 代码、0 迁移**，交付物就是**三件套快照 + 偏离/缺口收口**。
+
+**起手 base** = `dd0e8c51`（= M10-0 的 `4f11bb7f` + 09:30 cycle `LUM-2122` 的 `docs/37` §134 docs-only 直推）。
+⚠️ 本片是**静默死亡后的抢救轮**：上一轮 run（`lum-1786-c95b99fea078`）于 **02:17:43Z** 因上游 **524** 退出，工作树有 1 处未提交改动、0 提交、分支未推送。cycle（`LUM-2130`）把它固化成提交 **`c8b94c77`** 并推分支 ⇒ 本片接手时**那一步已完成**（详见 §40.2）。
+
+### 40.1 硬前置与 ⑦ 读数（当轮实测，逐字）
+
+```
+$ python3 scripts/route_parity.py            # base dd0e8c51
+upstream 456 (commit f41fae6b08fb) | local 473 registered | baseline 473
+  implemented  388 real +   3 placeholder =  391 / 456   known_gap   65   unclaimed    0   regression   0   local_only    8
+  gaps by owner: M9=33  M3+=16  M3=11  M10=5
+OK: every upstream route is either implemented or owned
+```
+
+* **硬前置成立**：`owners` 字典里**没有 `M7` 键**（`docs/60` §4.1 给本片的硬前置是「全波（M7-0…M7-20）」）⇒ 24 条 M7 上游路由**逐条落地、缺 0**。
+* 不变式：`implemented + known_gap = 456` ✓ / `unclaimed 0` ✓ / `regression 0` ✓ / `local_only 8`（≠ 计划期的 9，见 §40.9）。
+* `sources.files_scanned 206`（M7-0 起手时 201）；`upstream_commit f41fae6b08fb` 未漂。
+
+### 40.2 快照三件套
+
+**(a) ⑦ `docs/fixtures/route-parity-baseline.json`：`457 → 473`（本波唯一一次，`--write-baseline`）**
+
+| 项 | 值 |
+|---|---|
+| 片前（当轮 `baseline` 字段实测） | **`457`** |
+| 片后（当轮 `local` 实测，未折叠注册点口径） | **`473`** |
+| 净增 | **`+16`**，逐条都是 **M7 自己的渠道键**：dingtalk 7（M7-9）+ lark 5（M7-14）+ wecom 4（M7-15） |
+| 幂等复核 | 在交付树再跑 `--write-baseline`，产出与文件**逐字节相同**（`git diff` 空 / 键数都 473 / JSON 归一后 `a == b`） |
+| 同轮写者 | **唯一**（M8-INT 的配额已用掉；M9-INT `LUM-1825` 与 M10-9 都未起手） |
+
+* `457` 的来处：M8-7 INT 的整树刷新 `406 → 458` **减** M10-0 的删键型最小刷新（`458 → 457`，只删幽灵占位 `GET /api/feature-flags`）。
+* **抢救说明（本片命途的一部分）**：本片上一轮 run 死在**刷完基线、还没写文档**的那一刻（`c8b94c77` = 那 +16 行本身）。cycle 在 base `dd0e8c51` 上独立跑 `--write-baseline`，产出与抢救提交里的 JSON **归一后逐字相同**（diff 空）；本片接手后又**自己复核了一遍**（上面「幂等复核」那一行）⇒ 这一步**不必重做**，重跑也只是同一结果。
+* `344`（计划期）/`406`（M8-INT 前）/`430`（计划预测）/`458`（M8-INT 后）**都已过期**；`docs/60` §6.1 的 M7-21 行也按本表订正。
+
+**(b) ⑨ `crates/mc-conformance/report.json`：本片**不动**（并给出归属）**
+
+* 当轮 blob **`3eb0430a39c8cf6c50ccafe626542abba3eaa0d4`**；totals `fixtures 365 / pass 14 / mismatch 23 / unmounted 22 / placeholder 0 / unevaluable 306`；`contract_equivalence_rate 0.038356` / `mounted_equivalence_rate 0.378378`；门 ⑨ = `report matches`（绿）。
+* **M7 面的 12 条**（按 `docs/60` §6.2 的 24 条路由过滤）= **8 `pass` + 4 `unevaluable`**：
+  * 8 条 `pass` = §6.2 承诺的那 8 条（lark 7 + telegram 1），**已由 M7-14 随 PR #111 刷进快照**（`pass 7 → 14` / `unmounted 29 → 22`）⇒ 本片**只核对**。先例：M8-6 的 composio 一条（`unmounted → pass`，同样是本片之前落地的片自己刷的）。
+  * 4 条 `unevaluable` = 4 条 dingtalk 群 scope 矩阵 fixture（`GET …/dingtalk/groups`，`actor=member`）⇒ 见 §40.5 **G-4**。
+* **wecom 面 = 0 条 fixture**（阴性对照组，连续第 6 轮）⇒ M7-20 是 0 路由片，**不该**动 ⑨，实测也确实没动。
+* **下一批归 M10-INT（`LUM-2111`）**：`/api/config` 17 条 + `/health` 1 条 = 18 条 `unmounted`（`contracts/golden/{config,health}/` 已存在）⇒ 它们一挂上路由就会变可判定。**普通片不许顺手刷**。
+
+**(c) ⑩ `scripts/file_size_baseline.tsv`：本片**不动**（基线只减不增）**
+
+* 当轮 `scanned 1170 / baseline 10 / violations 0`；该表 **10 行未动未缩**。
+* **M7 写集里没有任何文件在表内**（`docs/60` §6.3 的预飞成立）⇒ 全波走 800 行硬限，各片自报的最长新文件：M7-16 **775** / M7-17 **705** / M7-18 **784** / M7-19 **773** / M7-20 **738** ⇒ **全波最大值 784 ≤ 800** ✓。
+* ⚠️ 门 ⑩ 只看 `git ls-files` ⇒ **未 `git add` 的新文件它看不见**。本波实测踩到 **3 次**（M7-15 §31、M7-19 §37、M7-20 §38 各一次；M7-19 那次 `round_trip.rs` 实为 820 行而门报绿）。**纪律：自查 ⑩ 前先 `git add`。**
+
+### 40.3 偏离表收口（R-M7-*，逐条；一条只有一个收口处）
+
+`docs/60` §8 登记了 R-M7-1…R-M7-9，锚点（§10.6）追加 **R-M7-10 / R-M7-11**。本片把它们的**终态**收在一处（细节出处逐条给出，不重复搬运）：
+
+| ID | 终态判定（本片复核） | 收口处 |
+| --- | --- | --- |
+| **R-M7-1** 无 Redis | **成立，登记不实现**：4 处跨副本协调全换进程内替身；根 `Cargo.toml` 与 `crates/**/Cargo.toml` **零** `redis` 依赖。**部署契约 = 单副本**（或"渠道连接只在一个副本上开"）。真实落点：`engine/lease.rs::InProcessLeaseStore`、`wecom/dedupe.rs`（M7-20，**这条的唯一真落点**）、M7-11 的进程内安装会话表、`wecom/relay/**` 的进程内重投递 | §10.6 + §31/§33/§34/§38 的 R1 + **`docs/60` §11.7 G-1** |
+| **R-M7-2** 平台 API 无法真连 | **成立，已按替身三条纪律交付**：5 渠道各有一条端到端回路；取证位置见 §40.7（**不是**"口头承诺"） | §10.6 + **`docs/60` §11.6** |
+| **R-M7-3** 「未配置」语义按端点而异 | **成立，且有一处口径更正**：wecom 的部署密钥缺失 ⇒ 4 条路由里 **3 条回 403 `wecom_not_configured`**（`writeFeatureDisabled` ⇒ `http.StatusForbidden`），**不是** 503 —— `docs/60` §8 的 R-M7-3 与上游 `router.go:917` 的注释两处都写 503，**两处都不是代码**。503 属于**够不着 `WeCom`** 的那一格（凭据没验过） | §31.2 **D4**（逐字取证） |
+| **R-M7-4** `secretbox` 两份实现 | **成立，登记不实现**：M6 面 `mc-plugin-host::credentials::SecretBox`（已合、冻结）与 M7 面 `mc-secrets::secretbox`。**方位订正**（§10.6 已写）：方向是 `mc-plugin-host → mc-secrets` ⇒ `mc-secrets` **不能**复用（成环），反过来 M6 面也不必改。收敛票**不在 M7 写集内** | §10.6 + **`docs/60` §11.7 G-2** |
+| **R-M7-5** lark 两套表并存 | **成立，已按上游实际读取路径落地**（`mc-repos/src/channel/mod.rs` 两套并列；M7-14 的 DoD 明写"不得合并"）。可执行判据：`channel_store/tests.rs::both_generations_can_hold_a_row_for_the_same_session` | §32.5 **R4** |
+| **R-M7-6** 渠道读侧有一条属 M4 | **闭**（不是缺口）：`GET /api/chat/history`（owner `M4`，`router.go:2373`）当轮实测**在 `implemented` 里** ⇒ M4 侧已落地；M7 只提供数据。**口径一条：\"M7 全绿\" ≠ \"渠道面全绿\"** | **`docs/60` §11.7 G-3** |
+| **R-M7-7** 停机顺序 | **成立，已落**：`apps/mc-server/src/channels.rs` 的 `ChannelHandles::shutdown` = 先停渠道连接；`main.rs` 的停机链按此序 | §10.7 |
+| **R-M7-8** 本仓最大一波的派发复杂度 | **成立，实际按 9 个 stage × ≤3 并发 跑完**，两处 stage 内 `∥` 被收口成串行（stage 8 = `M7-19 → M7-20`，`docs/60` §4.3 的笔误订正） | §10.7 + `docs/60` §4.3 |
+| **R-M7-9** 媒体面 SSRF / 内容注入 | **成立，已交付**：`media_guard`（CIDR 白名单）+ `media_crypt`，M7-18 的 DoD 含 SSRF 反例 | §35（M7-18 的 D/R 表） |
+| **R-M7-10** `channel_type` 双口径（`feishu` vs `lark`） | **成立，已由 anchor 收敛成两个函数**（`ChannelKind::{as_str,storage_str}` + `from_storage_str`，3 条用例）；各片不得内联字面量 | §10.6 |
+| **R-M7-11** 两份 `secretbox` 的签名不同 | **成立，是故意的**：M7 面 `seal` 自取 nonce（平台帧里没有 rng 参数）+ `seal_with_nonce` 做可复现向量。与 R-M7-4 同一张收敛票 | §10.6 |
+
+**另有 3 类"上游自身不闭合、照抄并标出"的裁决**（**不是**缺口，改它会让两个部署的读数漂开，各有用例钉住现状）：
+① §34.5 **R2**：`errStreamAckTimeout` 在 `provablyNotSent` 里被判"可能已上 socket"却不在 `unconfirmedReason` 表里 + `Resolve(absent)` 不设围栏（同 id 二次发布再记一次 `no_live_connection`）；
+② §38.5 **R2-①**：`traceOutFields` 只读 `markdown.content` ⇒ **流帧正文不进任何 trace**；
+③ §37.4 同族的 `reply_source` 写入口径（见 §40.4）。
+
+### 40.4 收敛票与登记项总表（跨片汇总，**一处收口**）
+
+M7 各片在自己的"交接（H）"里把**收敛/接线**事项逐条留给后续片；本片按「**同一件事只留一个入口**」把它们归类。**本表是唯一收口处**，各片的 H 条目不再单独追。
+
+| # | 事项 | 来源片 | 为何本片不做 | 归谁（建议） |
+| --- | --- | --- | --- | --- |
+| **C-1** | `Decrypter` / `decode_credentials` / `config::credentials_from_config` 的**三分法**收敛成一处 | M7-8 §22.2 **D4** + M7-9 §24.2 **D2**（逐字："收敛票归 M7-21，与 §22 的 D4 同一张票"） | 本片 0 代码 | 未来碰凭据面的片（可与 C-2 合并） |
+| **C-2** | `dingtalk/mod.rs` 的 `Decrypter` / `StreamInstallConfig` / `resolve_app_secret` 搬出（`mod.rs` 只剩 7 行余量到门 ⑩） | 同上 | 同上（搬类型要动 `mc-channel`） | 同上 |
+| **C-3** | `decode_secret` 的**重复实现**（§32.2 **D11**，M7-13 已标"可合并"） | M7-13 | 同上 | `mc-channel` 的 lark 面 |
+| **C-4** | `classify_seal` / `SealVerdict` / `DeliveryBudget::fallback` 从 `outbound.rs` 收敛（上游在 `seal_outcome.go`） | M7-17 §34.4 **H2** 明写"**M7-19 落地时收敛**" | **已做（M7-19）**：实现现在住 `crates/mc-channel/src/wecom/seal.rs`，`outbound.rs:172` 只留一行 `pub use` 做兼容再导出（当轮实测）⇒ 本片只记终态 | — |
+| **C-5** | 两份 `task_address`（M7-17 / M7-20）合成一处 | M7-20 §38.4 **H1**（**D10**） | 同上 | `mc-channel/src/wecom/` |
+| **C-6** | `on_chat_done` / `on_task_failed` / `on_task_cancelled` 的**调用点**（上游 `Patcher::Register` 那一步） | M7-13 §32.4 **H1**（标"宿主 / INT"） | 调用点在**宿主**（`apps/mc-server`），本片写集不含 | 并入 **D-1** 的 M7-FU 片 |
+| **C-7** | `reply_source` 的**写入点**（`AckNotifier::remember_source` 已给，接线点仍缺） | M7-8 §22.2 **D12** + §24.4 #3 | 接线点在宿主 / binder 路径 | 并入 **D-1** 的 M7-FU 片 |
+| **C-8** | `mc-telemetry` 的 `SENSITIVE_KEYS` 补齐渠道键名 | M7-11 §29.5 **R5**（原文"归 M7-21 INT 一次做完"） | 🔴 **写集不可执行**：本片是 0 代码片，`crates/mc-telemetry/**` 不在写集 ⇒ **转派** | 未来碰遥测层的片（见 §40.5 **G-6**，含**具体洞清单**） |
+| **C-9** | M7-7/8 的两处"诚实默认值 → 真实现"（`NoBotName`/`NoGroupPresence` → `BotNameResolver`/`PresenceObserver`） | M7-7 §19.4 #2 + M7-9 §24.4 #3 | **实现已在 M7-9 落**（`crates/mc-http/src/routes/channels/dingtalk.rs:205` 的 `resolver_set(&state)` 是**一个**装配入口，返回可直接交给 `register_resolvers` 的集合）；**但调用它的宿主仍缺**（`apps/mc-server` 未动）⇒ 与 **C-10** 同一处 | 实现：—；**接线**：并入 **C-10/D-1** 的 M7-FU 片 |
+| **C-10** | 五渠道的**宿主装配**（`register_with` × 5 + `resolver_set` + `senders` + `TypingIndicator` + `Supervisor::spawn`） | §13.5 #2 / §17.4 #1 / §18.4 #1 / §19.4 #4 / §24.4 #3 / §31 #3 / §36.4 H2 | 🔴 **掉棒**（不是收敛票）⇒ 见 §40.6 **D-1** | M7-FU 片（写集 = `apps/mc-server/src/{main.rs,channels.rs}`） |
+
+* **§31 D9 的复核（本片欠下的那一条，结论 = 未转绿）**：M7-15 写「BYO 安装 503 ⟶ **M7-16 落传输**、**M7-21 复核该端点转绿**」。当轮实测 **仍回 503**：`routes/channels/wecom.rs:158` 的生产接线仍是 `PendingWsTransport`（`:172-190` 恒回 `TransportError::Failed`）。上一条 **C-10 的同一族** ⇒ 归 §40.6 **D-2**。
+
+### 40.5 缺口登记（本波实际未落地的项，逐条）
+
+| # | 缺口 | 当轮证据 | 归属 / 处置 |
+| --- | --- | --- | --- |
+| **G-1** | **无 Redis**（上游 4 处跨副本协调 → 进程内替身） | 零 `redis` 依赖；替身四处落点见 §40.3 R-M7-1 | 登记不实现；部署契约 = **单副本** |
+| **G-2** | `secretbox` 两份实现 | 两份签名不同（§40.3 R-M7-4/R-M7-11） | 登记不实现；收敛票不在 M7 写集 |
+| **G-3** | 渠道读侧有一条属 M4（`GET /api/chat/history`） | 当轮 ⑦ 实测该键 **已在 `implemented`**（M4 面已落地） | **R-M7-6 = 闭**；口径入 `docs/37` §136 |
+| **G-4** | **4 条 dingtalk 群 scope 矩阵 fixture 仍 `unevaluable`** | 当轮 ⑨ M7 面 12 条 = `8 pass + 4 unevaluable` | 登记为缺口：承诺原文只承诺"转 evaluable + 给结论"；要**真库 + 多 actor**（⑨ 工具面），不在 M7 写集 |
+| **G-5** | `channel_outbound_message` **无 `channel_context_revision` 列** ⇒ slack history 读面用 `(binding_id, route_revision)` **近似** | `migrations/upstream/425_*.up.sql` 只有 `route_revision`；迁移 `377` 补的是 `chat_message`/`agent_task_queue`/`channel_chat_session_binding` | 登记为缺口（§15.2 **D6(a)**）：方向是**多**放行，**不会少放行** ⇒ 近似而非漏实现 |
+| **G-6** | `mc-telemetry` 的 `is_sensitive` **未覆盖**渠道键名：`app_key` / `appkey` / `aeskey` / `dingkey` / `encrypt_key`（**5 个**） | 当轮逐名实测：`app_secret`/`app_secret_encrypted`/`corpsecret`/`bot_token`/`app_token`/`verification_token`/`signing_secret`/`tenant_access_token` **已被**子串覆盖（表里 `secret`/`token`/`apikey` 兜住绝大部分）；上列 5 个**未覆盖**。**可达性 = 当前不可达**：`redact_log` 全仓唯一消费者是 `mc-autopilot/src/credential.rs`；M7 代码**零** `redact_log` 调用、**零** `tracing::*` 凭据插值 | 登记为缺口 + **具体洞清单**（= §40.4 **C-8** 的转派结果）；`crates/mc-telemetry/**` 不在本片写集 |
+| **G-7** | **宿主装配**停在 M7-0 形态 | §40.6 **D-1** 四条实证 | **掉棒** |
+| **G-8** | wecom BYO 凭据探针（`PendingWsTransport`）**未换** ⇒ 该端点恒 503 | §40.6 **D-2** 两条实证 | **掉棒** |
+
+### 40.6 跨波掉棒审计（照 `docs/57` §9.8 的做法）
+
+**结论：本波 **2 项**掉棒，同一族 —— 「**接线点落在已冻结的写集里**」：一边按裁定落了产物，另一边（有权改接线的那片）早已合入、没有片被授权回头改。**
+
+| 项 | 裁定出处 | 裁定归谁 | 实际交付 | 判定 |
+| --- | --- | --- | --- | --- |
+| **D-1** 五渠道生产装配（`register_with` × 5 + `resolver_set` / `senders` / `TypingIndicator` / `Supervisor::spawn` / `InstallationStore`+`LeaseStore` 生产实现 + `main.rs` 的 `deps` 非 `None`） | `docs/60` §2.4 / §3.1（`apps/mc-server/src/channels.rs` = **anchor 写集**）；`docs/32` §13.5/§17.4/§18.4/§19.4/§24.4/§31/§36.4 逐片都写"装配归宿主" | 「宿主」= **M7-0 的写集**，M7-0 已合入（`ab998afe`） | M7-0 只落**宿主位**（`start(keys, deps)` 骨架 + 停机链），`deps` 定成 `None` 的**显式空跑** | **掉棒** |
+| **D-2** wecom BYO 的**凭据探针接线**（`wecom.rs:158` 换掉 `PendingWsTransport`） | §31.2 **D9** 逐字："M7-16 落传输、**M7-21 复核该端点转绿**" | 上半场 M7-16（写集 = `crates/mc-channel/src/wecom/**`），下半场 M7-21（本片） | M7-16 **落了传输**（`ws_frame.rs`/`ws_sender.rs`/`stream_store.rs` 都在），但**接线那一行在 `crates/mc-http/src/routes/channels/wecom.rs`**（= **M7-15 的写集**）⇒ 两个片都没有改动授权 | **掉棒** |
+
+**D-1 的四条实证**（逐条可复算）：
+1. `git log --oneline -1 -- apps/mc-server/src/channels.rs` = **`ab998afe`**（M7-0）⇒ 全波未再被碰过（198 行，与 anchor 逐字相同）。
+2. `apps/mc-server/src/main.rs:184` = `channels::start(&channel_keys, None)` —— **`None` 硬编码**（不是"端口未实现"：三件套实现早已存在）。
+3. `grep -rn 'register_with' apps crates/mc-http --include=*.rs` = **0 个生产调用点**。
+4. `grep -rn 'Supervisor::spawn' apps crates --include=*.rs` = **0 个生产调用点**；且 `channels.rs:157` 的注释仍写"仍是 `todo!()`" —— **注释也已过期**（`grep -c 'todo!' crates/mc-channel/src/engine/supervisor.rs` = **0**）。
+
+**D-2 的两条实证**：① `wecom.rs:158` 当轮仍是 `HandshakeProbe::new(Arc::new(PendingWsTransport))`；② `routes/channels/wecom/tests/db.rs:293`（`byo_answers_503_while_the_probe_transport_is_not_wired`，`#[ignore]` 真库用例）把 `503 + wecom_credentials_unverifiable + 一行不写` 钉成**当前期望** ⇒ 该用例现在是**"未接线"的绿**，不是"已转绿"。
+
+**处置**（照 `docs/57` §9.8.3 的执行规则）：本片**只登记**（写集不含 `apps/**` 与 `crates/mc-http/src/**`，0 代码），**不**顺手改；**建议开一片 M7-FU**（写集 = `apps/mc-server/src/{main.rs,channels.rs}` + `crates/mc-http/src/routes/channels/wecom.rs`），**可见判据**见 `docs/60` §11.8。执行规则 1（"裁定的归属必须当场写进接收片的描述动作清单"）在本波被违反 7 次而无人回头 —— 这正是这两项掉棒的成因。
+
+### 40.7 五渠道端到端回路（`docs/60` §4.2 的验收判据）—— 取证位置
+
+| 渠道 | 承担片 | 取证文件（逐字，当轮实测存在） | 证据形态 |
+| --- | --- | --- | --- |
+| slack | M7-4 | `crates/mc-channel/src/slack/tests.rs`（`the_slack_round_trip_closes_on_a_local_platform_stand_in` + 重放/断连两条反例）+ `crates/mc-http/tests/channels/slack.rs`（672 行真库面） | 两级：WS 替身回路 + 真库 HTTP 面 |
+| telegram | M7-6 | `crates/mc-http/tests/channels/telegram_round_trip.rs`（616 行，`drive_inbound` = 真 channel + 真 engine + 5 个真 PG 端口；`drive_streaming_delivery`） | **单文件整链**，最完整 |
+| dingtalk | M7-8 | `crates/mc-channel/src/dingtalk/stream/tests.rs`（四份 `testdata/*.json` golden）+ `dingtalk/outbound/tests/http.rs` + `crates/mc-http/tests/channels/dingtalk.rs`（563 行真库 7 路由） | 三段：帧编解码 ∥ 出站帧 ∥ 真库路由 |
+| lark | M7-13 | `crates/mc-channel/src/lark/tests/round_trip.rs`（442 行，9 条） | 收 + 判决 + 发（进程内替身 + 真端口） |
+| wecom | M7-19 | `crates/mc-channel/src/wecom/wecom_channel/tests/round_trip.rs`（554 行） | 收 + 判决 + 发（自造帧 + 真端口） |
+
+* **如实说的边界**（不是假绿）：五条回路的"真"**都在进程内** —— `mc-channel` 里没有 `sqlx`（§36.5 R1）⇒「收 → 判决 → 发」与「仓储」分处两套证据。跨这两半的整链只在 telegram 与 dingtalk 上有；slack/lark/wecom 的"真库那一半"在 `mc-http/tests/channels/**` 有，但未与帧回路合成一条用例。
+* **更大的那一处**：这五条回路**没有一条**被**生产宿主**跑起来（§40.6 **D-1**）。
+
+### 40.8 门禁读数（交付树，逐字取自当轮日志）
+
+```
+① fmt 0 · ② build 0 · ③ clippy 0 · ④ clippy-test-util 0 · ⑤ test 0 · ⑦ route-parity 0 · ⑨ conformance 0 · ⑩ file-size 0   ⇒ 8/8
+⑦ upstream 456 (f41fae6b08fb) | local 473 | baseline 473 | implemented 388 real + 3 placeholder = 391 / 456 | known_gap 65
+   unclaimed 0 | regression 0 | local_only 8（其中 placeholder 1）| owners {M9 33, M3+ 16, M3 11, M10 5} | files_scanned 206
+⑦b slash_alias_audit: 470 registered upstream-key literals / 0 defect(s) / 0 warning(s)；--declared m7 表 exit 0
+⑨ report.json blob 3eb0430a… / totals 365 · 14 · 23 · 22 · 0 · 306 / report matches
+⑩ file_size_check: limit=800 scanned=1170 baseline=10 violations=0（file_size_baseline.tsv 未动）
+```
+
+* **⑥/⑧ 不跑**：本片 **0 代码 / 0 迁移** ⇒ 按 `docs/60` §6.5 与 `docs/57` M6-10 的先例只跑离线 8 门。
+* **不校验的三件事**（本片写集外）：`crates/mc-conformance/report.json`（归 M10-INT）、`contracts/**`、`migrations/**`（本波 0 迁移，§6.4 成立）。
+
+### 40.9 与 `docs/60` §6.1 计划表的偏差（逐项，一处不抹平）
+
+| 项 | §6.1 计划 | 当轮实测 | 差异与原因 |
+| --- | ---: | ---: | --- |
+| `local` | 430 | **473** | +43：§6.1 是「M7 一家」的账，实测是全仓账（含 M8 全波 + M10-0 的 −1） |
+| `implemented` | 354 real | **391 = 388 real + 3 ph** | +37 real：全仓口径；**M7 自己的 24 条全是 real（0 占位）** |
+| `known_gap` | 102 | **65** | `M7` 键消失；余下 `{M9 33, M3+ 16, M3 11, M10 5}` 全属别波 |
+| `owners.M7` | 0 | **0（键不存在）** | ✓ 唯一逐字命中 |
+| `baseline` | `344 → 430` | **`457 → 473`** | 见 §40.2(a) |
+| `local_only` | 9 | **8** | **−1 不是 M7 回归**：M10-0 删幽灵占位 `GET /api/feature-flags`（上游无此键）⇒ 从 M10-0 起该不变式就已过期 |
+
+⇒ **§6.1 整张表只作"形态预测"读**；任何绝对读数必须**当轮重取**（本波为此留下 5 个修订版）。
+
+### 40.10 交接
+
+* **对本片的三件后续**：① **D-1 / D-2 需要一片 M7-FU**（本片无权改 `apps/**` 与 `crates/mc-http/src/routes/channels/wecom.rs`）；② **G-6 的遥测表**归未来碰遥测层的片；③ **G-4 的 4 条 `unevaluable`** 属 ⑨ 工具面。
+* **对本片之后立即成立的**：`owners.M7 = 0` ⇒ **`LUM-1815`（M9-0 anchor）的两个硬前置（M7 全合 + M8 全合）全部成立**，M9 波 stage 1 可起跑。
+* **三个基线写者不得同轮**（同一批快照文件）：`LUM-1786`（本片，已用掉本次配额）/ `LUM-1825`（M9-INT）/ `LUM-2111`（M10-INT）。
+* **⑨ 的下一次刷新归 M10-INT**（18 条 `config`/`health` fixture），**不是**任何一个普通 M10 片。
