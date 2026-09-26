@@ -5355,3 +5355,214 @@ after **0/40**（修前未复现：CI 1 例 + §128 的读码分析）。
   `crates/mc-channel/src/wecom/{wecom_channel*,resolvers*,inbox_message*,markdown*,seal*,mod.rs}` +
   `outbound*` 的三处收敛 + `docs/32` ⇒ 与任何 lark 片**路径交集 ∅**。
 * **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。
+
+---
+
+## 38. M7-20（`LUM-1785`）：wecom 打字/限流/去重/追踪（**0 路由**）
+
+> **号段说明**：base `8c254fa6` 实测 `docs/32` 末号 = **`## 37.`**（M7-19 随 PR #113 按号段纪律重编）
+> ⇒ 本节取 **`## 38.`**（issue rev 7/8/9 的裁决复核后仍成立）。`docs/32` 是本片唯一与别人共写的文件；
+> 本片起手时 M7 只剩 `LUM-1786`（M7-21 INT）在排、且它不写本节之前的任何号。
+
+### 38.0 这一片补的是哪条掉棒
+
+上游 `internal/integrations/wecom/{typing_indicator.go(978), rate_limit.go(482), senders_registry.go(204),
+dedupe_redis.go(200), trace.go(350)}` = **2,214 行**（非测试口径；逐文件分配见
+`docs/fixtures/m7-slice-upstream-files.tsv` 的 M7-20 行）。
+
+它是 wecom 子波的**最后一个代码片**，也是三处**跨片接缝**的落点：
+
+* `senders_registry.go` 的**写侧**（M7-19 §36.4 H1：`SenderRegistry` 本片实现 `set` / `clear`）
+  + **读侧**（M7-17 §34.4 H4：`SenderLookup` 的 `get` / `stream_sender`）+ **流面**
+  （M7-16 §33.2 D6：`StreamSender`）；
+* `rate_limit.go` 的配额门（M7-16 §33.2 **D4** 明写"归 M7-20，接上时改的是 `send_one_text` 那一层"）
+  与一次退避重试；
+* `dedupe_redis.go`（M7-16 §33.2 **D1** 明写"`R-M7-1` 的真实落点是 M7-20 的 `dedupe.rs`"）
+  与 `trace.go`（M7-18 §35.4 **H3** 明写"M7-20 落地 `trace.rs` 时**收敛**"）。
+
+### 38.1 写集（逐字；**18 个新代码文件 +7,287 / −12**，`wecom/mod.rs` **+13**，`docs/32` **+本段**）
+
+| 文件 | 行数 | 上游对应 |
+| --- | ---: | --- |
+| `crates/mc-channel/src/wecom/typing.rs` | **新增 452** | `typing_indicator.go` 的管理器 / 两个同步接缝 / 端口装配 |
+| `.../wecom/typing/ports.rs` | **新增 383** | `taskLookup`+`taskOrigin`+`languageLookup` 三个端口、`TaskEvent`、`originOf`、`RootResolver` 的生产实现 |
+| `.../wecom/typing/events.rs` | **新增 375** | `handleTaskQueued` / `handleTaskFailed` / `handleTaskCancelled` / `sessionFor` / `taskAddress` |
+| `.../wecom/typing/closing.rs` | **新增 277** | `writeClosing` / `sayAsPlainMessage` / `relaySeal` / `releaseRound` / `RoundSenders` 端口 |
+| `.../wecom/typing/tests.rs` + `tests/{opening,endings,addressing,seam}.rs` | **新增 508 / 237 / 395 / 296 / 86** | 27 条用例（开场 / 结束 / 寻址 / 接缝） |
+| `.../wecom/rate_limit.rs` | **新增 447** | `rate_limit.go` 的**门**：常量、`RateLimitRefusal`、`RetryPlan`、`throttled`、`sendMsgFrame` |
+| `.../wecom/rate_limit/quota.rs` | **新增 393** | §6.3/门 ⑩ 拆出的**窗口与桶**：`quotaWindow` / `sendQuota` / `QuotaShards` |
+| `.../wecom/rate_limit/tests.rs` | **新增 666** | 19 条用例（滑动窗口 / 退避 / 门的三臂 / 分片 / 预留） |
+| `.../wecom/senders.rs` | **新增 476** | `senders_registry.go`：三个面（写侧 / 读侧 / 流面）+ `InstallationSender` |
+| `.../wecom/senders/tests.rs` | **新增 455** | 9 条用例（净清语义 / 分片配额 / 重连不清零 / 流面逐帧解 / 汇） |
+| `.../wecom/dedupe.rs` | **新增 323** | `dedupe_redis.go`（200）：三张 Lua 脚本逐格 + legacy 那一格（**R-M7-1 的真实落点**） |
+| `.../wecom/dedupe/tests.rs` | **新增 288** | 10 条用例（claim / release / settle / resolve+fence / **legacy 值原样** / TTL / 容量） |
+| `.../wecom/trace.rs` | **新增 738** | `trace.go`（350）：开关、两级上限、手写脱敏、五个记录点 |
+| `.../wecom/trace/tests.rs` | **新增 457** | 10 条用例（上游六条护栏的本仓对应物 + 边界） |
+| `crates/mc-channel/src/wecom/mod.rs` | **+13/−0** | 追加 5 行 `pub mod` + 注释（本片唯一该动的共享行；**未**重排别人刚加的行） |
+| `crates/mc-channel/src/wecom/media_ingest.rs` | **+8/−12** | **收敛**（§35.4 的 H3）：那一处 trace 改成调用 `trace.rs` |
+| `crates/mc-channel/src/wecom/outbound/ports.rs` | **+11/−0** | **端口形状勘误**（D11）：`AgentTask.chat_session_id` |
+| `.../wecom/outbound/tests.rs` + `tests/pipeline.rs` | **+2/−0** | 上面那条字段的两个构造点 |
+
+**新增用例 75 条**（typing 27 / rate_limit 19 / dedupe 10 / trace 10 / senders 9）；
+`mc-channel` 整 crate 的 lib 用例 **1,504 → 1,579 passed / 0 failed**。
+
+### 38.2 偏离与形态取舍（D1…D12；每条要么有落点，要么有用例）
+
+* **D1（限流桶**按 installation 分片** = 本片专属验收）**：上游一个 `sendQuota` 活在一个 `wsSender`
+  上 = 一把 socket = 一条安装 ⇒ 本仓落成 [`QuotaShards`]（`installation_id → Arc<SendQuota>`，容量
+  1,024，满了淘汰一条）。🔴 它同时**关掉**了上游自己指出的那条缝（*a reconnect mints a new wsSender
+  with an empty window*）：桶跟着 installation 而不跟着 socket 走 ⇒ 一次重连不再把计数清零
+  （用例 `a_reconnect_does_not_reset_a_spent_quota` 逐字钉住）。退避重试仍然留着 —— 它管的是 45033
+  与"我们的计数与 `WeCom` 的不同"。
+* **D2（`dedupe.rs` 是 `R-M7-1` 的真实落点，而本仓**有两份**实现）**：M7-17 在自己的写集里落过
+  `relay/claims.rs::InProcessDedupe`（它那一面要那个接口才能把中继装起来）。写集纪律（§3.3"一格 =
+  一个文件 = 一个写者"）不许本片回头改那个文件 ⇒ 本文件落的是上游那份文件**逐条**语义的**生产**实现，
+  与 M7-17 那份有两处**可指出**的差别：① **上游 `resolve` 的 legacy 那一格**
+  （`string.find(v, '/', 1, true)` ⇒ 非 token 形状的值报 `Settled` 并**原样留着**）落了；
+  ② 容量 / TTL / tombstone TTL 都是显式构造参数。前者在**纯进程内**部署里够不着
+  （进程内存储从空表开始、本文件从不写 `1`）⇒ 与 M7-16 的 **D9** 同款：**照抄 + 用例种一个 legacy 键
+  逐字钉住**（`a_legacy_value_resolves_as_settled_and_is_left_alone`）。
+* **D3（claim 预算的数值差 50ms vs 2s，语义一致）**：上游 `defaultClaimBudget` 是 **2s**
+  （一次 Redis 往返的界），本仓 M7-17 定的 `DEFAULT_CLAIM_BUDGET` 是 **50ms**。本片**复用**那个常量
+  （不重抄），并照上游口径把它当**报出的数字**（`claim_budget()`）而不是拿来界什么 —— 进程内一次
+  `HashMap` 操作没有可界的东西。上游 `bookkeepingBudget` 的"丢取消、不丢截止时刻"那条区分因此
+  无对应物（本仓既不上线、也不产生取消）。
+* **D4（trace：`slog` → `tracing`、**没有 `regex`**、字段存在性落成哨兵）**：依赖集在 M7-0 之后冻结
+  ⇒ `redact_bearer_tokens` 是一条**手写扫描器**，逐格复刻上游那条正则（`\b` 的 ASCII 词边界、
+  四个参数名大小写不敏感、值类 `[^\s&"'<>]+` 至少一个字符，含"粘在前面的参数名不算"与"空值留在原地"
+  两格）；`tracing` 的字段名必须**编译期**确定 ⇒ emit 那一侧固定渲染每个字段、缺席写 `-`；
+  值与开关那一半抽成 `TraceFields`（用例因此不必装 subscriber 就能逐字核对那一半）。
+  ⚠️ 上游 `traceOutFields` **只读 `markdown.content`**（流帧正文在 `stream.content` 下 ⇒ **不记**）——
+  照抄，登记 R2。
+* **D5（配额门落在 `LiveSender` 这一层，预留粒度按**段数**一次算清）**：M7-16 的 D4 说"接上时改的是
+  `send_one_text` 那一层"，但 `ws_sender.rs` **不在本片写集里** ⇒ 门落在
+  `InstallationSender::send_text`。代价与取舍：切分在 `WsSender::send_text` 内部 ⇒ 本片按
+  `split_for_wire` 的**段数**一次预留（上游逐段预留），一条**中途失败**的答复因此会多花掉后面几段的
+  额度 —— 方向**偏保守**（只会少发、不会多发）。用例 `a_split_answer_reserves_one_slot_per_piece`。
+* **D6（第二次尝试那个 `match` 的两臂映射）**：上游第二臂列的是"我们自己的拒绝 + **裸的**上下文错误"
+  （`context.Canceled` / `DeadlineExceeded`），而它自己的 `errNotAttempted` / `errChatBusy`
+  **落在 `default`**。本仓没有"裸上下文错误"这个变体，而那两条哨兵的对应物
+  （`SenderError::NotAttempted` / `ChatBusy`）的文档逐字是"**一个字节都没出去**" ⇒ 本片把它们并进
+  这一臂（与上游那段注释的**意图**一致），但**不**并进 `is_not_attempted()` 的全集（那会把
+  `FrameTooLarge` 这类**永久**缺陷藏进一次"拒绝"里）。四条未知（`AckTimeout` / `StreamAckTimeout` /
+  `AckAbandoned` / `WriteAttempted`）走第一臂 —— 未知压过第一次的拒绝。两臂各有用例。
+* **D7（本仓没有进程内事件总线 ⇒ 三个**显式入口** + 两个**同步接缝**）**：M7-17 的 §34.4 H1 逐字
+  （`Outbound::handle_chat_done` / `handle_inbox_new` 就是显式调用）⇒ 本片落成
+  `TypingIndicator::{handle_task_queued,handle_task_failed,handle_task_cancelled}`，事件落成一个**值**
+  `TaskEvent`（上游从信封 + payload 读的四个键逐条对应）。`engine::TypingNotifier` 的两个方法是
+  **同步**的（M7-1 定的契约）⇒ `DetachedTypingNotifier` 只推一个脱离任务，真正的工作在
+  `on_ingested_now` / `on_settled_now`（与 `lark::typing` / `dingtalk::ack` 逐字同款），
+  没有运行时时**只记一条 warn、绝不 panic**（有用例）。`TASK_LOOKUP_TIMEOUT`（800ms）照抄并留作
+  文档与诊断的界，因为端口没有接受截止时刻的形参。
+* **D8（`LanguageLookup` 端口 + `DeploymentLanguage` 兜底）**：上游 `localeFor` 要
+  `channel_user_binding` + `user` 两条读才谈得上"1:1 读那个人的档案"。本片交**端口**与兜底实现
+  （一律部署语言：对群聊**等价**、对 1:1 **降级而不是错误**），真正的档案回查归**宿主接线**（H2）。
+  `localeFor` 的第三个实参在上游是 `chatType, senderID`，而在**失败**那条路上上游传的是
+  `bound.ChatID` —— 本片照抄并写明它**是对的**：单聊里那个 chat id **就是**那个人的 userid。
+* **D9（门 ⑩ 的两处拆分）**：`rate_limit.rs` 正文 fmt 后 **818 行**（越 800）⇒ 窗口与桶落到
+  `rate_limit/quota.rs`（393）；`typing/tests.rs` 主体 **1,493 行**越限 ⇒ 用例按门类拆成
+  `typing/tests/{opening,endings,addressing,seam}.rs`（父文件留装置与夹具，509 行）。两个拆法都只
+  在**写集路径之下**新建子模块（先例：M7-16 的 D10、M7-17 的 D9）。
+  ⚠️ 本片**踩到并确认**了 M7-19 §36.3 那条坑：新文件 `git add` **之前**门 ⑩ 看不见它们
+  （`scanned` 照旧 1,147）⇒ 自查 ⑩ 必须先 `git add`（`git add` 之后 1,147 → **1,165** = +18）。
+* **D10（寻址规则现在有**两份**实现，附**等价比对**）**：上游 `typing_indicator.go` 与 `outbound.go`
+  在同一个包里共用自由函数 `taskAddress`；本仓 M7-17 把它落成 `Outbound::task_address`（要宽的
+  `OutboundQueries`），而本片只拿得到窄的 `DeliveryLookup` ⇒ 在 `typing/events.rs` 落自由函数
+  `task_address`。**两条规则不许漂**：用例
+  `the_addressing_rule_agrees_with_outbound` 对同一批四行（没有行 / 别的平台 / 被撤销的安装 /
+  活的 `WeCom` 行）逐项比对 `addr` / `ours` / `skip`。收敛成一处的**票**归 M7-21（H1）—— 拿宽查询的
+  那一个不是本片能改的写集。
+* **D11（端口形状勘误，同一类第 17 次）**：`AgentTask`（M7-17 的投影）**没有** `chat_session_id`，
+  而上游 `sessionFor` 在信封没盖它时**回查那一列**（`typing_indicator.go` 逐字：*the row the round
+  matcher reads*）。本片给它补一列（+11 行 + 两个测试构造点），与 M7-19 给 `InboxPush` 补
+  `title` / `body`（§37 的 D2/D5）是**同一类**：**少了它，那个兜底只能整个删掉**，而"一个一直转圈
+  没人收的气泡是一次**没人报告**的失败"。
+* **D12（`trace.rs` 与 `media_ingest.rs` 的收敛，H3 落地）**：M7-18 的那一处 trace **没有开关、也没有
+  两级截断** ⇒ 现在它只是**调用** `trace::trace_media_headers`（开关、单行化、`traceHeaderRunes` 的
+  失控闸**只有一份**实现）。本仓那一行比上游**多一格** `installation_id`（媒体路径的其余每一行都带它，
+  而这一行是唯一无法事后恢复的）⇒ 那个字段作为 `media_headers_fields` 的形参交进去。
+
+### 38.3 门禁证据（当轮实测，base `8c254fa6` + 本片）
+
+* **`bash scripts/gates.sh` = 8/8 PASS**；**`--with-db` = 10/10 PASS，615s**
+  （① 3s ② 109s ③ 48s ④ 58s ⑤ 57s ⑥ 226s / `migrate=0,e2e=0` ⑧ 29s ⑦ 0s ⑨ 85s ⑩ 0s）。
+  当轮**新建**库 `multica_lum1785` / 角色 `mc_lum1785`（带 `CREATEDB`，⑧ 要它）。
+  追加两道的理由：本片改了**一个端口投影的形状**（D11 的 `chat_session_id` 对着
+  `agent_task_queue`），与 M7-17/M7-19 追加 ⑥ 的理由同款。`CARGO_INCREMENTAL=0` 跑的
+  （M7-18/M7-19 的 `ENOSPC` 假红教训：`/` 到 100% 时 ⑥ 会以 `os error 28` 假红）。
+* **⑦ 读数（片后，逐字）**：`upstream 456 (commit f41fae6b08fb) | local 474 registered | baseline 458`；
+  `implemented 388 real + 3 placeholder = 391 / 456 | known_gap 65 | unclaimed 0 | regression 0 |
+  local_only 9`；`gaps by owner: M9=33 M3+=16 M3=11 M10=5`（**无 `M7` 键**；和 = 65 ✓；
+  `implemented + known_gap == 456` ✓）。**九个数与片前逐字相同** —— 0 路由片该有的形态证据。
+  **`--write-baseline` 未跑**：M7 唯一一次基线刷新归 **M7-21 INT**（`LUM-1786`）。
+* **形态门**：`slash_alias_audit.py --quiet` exit 0（三类缺陷全 0）⇒ 本片**未注册任何路由**
+  （`crates/mc-http/src/routes/channels/**` 零改动）。
+* **⑨**：`report matches crates/mc-conformance/report.json`（快照**未动**，blob `3eb0430a…`；
+  `docs/fixtures` tree `5e44cecd…`、`crates/mc-conformance` tree `f696e5cc…` 三个输入逐 blob 恒等）。
+  **wecom 的 fixture = 0 条** ⇒ 本片**不刷快照**、也**不把它当战绩**（**阴性对照组**，连续第 6 轮）。
+* **⑩**：`scanned 1147 → 1165 / baseline 10 / violations 0`（`git add` 之后复核过 —— 见 D9）。
+  本片 18 个新文件最长 **738**（`trace.rs`），全部 ≤ 800；`scripts/file_size_baseline.tsv` **未改**。
+* **③/④**：clippy 全绿（含 pedantic，`-D warnings`）。本片踩到并修掉的具体 lint：
+  `missing_fields_in_debug`（三处手写 `Debug` 补 `finish_non_exhaustive`）、
+  `struct_excessive_bools`（`Wired` 的七格布尔加 `allow` + 理由）、
+  `needless_pass_by_value`（`trim_before` 改收 `&[Instant]`）、`too_many_lines`（两处拆/allow）、
+  `unchecked_time_subtraction`、`format_push_string`、`doc_markdown`、
+  `needless_borrows_for_generic_args`、`bool_assert_comparison`。
+* **⑤**：`mc-channel` lib **1,579 passed / 0 failed**（本片 +75）。
+* **凭据面（DoD 第 6 条）**：五个新类型的 `Debug` 都是手写的、只报形态
+  （`LiveSenders` / `InstallationSender` / `WeComClaimStore` / `SendQuota` / `QuotaShards` /
+  `TypingIndicator`），**没有一行** `tracing::*` 插值凭据字段；「错误路径不回显凭据」由两条用例承担：
+  `the_switch_governs_every_point_and_never_records_a_credential` 断言
+  `aibot_subscribe` 的 **secret 连字段名都不出现**、且绑定 token 在预览里被换掉
+  （`the_binding_token_really_does_land_inside_the_preview` 先把"它确实落在 120 rune 之内"证明掉，
+  否则那条脱敏理由够不着）。
+
+### 38.4 交接（H1…H3）
+
+* **H1（M7-21 `LUM-1786` INT）**：⑦ 基线 / ⑨ 报告 / ⑩ 基线三件套的刷新**全归 INT**（本片未刷任何
+  快照）；**D10 的收敛票**（把两份 `task_address` 合成一处）也归它排期。`outcome.rs` 的原因集仍是
+  看板 label 的**封闭**定义（本片未加、未改）。
+* **H2（宿主接线，`apps/mc-server/src/channels.rs` = anchor 写集）**：本平台现在有**一整套**装配面 ——
+  `senders::LiveSenders`（一个对象同时是 `SenderRegistry` 的写侧 / `SenderLookup` 的读侧 /
+  `StreamSender` 的流面，配额桶在它里面按安装分片）、`WeComDeps::with_senders(...)`、
+  `TypingIndicator`（六个端口各有一个 `with_*`，`wired()` 逐格报"配没配"）+
+  `DetachedTypingNotifier`（引擎那个同步接缝）、`TypingIndicator::with_roots(TaskLookupRoots::new(...))`
+  （自动重试血缘，M7-17 §34.4 H4 那一条）、`LanguageLookup` 的真实实现（1:1 档案回查，D8）、
+  `trace::set_trace_from_env()`（`MULTICA_WECOM_TRACE=1`）。本片**未动** `apps/mc-server`。
+* **H3（M7-21 / 后续片）**：`rate_limit` 的窗口常量与 `QuotaShards::with_config` 是"WeCom 哪天改
+  公布口径"时**唯一**要改的旋钮；`dedupe.rs` 的 legacy 那一格在**接真 Redis** 时才重新可达
+  （接真 Redis 属于 `R-M7-1` 的收敛票，不在 M7 写集内）。
+
+### 38.5 风险（R1…R3）
+
+* **R1（单副本部署契约，`R-M7-1` 的正面那一半）**：进程内的 claim / 配额 / 中继 ⇒ 多副本部署下同一
+  installation 可能被两个副本同时连接。生产部署契约因此是**单副本**，或"渠道连接只在一个副本上开"。
+  本片**不引 Redis**（与 M5/M6 的选型纪律一致）。**并且**：桶跟着 installation 走（D1）意味着
+  "重连清零"那条缝被关掉了，配额记账比上游**更**准；代价是一张表要自己淘汰（容量 1,024）。
+* **R2（上游两处自身不闭合，照抄并标出）**：① `traceOutFields` **只读 `markdown.content`** ⇒
+  一条**流帧**的正文（`stream.content`）**不进**任何 trace（本片逐字照抄 + 用例钉住；一个片顺手补全会
+  让两个部署的日志形状漂开）。② 上游 `actionable()` / `dedupe resolve(absent)` 那两条既有不闭合已由
+  M7-17 登记（§34.5 R2），本片**未**触碰它们的分类。
+* **R3（两份 `task_address` 靠**一条用例**保持同步）**：D10 的等价比对是当前唯一机制；两份实现在
+  同一批四行上逐项相等。若将来有人只改了其中一处，那条用例会先红 —— 但**它只覆盖那四行**，新的行使
+  两者分叉时它未必抓得到（收敛票归 H1）。
+
+### 38.6 合并期复核（当轮实做）
+
+* **base**：起手 `git fetch` + `git rev-parse origin/feat/multica-rs-initial` = **`8c254fa6`**
+  （= PR #113 合并提交 `db5713cf` 之上的两笔 cycle docs 直推），与 issue rev 8/9 的当轮实测**逐字一致**。
+* **硬前置六条当场成立**：`git cat-file -e HEAD:crates/mc-channel/src/wecom/{wecom_channel,
+  resolvers,inbox_message,markdown,seal}.rs`（M7-19 的五个产物）+ `stream_store.rs`（M7-16）**六条全
+  PRESENT**（rev 8 的"MISSING → present"跃迁在起手那一刻独立复采命中）。
+* **`wecom/mod.rs` 的写者链已清空**：base 实测 **106 行 / 26 个 `pub mod`**（M7-19 落地后）；本片
+  **追加式** +5 行 `pub mod` ⇒ 119 行 / 31 个，别人的行一字未动。M7 只剩 `LUM-1786`（INT，0 代码片）
+  ⇒ 本片**不与任何片同飞**。
+* 🔴 **第三个平台级陷阱（本片第三次踩到，逐字留证）**：`multica repo checkout` 为**新** workdir 建的
+  `agent/devbox5/b224e1bb1b2b` 分支再次起在**默认分支**（`4fc96f30`，`pc-*` 那条**另一个根**）上，
+  与 `feat/multica-rs-initial` 无共同祖先 ⇒ 起手第一件事必须是
+  `git checkout -B agent/devbox5/b224e1bb1b2b origin/feat/multica-rs-initial`。**铁律照旧**：
+  `git rev-parse HEAD` 必须等于 `git ls-remote origin feat/multica-rs-initial`，不等就先切。
+* **同轮在飞**：起手时 daemon `running_task_count = 2`（00:00Z 的并发 cycle + 本片），GH **0 open PR**
+  ⇒ 本片与任何片**路径交集 ∅**（只写 `crates/mc-channel/src/wecom/**` 的 18 个新文件 + `mod.rs` 的
+  追加段 + `media_ingest.rs` 的收敛 + `outbound/ports.rs` 与两个测试构造点的一列 + `docs/32`）。
+* **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。

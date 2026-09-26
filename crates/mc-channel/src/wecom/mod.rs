@@ -95,6 +95,19 @@ pub use wecom_channel::{
     SEND_NOT_SUPPORTED, SUBSCRIBE_TIMEOUT,
 };
 
+// M7-20（`LUM-1785` / `docs/60-M7-PLAN.md` §3.3）：wecom 的**打字指示 / 限流 / 去重 / 追踪**面 ——
+// 本片是 wecom 子波的**最后一个代码片**（M7 只剩 M7-21 INT）。
+// 追加这 5 行是本片写集的 mod.rs 改动（issue 正文的写集此前只列了 5 个**新**文件，本节把它正式
+// 补进正典写集 —— 同一类勘误第 16 次，先例见 `docs/32` §33 的 D1 / §34 的 D12 / §35 的 D1 与 §38）：
+// 新文件必须先被这里声明才进编译单元，否则连 `dead_code` 都不报。
+// 上游来源：`internal/integrations/wecom/{typing_indicator.go,rate_limit.go,senders_registry.go,
+// dedupe_redis.go,trace.go}`（2,214 行，非测试口径）。
+pub mod dedupe;
+pub mod rate_limit;
+pub mod senders;
+pub mod trace;
+pub mod typing;
+
 /// 把本平台的工厂注册进 `registry`（**失败关闭**，与 slack / dingtalk 同款）。
 ///
 /// 宿主（`apps/mc-server/src/channels.rs`）只拿得到 [`ChannelDeps`] —— 那里**没有**部署密钥，
