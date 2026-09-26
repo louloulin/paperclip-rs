@@ -124,6 +124,17 @@ opentelemetry_sdk = "0.24"
 opentelemetry-otlp = "0.17"
 tracing-opentelemetry = "0.25"
 
+# 性能 bench（M10-6 / `LUM-2108` / `docs/64` §2.5）。
+# 🔴 版本**必须** `0.7`：`criterion` newest 是 `0.8.2`，其 `rust_version = 1.86` > 本仓
+# `[workspace.package] rust-version = "1.80"`（实测 crates.io）；`0.7.0` 的 MSRV 恰好 `1.80`。
+# 选库闸门（`plan1.md` §4：活跃维护 + >1M 月下载）实测通过：总下载 2.90 亿 /
+# 近 90 天 5,968 万。**不要**在后续切片里顺手升到 0.8.x。
+# 唯一消费者是 `crates/mc-bench`（dev-dependency）。
+# 🔴 `async_tokio` 是**必须**的：三条热点的被测入口是 `async fn`，只有它能让
+# `b.to_async(&runtime)` 直接 measure「future 完成」，而不是「`block_on` 套壳 + future 完成」。
+# 该 feature 只引入 `tokio`（**已在**本表里），不改任何既有产物。
+criterion = { version = "0.7", features = ["async_tokio"] }
+
 # Test
 proptest = "1"
 mockall = "0.13"
