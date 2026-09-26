@@ -1013,6 +1013,36 @@ D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面
 
 ---
 
+
+### 9.16 M9-1（`LUM-1816`）：cloud-billing 8 条（owner-credit 出站代理 + 机器凭据闸）的偏离登记（**索引段**）
+
+> **本段为什么存在**：切片描述与 cycle 的号段账都把 M9-1 的登记号记为 **`### 9.16`**，而 §41 / §43 /
+> §46 已按「`### 9.x` 系列自 M7-0 起只作索引」的裁定把各片的完整登记落在自己的 `## N.` + `### N.x`。
+> 为**同时**满足两者，本节只做**索引**：偏离的**唯一一份完整登记**在 **`## 46.`（46.1–46.6）**，
+> 此处只列判据与标题，不复制正文。（`### 9.14` / `### 9.15` 是 M10-2 / M10-4 的预留号，本轮都未落地。）
+
+**写集（3 个文件，唯一写者 M9-1，全文见 §46 开头的写集执行说明）**：
+`crates/mc-cloud/src/billing.rs`（原地填充）· `crates/mc-http/src/routes/cloud/billing.rs`（原地填充）·
+`crates/mc-http/src/routes/cloud/billing/tests.rs`（**新建**：门 ⑩ 的 800 行上限下放不下的证据面）。
+
+**三层语义矩阵（8 条逐条，全文见 §46.2）**：未配置 ⇒ **403** `cloud_runtime_not_configured`；
+配了但非法 ⇒ **500** `cloud_runtime_misconfigured`；无会话 ⇒ **401**；`mat_` / `mcn_` 机器凭据 ⇒ **403**
+且**不产生出站请求**。三条单条件用例逐条与上游一致。
+
+**登记的偏离（8 条，全文见 §46.3）**：D-1 机器凭据闸的链上位置先于会话提取（组合态 403 vs 上游 401，
+有意）；D-2 响应体**不 trim**；D-3 非 JSON 体**不包** `{"error": …}` 信封、不声明 `Content-Type`；
+D-4 `session_id` 空值分支照抄但本地 router 不可达；D-5 无 request-id 中间件 ⇒ 不给 `X-Request-ID` 时不盖章；
+D-6 体读错误一律按 413；D-7 错误信封是**嵌套**（上游扁平）+ `forbidden: ` 前缀；D-8 计量桶显式给出。
+
+**结构性为 0 / 未接线（全文见 §46.4）**：**504 无端到端用例**（`CloudConfig` 没有超时注入口 ⇒ 端到端要真等 35s，
+只有映射层用例）；`X-Actor-Source` 的**服务端盖章链**未接线（W1 面）；`mat_` / `mcn_` 两种 token 本身不在本波写集。
+
+**门禁**：十道门各自有当轮绿记录（① fmt 4s · ② build 300s · ③ clippy 91s · ④ clippy-test-util 50s ·
+⑤ test 61s · ⑥ db 464s `migrate=0,e2e=0` · ⑧ schema-drift 42s · ⑦ route-parity 1s · ⑨ conformance 85s ·
+⑩ file-size 2s）；⑦ `local 475 → 483`、`implemented 393 → 401`、`known_gap 63 → 55`、`owners.M9 33 → 25`、
+`baseline 473` 不动、`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**；⑩ `scanned 1229 / violations 0`。
+🔴 **两件环境事实**（ENOSPC 第 7、8 次实证 + ⑥ 的时序 flake）逐字见 **§46.5**。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -6641,3 +6671,163 @@ an open connection`（全是与本片写集**无关**的路径；PG 侧无 `too 
   （含四个 `miss` 早退）都记一次，与上游逐字同。
 * **R-6（`inbound_too_large_total` 的接线点）**：见 §43.4 —— `crates/mc-ws/src/pump.rs` 不在本片
   写集，登记给后续片（与 `docs/64` §6.5 的"未接线项要登记"一致）。
+
+---
+
+## 46. M9-1（`LUM-1816`）：cloud-billing 8 条（owner-credit 出站代理 + 机器凭据闸）的落点与偏离登记
+
+> **号段复核（两个号空间 + 跨分支，当轮实测）**：`docs/32` 的 `## ` 末号 = **`## 43.`**（M10-3 / 已合）
+> ⇒ 本片取 **`## 46.`**（`## 44.` = M10-2 / `LUM-2104`、`## 45.` = M10-4 / `LUM-2106` 是本轮同批在飞slice
+> 的预留号，两者**都还没落地**）。**跨分支复核**：`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`
+> 后逐个远端分支取 `docs/32` 的 `^## 4[4-9]\.` ⇒ **0 命中**（无争号）。GH `pulls?state=open` = **0**。
+> `### 9.x` 末号仍是 **`### 9.13`**（M9-0）—— 该系列自 M7-0 起按 §41 / §43 的裁定只作**索引**用；
+> 本片为满足切片描述的号段（`### 9.16`）在 `## 9.` 末尾补一段索引式 `### 9.16`（只列判据 + 指向本节，
+> 不复制正文）。**正文唯一一份在这里。**
+>
+> **起手 base（当轮实测）= `cd355186`**（= `merge(m9-0): PR #121`；它同时含 `merge(m10-3): PR #120`）。
+> 交片前 `origin/feat/multica-rs-initial` 前移到 **`b2a650a8`**（cycle 的 `docs/37` §145，**docs-only**）
+> ⇒ 本片 rebase 到它，**零冲突**（写集与之零交集）。
+
+**写集执行说明（一处，逐字）**：`docs/62-M9-PLAN.md` §3.3 给 M9-1 的那一格是
+`crates/mc-http/src/routes/cloud/{billing.rs,subscriptions.rs,webhook.rs}`（一格 = 一个本地文件 = 一个写者）。
+本片实际落成 **3 个文件**：
+
+| 文件（逐字） | 动作 | 唯一写者 | 说明 |
+| --- | --- | :-: | --- |
+| `crates/mc-cloud/src/billing.rs` | 原地填充（anchor 建的桩） | M9-1 | 8 条出站契约 + 两条纯函数 |
+| `crates/mc-http/src/routes/cloud/billing.rs` | 原地填充（anchor 建的桩） | M9-1 | 8 个 handler + 公共骨架 |
+| `crates/mc-http/src/routes/cloud/billing/tests.rs` | **新建** | M9-1 | 门 ⑩ 的 800 行硬上限下，`DoD` 要求的证据面（离线替身 + 15 个用例）放不进锚点冻结的那一个文件 |
+
+判据：`tests.rs` 是 `billing.rs` 的**子模块**（`#[cfg(test)] mod tests;`），**唯一写者仍是 M9-1**、
+与任何别的切片**零交集**（同 stage 的 M9-2/M9-3 不碰 `routes/cloud/billing/**`）⇒ 「一格 = 一个写者」
+这条不变量成立；先例 = M10-3 的 `crates/mc-http/src/routes/probes/realtime/tests.rs`（新建）与
+M9-0 anchor 的 `crates/mc-cloud/src/transport/tests.rs`。**若评审认为该文件越出写集，请把它并入
+`billing.rs`——但那会让该文件到 ~1.2k 行，门 ⑩ 必红**（实测：合并形态 1202 行）。
+
+### 46.1 落点与写集审计
+
+* **anchor 冻结件一个字节未动**：`crates/mc-cloud/src/transport.rs` / `crates/mc-http/src/actor_guard.rs` /
+  `crates/mc-http/src/state.rs` / `crates/mc-http/src/state/cloud.rs` / `routes/cloud/mod.rs` /
+  `routes/{mod,mount}.rs` / 任何 `Cargo.toml` / `Cargo.lock` **全部只读**（`git diff --stat` 里没有它们）。
+  `routes/cloud/mod.rs` 在 anchor 期已 `pub mod billing;` + `.merge(billing::router())` ⇒ 本片**零注册点改动**。
+* **注册键 +8**：`GET /api/cloud-billing/{balance,transactions,batches,topups,price-tiers}`、
+  `POST /api/cloud-billing/checkout-sessions`、`GET /api/cloud-billing/checkout-sessions/:sessionId`、
+  `POST /api/cloud-billing/portal-sessions`（本地字面量逐字 = `docs/fixtures/m9-declared-routes.tsv` 的那 8 行；
+  路径参数写 `:sessionId`）。**只注册上游字面量那一形态**（`docs/62` §1.4 实测 `dual-form required: 0`）。
+* **迁移 0 条**：本面在本地与上游都**没有**表（`docs/62` §9.4）；`migrations/**` 未动。
+* **行数（门 ⑩）**：`mc-cloud/src/billing.rs` **467**（含 7 个用例）、`routes/cloud/billing.rs` **409**（含出站骨架）、
+  `routes/cloud/billing/tests.rs` **783** —— 三个都 ≤ 800；`scripts/file_size_baseline.tsv` **未动**。
+
+### 46.2 三层语义矩阵（`docs/62` §2.5 的 A 行，8 条逐条）
+
+| 情形 | 本地 | code | 出站请求 | 判据（用例） |
+| --- | :-: | --- | :-: | --- |
+| `MULTICA_CLOUD_URL` 缺 / 空 / 全空白 | **403** | `cloud_runtime_not_configured` | **0 次** | `the_three_layer_matrix_holds_for_all_eight_routes`（8/8） |
+| 配了但非法（userinfo / query / fragment / 非绝对） | **500** | `cloud_runtime_misconfigured` | **0 次** | 同上（8/8） |
+| 无会话（缺 `X-Multica-User-Id`） | **401** | `unauthorized` | **0 次** | 同上（8/8） |
+| `mat_` / `mcn_` 机器凭据（`X-Actor-Source: task_token｜cloud_pat`） | **403** | 上游逐字文本 | **0 次** | `machine_credentials_are_403_and_never_reach_the_wire`（8 × 2 来源） |
+| 云侧 4xx / 5xx | **原样** | —（云侧的体逐字） | 1 次 | `cloud_side_statuses_and_bodies_are_passed_through_verbatim` |
+| 传输失败（连接被拒 / 体超限） | **502** | `upstream_error` | 1 次 | `transport_failures_are_502_and_never_echo_the_cloud_body` |
+| 超时 | **504** | `cloud_runtime_timeout` | — | `the_transport_error_table_is_total`（映射层；端到端打不到，见 46.4） |
+
+**出站 wire（逐条钉住）**：8 条**全部**盖章 `X-User-ID`（= 会话身份，客户端无法伪造 —— 调用方也没法传
+逐字头，`transport` 只转发 `Request.headers` 里显式给的那些，而本片一个都不给）+
+`X-Request-ID`（调用方给了才盖）；3 条带 query 的**逐字透传**查询串（`transactions` / `batches` / `topups`），
+其余 5 条**丢掉**客户端查询串；`POST checkout-sessions` 转发体（1 MiB 上限 + 空体/JSON 语法两道 400），
+`POST portal-sessions` **不读体也不转发体**（上游 `withBody` 没打开）。
+
+### 46.3 与上游的已知差异（逐条登记）
+
+| # | 上游 | 本地 | 为什么可以不同 / 可观测影响 |
+| :-: | --- | --- | --- |
+| D-1 | chi 的 Auth 中间件（外层组合）在 `RequireHumanActor`（路由组）**之前** | `route_layer(require_human_actor)` 在**会话提取之前**（axum 的中间件必先于 handler 提取器） | 「无会话 **且** 机器凭据」这一格：上游 **401** / 本地 **403**。三条**单条件**用例逐条与上游一致（这是**有意**的偏离：路由组级闸是本片 `DoD` 点名的形态，且它对 8 条**一次性**生效）。组合态无产品意义（机器凭据必带属主 id）。用例把这一格钉住（`machine_credentials_…` 末段） |
+| D-2 | `writeCloudRuntimeResponse` 写 `bytes.TrimSpace(resp.Body)` | **不 trim**，原样字节（空 / 全空白 ⇒ 无体那一支保留） | 仅当前导/尾随空白存在时可观测。`DoD` 第 4 条要求「逐字透传、不重编码」⇒ 取更严的一侧 |
+| D-3 | 体不是合法 JSON 时：`writeJSON(w, status, {"error": string(body)})` | 原样转发字节，且**不声明** `Content-Type` | 上游那一步把**任意云侧体**塞进**错误信封**，与 `docs/62` §2.4 判据 ③ 的取向相反。用例 `notjson` 钉住 |
+| D-4 | 上游 `{sessionId}` 段为空 ⇒ handler 里 400 `session_id is required` | 同一分支**照抄**，但经由本地 router **不可达**（matchit 的段不允许为空 ⇒ `/checkout-sessions/` 走 404） | 保留分支 = 上游语义照抄；不可达性登记在这里（不删分支） |
+| D-5 | `cloudRuntimeRequestID`：第二支读 chi 的进程内 request id | 只透传调用方给的 `X-Request-ID`（本仓**没有** request-id 中间件） | 调用方不给时云侧少一个关联键；不影响任何状态码/体判据 |
+| D-6 | 体读失败：`MaxBytesError` ⇒ 413，**其他**读错误 ⇒ 400 | `axum::body::to_bytes` 的 `Err` 一律按 **413**（两种来源在本地不可区分） | 客户端断开时响应无人可读；正常超限路径逐字一致（用例含 `MAX+1` 字节那一档） |
+| D-7 | 错误体 `{"error": msg, "code": code}`（**扁平**） | `{"error":{"code":…,"message":…}}`（**嵌套**，全仓同款） | 形状与 `mc_errors` 一致（既有约定）；403 机器凭据那条的 `message` 带 `Error::Forbidden` 的 `forbidden: ` 前缀（全仓同款） |
+| D-8 | 计费路由的 `op` 桶由 `inferOp(path)` 推出 `billing` | 显式 `with_op("billing")` | 与推导值逐字相同（`/api/v1/billing/*` 命中同一支），显式只是让调用点可读 |
+
+### 46.4 结构性为 0 / 未接线项（如实登记，不是缺口）
+
+1. **504 没有端到端用例**：`state::cloud::CloudConfig` 的两个构造口（`from_env_with` / `with_settings`）
+   都用 `transport` 的默认 35s 超时，**没有超时注入口** ⇒ 端到端触发 504 要真等 35s。
+   本片只给**映射层**用例（`transport_error(&CloudError::Timeout)` ⇒ 504 + `cloud_runtime_timeout`）。
+   接线点若要补：给 `CloudConfig` 加 `with_timeout`（**会动 anchor 冻结文件** `state/cloud.rs`）⇒ 登记给 M9-10/INT。
+2. **凭据面的接线层级**（M9-0 已登记，本片重申）：本仓 `AuthUser` 只读 `X-Multica-User-Id`、
+   **不盖章** `X-Actor-Source` ⇒ 本片的机器凭据反例走「显式带该头」，与上游「Auth 中间件盖章」的链路差一层（W1 面）。
+   `mat_` / `mcn_` 两种 token 本身也不在本波写集内。
+3. **"真库 0 行" 的证据形态（D-7 之外的另一条口径）**：门 ⑥ 用 `--ignored` 跑**整个** mc-http 的 DB 套件，
+   别的用例会在同一张 `activity_log` / `agent_task_queue` 上并发写 ⇒ **行数差不是确定判据**。
+   本片在真库上的判据 = ①真库连接真的建立（`pool.size() >= 1`）②`information_schema` 里
+   `cloud_billing%` / `cloud_subscription%` / `checkout_session%` / `topup%` / `stripe_event%` **0 张表**
+   ③8 条响应是云侧逐字体（`a_real_database_holds_no_billing_table_for_the_eight_proxy_routes`，
+   `#[ignore]` + `MULTICA_TEST_DATABASE_URL`）。
+4. **离线替身的范围**（`docs/62` §4.2 的替身纪律 ①）：替身是**本地 axum 服务**（一个进程一个 base，
+   行为按 `X-Request-ID` 变体前缀分派），只替平台 wire —— 不替业务路径、不替云侧的授权判定。
+
+### 46.5 门禁读数（逐字取自当轮日志）
+
+**起手（base `cd355186`，本 run 在 checkout 上实测）**
+
+```
+⑦  upstream 456 (commit f41fae6b08fb) | local 475 registered | baseline 473
+    implemented 390 real + 3 placeholder = 393 / 456   known_gap 63   unclaimed 0   regression 0   local_only 8
+    gaps by owner: M9=33  M3+=16  M3=11  M10=3
+⑦b registered upstream-key literals: 477 / 0 defect / 0 warning（exit 0）
+⑩  file_size_check: limit=800 scanned=1229 − 1（本片新增的 tests.rs）= 1228 baseline=10 violations=0
+⑨  当轮未单独重跑（见交片：`report matches` ⇒ 与 base 逐字相同）
+```
+
+**交片（本节的提交，`bash scripts/gates.sh --with-db` 的 10 道门）**
+
+```
+⑦  upstream 456 | local 483 registered | baseline 473（**不动**）
+    implemented 398 real + 3 placeholder = 401 / 456   known_gap 55   unclaimed 0   regression 0   local_only 8
+    gaps by owner: M9=25  M3+=16  M3=11  M10=3        ← 位移与本片预测逐字相符（docs/62 §6.1 的 M9-1 行）
+⑦b registered upstream-key literals: 485（+8）/ 0 defect / 0 warning
+⑨  report matches crates/mc-conformance/report.json（**逐字不变**）
+    pass 15  mismatch 23  unmounted 21  placeholder 0  unevaluable 306
+    （M9 面 20 条 fixture = 17 unevaluable + 3 unmounted；后者是 M9-6 的 stripe，本片不产生位移）
+⑩  file_size_check: limit=800 scanned=1229 baseline=10 violations=0（file_size_baseline.tsv **未动**）
+⑤  新增例：cargo test -p mc-http --lib routes::cloud::billing ⇒ **11 passed / 1 ignored**（ignore = 真库那条）；
+    cargo test -p mc-cloud ⇒ **32 passed**（其中 7 条是本片新增）
+```
+
+**十道门**（`scripts/gates.sh`；逐字取自当轮日志）
+
+```
+① fmt 0(4s) · ② build 0(300s) · ③ clippy 0(91s) · ④ clippy-test-util 0(50s) · ⑤ test 0(61s)
+⑥ db 0(464s, migrate=0,e2e=0) · ⑧ schema-drift 0(42s) · ⑦ route-parity 0(1s) · ⑨ conformance 0(85s) · ⑩ file-size 0(2s)
+```
+
+📌 **两件当轮环境事实（如实披露，不是本片回归；判据都指向磁盘与并发，不指向代码）**
+
+1. 🔴 **ENOSPC 第 7、8 次实证（本片一次全量 `--with-db` 跑到 0 字节）**：同一条命令在**单跑**时
+   ①–⑤ + ⑦⑧⑩ 全绿、⑥⑨ 因 `couldn't create a temp dir … (os error 28)` 与
+   `CREATE DATABASE … could not create directory "base/…"` 判红（13 处 `os error 28`，**零** `error[E…]`）。
+   **一键止血**（本轮两次）：`rm -rf target/debug/incremental`（1.5G）+ `target/debug/deps` **每个 stem 只留
+   mtime 最新**（第一次 2748 个文件 / **9.35G**、第二次 1419 个 / **8.69G**）⇒ 再把剩下的门**分批**跑绿
+   （`--only build,clippy,clippy-test-util,test` = 4/4 PASS / 502s；`--only schema-drift,db` = 2/2 PASS / 506s）。
+   ⇒ **十道门各自都有当轮绿记录，但没有一次"同一条命令 10/10"** —— 卡点是**共享 overlay 磁盘**
+   （本 run 的 `target` 峰值 19G，而同机还有在飞 slice 各自的 `target`），不是代码。
+2. ⚠️ **⑥ 的一次时序 flake（与本片写集无关）**：另一次 `--only db` 里
+   `apps/mc-server/src/webhook_worker/tests.rs::ticker_alone_drives_a_queued_delivery_to_terminal` 红
+   （`投递 … 在 2s 内仍是 queued`，该用例的相位余量只有 ~0.4s，见 §27 的读数）——
+   **单跑即绿**（`--test-threads=1` 连跑两次 5/5 PASS），随后重建库的整门 ⑥ `e2e=0` PASS。
+   ⇒ 判据化动作：**门 ⑥ 红了先看是不是这条**；不要把它当成本片回归。
+
+### 46.6 交接与风险
+
+* **R-1（写集外延）**：`routes/cloud/billing/tests.rs` 是本节 46.0 表里说明的第三个文件（唯一写者 M9-1）。
+  M9-2 / M9-6 / M9-11 **不得**写它；各自照同一布局建自己的 `tests.rs`。
+* **R-2（`mc-cloud/src/billing.rs` 的公开面）**：`op` / 8 个 `*_request` / `parse_query` /
+  `is_valid_stripe_session_id` / `checkout_session_path` 是**给我方后续切片复用**的（M9-2 的订阅面有
+  另一份形状：注入体 + 幂等键）。**不许**改这个文件去适配订阅面（它的唯一写者是 M9-1）。
+* **R-3（响应透传的口径）**：D-2 / D-3 是**有意**偏离上游 `writeCloudRuntimeResponse`。后来者（尤其
+  做 `--db-url` 全量 ⑨ 的 M9-10）**不得**按上游那两步改回 trim / 包信封 —— 要先读本节的判据。
+* **R-4（`X-Actor-Source`）**：本闸效力取决于「服务端盖章」是否接线（46.4 第 2 条）。
+  在 W1 面接线之前，**不得**宣称这 8 条已经"挡住机器凭据"——只能说"挡住显式带该头的请求"。
+* **R-5（`MULTICA_CLOUD_URL` 的读取口）**：唯一入口是 `AppState::new` 的构造体（`state/cloud.rs`）。
+  本片的用例全部走 `CloudConfig::from_env_with` **注入**，**不碰进程 env**（并发用例下是唯一安全形态）。
