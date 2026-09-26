@@ -11564,24 +11564,6 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - ⇒ **`LUM-1980` 的 8 条修复在 CI 上成立**（至少一次），且**红→绿的对应关系是逐用例可追的**（不是「换个 run 就绿了」这种弱结论）。门 ⑥ 新基线：`#373` = 第 **1** 个数据点（≥3 个连续 run 才改判，见 §130.6）。
 - ⚠️ 顺带：本 run 的 §130 直推 **`3385d7d5` 又触发了一个 run（`#374`，23:36:09Z）** —— 每次 docs-only 直推都会起一个 CI run（成本 ≈ 10 分钟 × 3 job）；这不影响判据链（走「合并树同树 `--with-db`」那条离线路即可）。
 
-### §130.13 轮内转非只读：`LUM-1784` 于 23:38:24Z 开 **PR #113**，23:4xZ 自撞「交互式 rebase + 非 TTY `vim`」挂起 ⇒ 自恢复后重跑门禁
-
-**时间线（逐条实测，这是本轮最值得记的一手材料）**：
-
-| 时刻（Z） | 事件 | 实测判据 |
-| --- | --- | --- |
-| 23:31–23:37 | 它在**自己的热 target** 上跑 `bash scripts/gates.sh --with-db`（`timeout 4800`），已进 ⑥ 用例执行段 | `/proc` 逐 PID：`63388 timeout` → `14378 cargo test -p mc-repos …` → `16941 autopilots-dd82…` |
-| **23:38:24** | **PR #113 开出**（head `effc01cb`，base 报 `5340ac06`） | 认证 GH `pulls?state=open` = 1；`refs/pull/113/head` 可得、**`refs/pull/113/merge` 不可得**（有冲突 ⇒ GitHub 拒绝建合并提交） |
-| 23:39–23:46 | 它**自己**发现 base 已前进 ⇒ 起 **interactive rebase** 把 base 并进来并解 `docs/32` 号段 | `rebase-merge/git-rebase-todo` 逐字：`pick effc01cb docs(32-36.3)…` + `pick 172f7755 docs(32-37): 号段重编 —— LUM-1980 的 PR #112 先落地占 ## 36.，本片按号段纪律改为 ## 37.（+10 处自引用）` |
-| 🔴 23:41–23:46 | **挂起**：`git rebase --continue` 用 `-e` 起编辑器 ⇒ `/etc/alternatives/editor → /usr/bin/vim.basic` 以 **`fd0 == fd1 == pipe`** 启动 ⇒ `do_select` 里**死等 EOF** | `ps -o wchan` = `do_select`；`ls -l /proc/21898/fd/0` = `pipe:[…]`；链条 `bash → git rebase --continue → git commit -e → /usr/bin/editor` 全部 `do_wait` |
-| 23:46:36 | 编辑器进程消失（工具调用被上层收掉）⇒ pi 恢复推理 | `vim-hung → vim-gone`；本地 HEAD 仍 `5340ac06`、`rebase-merge/` 仍在 |
-| 23:47–23:5x | **它自己重排并重跑**：本地 HEAD `d31f69ae`（含号段重编提交）⇒ 立刻在**新树**上重跑 `--with-db`（先 `cargo`/`clippy`，后测试二进制 `hub_user_frames`） | `/proc` 逐 PID |
-
-- 🔴 **这就是 MEMORY.md 里那条老坑的再现**（LUM-1392 cycle 记过）：**本仓 worktree 共享裸仓、`user.name/email` 是空串，且 `EDITOR` 默认 `/usr/bin/vim.basic` ⇒ `git rebase`（尤其交互式）在无 TTY 的 agent 环境里必然挂**。解药逐字是 `GIT_COMMITTER_NAME/EMAIL` + **`GIT_EDITOR=true`**（中途失败可 `git commit -C <原commit>` 再 `git rebase --continue`）。
-- **本轮的处置（刻意不越界）**：本 run 在本机**已按同一定式把冲突解好并做成合并提交 `db19f149`（树 `1efb9f0f`）作为预演**，但**没有推送** —— 因为它正在**同一分支**上做同一件事，抢推会让 PR #113 的 head 与 base 分叉、把「谁的解更权威」变成竞态。判据：`git ls-remote refs/heads/agent/devbox5/80429b9e50ef` 仍是 `effc01cb`（它未 force-push）⇒ **让位，等它自己收口**。
-- **预演的独立价值（已产出、可复核）**：① 冲突面**只有 `docs/32` 一个文件**（`git merge-tree --name-only`）；② 解法 = **两侧都保留 + 号段归位**：`## 36.` 归先落地的 `LUM-1980`（PR #112），M7-19 那节连同 **`### 36.1…36.10` 风格的自引用子节**重编号为 `## 37.` / `37.x`（本 run 在预演里把 6 个子节全改了）；③ **22 个文件里 21 个的合并后 blob == `effc01cb` 的 blob（字节相同）**，只有 `docs/32` 是解析结果；④ 合并后相对 base 的 `--numstat` = **22 文件 `+7835 −63`**（比 PR 的 `+7836` 少 1，差的正是分隔行）。
-- **残留（不掩盖）**：`f617bdd8` 的提交正文与 **PR #113 描述**里的「`docs/32` §36 / §36.2 / §36.4」是**重编号前**的自引用 —— 历史提交改不动，PR 描述也可以不改（正文已被 `docs/32` §37.2/§37.4 取代）⇒ 权威落点以 `docs/32` 的 **§37.x** 为准，已在合并提交信息里逐字登记。
-
 ### §130.13 轮内转非只读：`LUM-1784` 交 **PR #113** ⇒ 判据链**六步全绿**合并，落地 **`db5713cf`**（树 `6f1c2e45` 四读数 + 同树 10/10）
 
 **时间线（逐条实测 —— 这是本轮最值得留档的一手材料，因为中间夹了一次「自撞编辑器挂起」）**：
@@ -11612,6 +11594,9 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 - **PR 状态**：`state=closed / merged=true / merged_at 23:59:38Z / merge_commit db5713cf`；轮末 GH **0 open PR**。
 - **硬前置解锁实测**：落地 base 上 `crates/mc-channel/src/wecom/{wecom_channel,resolvers,inbox_message,markdown,seal,stream_store}.rs` **六条全 present**（M7-19 五条 + M7-16 一条）⇒ **`LUM-1785`（M7-20）的硬前置六条当轮由 MISSING 变成立**（这是本轮唯一的状态跃迁）。
 - 🔴 **本 run 的「预演合并」`db19f149`（树 `1efb9f0f`）刻意未推送**：23:41 时它正在**同一分支**上做同一件事（rebase 解号段），抢推会让 PR #113 的 head 与 base 分叉、把「谁的解更权威」变成竞态。判据是「`git ls-remote` 仍是 `effc01cb`（未 force-push）」⇒ **让位，等它自己收口**（结果：它 23:58:55 自己交出了 `df9fee2a`，比本 run 的解更完整 —— 它多带了一个 `docs(32-37)` 号段重编提交）。**预演的价值转移为「提前 18 分钟就知道冲突面只有 `docs/32` 一个文件」**（§130.8），而不是「替它合并」。
+
+
+- **残留（不掩盖）**：`f617bdd8` 的提交正文与 **PR #113 描述**里的「`docs/32` §36 / §36.2 / §36.4」是**重编号前**的自引用 —— 历史提交改不动，PR 描述也可以不改（正文已被 `docs/32` §37.2/§37.4 取代）⇒ 权威落点以 `docs/32` 的 **§37.x** 为准，已在合并提交信息里逐字登记。
 
 ### §130.14 🔴 新 finding：本仓 worktree 的 `EDITOR` 陷阱（**第二次**在 agent 环境里挂住整片）
 
