@@ -6382,26 +6382,40 @@ handler + 四态访问门）、`crates/mc-http/src/routes/probes/realtime/tests.
     hub/mod.rs 638 行（余量 162）
 ```
 
-**交片（`bash scripts/gates.sh --with-db --db-url '…/multica_lum2105'` = 10/10 PASS）**
+**交片（`bash scripts/gates.sh --with-db --db-url '…/multica_lum2105'` = 10/10 PASS / 1164s）**
 
 ```
-① fmt 0 · ② build 0 · ③ clippy 0 · ④ clippy-test-util 0 · ⑤ test 0
-⑥ db 0(migrate=0,e2e=0) · ⑧ schema-drift 0 · ⑦ route-parity 0 · ⑨ conformance 0 · ⑩ file-size 0
+① fmt 0(3s) · ② build 0(265s) · ③ clippy 0(150s) · ④ clippy-test-util 0(70s) · ⑤ test 0(77s)
+⑥ db 0(493s, migrate=0,e2e=0) · ⑧ schema-drift 0(28s) · ⑦ route-parity 0(1s) · ⑨ conformance 0(77s) · ⑩ file-size 0(0s)
 ⑦  upstream 456 | local 475 registered | baseline 473（**不动**）
     implemented 390 real + 3 placeholder = 393 / 456   known_gap 63   unclaimed 0   regression 0   local_only 8 (1 ph)
     owners {M9 33, M3+ 16, M3 11, M10 3}   files_scanned 208
-⑦b registered upstream-key literals 471（base 470；本片**真的**多一条注册键）/ 0 defect / 0 warning（exit 0）
+⑦b registered upstream-key literals: 471（base 470；本片真的多一条注册键）/ 0 defect / 0 warning（exit 0）
     --declared docs/fixtures/m10-declared-routes.tsv: declared 5 / dual-form 0 / single-form 5（exit 0）
-⑨  **逐字不变**（365 / 15 / 23 / 21 / 0 / 306；`--check` = `report matches`，blob 与起手相同）
-    ⇒ 该路径**无 fixture**，本片**未动** `crates/mc-conformance/report.json`（§43.7 的 R-3）
+⑨  fixtures 365 | pass 15 | mismatch 23 | unmounted 21 | placeholder 0 | unevaluable 306
+    contract 0.0410958904109589 · mounted 0.39473684210526316   （与起手**逐字相同**）
+    `--check` = `report matches crates/mc-conformance/report.json`（blob 与起手相同 db173fe8409d）
 ⑩  file_size_check: limit=800  scanned=1183  baseline=10  violations=0（`file_size_baseline.tsv` **未动**）
-⑤  新增例：`cargo test -p mc-http --lib routes::probes::realtime` ⇒ **15 passed**；`cargo test -p mc-ws --lib hub::metrics` ⇒ **6 passed**
+⑤  新增例：`cargo test -p mc-http --lib routes::probes::realtime` ⇒ **15 passed**；
+    `cargo test -p mc-ws --lib hub::metrics` ⇒ **6 passed**
 ```
 
 * 不变式逐条：`implemented + known_gap == 456`（393 + 63 ✓）、`unclaimed == 0`、`regressions == 0`、
   `baseline` 不动（473）、`local_only` 不增（8 → 8）。**⑦ 的位移与本片预测逐字相符**
   （`local 474 → 475`、`implemented 392 → 393`、`known_gap 64 → 63`、`owners.M10 4 → 3`）。
 * `local_only` 仍是 **8（1 ph）**：`.route("/health/realtime")` 是**上游键**，不进 `local_only`。
+* 全量门禁的**当轮环境**（如实披露，两件都不改变判据）：① 冷 `target`（起手 `rm -rf target`）
+  且 `CARGO_INCREMENTAL=0`（`docs/64` §6.5 的通用纪律里那条"起手看 `df`"的落地 —— 一次冷全量
+  `--with-db` 实测把 `/` 吃到 **129 MiB 余量**，不这么做会在 ② / ⑥ 处 ENOSPC 伪装成代码红，
+  与 `docs/37` §46 / `docs/32` §37 的第 3、4 次实证同款）；② ⑥ 跑在**重建的**库上（见下）。
+
+📌 **门 ⑥ 的一条环境事实（本片实测，不是本片回归）**：同一条 `--only db` 命令在**复用**的库上
+第二次跑会红 —— `e2e=101`，8 例 `routes::auth::tests::google_login_*` 与
+`routes::channels::lark::tests::db::*` 报 `Connect(PoolTimedOut)` / `pool timed out while waiting for
+an open connection`（全是与本片写集**无关**的路径；PG 侧无 `too many clients`、`max_connections=100`、
+时刻内活动连接仅 6）；在 **`DROP` + `CREATE DATABASE`** 重建的库上跑即绿（本片 3 绿 1 红，
+绿的 3 次全是重建后的库）。⇒ 判据化动作：**跑 ⑥ 之前先重建库**（或别把 ⑥ 连跑两次）。
+根因未定（客户端池超时 vs 复用库里的残留行/统计），登记给工具面，**不建议**在本波改 `scripts/**`。
 
 ### 43.7 交接与风险
 
