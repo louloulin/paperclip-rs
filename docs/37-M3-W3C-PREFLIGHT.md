@@ -11971,15 +11971,95 @@ panicked at crates/mc-http/tests/composio/support.rs:577:34: a link call
 3. **「同轮先合一片」会当场作废第二片的 ②**：⇒ **合并顺序要提前定**：先合**证据已完备（CI 三绿）**的那片，把「需真合 + 重跑」的那片留在**有热 `target` 的工作区**做（本轮 #115 靠 CI 零重跑；#116 的 13G 热 target 被我保留到最后才回收）。
 4. **「M10-6 与本轮配对」的价值来自跨波冲突图**：它不是"随便一个 0 路由片"，而是**唯一改 `Cargo.lock` 的片**、且其死对头 `M9-0` 下一轮就要起手 ⇒ 空位派发的第 4 类判据（§133.9 第 4 条的推广）= **「这片再等一轮会不会撞上别人」**（不只问"它的硬前置满足了吗"）。
 5. **描述勘误在片起手后也照发**：我在 `LUM-1786` 起手**之后**才发现自己 rev 10 引用的 `report.json` blob 写错（`fa53d084` 是 #111 合入**前**）⇒ 立即 rev 11 修正 + 留勘误节。片可能已读过旧值，但**权威版本必须在描述里**，否则下一轮 cycle 会继续抄错值。
+## §135 10:00 cycle（`LUM-2130`，02:30Z 触发）：起手 daemon 只剩 cycle 自己 ⇒ **两片同时"静默死亡"（上游 524）**，抢救两片 + `rerun` 落回 3/3；零构建复采
+
+### §135.1 起手三连 + 逐 PID 拆槽（全部当场实测）
+
+- **df** `/`：`49G 总 / 27G 已用 / 21G 可用 / 57%` ⇒ 健康带内（≥18G），**无需先回收**（与 §134 的 4.0G/92% 形成对照：§134 回收 41.4G 后收尾 36.9G，一夜过去又落到 21G）。
+- **base** = `git rev-parse origin/feat/multica-rs-initial` = **`dd0e8c51`**（= §134 的 docs-only 直推）。`multica repo checkout` **再次落 `main` 线**（`4fc96f30`，与 `feat/multica-rs-initial` 无共同祖先）⇒ 定式第一步 `git checkout -B agent/devbox5/c606537aeee2 origin/feat/multica-rs-initial`（**第 4 次踩**，见 §135.9 第 4 条）。
+- **GH**：`pulls?state=open` ⇒ **0 open PR**（§134 收尾也是 0）。
+- **daemon**：`running_task_count = 1` ⇒ 只有本 cycle；逐 PID 扫 `/proc/*/cmdline`：**`26728` = 本 run 的 `pi`、`39` = `multica daemon`，没有第三个 `pi`、没有 `cargo`** ⇒ **两个槽位都空**。
+
+### §135.2 🔴 新 finding（第 7 类死亡形态）：**上游 524 ⇒ run「静默死亡」**
+
+上一 cycle 派的 **两片都在 run 起手 ~28/~39 分钟后死掉**，形态完全一致：
+
+| 片 | run id | `created_at` | 终态 | 死亡时刻 | 退出时的工作树 |
+| --- | --- | --- | --- | --- | --- |
+| `LUM-1786`（M7-21 INT） | `01a0db67-a05b-7ebe-bf50-c95b99fea078` | 01:49:56Z | **failed** | 02:17:43Z（+28 min） | `M docs/fixtures/route-parity-baseline.json`；**0 提交、未推** |
+| `LUM-2108`（M10-6 bench） | `01a0db67-a84a-76ea-a35e-3a8eabef12b3` | 01:49:58Z | **failed** | 02:28:55Z（+39 min） | `M Cargo.lock` + `M Cargo.toml` + `?? crates/mc-bench/`；**0 提交、未推** |
+
+- **error 逐字 = `524 status code (no body)`**（Cloudflare 超时，模型 API 侧），两片**同一原因**。
+- **平台的失败痕迹只有两处**：① `multica issue runs <id> --output json` 里 `status: failed` + `error`；② issue 上一条 **`type: system`** 的评论，`content` 逐字就是那句 error、`source_task_id` = 死掉的 run id（实例：`01a0db81-0ff3-792b-81c4-a79acc511e52` ← run `…c95b99fea078`；`01a0db8b-4e71-72e8-b71c-c498bbf349f6` ← run `…3a8eabef12b3`）。
+  * 顺带一条**可用的映射法**：failed run id 的**末段 = 该片的 workdir 后缀**（`…-c95b99fea078` → `lum-1786-c95b99fea078`、`…-3a8eabef12b3` → `lum-2108-3a8eabef12b3`）⇒ 从 run id 直接定位死掉的工作树。**注意字段名是 `content` 不是 `body`** —— 本轮我第一次用 `--roots-only --summary --compact` 读 `body` 得到空串，差点把这条痕迹判成"无内容的角落"。
+- ⇒ **「逐片终态判定」必须补第 0 步**：`multica issue runs <id> --output json` 看最近一条 run 的 `status`/`error`。**`running_task_count` 回落既不等于"干完了"也不等于"交片了"** —— 本轮如果只按 `porcelain`/`已推` 判，会得出"两片都在编译迭代段活着"的错误结论。
+
+### §135.3 抢救一：`LUM-1786`（M7-21 INT）—— 只固化，**不改写**；正确性另做独立复核
+
+- **固化**：把死 run 留下的那处未提交改动**原样**提交为 `c8b94c77`（分支 `agent/devbox5/c95b99fea078`，**已推送**）。提交信息里逐条写了"这是死 run 的 WIP、本提交**未跑门禁**"。
+- **独立复核（在 base `dd0e8c51` 上现算）**：跑 `python3 scripts/route_parity.py --write-baseline` 并把产出与该 WIP 的 JSON **归一化后逐条比**（`json.dumps(..., sort_keys=True, indent=2)`）⇒ **diff 为空**、`baseline 473 == local 473`、`regression 0 / unclaimed 0`。
+- ⇒ **该刷新本身可信**，M7-21 的真正剩余工作是「`docs/32` + `docs/37` + `docs/60` §11 收口 + ⑦/⑨/⑩ 快照复核 + 门禁」。**这条结论已写进片描述 rev 16**（否则接手方会把已完成的 `--write-baseline` 当"还没做"重做一遍，或者更糟：以为整片都做完了）。
+- **片前基线口径随之下修**：`--write-baseline` 的**片前值 = `473`**（不是描述里早先写的 `457` —— `457` 是"刷新前的文件值"）。这正是 §134.9 第 5 条"描述勘误在片起手后也照发"的续用。
+
+### §135.4 抢救二：`LUM-2108`（M10-6 bench）—— 骨架在、**主体没写**
+
+- **固化**：同样原样提交为 `eddb4783`（分支 `agent/devbox5/3a8eabef12b3`，**已推送**）= `crates/mc-bench/{Cargo.toml,src/lib.rs}` + 根 `Cargo.toml`（`criterion = "0.7"` + 注释说明为何不能升 0.8.x）+ `Cargo.lock`（+226/−1）+ 三个 bench 入口。
+- **接手的三个硬事实（逐项实测，已写进片描述 rev 7）**：
+  1. 🔴 `crates/mc-bench/benches/{issue_list,facets,inbox_cursor}.rs` **各自只有 1 行 `fn main() {}`** ⇒ `cargo bench -p mc-bench` **不产任何读数**，三条热点**全部没写**（本片主体工作量都在这里）；
+  2. 🔴 `crates/mc-bench/src/lib.rs` = **827 行 > 门 ⑩ 的 800 行硬上限** ⇒ 必须先拆分（清单 `scripts/file_size_baseline.tsv` 不许动）；
+  3. `docs/fixtures/bench-baseline.json` **未落**（起手段：在未改生产代码的 base 上跑一次冻基线）。
+- `[[bench]]` 的 `harness = false` **且** `test = false` 与根 manifest 的 `criterion = "0.7"` 注释块**已就位** ⇒ 这两条只需复核。
+
+### §135.5 🔴 `status todo` **不起 run**（本轮第一次实证）⇒ 重启死 run 用 `multica issue rerun`
+
+- 我按 §134 记的"派发两步"做了：`update --description-file … --no-start` → `status <id> todo`。**结果：issue 变成 `todo` 了，但没有任何 run 起手** —— 等 48s 后 `running_task_count` 仍是 `1`、`issue runs` 里**只有那条 failed**。
+- **正确动作 = `multica issue rerun <id>`**（"Re-enqueue an issue's current agent assignment as a fresh run"）：两条命令后 **~60s 内 `running 3 / active 3`**，两片的 `--active` 各自显示一条 `running` 的新 run（`01a0db91-688e-785e-8308-bb256dfecac8` / `01a0db91-68f3-7051-87bd-27863331c524`，`created_at` 02:35:34Z / 02:35:35Z）。
+- **判据化结论**：`status todo` 的"起 run"效果**只对"新指派/新子 issue"成立**；**已指派给同一 agent 的片，改 status 只是改状态**。⇒ 重启定式 = **`rerun`**，别照抄"两步"。
+
+### §135.6 ⑦ / ⑨ / ⑩ 当轮读数（base `dd0e8c51`，**零构建**，抢救提交都在片分支、不影响 base）
+
+- ⑦ `upstream 456 (commit f41fae6b08fb) | local 473 registered | baseline 457 | implemented 388 real + 3 placeholder = 391 / 456 | known_gap 65 | unclaimed 0 | regression 0 | local_only 8`；不变式 `implemented + known_gap == 456` ✓；`owners = {M9:33, M3+:16, M3:11, M10:5}`（**无 `M7`** ⇒ M9-0 的"全波落地"硬前置仍成立）。**与 §134 逐字相同**。
+- ⑦b `slash_alias_audit.py --quiet` ⇒ **exit 0**。
+- ⑩ `file_size_check: limit=800  scanned=1170  baseline=10  violations=0`。**与 §134 逐字相同**。
+- ⑨ **第 12 次主动不冷编**：三个门输入 blob 与 §134 **逐字相同** —— `crates/mc-conformance/report.json` = `3eb0430a39c8cf6c50ccafe626542abba3eaa0d4`、`docs/fixtures` tree = `f8a22c4edded82a1da8dfe120afe29f68ebe39ba`、`crates/mc-conformance` tree = `f696e5ccd520631d66b55c145f4c42bc15e43ed7` ⇒ totals **继承 `365 / 14 / 23 / 22 / 0 / 306`**。⚠️ `crates/mc-bench/` 落在抢救分支上 ⇒ 对 `crates/mc-conformance` tree 无影响。
+
+### §135.7 号段（当轮实测）
+
+- `docs/32-M3-DAEMON-FACE.md` 末号 = **`## 39.`**（`## 36.`=`LUM-1980`、`## 37.`=M7-19、`## 38.`=M7-20、`## 39.`=M10-0）⇒ **下一片若开新节取 `## 40.`**（号由**落地顺序**占；在飞分支也要对账，见 LUM-2102 的第二次撞号）。
+- `docs/37` 末号 = `§134` ⇒ 本 **`§135`**。
+
+### §135.8 next cycle 起点（10:30 / 02:30Z）
+
+- **base** = `dd0e8c51` + 本 §135 docs-only 直推（起手一律 `git rev-parse` 实测，**不抄本行**）；GH **0 open PR**；daemon **3/3** = cycle ∥ `LUM-1786`（`lum-1786-c95b99fea078`，**热 15G `target/`**）∥ `LUM-2108`（`lum-2108-3a8eabef12b3`，**热 1.6G `target/`**）；磁盘起手 **21G / 57%**。
+- **第一动作（顺序不可换）**：① `df -h /` 连采两次 ② `git rev-parse HEAD` 对 `git ls-remote origin feat/multica-rs-initial` ③ 认证 GH `pulls?state=open` ④ 从 `/` 起手逐 PID 扫 `/proc/*/cmdline`（先读是不是 `pi`）⑤ **`multica issue runs <id> --output json` 逐片查最近 run 的 `status`/`error`（**本轮新增，判"静默死亡"**）** ⑥ 逐片「终态（`porcelain` 空 + `pi` 消失 + 已推/已开 PR）∧ 形态判定」。
+- **槽位链（勿抄旧行）**：
+  - `LUM-1786` 终 ⇒ 判据链合入。⚠️ 它是**基线写者** ⇒ 合并后**当场重跑 ⑦** 复核 `baseline == 片后 local 实测`（本片预期 `baseline 473 == local 473`）、并核对 ⑨ 三个输入未位移；合入后 **`LUM-1815`（M9-0）的两个硬前置全部成立** ⇒ 派 **M9-0 单独跑**（anchor 不并行；它写 `state.rs`/`mount.rs`，若 `LUM-2108` 仍在飞则争 `Cargo.lock` ⇒ **`M10-6` 必须先终态/合入**）。
+  - `LUM-2108` 终 ⇒ 递补 **`LUM-2103`/`LUM-2104`/`LUM-2105`（M10-1/2/3，stage 2，硬前置 M10-0 已合）**（**加路由片 ⇒ 不得与 `--write-baseline` 片同轮**）。
+- 🔴 **本轮的 524 若复发**：工作树已固化（两个抢救提交都在远端）⇒ **不再抢救**，直接 `rerun`；若**同一原因连续第 2 轮**，把"上游不稳定"登记进片描述并把派发节奏降为**单片**（两片同死 = 一轮白跑两个槽位）。
+- **三个基线写者不得同轮**：`LUM-1786`（M7-21 INT）/ `LUM-1825`（M9-INT）/ `LUM-2111`（M10-INT）。**⑨ 的 M10 归属不变**（`/api/config` 17 条 + `/health` 1 条归 M10-INT，普通片不许顺手刷 `report.json`）。
+
+### §135.9 lesson
+
+1. 🔴 **第 7 类死亡形态 = 上游 524「静默死亡」**：run `failed`、error 逐字 `524 status code (no body)`、**工作树留脏 + 0 提交 + 未推**、平台只在 issue 上留一条 `type: system` 的 `content` = 该 error 的评论。**`running_task_count` 回落绝不等于"干完了"** ⇒ 终态判定的**第 0 步**是 `multica issue runs <id>` 看 `status`/`error`，其余判据（`porcelain` 空、已推、已开 PR）只在 `status: succeeded` 之后才有意义。（只读评论扫描不够：**字段是 `content`，不是 `body`**；`--summary --compact` 下我按 `body` 读会拿到空串。）
+2. **抢救只固化、不改写、正确性另做**：cycle 对死 run 的工作树**原样**提交（一个 commit + 提交信息写清"未跑门禁"），**绝不顺手修** —— 否则"这份 WIP 是谁改的、哪部分是经过验证的"就无从回答。想给接手方"这步已经对了"的结论，就**在 base 上现算一遍再比**（本轮 `--write-baseline` 的 JSON 归一化比对，10 秒成本换掉接手方一次重复劳动 + 一次误判"还没做"）。
+3. 🔴 **`status todo` 不起 run（已指派同 agent 时）；重启死 run 用 `rerun`** —— 与 §134.9 的"空位只认当轮读数"同族：**动作→效果的对应关系必须当轮实测，不能照抄上一轮的"派发两步"**。
+4. **`multica repo checkout` 落 `main` 线是常态（第 4 次踩）**：起手第一件事永远是 `git rev-parse HEAD` 对 `git ls-remote origin feat/multica-rs-initial`，不等就 `git checkout -B <本任务分支> origin/feat/multica-rs-initial`。这条已经写过三次，**仍然值得再写一次**：它一次都不报错，只是让整轮读数对着错误的树。
+5. **数字口径**：`--write-baseline` 的"片前值"= **刷新前文件里的 `baseline`**、`--write-baseline` 的"片后值"= **当轮 `local`**（本轮 `457 → 473`）。描述里"片前/片后"两个词必须写清是哪个，否则接手方会把 `473` 当成"该片引入的位移"。
 
 ---
 
-## §135 M7-21 INT（`LUM-1786`，base `dd0e8c51`）：M7 波收口的口径表（⑦ 基线片前值的三类成因 / ⑨ 归属 / 掉棒成因）
+> **号段复核（本片改号 `§135` → `§136`）**：本片起手（02:36Z）`git fetch` 实测 `docs/37` 末号 = **`§134`** ⇒ 先取 `§135`；
+> 交片时 10:00 cycle（`LUM-2130`）的 **`cbdf9cf9`**（`§135 10:00 cycle…`）已落进 base ⇒ 按「**先落地者保号**」
+> 本片改号 **`§136`**（与 `docs/32` §40 / `docs/60` §11 同一处撞号裁决：`## 38.` 先例）。
+> ⚠️ **教训（第七类预飞检查 = `docs/37` 号段对账）**：本片只对了 `docs/32` 的 `## N.`，**漏了 `docs/37` 的 `§N`** ——
+> 而这一波的 cycle 每轮都在往 `docs/37` 末尾追加一节 ⇒ 交片前必须同时复核**两个号空间**（且两次都要 `git fetch` 在飞分支）。
+
+## §136 M7-21 INT（`LUM-1786`，base `dd0e8c51`）：M7 波收口的口径表（⑦ 基线片前值的三类成因 / ⑨ 归属 / 掉棒成因）
 
 > 本节是 M7 波（W7 渠道面）**收口**的口径收口，与 `docs/32` §40、`docs/60` §11 三处互指。
 > 本片 **0 路由 / 0 代码**；起手 base = `dd0e8c51`；唯一写 `docs/fixtures/route-parity-baseline.json` 的片。
 
-### §135.1 ⑦ 的「片前基线」是一个**只能在起手那一刻取**的读数 —— 它有三类过期成因
+### §136.1 ⑦ 的「片前基线」是一个**只能在起手那一刻取**的读数 —— 它有三类过期成因
 
 M7-21 的 DoD 逐字要求「`--write-baseline` 的**片前值** = 当轮 `baseline` 字段的**实测值**」。这一波里这个值被写进 issue 描述**五次都对、五次都过期**（`344` → `406` → `430` → `458` → `457`）。三类成因，逐类给判据：
 
@@ -11991,11 +12071,11 @@ M7-21 的 DoD 逐字要求「`--write-baseline` 的**片前值** = 当轮 `basel
 
 ⇒ **纪律（写进后续任何 INT 片的起手清单）**：`--write-baseline` 的「片前」**不许从文档/issue 里抄**，必须由**当轮** `python3 scripts/route_parity.py` 的 `baseline` 字段现场取；**片后**同理必须是当轮 `local` 的实测值。
 
-### §135.2 `local` 是**未折叠的注册点**数，不是"路由条数"
+### §136.2 `local` 是**未折叠的注册点**数，不是"路由条数"
 
 `local 473` 里 `/x` 与 `/x/` **各算一条**（`route_parity.py` 在**比较**时折叠、在**计数**时不折叠）。本波实测：`local 473` 里有 **74 组**双形态键（`slash_aliases` 数组 / `note:` 行逐条列出：`473 − 74 = 399` 个折叠键）。⇒ **推论两条**：① 不许按"折叠后的键集合"去推算 `local`（`docs/37` §95 的 M6-INT 先例）；② 一个 0 路由片的 `local` **必须逐字不变**（本波 15 个 0 路由片全部逐字命中）。
 
-### §135.3 「M7 全绿」≠「渠道面全绿」—— 渠道面的三层账
+### §136.3 「M7 全绿」≠「渠道面全绿」—— 渠道面的三层账
 
 | 层 | 判据 | M7 的终态 |
 | --- | --- | --- |
@@ -12005,16 +12085,16 @@ M7-21 的 DoD 逐字要求「`--write-baseline` 的**片前值** = 当轮 `basel
 
 ⇒ **口径**：`owners.M7 = 0` 只说明**账内**全绿。渠道面的**主证据**（§4.2 的"每渠道至少一条真实收发回路"）在**账外**，必须按 §40.7 的**逐文件取证**读，不能拿 ⑦ 当它的替身。
 
-### §135.4 「未配置」语义**按端点而异**，且 wecom 那一格是 **403 不是 503**
+### §136.4 「未配置」语义**按端点而异**，且 wecom 那一格是 **403 不是 503**
 
 * `docs/60` §8 R-M7-3 与上游 `router.go:917` 的注释**都写 wecom 端点 503** —— **两处都不是代码**。逐字实现是 `writeFeatureDisabled`（`handler.go:578` ⇒ `http.StatusForbidden`）⇒ **3 条路由回 403 `wecom_not_configured`**；503 只属于**够不着 `WeCom`**（凭据没验过）的那一格。取证与用例见 `docs/32` §31.2 **D4**。
 * lark 的列表是 **200 空 + `install_supported:false`**（不是 403/503）。⇒ 纪律：**禁止"统一 503"**；每条路由的未配置语义必须**逐 fixture**对齐（`docs/60` §2.4）。
 
-### §135.5 单副本部署契约（`R-M7-1` 的正面那一半）
+### §136.5 单副本部署契约（`R-M7-1` 的正面那一半）
 
 本仓**没有 Redis** ⇒ 上游 4 处跨副本协调（WS 租约 CAS / 入站去重 / 安装会话 / 出站重投递）全部换成**进程内替身**。**部署契约 = 单副本**，或"渠道连接只在一个副本上开"。⇒ 后续任何"为什么多副本下同一个 installation 被连两次"的提问，答案在这一条（`docs/32` §40.3 R-M7-1 + §31/§33/§34/§38 的 R1）。
 
-### §135.6 本波**掉棒**的成因口径（第 17 类）：**接线点落在已冻结的写集里**
+### §136.6 本波**掉棒**的成因口径（第 17 类）：**接线点落在已冻结的写集里**
 
 本波抓到 **2 项**掉棒，**同一族**（`docs/32` §40.6）：
 
@@ -12025,13 +12105,13 @@ M7-21 的 DoD 逐字要求「`--write-baseline` 的**片前值** = 当轮 `basel
 **判据化动作（写给 cycle / 派发者，花 30 秒）**：写"归 X"之前，`grep` 一下那个逐字路径**是不是某个已合入片的写集**；是 ⇒ 连同"谁有权改"一起写进**新开片的描述**（`docs/57` §9.8.3 的执行规则 1、2）。
 **"复核"不是交付**：本片被指派"复核该端点转绿"，实测结论是**未转绿** —— 把复核的**否定结论**如实登记（`docs/32` §40.4 末条）比"看起来完成了"重要。
 
-### §135.7 ⑨ 的归属口径（本波只核对、不动快照）
+### §136.7 ⑨ 的归属口径（本波只核对、不动快照）
 
 * `crates/mc-conformance/report.json` 的刷新**只归该波的 INT 片**，且**只在有 `unmounted` ⇒ 可判定 的位移时才刷新**。
 * 本波实测：**M7 面 8 条 `unmounted → pass` 已由 M7-14（PR #111）自己刷掉**（`pass 7 → 14` / `unmounted 29 → 22`）；**wecom 面 0 条 fixture**（阴性对照组）⇒ M7-INT **一格未动**，只核对（`report matches`）。
 * **下一批已知位移归 M10-INT**：`/api/config` 17 条 + `/health` 1 条 = 18 条 `unmounted`。**普通片不许顺手刷**（`docs/32` §39.8 R-M10-4 同款纪律）。
 * **先例对照**：M8-6 的 composio 一条**自己刷了**（`unmounted → pass`）；M7-9 挂 7 条路由**没刷**（它那 5 条 fixture 是 `unevaluable`，actor 非 anonymous）⇒ **判据是 fixture 的 `actor` 与 `via`，不是"这一片加了几条路由"**。
 
-### §135.8 门 ⑥ 的新基线（承 §130.6，本轮复核后仍成立）
+### §136.8 门 ⑥ 的新基线（承 §130.6，本轮复核后仍成立）
 
 `LUM-1980` 的 8 条测试侧修复随 **PR #112** 落地（`b248e02b`）；**`#373`（含修复的第一棵树）逐用例转绿** ⇒ 门 ⑥ 的判据基线**自 `#373` 起算**。⇒ 后续轮次若 ⑥ 红：先判「红点是否在**修复前**的旧名录里」∧「与本片写集是否零交集」—— 两条都真才可按"已知"登记（并换**当轮新建库**单跑 `--only db`、逐字登记用例名 + 行号 + 交集 ∅）；**不在名录里 ⇒ 按本片回归处理**。⚠️ 旧名录**不再**是"红了也正常"的理由。

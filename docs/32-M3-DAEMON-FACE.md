@@ -5838,7 +5838,7 @@ M7 各片在自己的"交接（H）"里把**收敛/接线**事项逐条留给后
 | --- | --- | --- | --- |
 | **G-1** | **无 Redis**（上游 4 处跨副本协调 → 进程内替身） | 零 `redis` 依赖；替身四处落点见 §40.3 R-M7-1 | 登记不实现；部署契约 = **单副本** |
 | **G-2** | `secretbox` 两份实现 | 两份签名不同（§40.3 R-M7-4/R-M7-11） | 登记不实现；收敛票不在 M7 写集 |
-| **G-3** | 渠道读侧有一条属 M4（`GET /api/chat/history`） | 当轮 ⑦ 实测该键 **已在 `implemented`**（M4 面已落地） | **R-M7-6 = 闭**；口径入 `docs/37` §135 |
+| **G-3** | 渠道读侧有一条属 M4（`GET /api/chat/history`） | 当轮 ⑦ 实测该键 **已在 `implemented`**（M4 面已落地） | **R-M7-6 = 闭**；口径入 `docs/37` §136 |
 | **G-4** | **4 条 dingtalk 群 scope 矩阵 fixture 仍 `unevaluable`** | 当轮 ⑨ M7 面 12 条 = `8 pass + 4 unevaluable` | 登记为缺口：承诺原文只承诺"转 evaluable + 给结论"；要**真库 + 多 actor**（⑨ 工具面），不在 M7 写集 |
 | **G-5** | `channel_outbound_message` **无 `channel_context_revision` 列** ⇒ slack history 读面用 `(binding_id, route_revision)` **近似** | `migrations/upstream/425_*.up.sql` 只有 `route_revision`；迁移 `377` 补的是 `chat_message`/`agent_task_queue`/`channel_chat_session_binding` | 登记为缺口（§15.2 **D6(a)**）：方向是**多**放行，**不会少放行** ⇒ 近似而非漏实现 |
 | **G-6** | `mc-telemetry` 的 `is_sensitive` **未覆盖**渠道键名：`app_key` / `appkey` / `aeskey` / `dingkey` / `encrypt_key`（**5 个**） | 当轮逐名实测：`app_secret`/`app_secret_encrypted`/`corpsecret`/`bot_token`/`app_token`/`verification_token`/`signing_secret`/`tenant_access_token` **已被**子串覆盖（表里 `secret`/`token`/`apikey` 兜住绝大部分）；上列 5 个**未覆盖**。**可达性 = 当前不可达**：`redact_log` 全仓唯一消费者是 `mc-autopilot/src/credential.rs`；M7 代码**零** `redact_log` 调用、**零** `tracing::*` 凭据插值 | 登记为缺口 + **具体洞清单**（= §40.4 **C-8** 的转派结果）；`crates/mc-telemetry/**` 不在本片写集 |
