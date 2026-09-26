@@ -116,7 +116,6 @@
     "GET /api/daemon/workspaces/:param/repos",
     "GET /api/daemon/workspaces/:param/runtime-profiles",
     "GET /api/daemon/ws",
-    "GET /api/feature-flags",
     "GET /api/github/setup",
     "GET /api/health",
     "GET /api/health/db",

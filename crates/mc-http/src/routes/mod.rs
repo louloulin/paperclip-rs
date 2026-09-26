@@ -133,6 +133,22 @@ pub mod vcs;
 // 形态（不是 `Route(…)+Post("/")`）⇒ 只注册无尾斜杠那一种，多注册一条就是 `EXTRA_ALIAS`。
 pub mod squad_evaluations;
 
+// M10 anchor scaffold（LUM-2102 / docs/64-M10-PLAN.md §3.1 / §4.1 第 1 行）：**两个**面一次声明，
+// 让 M10-1..M10-4 四个切片不再同时编辑本文件。
+// - `probes` 是目录切片（`probes/mod.rs` 自己聚合 `live` / `ready` / `realtime` 三个子 router，
+//   M10-1/2/3 各自只填自己那一份）；
+// - `config` 是**单文件**切片（`GET /api/config`，M10-4 原地填充 `get_config` + 17 字段的 `AppConfig`）。
+// `mount.rs` 已接好 `mount_slice_probes()`（anchor 期四个子 router 全是空 `Router::new()`
+// ⇒ **零注册键**）。
+//
+// 🔴 本波独有纪律（写进 M10-0 的 DoD）：anchor **不得**给这 5 条上游键注册任何 501 占位 ——
+// ⑦ 会把它算成 `implemented_placeholder`（`owners.M10` 假清零），而 ⑨ 会从 `unmounted` 变成
+// **`mismatch`**（期望 200 / 得到 501 ⇒ `mismatch 23 → 41`）。
+// 形态纪律（docs/64 §1.4 实测 `dual-form required: 0`）：5 条全是上游 `r.Get("/a/b", h)` 的
+// **plain** 注册 ⇒ 只注册**无尾斜杠**那一形态（补尾斜杠 = `EXTRA_ALIAS`）。
+pub mod config;
+pub mod probes;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

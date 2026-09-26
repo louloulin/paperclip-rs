@@ -5566,3 +5566,167 @@ dedupe_redis.go(200), trace.go(350)}` = **2,214 行**（非测试口径；逐文
   ⇒ 本片与任何片**路径交集 ∅**（只写 `crates/mc-channel/src/wecom/**` 的 18 个新文件 + `mod.rs` 的
   追加段 + `media_ingest.rs` 的收敛 + `outbound/ports.rs` 与两个测试构造点的一列 + `docs/32`）。
 * **不刷任何快照**：⑦ 基线、⑨ 报告、⑩ 基线三件套都属于 **M7-21**（`LUM-1786`）。
+
+---
+
+## 39. M10-0 anchor（`LUM-2102`）：文件→写者表与偏离登记
+
+> **号段复核（计划期写的「§9.14」是失效的占位号；提交时的 `## 38.` 撞号 ⇒ 本片改号 `## 39.`）**：
+> `docs/32` 的 `## 9.` 是 M6-0 anchor（`LUM-1665`）、`## 10.` 是 M7-0 anchor（`LUM-1765`）、
+> `## 11.` 是 M8-0 anchor（`LUM-1797`）—— 三节都写了同款复核注；`## 12.`…`## 37.` 已被各波切片占用。
+> **起手实测**（base `8895adf4`）：`grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` = `## 37.`、
+> `### 9.x` 末号仍是 `9.11`（M8-0 与 M9-0 **都没有**占用计划里预定的 `9.12` / `9.13` —— `§9.x`
+> 那套号从 M7-0 起就没再往下用）⇒ 本片先取 `## 38.`。**交片后实测撞号**：在飞的 PR **#115**
+> （M7-20 / `LUM-1785`，head `bc4dd270`）的 `docs/32` 里**同一个号已被占用**
+> （`git show bc4dd270:docs/32-M3-DAEMON-FACE.md | grep -n '^## 38\.'` ⇒ `## 38. M7-20（LUM-1785）…`）；
+> 按先例「**先落地者保号**」（`LUM-1980` 与 `LUM-1784` 争 `## 36.` 时的裁决，见 `## 37.` 的合并提交
+> `df9fee2a`）—— #115 先开、它的判据链已在进行 ⇒ #115 保 `## 38.`，**本片改号 `## 39.`**
+> （本节内所有 `§39.x` 引用随这次 docs-only 改号提交一起落地；issue 评论里写的「`## 38.`」是改号前的旧值）。
+
+
+> **号段复核（`docs/64` §3.1 正文写的「§9.14」是计划期占位号）**：`docs/32` 的 `## 9.` 是 M6-0
+> anchor（`LUM-1665`）、`## 10.` 是 M7-0 anchor（`LUM-1765`）、`## 11.` 是 M8-0 anchor（`LUM-1797`）
+> —— 三节都在开头写了同款复核注；`## 12.`…`## 37.` 已被各波切片占用。**起手实测**
+> （base `8895adf4`）：`grep -n '^## ' docs/32-M3-DAEMON-FACE.md | tail -1` = `## 37.`、
+> `### 9.x` 末号仍是 `9.11`（M8-0 与 M9-0 **都没有**占用计划里预定的 `9.12` / `9.13` ——
+> `§9.x` 那套号从 M7-0 起就没再往下用）⇒ 本节取 **`## 38.`**，与三节先例同款。
+> 这正是 `docs/64` §3.1 要求「号段起手复核」的原因：计划期写的号在别的 anchor 合并后已过期。
+
+`docs/64-M10-PLAN.md` §3.1 的「共享锚点（**只在 M10-0 动一次**）」是**锚点文件集**；本节的表是它
+落地后的**准确版**（含锚点期的四处归位判断，见 §39.2）。M10 后续切片按本表认领写集，**不得**编辑
+左列之外的共享文件：`crates/mc-http/src/routes/{mod,mount}.rs`、`crates/mc-http/src/routes/probes/mod.rs`、
+`docs/fixtures/route-parity-baseline.json` 全部由**本锚点冻结**（后者的下一次刷新归 **M10-9 INT**）。
+
+### 39.1 锚点冻结的共享/聚合文件（M10 各片只读，写各自子文件）
+
+| 冻结文件（逐字路径） | 谁写 | 说明 |
+| --- | :-: | --- |
+| `crates/mc-http/src/routes/mod.rs` | anchor | 追加 `pub mod config;` + `pub mod probes;`（**两行，只加不改**）；既有一行未动 |
+| `crates/mc-http/src/routes/mount.rs` | anchor | 加 `mount_slice_probes()`（一个函数 + `router()` 里**一行** `.merge(...)`）+ **删**幽灵占位 `/api/feature-flags`（§39.3） |
+| `crates/mc-http/src/routes/health.rs` | anchor | **删** `pub async fn placeholder`（唯一调用者随幽灵占位一起删）；`/api/health`、`/api/health/db` **逐字不动** |
+| `crates/mc-http/src/routes/probes/mod.rs` | anchor | 探针面聚合（4 条注册键 = 3 个子 router）+ `pub mod {live,ready,realtime};` + 子 router 的 `merge` 点 |
+| `crates/mc-http/src/routes/config.rs` | anchor | `GET /api/config` 的**签名 + 17 字段完整形状**；实现归 **M10-4** 原地填充 |
+| `docs/fixtures/route-parity-baseline.json` | anchor（**唯一一次例外**） | 删 1 键（`GET /api/feature-flags`）⇒ `458 → 457`；下一次刷新归 **M10-9** |
+| `docs/32` §39（本节） | anchor | M10 文件→写者表 + 偏离登记（其余片只读） |
+| `Cargo.toml`（根）/ `Cargo.lock` | **不入本片写集** | 本波**只被 M10-6 碰一次**（`mc-bench` 成员 + `criterion = "0.7"`）；`members` 是 `crates/*` glob ⇒ 不加字面路径 |
+
+**M10 各片的落点（本锚点建好形状后各自原地填充）**：
+
+| 本地文件（逐字） | 唯一写者 | anchor 期的形态 |
+| --- | :-: | --- |
+| `crates/mc-http/src/routes/probes/live.rs` | **M10-1** | 空 `Router::new()`（23 行） |
+| `crates/mc-http/src/routes/probes/ready.rs` | **M10-2** | 空 `Router::new()`（27 行） |
+| `crates/mc-http/src/routes/probes/realtime.rs` | **M10-3** | 空 `Router::new()`（30 行） |
+| `crates/mc-http/src/routes/config.rs` | **M10-4** | `get_config` 签名 + `AppConfig` 17 字段（143 行） |
+| `crates/mc-feature-flags/src/frontend.rs`（新）+ `crates/mc-feature-flags/src/lib.rs`（+1 行 `pub mod frontend;`） | **M10-4** | — |
+| `crates/mc-ws/src/hub/metrics.rs`（新）+ `hub/mod.rs` / `lib.rs` | **M10-3** | — |
+| `contracts/golden-local/**` + `scripts/mc_golden_local_check.sh` | **M10-5** | —（新目录；不动 `contracts/golden/**` 的 365 分母） |
+| `crates/mc-bench/**` + `Cargo.toml`/`Cargo.lock` | **M10-6** | — |
+| `deploy/Dockerfile` + `scripts/gates.sh` + `.github/workflows/ci.yml` | **M10-7** | —（门 `image` **不进**默认集合） |
+| `scripts/stop_condition.sh` + `docs/65-STOP-CONDITION.md` | **M10-8** | — |
+| `crates/mc-http/src/routes/{attachments/**,uploads.rs,quick_actions/**,avatars.rs,ws.rs,comments/sub_issues.rs}` + `crates/mc-repos/src/attachment.rs` / `lib.rs` + `routes/issues/mod.rs`（**仅** `attachments` 那一行） | **M10-B1…B4** | —（B 面 = `M3+` 17 行尾账） |
+| `crates/mc-conformance/report.json` + `docs/fixtures/route-parity-baseline.json`（457 → 494） | **M10-9** | —（INT；**唯一**能刷这两份快照的片） |
+
+### 39.2 锚点期的**四处归位判断**（`docs/64` §3.1 未写或写法不同）
+
+| # | 事项 | 计划写法 | 本锚点落点 | 理由 |
+| :-: | --- | --- | --- | --- |
+| 1 | `/api/config` 的**合并点** | §3.1 只写「`mount.rs` + `mount_slice_probes()` 与**一行** `.merge(...)`」，没说 `config::router()` 谁接 | 收进**同一个函数**：`mount_slice_probes()` = `probes::router()` + `config::router()` 两次 merge | ① `docs/64` §3.1 给 `mount.rs` 的授权是**一行** `.merge(...)`；② M10-4 自己的写集审计第 ② 条逐字写「config.rs 只需 M10-0 的 `pub mod` 一行」⇒ 它**不碰** `mount.rs`。两条只有"anchor 一次接完两个面"能同时满足。函数名仍叫 `mount_slice_probes`（计划钉死的名字），函数 doc 里写明它含两个面 |
+| 2 | `AppConfig` 的 **11 个 bool 字段** | §2.2 的表（17 字段） | 结构体加 `#[allow(clippy::struct_excessive_bools)]` + 逐字注释 | 门 ③ `-D warnings` 把 `clippy::struct_excessive_bools`（>3 bool）当错误。**不能**改成枚举/状态机：那 11 个 bool 是上游 `AppConfig` 的逐字形状（其中 4 个是客户端 fail-closed 的**能力声明**）。豁免处写明这是**有意**的、且 `is_false` 的 `#[allow(clippy::trivially_copy_pass_by_ref)]` 由 serde 的 `skip_serializing_if` 签名决定 |
+| 3 | `get_config` 的**桩形态** | §3.1「建桩（签名 + 完整形状）」 | 函数体 `unimplemented!("M10-4（LUM-2106）…")`，且 `router()` 返回**空** `Router::new()` | 与"不得注册 501 占位"一致：`unimplemented!()` **不可达**（路由没挂），而 501 占位是**可达的假实现**。若桩返回 `Json(AppConfig::default())`，M10-4 万一漏接线就会以"200 + 全空字段"静默通过 ⑨ 的空 `json_subset` ⇒ 假绿 |
+| 4 | ⑦ 基线的**刷新幅度** | §6.1「`baseline 458 → 457`」 | **最小刷新**：只删 1 键（用 `route_parity.py` 自己的 `write_baseline()` 写回，非手改格式），**不**跑整树 `--write-baseline` | 整树重写会**吸收 15 条 M7 渠道键的漂移**（`--write-baseline` 实测给 473，见 §39.3），而那 15 条的刷新**已归 M7-21 INT（`LUM-1786`）**（`docs/60` §6.1 的 M7-21 行、"`--write-baseline` 344 → 430"；`docs/32` §37 末条也逐字写「⑦ 基线…都属于 M7-21」）⇒ 本片吸收它 = **抢走另一个未跑片的交付物**、让它那一行预测失效。M10-9 INT 再按本波口径刷到 494 |
+
+### 39.3 幽灵占位 `GET /api/feature-flags` 的**预删**（本波唯一一次基线破例）
+
+* **判据三条**：① 上游 **没有这条键**（`grep -c 'feature-flags' docs/fixtures/upstream-routes.tsv` = **0**；
+  `upstream-routes.tsv` = 456 条）—— 它是 M0 自造的"静默假成功"路由；② 它想表达的语义（UI 读 flag）
+  由 **M10-4** 的 `/api/config` 的 `feature_flags` 字段**正式承担**（`docs/64` §2.2 第 12 行）⇒ 留着
+  就是第二个真相源；③ 先例一致：M4-0 删 6 个、M6-0 删 4 个自造占位（`docs/42` §1.1 / `docs/57` §5）。
+* **同一次提交内必须做的两件事**：删 `mount.rs` 那一行 **且** 删 `health::placeholder`（否则门 ③
+  `-D warnings` 因 dead_code 红）；**且** 在**同一次提交**里刷 ⑦ 基线（`route_parity.py:539` 的
+  `regressions = set(baseline) - live` ⇒ 只删不刷必判红）。
+* **实测（当轮）**：`local 474 → 473`、`baseline 458 → 457`、`local_only 9 → 8`
+  （`local_only_placeholder 2 → 1`）、`implemented 391（388 real + 3 ph）`**不变**、`known_gap 65`
+  **不变**、`unclaimed 0`、`regressions 0`。⑦ 的 `owners` 也不变 = `{M9 33, M3+ 16, M3 11, M10 5}`。
+* **基线幅度偏差的登记（与 `docs/64` §6.1 逐字相符，但机制要说清）**：`--write-baseline` 在本轮会给
+  **473 条**（= 当前的 `local`），差额 **15 条全是 M7 渠道键**（逐字：`DELETE .../dingtalk/installations/:param`
+  、`DELETE .../dingtalk/installations/:param/groups/:param`、`GET /api/agents/:param/dingtalk/groups`、
+  `GET .../dingtalk/groups`、`GET .../dingtalk/installations`、`POST .../dingtalk/install/byo`、
+  `DELETE/GET/POST .../lark/*`（4 条）、`GET/POST/DELETE .../wecom/*`（3 条）、`POST /api/{dingtalk,lark,wecom}/binding/redeem`）。
+  **它们的来处逐条实测**：M7-9（`32def21a`，09-25 13:33）、M7-15（`0fad9de7`，09-25 16:45）、M7-14（`c45a5881`，09-25 22:02）
+  —— 三者**都晚于**最近一次基线刷新 M8-7（`f3e9794e`，09-25 13:18；`git merge-base --is-ancestor 32def21a f3e9794e`
+  = **假**）⇒ 这 15 条是 **M7 波自己的待刷新项**，不是 M10 的。
+
+### 39.4 `local_only 8` 的逐条登记（当轮实测）
+
+| # | 键 | 落点 | 类型 | 登记理由 |
+| :-: | --- | --- | :-: | --- |
+| 1 | `GET /api/issues/:id/reactions` | `routes/issues/mod.rs:171` | real | M2 面本地能力（上游注释外的聚合读面） |
+| 2 | `GET /api/issues/:id/quick-actions` | `routes/issues/mod.rs:205` | **placeholder** | `M3+` 尾账（M10-B3 的 issue 侧 render/run 与之相邻，但**不是**同一条键） |
+| 3 | `GET /api/health` | `routes/mount.rs:28` | real | §39.5（**保留**） |
+| 4 | `GET /api/health/db` | `routes/mount.rs:29` | real | §39.5（**保留**） |
+| 5 | `GET /api/openapi.json` | `routes/mount.rs:30` | real | 本仓自造文档面（无上游对应物） |
+| 6–8 | `GET`/`POST /api/me/pats`、`DELETE /api/me/pats/:id` | `routes/pats.rs:94,94,95` | real | M1-C 的 PAT 自助面（上游在 `/api/tokens*` 下，是**不同**的键集合） |
+
+* `local_only` 的口径（`route_parity.py:20` 逐字）：*registered here, absent upstream (informational)*
+  ⇒ **不进任何门的分子分母**，是**登记项**；本片只做 `9 → 8`（删幽灵占位那一条），**不**为凑数改动
+  上面 7 条有主的本地能力。
+
+### 39.5 `/api/health` 与 `/api/health/db` **保留**的理由（`docs/64` §9.3 的落地）
+
+* ① **不是上游 `/health` 的别名**：本仓 `/api/health` 的语义是"服务 + DB 综合"（`health.rs:22-34`：`status`
+  恒 `"ok"`、`db` 字段才反映健康），而上游 `/health` 是**纯 liveness**（`liveHandler` 不触库）⇒ 把本地这条
+  改成上游语义会**破坏 3 个既有消费者**：`apps/mc-cli/src/main.rs:42` 的探针、`mc-openapi` 的文档测试、
+  `mc-conformance/tests/golden.rs:167` 的自造 fixture。
+* ② **收敛收益为 0、代价 4 处**：`local_only` 不进门的分子分母（§39.4）⇒ 收敛只让一个登记数字变小，却要
+  动 CLI / openapi / conformance / 台账四处。
+* ⇒ 上游的 `/health` 由 **M10-1** 在**根路径**上独立实现（`probes/live.rs`），与这两条**并存**、语义不同。
+
+### 39.6 本锚点的门禁读数（逐字取自当轮日志，**非**计划表）
+
+```
+① fmt 0 · ② build 0 · ③ clippy 0 · ④ clippy-test-util 0 · ⑤ test 0 · ⑦ route-parity 0 · ⑨ conformance 0 · ⑩ file-size 0
+⑦ upstream 456 (commit f41fae6b08fb) | local 473 registered | baseline 457
+   implemented 388 real + 3 placeholder = 391 / 456   known_gap 65   unclaimed 0   regression 0   local_only 8
+   owners {M9 33, M3+ 16, M3 11, M10 5}   sources: files_scanned 206（base 201：新增 5 个文件）
+⑨ totals fixtures 365 · pass 14 · mismatch 23 · unmounted 22 · placeholder 0 · unevaluable 306
+   contract_equivalence_rate 0.038356 · mounted_equivalence_rate 0.378378   （report.json sha256 888c6a27…，与 base 逐字节相同）
+⑩ file_size_check: limit=800 scanned=1152 baseline=10 violations=0（`scripts/file_size_baseline.tsv` 未动）
+   起手读数 1147 是**未 `git add` 时**的值（门 ⑩ 只看 `git ls-files`，本仓已知坑：新文件未 tracked 就看不见）
+   ⇒ 本片 5 个新文件 tracked 后为 1152（= 1147 + 5），violations 仍 0
+形态门 slash_alias_audit：declared 5 / dual-form required 0 / 0 defect 0 warning；--declared m10 表 exit 0
+最长新文件：`probes/mod.rs` 48 行（另 `config.rs` 143、`mount.rs` 530、`routes/mod.rs` 154）
+```
+
+* **⑨ 的三位数逐字未动**（`14 / 23 / 22`）—— 这是本片的红线：anchor 期 `probes/*` 与 `config.rs`
+  的 router 全空 ⇒ `/api/config` 的 17 条 fixture **停在 `unmounted`**。若注册 501 占位，它们会变成
+  `mismatch`（`23 → 41`）。
+* **门 ③ 的一处豁免**：`config.rs` 的 `#[allow(clippy::struct_excessive_bools)]`（§39.2 第 2 条）。
+
+### 39.7 写集审计两类（本片）
+
+* ① **本片新建的文件在不在 anchor 骨架里**：本片**就是**建骨架的片 ⇒ `probes/{mod,live,ready,realtime}.rs`
+  与 `config.rs` 五个新文件由本片创建，无外部依赖（`probes/mod.rs` 是聚合点，三个子文件是 M10-1/2/3 的
+  原地填充位）。
+* ② **为让新文件可见改了哪个既有文件**：只有三处，逐字 ——
+  `crates/mc-http/src/routes/mod.rs`（**追加段**，`pub mod config;` + `pub mod probes;`，既有一行未动）、
+  `crates/mc-http/src/routes/mount.rs`（`router()` 链尾 **+1 行** `.merge(mount_slice_probes(...))` +
+  **+1 个函数**；同时**删** 1 行幽灵占位）、`crates/mc-http/src/routes/health.rs`（**删** `placeholder`）。
+  历史第 16 类漏项（"新文件建好了但没接线"）在本片**不适用**：接线（`pub mod` + `.merge`）与建桩同片落地。
+* **零交集**：本片写集与在飞的 `LUM-1785`（M7-20，`crates/mc-channel/**`）/ `LUM-1786`（M7-21 INT，快照）
+  路径交集 **∅**；与 M9-0 的"不得同飞"约束（`routes/{mod,mount}.rs` + `Cargo.lock`）在本轮**成立**
+  （M9-0 尚未起跑）。
+
+### 39.8 交接与风险（留给 M10 各片 / M10-9 INT）
+
+* **R-M10-1（M10-4 必读）**：`AppConfig` 的 17 字段**只是形状**，取值与 `omitempty` 行为全归 M10-4；
+  且 ⑨ 的 17 条 `config/*` fixture 的 `json_subset` **全是空对象** ⇒ 它们只证明"挂上且 200 + JSON 对象"，
+  **不**证明字段集（字段级判据见 `docs/64` §2.2 与 M10-5 的 `contracts/golden-local/**`）。
+* **R-M10-2（形态）**：4 条探针 + `/api/config` 全是上游 **plain** 注册 ⇒ **只注册无尾斜杠**那一形态
+  （本波 `slash-alias-allowlist.tsv` 是 0 数据行、无豁免退路）。
+* **R-M10-3（交叉波）**：`docs/fixtures/route-parity-baseline.json` 的下一次刷新归 **M10-9**；M7-21 INT
+  （`LUM-1786`）也会刷**同一文件**（它要吸收 §39.3 那 15 条 M7 键）⇒ 两者**必须串行**，不得同轮。
+* **R-M10-4（死代码）**：`health::placeholder` 已随幽灵占位删除 ⇒ M10 及以后**没有**占位退路
+  （`docs/64` §6.5 第 5 条：每条路由至少一条用例，不得用 `health::placeholder`）。
+* **不刷 `mc-conformance/report.json`**：本片未动 ⑨ 的任何一位（sha256 与 base 逐字节相同）⇒ 报告文件的
+  刷新**只**归 M10-9（`docs/64` §6.2）。

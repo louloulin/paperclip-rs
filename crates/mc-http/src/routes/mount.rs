@@ -58,7 +58,20 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 注：切片接线时**必须**两形态一起注册（`/api/skills` + `/api/skills/`、
         // `/api/skills/:id` + `/api/skills/:id/`），漏一个会被 `slash_alias_audit.py` 判
         // `MISSING_ALIAS` —— 这条**不再有 allowlist 退路**（M6-0 已删那 2 行）。
-        .route("/api/feature-flags", get(health::placeholder))
+        //
+        // ❌ 幽灵占位 `GET /api/feature-flags`（= `health::placeholder`，**恒 501**）已由
+        // **M10-0 anchor 预删**（LUM-2102，配方见 docs/64 §9.3）。判据三条：
+        // ① 上游 `router.go` **根本没有这条键**（`grep -c 'feature-flags'
+        //    docs/fixtures/upstream-routes.tsv` = 0）—— 它是 M0 自造的「静默假成功」路由；
+        // ② 它想表达的语义（UI 读 flag）由 M10-4 的 `/api/config` 的 `feature_flags` 字段
+        //    **正式承担** ⇒ 留着就是第二个真相源；
+        // ③ 先例一致：M4-0 删 6 个、M6-0 删 4 个自造占位。
+        // 预删后：④ 注册键集合减 1（`local 474 → 473`）、`local_only 9 → 8`
+        // （其中 `local_only_placeholder 2 → 1`）；它的唯一调用者就是这一行 ⇒
+        // `health::placeholder` 随之成死代码，**同一个提交里一并删除**（否则门 ③
+        // `-D warnings` 红）；⑤ 该键在 `docs/fixtures/route-parity-baseline.json` 里
+        // ⇒ 删除与 `--write-baseline` **必须在同一次提交**（`route_parity.py:539` 的
+        // `regressions = set(baseline) - live`，只删不刷基线必判红 —— 本波**唯一**一次基线破例）。
         // ----- M1 切片占位（sub-issue A/B/C 在 mount_slice_* 里追加真实 router） -----
         .merge(mount_slice_workspace_member(state.clone()))
         .merge(mount_slice_auth())
@@ -105,6 +118,12 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 1 条键，**只注册无尾斜杠形态**（上游 `router.go:2097` 是 plain `r.Post`）。
         // 它的 handler 写在 `routes/squad_evaluations.rs`，不改 `issues/` 目录里的任何文件。
         .merge(mount_slice_squad_evaluation())
+        // ----- M10 anchor scaffold（LUM-2102 / docs/64-M10-PLAN.md §3.1） -----
+        // ⚠️ anchor 期：`probes/*` 三个子 router 与 `config.rs` 都是**空** `Router::new()`
+        // ⇒ 本行**不加任何注册键**（本片 ⑦ 只减 1：上面那条被预删的幽灵占位）。
+        // 🔴 若 anchor 先注册 501 占位，⑦ 会把 `owners.M10` 假清零，而 ⑨ 会从 `unmounted`
+        // 变 **`mismatch`**（期望 200 / 得到 501 ⇒ `mismatch 23 → 41`）—— 这是本片的红线。
+        .merge(mount_slice_probes(state.clone()))
 }
 
 /// workspace + member + me 切片。
@@ -473,4 +492,39 @@ fn mount_slice_issue_view_pin() -> Router<Arc<AppState>> {
 /// squad leader 判决切片：`POST /api/issues/:id/squad-evaluated`（1 条上游键）。
 fn mount_slice_squad_evaluation() -> Router<Arc<AppState>> {
     super::squad_evaluations::router()
+}
+
+// ---------------------------------------------------------------------------
+// M10 anchor scaffold（LUM-2102 / docs/64-M10-PLAN.md §3.1 / §4.1 第 1 行 / §9.1）
+// ---------------------------------------------------------------------------
+//
+// **A 面 5 条上游键**（`/health` / `/healthz` / `/readyz` / `/health/realtime` / `/api/config`）
+// 一次性接好，M10-1..M10-4 四个实现切片各自只填自己的文件，**都不再改本文件**
+// （与 M3-0 / M4-0 / M5-0 / M6-0 / M7-0 / M8-0 同一手法）。
+//
+// ⚠️ **为什么两个面合成一个挂载点**：`probes/`（目录切片，`probes/mod.rs` 自己聚合
+// `live`/`ready`/`realtime` 三个子 router）与 `config.rs`（单文件切片）在 anchor 的写集里只有
+// **一行** `.merge(...)`（docs/64 §3.1）⇒ 两者的合并都收在这里。收益：M10-4 只需填 `config.rs`、
+// **不碰本文件**（它自己的写集审计第 ② 条逐字如此写）。
+//
+// ⚠️ 形态纪律（与 M7-0 / M8-0 同款）：这 5 条上游全是 `r.Get("/a/b", h)` 的 **plain** 注册
+// （`router.go` L1399/1400/1401/1412/1478，`docs/64` §1.1）⇒ `dual-form required: 0`
+// ⇒ 只注册**无尾斜杠**那一形态。补尾斜杠 = `EXTRA_ALIAS`、漏字面量 = `MISSING_EXACT`，
+// 本波 `slash-alias-allowlist.tsv` 是 **0 数据行**、**没有**豁免退路。
+//
+// ⚠️ 三条键**在根路径**（四条 `/health*` 不在 `/api` 前缀下）⇒ 不得被任何 `/api` 子树的
+// 鉴权提取器拦住（本地 `AuthUser` 按路由挂、不全局 ⇒ 天然满足，docs/64 §1.5）。
+//
+// ⚠️ 接线纪律 3 条：① 同 path+method 重复注册 ⇒ axum 启动时 panic；② 路径参数写 `:name`
+// （matchit 0.7 把 `{name}` 当字面量：编译通过但恒 404）；③ 不得注册 501 占位（见上）。
+
+/// ops 探针 + UI 启动配置切片：`/health`（M10-1）、`/healthz`+`/readyz`（M10-2）、
+/// `/health/realtime`（M10-3）、`/api/config`（M10-4）—— 5 条上游键。
+///
+/// anchor 期合并后**不给注册键集合加任何一条**（四个子 router 全空）⇒ 本片 ⑦ 的 `local`
+/// 只减 1（幽灵占位），`implemented_placeholder` 保持 3。
+fn mount_slice_probes(state: Arc<AppState>) -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::probes::router(state.clone()))
+        .merge(super::config::router(state))
 }
