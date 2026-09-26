@@ -5910,3 +5910,165 @@ M7 各片在自己的"交接（H）"里把**收敛/接线**事项逐条留给后
 * **对本片之后立即成立的**：`owners.M7 = 0` ⇒ **`LUM-1815`（M9-0 anchor）的两个硬前置（M7 全合 + M8 全合）全部成立**，M9 波 stage 1 可起跑。
 * **三个基线写者不得同轮**（同一批快照文件）：`LUM-1786`（本片，已用掉本次配额）/ `LUM-1825`（M9-INT）/ `LUM-2111`（M10-INT）。
 * **⑨ 的下一次刷新归 M10-INT**（18 条 `config`/`health` fixture），**不是**任何一个普通 M10 片。
+
+---
+
+## 41. M10-1（`LUM-2103`）：live 探针 `GET /health`（1 路由）的落点与偏离登记
+
+> **号段复核（两个号空间，当轮实测）**：`docs/32` 的 `## ` 末号 = `## 40.`（M7-21 INT）
+> ⇒ 本节取 **`## 41.`**。`### 9.x` 末号仍是 `### 9.11`（M6-8）—— 该系列**自 M7-0 起未再使用**：
+> `## 10.`（M7-0）…`## 40.`（M7-21 INT）全部走自己的 `## N.` + `### N.x`（§39 开头已就同一问题
+> 裁定过一次，「§9.14」/「§9.12」都是计划期占位号）⇒ 本节把偏离登记落在 **`### 41.x`**，
+> **不**续一个已停用 30 节的 `§9.12`。**跨分支复核**（在飞分支的 `docs/32` 不在 base 上 ⇒
+> 只查 base 不够）：`git fetch origin '+refs/heads/*:refs/remotes/origin/*'` 后逐分支取
+> `grep -n '^## ' | tail -2` —— 在飞的 5 个分支（`c95b99fea078` / `3a8eabef12b3` /
+> `f33bf54cbfff` / `b224e1bb1b2b` / `4fe8c7050b3c`）末号最大仍是 `## 40.`（= base 值）
+> ⇒ `## 41.` 无争号。
+
+**写集（逐字）**：`crates/mc-http/src/routes/probes/live.rs`（把 M10-0 的空桩换成 handler + `router()`）
++ `crates/mc-http/src/routes/probes/live/tests.rs`（新建，8 例）。**两者都在 `docs/64` §3.3 给
+M10-1 的格子里**，`live.rs` 是 anchor 期就建好的原地填充位（§39.1 的表逐字登记过）。
+
+### 41.1 写集审计两类（`docs/64` §6.5 第 6 条）
+
+* **① 本片新建的文件在不在 anchor 骨架里**：`crates/mc-http/src/routes/probes/live/tests.rs` 是
+  新目录 `probes/live/` 下的**唯一**文件；`probes/live.rs` 是 M10-0 建好的骨架（anchor 期
+  `Router::new()`，23 行）。⇒ 与 `ready.rs` / `realtime.rs` **零交集**。
+* **② 为让新文件可见，改了哪个既有文件**：**一个都没有**。`crates/mc-http/src/routes/probes/mod.rs`
+  里 `pub mod live;` 由 M10-0 建好（本片只读），子 router 的 `merge` 点也在 M10-0 接好
+  （`probes/mod.rs::router()` 三次 `merge` + `mount.rs::mount_slice_probes()` 一行）。
+  ⇒ 本片**没有**改任何既有文件的**任何**一行（`git diff --stat 3d446c56..<head>` 的代码面
+  只有 `probes/live.rs` 的替换 + 一个新文件）。历史第 16 类漏项（「新文件建好了但没接线」）
+  在本片不适用：接线在 anchor 期就完成，本片只需**原地填 handler**。
+
+### 41.2 可判定契约（逐字段，与上游 `liveResponse` 对照）
+
+| # | 字段 | 上游（`health.go` L56-61 / L85-91） | 本地 | 证据 |
+| :-: | --- | --- | --- | --- |
+| 1 | `status` | `json:"status"`（**无** omitempty）⇒ 恒现、恒 `"ok"` | `&'static str`，无 `skip_serializing_if` | `live_is_200_with_status_ok_pid_and_started_at`；⑨ fixture `status_observed 200` / `detail status matched` |
+| 2 | `pid` | `json:"pid,omitempty"`，`os.Getpid()` | `std::process::id()`，`is_zero` 谓词 | 同上（断言 == 本进程 pid） |
+| 3 | `commit` | `json:"commit,omitempty"`，ldflags 注入 | `MC_BUILD_COMMIT` 构建期 `option_env!`，`is_blank` 谓词 | `commit_reflects_build_time_injection_with_omitempty`（未注入 ⇒ 键**不出现**） |
+| 4 | `started_at` | `json:"started_at,omitempty"`，`startedAt.Format(time.RFC3339)` | 进程级 `OnceLock<DateTime<Utc>>` + `to_rfc3339_opts(SecondsFormat::Secs, true)` | `started_at_is_process_scoped_not_request_scoped`（跨秒 + 与单例逐字相同 + 二进制 mtime 下界） |
+
+* **不触库**是**结构性**的，不是纪律性的：handler 的签名是 `async fn live() -> Json<LiveResponse>`
+  —— **不挂** `State<Arc<AppState>>`，类型上就拿不到 `Db`。用例
+  `live_is_200_even_when_the_database_is_unreachable` 用 `connect_lazy("…@127.0.0.1:1/…")`
+  （`mc-conformance` stateless 层同款）把「库真不可达也 200」钉住，并断言耗时 < 1s（若谁加了查询，
+  5s 的 `acquire_timeout` 会让它红）。
+* **⑨ 判据的强度要说清**：唯一那条 fixture（`contracts/golden/health/001-TestHealth-L212.json`）
+  的 `expect.json_subset` 是**空对象** ⇒ 它只证明「挂上了 + 200 + 一个 JSON 对象」，
+  **不**证明字段集。字段级判据只有上表 + `live/tests.rs`。
+
+### 41.3 与上游的已知差异（三处，逐条登记）
+
+| # | 上游 | 本地 | 为什么可以不同 / 影响 |
+| :-: | --- | --- | --- |
+| D-1 | `startedAt` 在 `newServerHealth(pool)` 里取 `time.Now().UTC()`（`ListenAndServe` **之前**） | 进程级 `OnceLock`，在**首次装配探针面**（`live::router()`）定值 —— 生产调用点是 `apps/mc-server/src/main.rs:175`，`TcpListener::bind` 在 `:225` | **可判定性质不变**：客户端"比我自己启动进程的时刻早 ⇒ 这不是我起的进程"这条判据成立。Rust 标准库没有"进程启动时刻"API（要用就得读 `/proc/self/stat`，平台特有代码 + 新风险）⇒ 取与上游**同语义时刻**的可用替代，并把它登记在此。定值点放在 `router()` 而**不是** handler 首次访问：否则"启动后一直没人探 `/health`"会让 `started_at` 漂到第一个请求的秒上 —— 那正是上游注释要防的假象 |
+| D-2 | `commit` 由 `-ldflags -X main.commit=` **链接期**注入 | `MC_BUILD_COMMIT` 由 `option_env!` **编译期**读入；本仓无 ldflags 等价物，CI 目前**未设置**该变量 | dev 构建下键**不出现**——与上游 dev 构建（`commit == ""` + omitempty）**行为一致**。**未接线项**：谁给 CI 注入 `MC_BUILD_COMMIT`（M10-7 的 CI 面 or 未来片）**不在本片写集**，登记给后续 |
+| D-3 | `writeJSON` 补尾 `'\n'` + 显式 `Content-Length` | axum `Json`（无尾换行；length 自动） | `Content-Type: application/json` 一致；⑨ 判据是 `json_subset`（本 fixture 为空对象）⇒ 不受影响。为对齐"house style"选 `Json` 而不是手工拼 body（全仓 200+ 路由文件同款） |
+
+**形态（`docs/64` §1.4 的 `dual-form required: 0`）**：只注册 `.route("/health", get(live))`
+**一种**形态。运行时对照在 `only_the_plain_form_is_served`（`/health` = 200、`/health/` ≠ 200）。
+
+### 41.4 🔴 `crates/mc-conformance/report.json` 的刷新归属裁决（本片与 `docs/64` §6.2 的**冲突**）
+
+* **冲突是什么**：`docs/64` §6.2（以及 §3.4 / §6.5 的 M10-9 行、`## 40.10` 的末条）把
+  `report.json` 的刷新**归属 M10-9（INT）**，本 issue 的「禁改」清单据此把它和
+  `docs/fixtures/route-parity-baseline.json` 并列禁写。**但**：门 ⑨ 的判据是
+  `mc-conformance --no-db --check report.json` = **整份 JSON 逐字节比对**
+  （`crates/mc-conformance/src/main.rs` 的 `expected != actual` ⇒ exit 1），而 M10-1 **必然**
+  造成位移（`unmounted → pass`）⇒ **「report.json 不动」与 DoD 1「`gates.sh` 8/8 绿」
+  在 M10-1 身上不可同时成立**（对 M10-0 没有这个矛盾：它零位移）。
+* **本片的裁决 = 刷新（最小、独立提交、可一条命令回退）**，三条依据：
+  1. **本仓的既成事实（4 个先例，全部是"产生位移的那片自己刷"）**：
+     `c45a5881` M7-14（`pass 7 → 14` / `unmounted 29 → 22`）、`0f9182fe` M8-6
+     （`pass 6 → 7` / `unmounted 30 → 29`）、`e5fe07bc`（M3b 补尾斜杠 + 刷新 ⑨ 报告）、
+     `8895abe8`（M3 anchor 预删 + 刷 ⑦ 基线 **与** ⑨ 快照）。**反例为零**：本仓从没有
+     哪一片带着红的 ⑨ 交付过。
+  2. **后续片与 INT 不受损**：本片只改 `/health` 一行的 outcome + 由它推导的 rates/totals；
+     M10-9 之后的 `--write` 是**幂等**的（它照样一次写全份）。若不做，M10 余下 5 片每一轮门
+     ⑨ 都会红，且红因**与它们无关** —— 那会把真正的信号淹掉。
+  3. **代价可控**：单独一个提交（`chore(m10-1): 刷 ⑨ 快照`），`git revert` 一步回到"禁改"的字面；
+     它不写 `docs/fixtures/route-parity-baseline.json`（⑦ 的基线**确实**不动：本片只增键、
+     不动基线 ⇒ `regressions == 0`）。
+* **给 M10-9 的话**：本片已把 `report.json` 刷到 `pass 15`；你按 `docs/64` §6.5 做本波三件套时
+  直接 `--write` 即可，**不需要**为 M10-1 单独做一步。若 owner 判定此项仍归你，`git revert`
+  本片的第二个提交即可（代码面零影响）。
+
+### 41.5 门禁读数（逐字取自当轮日志；起手与交片各一次）
+
+**起手（base `3d446c568dab028fbfb696f9a2b08f5d3a35be34`）**
+
+```
+⑦  upstream 456 (commit f41fae6b08fb) | local 473 registered | baseline 473
+    implemented 388 real + 3 placeholder = 391 / 456   known_gap 65   unclaimed 0   regression 0   local_only 8 (1 ph)
+    owners {M9 33, M3+ 16, M3 11, M10 5}   files_scanned 206
+⑦b registered upstream-key literals: 470 / 0 defect / 0 warning（exit 0）；--declared m10 表：declared 5 / dual-form 0 / exit 0
+⑨  fixtures 365 | pass 14 mismatch 23 unmounted 22 placeholder 0 unevaluable 306
+    contract 0.038356164383561646 · mounted 0.3783783783783784
+    三输入：report.json blob 3eb0430a39c8（sha256 888c6a27…）/ docs/fixtures tree 573ad03b6e1e / mc-conformance tree f696e5ccd520
+⑩  file_size_check: limit=800 scanned=1170 baseline=10 violations=0
+```
+
+**交片（本片落地后，`bash scripts/gates.sh` = 8/8 PASS / 252s）**
+
+```
+① fmt 0(3s) · ② build 0(116s) · ③ clippy 0(69s) · ④ clippy-test-util 0(0s) · ⑤ test 0(58s)
+⑦ route-parity 0(1s) · ⑨ conformance 0(5s) · ⑩ file-size 0(0s)      （⑥⑧ 未选：本片不碰库，见下）
+⑦  upstream 456 | local 474 registered | baseline 473（**不动**）
+    implemented 389 real + 3 placeholder = 392 / 456   known_gap 64   unclaimed 0   regression 0   local_only 8 (1 ph)
+    owners {M9 33, M3+ 16, M3 11, M10 4}   files_scanned 207     OK: every upstream route is either implemented or owned
+⑦b registered upstream-key literals: 470 / 0 defect / 0 warning（exit 0）
+⑨  fixtures 365 | pass 15 mismatch 23 unmounted 21 placeholder 0 unevaluable 306
+    contract 0.0410958904109589 · mounted 0.39473684210526316
+    目标行：`health/TestHealth@…integration_test.go:212#1` outcome unmounted → **pass**
+            （status_observed 404 → **200**，detail `no route…` → `status matched`）
+    report.json 新 blob db173fe8409d514fc6d52b1f7844d7b051916e0a（sha256 67c2b0cd…）；`--check` = `report matches`
+⑩  file_size_check: limit=800 scanned=1171 baseline=10 violations=0（`scripts/file_size_baseline.tsv` **未动**）
+    新文件行数：`probes/live.rs` **180**、`probes/live/tests.rs` **351**（均 ≤ 800）
+⑤  新增 8 例（`cargo test -p mc-http --lib routes::probes::live` ⇒ 8 passed / 0 failed / 448 filtered out）
+```
+
+* 不变式逐条：`implemented + known_gap == 456`（392 + 64 ✓）、`unclaimed == 0`、`regressions == 0`、
+  `local_only` 不增（8 → 8）、`baseline` 不动（473 → 473）。
+* **⑥/⑧ 未跑**：本片**零落库**（`Cargo.toml` / `Cargo.lock` / `migrations/**` 一字节未动，
+  0 迁移；handler 不挂 `State`、用例全用不可达 `connect_lazy`）⇒ 按 `docs/64` §6.5 第 1 条，
+  `--with-db` 只对「碰 DB 的片」追加，本片不是。
+* **③ 的一处豁免**：`live.rs` 的 `#[allow(clippy::trivially_copy_pass_by_ref)]` —— 签名由 serde 的
+  `skip_serializing_if` 定死（它以 `&T` 调用谓词），与 `routes/config.rs::is_false` 同款
+  （§39.2 第 2 条已就同一类豁免立过判例）。另：文档注释里引用的 Go 片段用**空格**缩进
+  （`clippy::tabs_in_doc_comments` 是 pedantic ⇒ 制表符会让门 ③ 红）。
+
+### 41.6 🔎 一条工具面发现：⑦b 的 `registered upstream-key literals` 计数会被**文档注释**抬高
+
+当轮实测：本片**真的**新增了一条注册键（`.route("/health", get(live))`），但 ⑦b 的
+`registered upstream-key literals` 仍是 **470**（未变）。逐文件定位后确认是**巧合**：
+
+* `scripts/w3b_premerge_audit.py::extract_routes`（⑦b 与 `slash_alias_audit` 共用）是对源码做
+  `\.route\s*\(\s*"…"` 的正则 + 括号配对，**不区分代码与文档注释**；
+* **base 的那 470 里就已经有一条是文档注释**：anchor 桩 `probes/live.rs:20` 写着
+  「`.route("/health", get(handler))` 填进来」—— 这行 **doc comment** 被当成了寄存器里的
+  `("GET","/health")`；
+* 本片把它换成**真**注册（`live.rs:157`）⇒ **一假换一真，净额 470 → 470**。
+
+⇒ 影响面：① 该数字**不是**"真实注册键数"（⑦ 的 `local` 才是，且它 473 → 474 正确位移）；
+② 门 ⑦b 的判据是 `defect/warning`（本片 0/0）与退出码，不是这个计数 ⇒ **门不受影响**；
+③ 但**后来的切片**若照抄"470 没变 ⇒ 我没加键"会得出错结论。⇒ 建议把 `extract_routes`
+对文档注释加掩码（`mask_cfg_test` 之外的第二个掩码），或至少让这一行改名叫
+`route literals found (may include doc comments)`。**本片不改 `scripts/**`**（不在写集），登记给工具面。
+
+### 41.7 交接与风险
+
+* **R-M10-1（对 M10-2 必读）**：`/health` 与 `/healthz` `/readyz` 是**两个**语义（liveness vs
+  readiness）——`probes/live.rs` 的 handler **不挂 `State`**，`ready.rs` 必须挂（它要 `Ping` +
+  比对 `mc-migrate::verify()`）。**不得**把 liveness 的"恒 200"抄进 ready 面。
+* **R-M10-2（形态）**：`/health` 只注册无尾斜杠形态（`only_the_plain_form_is_served` 是运行时对照）。
+  `slash-alias-allowlist.tsv` 仍是 0 数据行、无豁免退路。
+* **R-M10-3（`commit` 未接线）**：D-2 —— 谁在 CI 注入 `MC_BUILD_COMMIT`（不属本片写集）；
+  在此之前所有构建的 `/health` 都**没有** `commit` 键（与上游 dev 构建同行为，不是缺陷）。
+* **R-M10-4（⑨ 快照）**：本片已刷 `report.json`（`pass 14 → 15`）；**⑦ 基线未刷**（473 不动，
+  本片只增键）。M10-9 的 `--write` 幂等。
+* **R-M10-5（started_at 的定值点）**：`STARTED_AT` 在 `live::router()` 首次调用时定值 ⇒
+  若**将来有人**把探针面的装配改成"惰性 / 每请求重建 router"，`started_at` 会漂到重建时刻、
+  判据退化。`started_at_is_process_scoped_not_request_scoped` 的断言 ④（两个不同 router 实例
+  取值相同）正是为锁住这一点而写。
