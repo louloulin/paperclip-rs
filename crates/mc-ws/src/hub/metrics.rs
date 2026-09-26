@@ -365,3 +365,350 @@ fn counter_map(counters: &Mutex<BTreeMap<String, i64>>) -> Value {
             .collect(),
     )
 }
+
+// ---------------------------------------------------------------------- 用例
+//
+// 判据来源：`docs/64` §6.5 的 M10-3 专属验收 ——「**至少 3 个计数器**有『跑一次**真实连接** ⇒
+// 值增长』的用例」，且**不许**去断言进程级单例（别的用例的连接会干扰读数）⇒
+// 每条用例都走 `Hub::with_metrics` 注入**只属于本条用例**的集合。
+//
+// 为什么必须有真 socket：`record_connect` / `record_disconnect` 的调用点在
+// `Hub::register` / `Hub::unregister` 里，而它们只在**升级之后的连接生命周期**上跑
+// （`serve` → `register` → 读泵 → `unregister`）。直接调 `Metrics::record_*` 只能证明
+// 计数器自己会动，证明不了「接线点真的被跑到」——那才是本片要钉的东西。
+//
+// 装配与 `crates/mc-ws/tests/hub_support/mod.rs` 同款（真 axum server + 真
+// `tokio-tungstenite` 客户端），只是在单元测试里重了一份最小版（`mc-ws/tests/**`
+// **不在**本片写集）。
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::extract::ws::WebSocketUpgrade;
+    use axum::extract::State;
+    use axum::response::Response;
+    use axum::routing::get;
+    use axum::Router;
+    use tokio::net::TcpStream;
+    use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+    use super::*;
+    use crate::hub::{DeliveryOutcome, Hub};
+    use crate::identity::ClientIdentity;
+
+    /// 等待上限：真 socket 上的正向断言不该等这么久，等到了就是失败。
+    const WAIT: Duration = Duration::from_secs(5);
+
+    type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+    /// 测试 server（真 listener + 真 `axum::serve`；drop 时 abort）。
+    struct TestServer {
+        addr: SocketAddr,
+        hub: Hub,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn daemon_ws_route(State(hub): State<Hub>, ws: WebSocketUpgrade) -> Response {
+        hub.handle_websocket(
+            ws,
+            ClientIdentity {
+                daemon_id: "d-1".to_owned(),
+                runtime_ids: vec!["rt-1".to_owned()],
+                workspace_ids: vec!["ws-1".to_owned()],
+                client_version: "test/1".to_owned(),
+                ..ClientIdentity::default()
+            },
+        )
+    }
+
+    async fn start(hub: Hub) -> TestServer {
+        let app = Router::new()
+            .route("/daemon/ws", get(daemon_ws_route))
+            .with_state(hub.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let addr = listener.local_addr().expect("local addr");
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        TestServer { addr, hub, task }
+    }
+
+    /// 建一条**真** WS 连接（身份由 [`daemon_ws_route`] 固定注入，与 header 面无关）。
+    async fn connect(addr: SocketAddr) -> Ws {
+        let (ws, response) = tokio::time::timeout(
+            WAIT,
+            tokio_tungstenite::connect_async(format!("ws://{addr}/daemon/ws")),
+        )
+        .await
+        .expect("ws handshake timed out")
+        .expect("ws handshake failed");
+        assert_eq!(response.status().as_u16(), 101, "期望 101 升级");
+        ws
+    }
+
+    /// 等一个谓词成立；超时 panic（与 `hub_support::wait_until` 同款）。
+    async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            if cond() {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "等待条件超时（{WAIT:?}）: {what}"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// 一条真连接跑一次 ⇒ 四个计数器（realtime 面 3 个 + daemonws 面同名 3 个）增长。
+    ///
+    /// 这是「**至少 3 个计数器**」里最强的一条：`connects_total` / `active_connections` /
+    /// `disconnects_total` 都在**同一**条连接的生命周期上被观察到，且 daemonws 子对象
+    /// **同步**变化（本仓只有一条 ws 连接面，见模块头的结构差异登记）。
+    #[tokio::test]
+    async fn one_real_connection_moves_connect_active_and_disconnect_counters() {
+        let counters = Arc::new(Metrics::new());
+        let server = start(Hub::with_metrics(counters.clone())).await;
+
+        assert_eq!(
+            counters.get("connects_total"),
+            Some(0),
+            "注入的集合必须从零起"
+        );
+        assert_eq!(counters.get("daemonws.connects_total"), Some(0));
+
+        let ws = connect(server.addr).await;
+        wait_until("连接注册", || counters.get("connects_total") == Some(1)).await;
+
+        assert_eq!(counters.get("active_connections"), Some(1), "gauge 跟着上");
+        assert_eq!(counters.get("disconnects_total"), Some(0));
+        assert_eq!(counters.get("daemonws.connects_total"), Some(1));
+        assert_eq!(counters.get("daemonws.active_connections"), Some(1));
+
+        drop(ws);
+        wait_until("连接注销", || {
+            counters.get("disconnects_total") == Some(1)
+        })
+        .await;
+
+        assert_eq!(counters.get("active_connections"), Some(0), "gauge 跟着下");
+        assert_eq!(counters.get("connects_total"), Some(1), "累计值不回退");
+        assert_eq!(counters.get("daemonws.disconnects_total"), Some(1));
+        assert_eq!(counters.get("daemonws.active_connections"), Some(0));
+    }
+
+    /// 一次投递 ⇒ `messages_sent_total` 与 `events_sent_by_type{帧类型}` 同时增长。
+    ///
+    /// `events_sent_by_type` 的键是**帧的 `type`**（上游在各调用点静态传 `eventType`；
+    /// 本地唯一的投递漏斗 `notify_frame_filtered` 的签名不能改 ⇒ 从帧里解出来，见
+    /// [`event_kind`]）。
+    #[tokio::test]
+    async fn notify_task_available_counts_one_sent_frame_per_connection() {
+        let counters = Arc::new(Metrics::new());
+        let server = start(Hub::with_metrics(counters.clone())).await;
+        let _ws = connect(server.addr).await;
+        wait_until("连接注册", || {
+            counters.get("active_connections") == Some(1)
+        })
+        .await;
+
+        let outcome = server.hub.notify_task_available("rt-1", "task-9");
+        assert!(outcome.delivered, "rt-1 上有一条连接 ⇒ 必须送达");
+
+        assert_eq!(counters.get("messages_sent_total"), Some(1));
+        assert_eq!(
+            counters.get_map("events_sent_by_type"),
+            Some(BTreeMap::from([("daemon:task_available".to_owned(), 1)])),
+            "按帧 `type` 聚合（上游 `M.RecordEvent(eventType)`）"
+        );
+
+        // 第二条连接 ⇒ 一次投递记两条（`sent` 是**这条帧真的入队了几条连接**）。
+        let _ws2 = connect(server.addr).await;
+        wait_until("第二条连接注册", || {
+            counters.get("active_connections") == Some(2)
+        })
+        .await;
+        assert!(
+            server
+                .hub
+                .notify_task_available("rt-1", "task-10")
+                .delivered
+        );
+        assert_eq!(counters.get("messages_sent_total"), Some(3));
+        assert_eq!(
+            counters
+                .get_map("events_sent_by_type")
+                .and_then(|map| map.get("daemon:task_available").copied()),
+            Some(3)
+        );
+    }
+
+    /// `wakeup_*` 的一对键：**无人可送 ⇒ miss**、送到 ⇒ hit（上游 `notifyTaskAvailable`
+    /// 的 `if delivered { Hit } else if !deduped { Miss }`）。
+    #[tokio::test]
+    async fn wakeup_delivery_hit_and_miss_are_counted_separately() {
+        let counters = Arc::new(Metrics::new());
+        let server = start(Hub::with_metrics(counters.clone())).await;
+
+        // 没有 rt-1 的连接 ⇒ 无人可送。
+        assert_eq!(
+            server.hub.notify_task_available("rt-1", "task-1"),
+            DeliveryOutcome::miss()
+        );
+        assert_eq!(
+            counters.get("daemonws.wakeup_delivered_miss_total"),
+            Some(1)
+        );
+        assert_eq!(counters.get("daemonws.wakeup_delivered_hit_total"), Some(0));
+
+        let _ws = connect(server.addr).await;
+        wait_until("连接注册", || {
+            counters.get("active_connections") == Some(1)
+        })
+        .await;
+
+        assert_eq!(
+            server.hub.notify_task_available("rt-1", "task-2"),
+            DeliveryOutcome::hit()
+        );
+        assert_eq!(counters.get("daemonws.wakeup_delivered_hit_total"), Some(1));
+        assert_eq!(
+            counters.get("daemonws.wakeup_delivered_miss_total"),
+            Some(1),
+            "hit 不影响 miss 的累计值"
+        );
+    }
+
+    /// `runtime_gone_*` 是**另一对**键（上游 `notifyRuntimeGone` 不共用 wakeup 的计数）。
+    #[tokio::test]
+    async fn runtime_gone_delivery_uses_its_own_counter_pair() {
+        let counters = Arc::new(Metrics::new());
+        let server = start(Hub::with_metrics(counters.clone())).await;
+
+        assert_eq!(
+            server.hub.notify_runtime_gone("rt-1"),
+            DeliveryOutcome::miss()
+        );
+        assert_eq!(
+            counters.get("daemonws.runtime_gone_delivered_miss_total"),
+            Some(1)
+        );
+        assert_eq!(
+            counters.get("daemonws.wakeup_delivered_miss_total"),
+            Some(0)
+        );
+
+        let _ws = connect(server.addr).await;
+        wait_until("连接注册", || {
+            counters.get("active_connections") == Some(1)
+        })
+        .await;
+
+        assert!(server.hub.notify_runtime_gone("rt-1").delivered);
+        assert_eq!(
+            counters.get("daemonws.runtime_gone_delivered_hit_total"),
+            Some(1)
+        );
+    }
+
+    /// 生产装配（`Hub::new`）注入的就是 [`process`] 那个单例 ⇒ `/health/realtime` 读到的
+    /// 就是**真正在跑**的那条 hub 的计数（这条是「接线点接对了」的唯一判据；
+    /// 上面各条只能证明接线点**会**动）。
+    ///
+    /// 用单调计数器 `connects_total` 做断言（`active_connections` 是 gauge，本二进制里
+    /// 别的用例的连接会让它上下浮动）。
+    #[tokio::test]
+    async fn production_hub_reports_into_the_process_snapshot() {
+        let before = process()
+            .get("connects_total")
+            .expect("connects_total 必在快照里");
+        let server = start(Hub::new()).await;
+        let _ws = connect(server.addr).await;
+
+        wait_until("进程级单例被这条连接推动", || {
+            process()
+                .get("connects_total")
+                .is_some_and(|now| now > before)
+        })
+        .await;
+        assert!(
+            process().get("connects_total").unwrap() > before,
+            "单例是**累计**计数器 ⇒ 只增：{before} → {:?}",
+            process().get("connects_total")
+        );
+        assert_eq!(
+            snapshot()
+                .get("connects_total")
+                .and_then(serde_json::Value::as_i64),
+            process().get("connects_total"),
+            "`snapshot()` 就是单例的快照（`probes/realtime.rs` 的唯一数据来源）"
+        );
+    }
+
+    /// 键集合是**冻结契约**：daemonws 面 14 个键逐字、`redis` 子树 20 个键逐字
+    /// （上游实测；`docs/64` §2.3 写的 16 / `last_error:null` 是计划期估算 —— 更正见
+    /// [`redis_snapshot`] 与 `docs/32` §42）。
+    #[test]
+    fn snapshot_key_sets_match_upstream_verbatim() {
+        let metrics = Metrics::new();
+
+        let realtime: Vec<String> = metrics
+            .realtime_snapshot()
+            .as_object()
+            .expect("对象")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            realtime.len(),
+            13,
+            "上游 `realtime.Metrics.Snapshot()` 是 13 个顶层键"
+        );
+
+        let daemon: Vec<String> = metrics
+            .daemon_ws_snapshot()
+            .as_object()
+            .expect("对象")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            daemon.len(),
+            14,
+            "上游 `daemonws.Metrics.Snapshot()` 是 14 个键"
+        );
+
+        let redis = redis_snapshot();
+        let redis = redis.as_object().expect("对象");
+        assert_eq!(redis.len(), 20, "上游 `redis` 子树实测 20 个键");
+        assert_eq!(
+            redis.get("last_error"),
+            Some(&serde_json::Value::from("")),
+            "`last_error` 是 Go `string` ⇒ 零值 `\"\"`（不是 `null`）"
+        );
+        assert_eq!(redis.get("streams"), Some(&serde_json::json!({})));
+
+        // 响应体 = 13 个 realtime 键 + `daemonws` 子对象。
+        let response = metrics.snapshot();
+        assert_eq!(response.as_object().expect("对象").len(), 14);
+        assert_eq!(
+            response
+                .get("daemonws")
+                .and_then(serde_json::Value::as_object)
+                .map(serde_json::Map::len),
+            Some(14)
+        );
+    }
+}

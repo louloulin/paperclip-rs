@@ -118,10 +118,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
 /// 同 [`router`]，但 token 由调用方给定 —— 让四态访问门的用例**不**依赖进程 env
 /// （env 是进程级的，并发用例之间会互相干扰；本仓既有手法见
 /// `routes/webhooks/autopilots.rs` 的测试注入）。
-pub fn router_with_token(
-    _state: Arc<AppState>,
-    token: Option<String>,
-) -> Router<Arc<AppState>> {
+pub fn router_with_token(_state: Arc<AppState>, token: Option<String>) -> Router<Arc<AppState>> {
     // `_state` 保留在签名里是 anchor（M10-0）定下的切片形状，四个子 router 一致；
     // handler 与上游一样**不读**任何 server 状态。
     Router::new()
@@ -148,10 +145,9 @@ async fn realtime_metrics(
     }
 
     let mut response = Json(mc_ws::hub::metrics::snapshot()).into_response();
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
