@@ -1111,6 +1111,45 @@ D-6 体读错误一律按 413；D-7 错误信封是**嵌套**（上游扁平）+
 ⑨ **逐字不变**（该面 20 条 fixture 仍在 `unevaluable / unmounted` 档，`report.json` 未动）；
 ⑩ `scanned +4 / violations 0`（四个文件都在 800 行以内）。
 
+
+### 9.15 M10-4（`LUM-2106`）：UI 启动配置 `GET /api/config`（1 路由 / 17 字段 / 6 flag）的偏离登记（**索引段**）
+
+> **本段为什么存在**：与 §9.14 / §9.17 同款 —— 切片描述与 cycle 的号段账把 M10-4 的登记号记为
+> **`## 45.` / `### 9.15`**（`## 45.` 自 M7-0 起一直空置，`### 9.15` 是 §9.17 明确留出的预留号，
+> 起手 `grep -cE '^## 45\.|^### 9\.15'` 实测 **0 命中**）。偏离的**唯一一份完整登记**在
+> **`## 45.`（45.1–45.6）**，此处只列判据与标题，不复制正文。
+
+**契约**：`GET /api/config` 匿名可读、**不触库**，200 + 一个扁平 JSON 对象：`AppConfig` 的 **17 个字段**
+（其中 11 个无 `omitempty`、6 个零值时**不出现**）+ `feature_flags` 的 **6 个键**。
+
+**四条能力声明逐条实测（本片唯一不许照抄上游 `true` 的地方，全文见 §45.3）**：
+`local_worktree_supported=true`（`projects/resource_ref.rs` 的 `execution_mode ∈ {in_place, worktree}`
++ `wants_worktree`/`daemon_version_unsupported` 能力门）、`agent_conversation_starters_supported=true`
+（`mc-repos/src/agent/` 持久化）、`comment_delete_keep_replies_supported=true`（`/keep-replies` 已注册
++ `CommentRepo::soft_delete(id, true)`）、**`issue_create_properties_supported=false`**（❌ `CreateIssueRequest`
+**没有** `properties` 字段 ⇒ serde 静默忽略该 bag ⇒ 宣告 `true` 就是撒谎；补实现属 M2-A 面，**本波不做**）。
+
+**登记的偏离（5 条，全文见 §45.4）**：D-1 第 17 个字段恒 `false`（上游恒 `true`）；D-2 `cdn_domain` 取自**新 env**
+`MULTICA_CDN_DOMAIN`、`cdn_signed` 恒 `false` 且键不出现（本仓无 CloudFront）；D-3 host 归一化
+（`urlHostEquals`/`canonicalURLHost`）**手拆**而非引 `url` crate；D-4 flags 文件**每次求值都重读**且畸形时
+`warn!` 后按"无规则"继续（上游启动时读一次 + fail loudly）；D-5 `server_version` 取 `env!("CARGO_PKG_VERSION")`
+（上游是 `-X main.version` 打戳、dev build 可空）。
+
+**必须不发布的 flag（2 条，全文见 §45.5）**：`desktop_hang_stack_capture`、`custom_issue_statuses`（各有上游注释
+的理由 ⇒ 用例断言"键不出现"）；另 `triage_v1` 不在 `frontendPublicFlags` 里，同样不发布。
+
+**门禁**：⑦ `local 492 → 493`、`implemented 410 → 411`（real `408 → 408` + ph 3 不变）、`known_gap 46 → 45`、
+**`owners.M10 1 → 0`（M10 缺口清零，`gaps by owner` 里不再出现 `M10`）**、`baseline 473` 不动、`regressions 0`、
+`local_only 8` 不增；⑨ `pass 15 → 32`、`unmounted 21 → 4`（`mismatch 23` / `unevaluable 306` 逐字不变），
+`contract_equivalence_rate 0.041096 → 0.087671`、`mounted_equivalence_rate 0.394737 → 0.581818`
+—— 与 `docs/64` §2.2 的预测**逐字相符**；⑩ `scanned 1233 → 1235 / violations 0`。逐字读数见 **§45.6**。
+
+### 9.15.1 🔴 ⑨ 变绿**不等于** config 做完（`docs/64` §2.2 的硬警告）
+
+那 17 条 `config/*` fixture 的 **`json_subset` 全部是空对象**（本轮实测 17/17）⇒ ⑨ 只证明
+"挂上了 + 200 + body 是 JSON 对象"。字段级判据只有两处：**上游 `config_test.go`（`90e0bdf`）的 19 个断言**
++ 本片 `crates/mc-http/src/routes/config/tests.rs` 的 **18 条**用例。**任何**只报 ⑨ 变绿的交付都缺一半证据。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -7262,3 +7301,146 @@ M9-0 anchor 的 `crates/mc-cloud/src/transport/tests.rs`。**若评审认为该�
 * **R-6（`HumanActor` 的双层挂法）**：① 是**两层**（路由组 layer + 每个 handler 的提取器）。
   用例判据只能是「403 + 上游逐字文本 + 0 出站」——**无法分辨是哪一层拦的**（两层都覆盖了同一批请求）。
   删掉任一层都不会让本片的用例变红 ⇒ 改这一处必须重读本节与 `actor_guard.rs` 的模块头。
+
+
+## 45. M10-4（`LUM-2106`）：UI 启动配置 `GET /api/config`（1 路由 / 17 字段 / 6 flag / 0 迁移）的落点与偏离登记
+
+> **号段复核（两个号空间，起手实测，base `0e3e40f9`）**：`grep -cE '^## 45\.|^### 9\.15'
+> docs/32-M3-DAEMON-FACE.md` = **0 命中** ⇒ 两个号都空置，本节取 **`## 45.`**、索引段取
+> **`### 9.15`**（`### 9.15` 正是 §9.17 里明写"预留给 M10-4，本轮仍未落地"的那个预留号）。
+> ⚠️ 另注：切片描述正文里写的 `## 37.` / `§9.14` 均已过期（`§9.14` 已被 M10-2 占用）——**以本节为准**。
+>
+> **契约 pin 的口径（`docs/64` §1.6，本片两条 pin 差 12 提交）**：**字段集读 `90e0bdf`**
+> （`contracts/golden/PIN` 钉的那条，也是 ⑨ 的 17 条 fixture 的来源）、**路由行号读 `f41fae6b08fb`**
+> （`router.go:1478`）。两者的实际差异只有 `config.go` 的第 17 个字段
+> `issue_create_properties_supported` ⇒ 本片取**字段集 = `90e0bdf`（17 字段）**。
+>
+> **硬前置已满足**：M10-0（`LUM-2102`，anchor 骨架）已合；M10-2（`LUM-2104`，PR #123）已终态并合入
+> ⇒ 本片**可以**动 `crates/mc-feature-flags/Cargo.toml` 与根 `Cargo.lock`（`serde_yaml` 已在 lock 内 ⇒
+> **无新 package**，lock 由 cargo 重新生成，**未手工合并**）。
+
+### 45.1 写集审计两类（`docs/64` §6.5 第 6 条）
+
+* **① 新建文件**：`crates/mc-feature-flags/src/frontend.rs`（437 行）与
+  `crates/mc-http/src/routes/config/tests.rs`（564 行）。后者挂在 `routes/config/` 子目录下，
+  由 `config.rs` 末尾**既有**的 `#[cfg(test)] mod tests;` 加载（先例 = §30 的 **D10**、§44.1、§47 的 R-1）。
+* **② 为让实现成立而改的既有文件（逐字）**：
+
+  | 既有文件 | 改动 | 说明 |
+  | --- | --- | --- |
+  | `crates/mc-http/src/routes/config.rs` | anchor 骨架（143 行，空 `Router` + `unimplemented!`）→ 实现（382 行） | 17 字段装配 + 5 个 helper + 1 个注册键 |
+  | `crates/mc-feature-flags/src/lib.rs` | **+1 行** `pub mod frontend;`（含 3 行注释） | 逐字如切片描述所写 |
+  | `crates/mc-feature-flags/Cargo.toml` | **+1 行** `serde_yaml = { workspace = true }`（含 4 行注释） | §142 补入正典的那条 |
+  | `Cargo.lock` | **+1 行**（`mc-feature-flags` 的 `dependencies` 新增 `"serde_yaml"`）；**无新 package** | cargo 重新生成 |
+  | `crates/mc-conformance/report.json` | **本片是那一类要位移它的片** ⇒ 自己刷新（`--write`，**不是** `--write-baseline`） | §45.6 |
+  | `docs/32-M3-DAEMON-FACE.md` | 本节 + `### 9.15` 索引段 | — |
+
+* 🔴 **一字节未动**（写集审计第 ② 类里"为让新文件可见"的部分 = **0**）：`routes/mod.rs`（`pub mod config;`
+  在 M10-0 anchor 期已写好）、`routes/mount.rs`（`mount_slice_probes` 里的 `.merge(super::config::router(state))`
+  同样已接好）、`routes/probes/mod.rs`、`state.rs`（`vcs_keys` 字段由 M8-2 落下）、`crates/mc-http/Cargo.toml`
+  （**本片零条 http 依赖边**）、`migrations/**`（**0 迁移**）、`scripts/file_size_baseline.tsv`、
+  `contracts/**`（⑨ 的 fixture 一条没动）、`docs/fixtures/route-parity-baseline.json`（**本波只有 INT 一个写者**）。
+* **行数（门 ⑩）**：`config.rs` **382**、`config/tests.rs` **564**（≤800，余量 236）、`frontend.rs` **437**
+  （余量 363）。🔴 **交片前先 `git add` 再自查 ⑩**：该门只扫 `git ls-files` ⇒ 未跟踪的新文件它看不见
+  （本片实测：staged 前 `scanned=1233`、staged 后 **1235**，差值 = 本片的 2 个新文件）。
+
+### 45.2 17 字段的 `omitempty` 行为（`docs/64` §2.2 逐行表 → 本地取值）
+
+**11 个无 `omitempty`（零值也必现）**：`cdn_domain`（`""`）、`allow_signup`（`true`）、`posthog_key`（`""`）、
+`posthog_host`（`""`）、`analytics_environment`（**`"dev"`** —— 是缺省值不是空串）、
+`feature_flags`、`local_worktree_supported`、`agent_conversation_starters_supported`、
+`issue_create_properties_supported`、`comment_delete_keep_replies_supported`、`server_version`（自建版）。
+**6 个 `omitempty`（零值时不出现）**：`cdn_signed`、`google_client_id`、`workspace_creation_disabled`、
+`daemon_server_url`、`daemon_app_url`、`vcs_integration_available`。
+⇒ 缺省自建部署的 body **恰好 11 个键**，用例 `default_body_key_set_matches_the_upstream_shape` 钉住
+（11 + 6 == 17 个字段，多一个键就现形）。
+
+⚠️ **`ANALYTICS_DISABLED ∈ {true,1}` 的短路闸**有一个容易照抄错的细节：上游的 `if` 块**整段**不执行 ⇒
+三个字段全取 Go 零值，`analytics_environment` 变成**空串**而不是 `"dev"`（该字段无 `omitempty` ⇒ 键出现、
+值为 `""`）。用例 `analytics_disabled_short_circuits_all_three_fields` 逐字钉住这一条。
+
+### 45.3 四条能力声明的逐条实测证据（本片**不许照抄**上游 `true` 的地方）
+
+| 字段 | 本地取值 | 落地前的实测证据 |
+| --- | :-: | --- |
+| `local_worktree_supported` | **`true`** | `routes/projects/resource_ref.rs:106-119` 校验 `execution_mode ∈ {in_place, worktree}`；`:287` 的 `wants_worktree` + `:307` 的能力门对**未宣告 worktree 能力的 daemon** 返回扁平 422 `daemon_version_unsupported`（`:333`）⇒ 这份代码在跑，门就在跑 |
+| `agent_conversation_starters_supported` | **`true`** | `mc-repos/src/agent/tests/db_tests.rs` 有显式 INSERT 断言（`:159` 写入 `:174` 直读回 `conversation_starters`）⇒ 确实持久化 |
+| `comment_delete_keep_replies_supported` | **`true`** | `routes/comments/mod.rs:102` 已注册 `DELETE /api/comments/:commentId/keep-replies`，`mc-repos/src/comment.rs:468` 的 `soft_delete(id, keep_replies=true)` 只标自身 tombstone、回复保持可见（`:464-465` 逐字注释） |
+| `issue_create_properties_supported` | **`false`** ❌ | `routes/issues/dto.rs:242-262` 的 `CreateIssueRequest` **没有** `properties` 字段（实测 `grep -c properties` = **0**）⇒ serde **静默忽略**该 bag —— 正是上游注释警告的失败模式。客户端按"缺键/`false` ⇒ 不支持"fail-closed ⇒ `false` 是安全的一侧 |
+
+⚠️ 补 `properties` 的实现属 **M2-A 面**（`docs/59`），**本波不做**；D-1 已在 §45.4 登记。
+
+### 45.4 登记的偏离（5 条）
+
+* **D-1（第 17 个字段恒 `false`）**：上游 `IssueCreatePropertiesSupported: true`；本地 `false`（证据见 §45.3）。
+  **翻回条件**：`CreateIssueRequest` 加 `properties: Option<JsonValue>` **且** `POST /api/issues` 真落库
+  ⇒ 改 `config.rs` 一行 + 补 M2-A 的迁移与用例。⚠️ 在那之前**不许**改成 `true`。
+* **D-2（CDN 两字段无对应物）**：本仓 `mc-storage` **无 CDN 概念**、无 CloudFront signer ⇒
+  `cdn_domain` 取自**新 env `MULTICA_CDN_DOMAIN`**（缺省 `""`），`cdn_signed` **恒 `false`**、键**不出现**。
+  签名下载走 `mc-storage` 自己的 HMAC（登记给 M10-B1）。
+* **D-3（host 归一化手拆，未引 `url` crate）**：上游用 `net/url` 的 `url.Parse`/`Hostname()`；`mc-http` 的
+  依赖图里**没有** `url` crate（`docs/64` §2.4 不许为一个 host 比较新拉一条边）⇒ 按 `net/url` 的口径手拆
+  authority / userinfo / port / 补 `https://` 重试。**六种形态逐字对齐**（用例
+  `official_cloud_detection_canonicalizes_host_forms`）：全 URL / 裸主机 / 带端口 / 尾点 / 大小写 / 空白。
+  ⚠️ 该用例**双向**断言（云 ⇒ 键不出现；非云 ⇒ 键出现）—— 只判前者会被"`app_url` 为空 ⇒ 回落链短路"
+  变成空断言（这是本片实际踩到并修掉的一个洞）。
+* **D-4（flags 文件每次重读 + 畸形不 fail loudly）**：上游 `NewServiceFromEnv` 在**启动时**读一次
+  `MULTICA_FEATURE_FLAGS_FILE`，**畸形文件返回 error**（fail loudly）。本地**每次求值都重读**（运维替换文件
+  无需重启，与同一 handler 里 `POSTHOG_*` 的"每次请求重读"同款取向），畸形/读不到时 `warn!` 后按
+  **"无规则文件"**继续（缺省 = 三个门控键全 `false`，fail-closed 一侧）。理由：`/api/config` 是**无状态
+  公开面**，为它把整个进程启动拖死不划算。
+* **D-5（`server_version` 的来源）**：上游是 `main.go` 用 `-X main.version` 打戳进 `handler.Config`，
+  **dev build 可为空**；本地取 `env!("CARGO_PKG_VERSION")`（= `mc-http` 的 crate 版本，恒非空）
+  ⇒ 差异只在"dev build 也会有值"。官方云抑制分支（`isOfficialCloudDaemonConfig`）与上游**逐字相同**。
+
+### 45.5 6 个公开 flag（`EvaluateFrontendPublicFlags` 逐字）与"必须不发布"的 2 个
+
+* **3 个走 provider**（`FF_<KEY>` env 覆盖 → YAML 规则 → 缺省 `false`）：`billing_workspace_subscriptions`、
+  `composio_mcp_apps`、`plugins_v1`。
+* **3 个恒 `true` 的兼容键**（**不查 env、不查 YAML**，上游尾部三行硬编码）：`agents_agent_builder`、
+  `agents_skill_toggles`、`settings_resource_labels`。
+* **必须不发布**：`desktop_hang_stack_capture`（已装机 v0.4.13–v0.4.18 客户端在 `true` 时会一直开着调试器
+  通道，而该机群已产不出可用 stack ⇒ 不发布就是拆弹）、`custom_issue_statuses`（pre-v0.4.33 客户端据此显示
+  "New status" 且 fail-closed）；另 `triage_v1` 不在 `frontendPublicFlags` 里，同样不发布。
+  ⇒ `frontend.rs` **不导出**这三个常量，用例 `publishes_exactly_six_flags_with_the_upstream_defaults`
+  断言"恰好 6 个键 + 两个退役键缺席"（连 env 覆盖了 `FF_*` 也不发布）。
+* **匿名求值的口径**（不是简化，是逐字等价）：`/api/config` 挂在未鉴权路由组 ⇒ `EvalContext` 是**零值**
+  ⇒ `allow` / `deny` 列表**恒不命中**（上游 `evaluateRule` 的 `if v, ok := ec.Lookup(by); ok && …`）
+  ⇒ 本文件只保留 `percent` 与 `default` 两条分支。`percent` 仍实现：标识符为空串，FNV-1a 桶**确定**
+  （上游 `hash.go`：`key` 与 `identifier` 之间写一个 `0` 分隔字节，取 `sum32 % 100`）。
+  ⚠️ `ChainProvider` 在上游 `server/pkg/featureflag/` 里**没有定义**（只被 `config.go:153` 引用）；
+  本片按 `config.go:118-127` 的**注释**（"EnvProvider … StaticProvider …"）取**首个命中者胜**。
+* **`flagKeyToEnv` 的有损转换**已逐字移植并钉住：字母转大写、**非字母数字的连续段**折成**一个** `_`、
+  首尾 `_` 去掉 ⇒ `checkout--new__payment` 与 `--lead--` 都路由到预期 env 名。
+
+### 45.6 门禁（当轮实测，起手 base `0e3e40f9`）
+
+| 门 | 读数 | 判据 |
+| --- | --- | --- |
+| ① `fmt` | `cargo fmt --all -- --check` **exit 0** | — |
+| ③ `clippy` | `cargo clippy -p mc-http -p mc-feature-flags --all-targets` **0 warning 0 error** | 门 ③ 把 pedantic 档当**错误**（`tabs_in_doc_comments` 的 Go 代码块因此用**空格**缩进，先例 = `probes/ready.rs`） |
+| ⑤ `test`（本片两个 crate） | `mc-http --lib` **515 passed / 0 failed / 29 ignored**；`mc-feature-flags` **10 passed / 0 failed** | `config/tests.rs` **18** 条 + `frontend.rs` **9** 条 |
+| ⑦ `route-parity` | `upstream 456 \| local 492 → **493** registered \| baseline 473`、`implemented 410 → **411** / 456`（real **408** + ph **3**）、`known_gap 46 → **45**`、`unclaimed 0`、`regression 0`、`local_only 8`（不增）、`gaps by owner: {M9 18, M3+ 16, M3 11}` ⇒ **`M10` 已从表里消失** | 与 §149 的预测**逐字相符**；不变式 `411 + 45 = 456` ✓ |
+| ⑦b `slash_alias_audit` | `registered upstream-key literals 494` / `shapes OK` ⇒ **0 defect / 0 warning** | 只注册无尾斜杠 `/api/config`（`only_the_plain_form_is_registered` 钉住补斜杠必须 404） |
+| ⑨ `conformance` | `365 fixtures / pass 15 → **32** / mismatch 23（不变）/ unmounted 21 → **4** / placeholder 0 / unevaluable 306（不变）`；`contract_equivalence_rate 0.041096 → **0.087671**`、`mounted_equivalence_rate 0.394737 → **0.581818**` | 17 条 `config/*` 全部 `unmounted → pass`；两个 rate 与 `docs/64` §2.2 的预测**逐字相符**。🔴 但 `json_subset` 全空 ⇒ 见 §9.15.1 |
+| ⑩ `file-size` | `limit=800 scanned 1233 → **1235** baseline=10 violations=0` | +2 = 本片的 2 个新文件；基线清单**未动** |
+| ⑥ `db` / ⑧ `schema-drift` | **未跑**（**不是**跳过，见下） | — |
+
+#### 45.6.1 🔴 未跑的门与补跑条件（逐条登记，不静默省略）
+
+起手 `df -h /` **连采两次 = 12G / 12G**（< 20G 门槛），且同机 **M9-3（`lum-1818`）在飞**并正在编译
+（实测其 `target/` = **17G**、有活跃 `rustc`）⇒ 按 §149 纪律第 2 条"别的 run 正在跑门禁/编译就等它退出再开"，
+本片**没有**与它并发跑全量门禁：一条全量 `--with-db` 实测吃 ≈28G，而 ENOSPC 会**连 PostgreSQL 一起杀掉**
+（2026-09-26 已实证，代价 29 小时停摆）。
+
+**已跑（零编译 / 本 crate 局部，逐条给出退出码）**：① `fmt` **0**、③ `clippy`（两个 crate，`--all-targets`）**0 warning**、
+⑤ 的 `mc-http --lib` **0**（515/0）与 `mc-feature-flags` **0**（10/0）、⑦ **0**、⑦b **0**、⑨ **0**
+（`report matches crates/mc-conformance/report.json`）、⑩ **0**。
+
+**未跑**：⑤ 的**全 workspace** 那一半、⑥ `db`、⑧ `schema-drift`（三者都需要再冷建一批 test 二进制）。
+**补跑条件**（下一轮或 M9-3 收工后）：`df -h /` 连采两次**均 ≥ 20G** **且**
+`pgrep -af "[g]ates.sh --with-db"` 无命中（🔴 括号技巧：裸 `pgrep -f` 会匹配到等待者自己的命令行），
+然后 `flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db`，
+日志落 `<workdir>/.logs/`（**不要**落 `/tmp` 固定名 —— 本仓撞过名、读到过别人的摘要）。
+**本片零条 `#[ignore]` 用例** ⇒ ⑥ 补跑不涉及新增的真库用例；`/api/config` 本身**不触库**，
+它的"离线可答"已由 `config_route_is_public_and_offline`（库 URL **不可达**仍 200）钉住。

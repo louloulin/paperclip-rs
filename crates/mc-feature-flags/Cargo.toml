@@ -17,6 +17,11 @@ tracing = { workspace = true }
 parking_lot = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+# M10-4（LUM-2106 / docs/64 §2.2）：`frontend.rs` 读可选的 `MULTICA_FEATURE_FLAGS_FILE`
+# （YAML 规则文件，上游 `featureflag.LoadRulesFromYAMLFile`）。`serde_yaml` 已在
+# `[workspace.dependencies]`（根 Cargo.toml:67）且已在 `Cargo.lock` 内（`mc-skill` 在用）
+# ⇒ **无新 package**，只多这一条边。
+serde_yaml = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
