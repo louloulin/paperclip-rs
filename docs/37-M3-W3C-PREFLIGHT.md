@@ -14240,3 +14240,49 @@ M10-B2 的 `porcelain` 里有 **`scripts/route_parity.py`（+16/−3）与 `scri
 **号段**：`docs/32` 下一空号仍是 `## 55.`/`### 9.25`（`51`=B2 在飞、`52`=B3 已合、`53`=B4 预留、`54`=M10-5 在飞，`grep -c` 四者全 0）；`docs/37` 本节 §162 ⇒ 下轮 **§163**。
 
 **观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
+
+## §163 —— M10-B4（`LUM-2115`）交片记录：`M3+` 尾账收口，**该 owner 线整条退休**
+
+**起手 base `332b498c`**（= 合并 PR #130（M10-B2）`de668dbd` + 合并 PR #131（M10-5）
+`332b498c`；切片描述 §163 段写的 `1e6c0865` 是 docs-only 的后续提交，起手
+`git rev-parse origin/feat/multica-rs-initial` 实测取当前值）。
+
+### 交付的三条路由
+
+| 路由 | 上游 | 关键判据 |
+|---|---|---|
+| `GET /api/avatars/:sig/*key` | `router.go:1456` → `avatar.go:398` | HMAC 签名即凭据；**四种失败一律 404**（切片描述写 403，见 `docs/32` §53.4 D-1） |
+| `GET /ws` | `router.go:1424` → `realtime/hub.go:775` | **只读复用** `mc_ws::hub::Hub::handle_websocket`（不新写 hub） |
+| `GET /api/comments/:commentId/sub-issue-preview` | `router.go:2160` → `source_context.go:406` | 人类闸 403 + 跨租户 404 + 409/422/500 |
+
+### 门禁读数（当轮实测，base `332b498c`）
+
+- ⑦ `local 527 → 530`、`implemented 440 → 443`（**441 real + 2 placeholder**）、
+  `known_gap 16 → 13`、`baseline 473` 不动、`unclaimed 0`、`regressions 0`、`local_only 8` 不增；
+  不变式 **`443 + 13 = 456` ✓**。
+  🔴 **`gaps by owner: M9=13 / M3+=3 → {M9: 13}`** ⇒ **`M3+` 归零、整条 owner 线退休**。
+- ⑦b `528 → 531` / **0 defect / 0 warning**。
+- ⑨ **逐字不变**（`365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`），
+  **未重生成 `report.json`** —— 静态查证：新挂载键 ∩ `contracts/golden/` fixture 键 = **∅**
+  （`/ws` 的两处命中是 `/api/daemon/ws` 与工作区 slug `ws-1`，都不是本片那条键）。
+- ⑩ `scanned 1271 → 1276 / baseline 10 / violations 0`。
+- 门 ⑤ `mc-http --lib` **635 passed / 0 failed**，本片 **24 条**新用例。
+
+### 本轮可复用的三条判据
+
+1. 🔴 **「上游一律 404」是一句需要回上游逐字确认的话**。切片描述写「未签名 ⇒ 403」，
+   而上游 `ServeAvatar` 的注释逐字说明它对四种失败**都**回 `NotFound`，
+   理由是「不要让这条路由成为任何一种情况的 oracle」。⇒ **错误码也要回上游 grep**，
+   与「413/415 写串到隔壁片」是同一类错误（`docs/32` §9.21 已记过一次）。
+2. 🔴 **HMAC 的验签形状**：上游比的是 **base64 字符串的字节**
+   （`hmac.Equal([]byte(sig), []byte(signAvatarKey(key)))`），
+   **不是**解码后的 32 字节 ⇒ 用 `Mac::verify_slice` 是**错的**（它吃原始 tag 字节）。
+   踩到了，判据是那条「验签恒等」的往返用例。
+3. **门 ⑩ 的拆分刀口按「职责」而不是按行数**：路由面 / 错误面 / 纯函数留在一个文件，
+   读侧（查询 + 构建）进子模块，用例单独一个 `tests.rs`（先例 `routes/uploads/{rs,serve.rs,tests/}`）。
+   首版 1097 行 ⇒ 拆成 453 / 413 / 248，**基线一个字节未动**。
+
+### 号段
+
+`docs/32`：`## 53.` + `### 9.23`（起手 `grep -c` 实测**都是 0**、空置）；
+本文件 `§163`（起手末号 `§162`）。

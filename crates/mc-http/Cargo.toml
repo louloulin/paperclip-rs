@@ -90,6 +90,12 @@ zip = { workspace = true }
 # `internal/util/secretbox/secretbox.go` 的 `LoadKey` 口径），`state.rs` 解析它需要 base64 ——
 # 本 crate 之前没有这条边（workspace 里已有 `base64 = "0.22"`，无新包）。
 base64 = { workspace = true }
+# M10-B4（`LUM-2115`）：`GET /api/avatars/{sig}/*` 的签名是 **HMAC-SHA256**（上游
+# `avatar.go:148` `signAvatarKey`）⇒ 本 crate 之前没有这条边。`hmac` **已是 workspace
+# 成员**（`Cargo.toml` 的 workspace.dependencies，`Cargo.lock` 里已存在）⇒ 本片
+# **零新包**，只多这一条 path 边 + `Cargo.lock` 的 `mc-http` 依赖列表 +1 行。
+# 方向无环：`mc-ws` 已在依赖里且不依赖 `mc-http`。
+hmac = { workspace = true }
 # M8-0 anchor（LUM-1797 / docs/61-M8-PLAN.md §5）：代码与制品面（github / vcs / mcp /
 # composio）的一次性接线。三条 `path` 边必须在 anchor 一次接好：否则 M8-1..M8-6 的
 # 六个写者会各自回来改本 manifest（而它是共享文件）。
