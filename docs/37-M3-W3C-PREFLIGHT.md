@@ -14362,3 +14362,84 @@ du -sh /home/devbox/multica_workspaces/*/*/workdir/paperclip-rs/target
 **号段**：`docs/32` 下一空号 `## 55.`/`### 9.25`（`51`=B2、`52`=B3、`54`=M10-5 已合，`53`=B4 在飞）；`docs/37` 本节 §165 ⇒ 下轮 **§166**（B4 自己占 §163，§164 = 上一 cycle）。
 
 **观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
+
+---
+
+## §166 —— 06:30 cycle（`LUM-2388`）抢救轮：M10-B4 第四类死法「成果齐备但未固化」
+
+- base **`77c70d23`**（= §164 合并 `0b15503c` + §165 docs-only）⇒ 收尾 **`§166` 见本节**。GH 收尾 **0 open PR**；daemon 起手 **`running_task_count: 1`**（只有 cycle 自己）；`pg_lsclusters` = 5432 **online**；df 起手 **15G/69%**。checkout 落 `main` 线**第 17 次**（HEAD `4fc96f30`）⇒ 照例手动 `git checkout -B agent/devbox5/59ec8e94ee98 origin/feat/multica-rs-initial`。
+
+### 🔴 本轮唯一实质产出：**第四类死法 ——「成果齐备但未固化」**，与前三类都不同
+
+`LUM-2115`（M10-B4）的 run `01a0e4c9` 在 **22:19:56Z 以 `status=completed` 正常结束**（`agent_error=""`、45m58s / 166 tools、daemon 记 `turn_completed`）——
+**不是** 09-26 那种触发期 ENOSPC 静默死亡，**不是** provider 报错，**也不是** `pgrep` 假活。
+
+它把三条路由 + 冻结接线 + `hmac` 边 + 两份 docs **全部写完并 `git add` 进了索引**，`.logs/commit_msg.txt` 也备好，
+然后**在 `bg_run` 起的全量 `--with-db` 门禁还在跑的时候结束了 turn** ⇒ 那条门禁进程随宿主一起被带走
+（`.logs/gates_full_2115.log` 停在 ② build 中途，③④⑤⑥⑧⑨⑩ **无读数**）。
+
+| 死法 | 判别特征 | 本轮是否 |
+|---|---|---|
+| ① 良性静默 | `target/` 在长、日志 mtime 在动 | ✗ |
+| ② `pgrep` 假活 | 命中的是等待循环空转壳 | ✗ |
+| ③ 静默死亡 | daemon 零事件 + workdir 零写入 + 干净 0 提交 + 最后是长模型调用 | ✗ |
+| ④ **成果齐备但未固化** | **`git status --porcelain` 全是 `M `/`A `（已入索引）而 `git log` 仍停在 base** | ✅ |
+
+- 🔴 **判别动作（一条命令）**：`git status --porcelain` 前两列是 `M `/`A `（**已入索引**）+ `git log -1` 仍是 base
+  ⇒ 就是第四类。**与第三类的区别是「脏但已 `git add`」**——第三类只脏在工作树、索引是空的。
+- 🔴 **机制**：把长门禁放进 `bg_run` 然后结束 turn，**run-owned 的后台工作在 turn 退出时成为孤儿、结果丢失**。
+  代价不是白写代码，而是**一次已经付过的 13G 编译 + 一轮已经跑了一半的门禁**。
+- ⇒ **定式：门禁这类「需要本 turn 读到终态」的东西，要么在本 turn 内前台同步跑完，要么在结束 turn 前确认它已终态并把读数落进提交信息/描述。**
+  「我会等它的终态通知」这句话在 turn 结束时不成立。
+
+### 抢救动作（四步，全部实测过）
+
+1. **固化**：`git add -A` → `git -c user.name=devbox5 -c user.email=devbox5@local commit -F .logs/commit_msg.txt`
+   ⇒ 提交 **`875e8742`**，**12 文件 `+2257/−0`**；**提交信息逐字沿用该 run 自己写的那份，未改一字**。
+   提交前跑 §164 那条凭据自查（扫 `git diff --cached` 里的 GitHub 令牌前缀，**三个前缀的正则不要写进文档本身**——§164 已实证 push protection 会以 GH013 拦下）= **0**。
+2. **推分支** `refs/heads/agent/devbox5/2eabe601d19f` ⇒ `git ls-remote` 回读与本地 head **逐字一致**，工作树干净。
+3. **描述追加交接**：`LUM-2115` rev **9 → 10**（17256 → 20385 字符，回读复核 `§166`/`875e8742`/`77c70d23` 三个 needle 命中），
+   写明「不要重做」「剩余清单只有 rebase + 跑完门禁 + 开 PR」+ **上一 run 已实测绿的门读**。
+4. **rerun**：`assign --to <agent名> --no-start` → `status todo --no-start` → `rerun`（`status: queued`）
+   ⇒ 新 run 起来，`lum-2115-c4d914aeaaa7`，daemon `running_task_count` 1 → **2**。
+
+### 🔴 温 `target/` 的迁移**不是瞬时的**，§164 那条要补一个时间常数
+
+- rerun 派发后**第一秒**去看，旧 workdir 的 13G **还在原地**、新 workdir **没有** `target/`
+  ⇒ 按 §164 的描述这时该 `mv`，**但那是错的**：**约 60 秒后**平台自己把它搬了过去（新 workdir `target/` = 13G、旧目录 `GONE`、`df` 不变）。
+- ⇒ **定式：观察迁移要跨 ~90 秒再看一次**；**单次采样看到「供体还在、受体没有」不能推断「不会迁」**，
+  更不能因此手动 `mv`（§165 已记「cycle 不必 `mv`」，本轮补上「**也别急着 mv**」）。
+- ⇒ 顺带修正 §164 的一个措辞：迁移**不是**派发瞬间，而是**新 workdir 建好后的约一分钟内**；
+  `du`/`ls` 单点采样会落在迁移窗口里，**看起来像「没迁」**。
+
+### 门读（base `77c70d23`，三条零编译门全 exit 0，**0 条 cargo 门**）
+
+- ⑦ `local 527 / baseline 473 / 438 real + 2 ph = 440 / 456 / known_gap 16 / unclaimed 0 / regression 0 / local_only 8`、
+  `gaps by owner: M9=13  M3+=3`；不变式 `440+16=456` ✓
+- ⑦b `528 literals / 0 defect / 0 warning`；⑩ `scanned 1271 / baseline 10 / violations 0`
+- **与 §165 逐字相同**（第 10 次），理由命令化：`git diff --name-only 1e6c0865 77c70d23 -- crates contracts docs/fixtures scripts Cargo.lock migrations | wc -l` = **0**
+- ⑨ 继承 `365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`（**未跑**：⑨ 冷编要 14G，盘 15G；且 `routes/{mount,mod}.rs` 相对 B4 起手的 `332b498c` 无位移 ⇒ 报告必然不变）
+
+### 🔴 B4 的**可验收信号已在它自己的树里命中**（合入前的旁证）
+
+上一 run 在 `875e8742` 那棵树上实测到 ⑦ `local 527→530`、`implemented 440→443`（441 real + 2 ph）、
+`known_gap 16→13`、**`gaps by owner: {M9: 13}` —— `M3+` 整格消失**，⑦b `528→531`、⑩ `1271→1276`。
+⇒ §165 为 B4 写下的信号（`M3+ 3→0`、`gap 16→13`、`ph` 停 2）**逐项命中**，**M3+ 线整条退休**。
+但**这些不是合并树读数**：`332b498c..77c70d23` 有前进（`docs/37` §164/§165）⇒ 形态③，**收割时必须当轮重跑三门**，不得引用本段。
+
+### 第 2 槽位**算术否决**（连续第 3 轮同因）
+
+`avail 15G − 新片峰值 12–17G = −2G < 0` ⇒ §150.2 ① 否决。**可回收量 = 0**：唯一的编译产物就是 B4 那 13G，
+而它**刚被平台迁进在飞片的新 workdir** ⇒ **活物**。⇒ **在飞 2/3，第 3 槽位空置**（cycle 自身 + B4 重跑）。
+
+### 下一轮顺位
+
+1. **收割 B4**：判据链七条（numstat 用 **`merge-base..head`**、形态③ ⇒ **必须真合 base + 重跑**、`merge-tree` **按 exit code 判**、**CI `fast`/`db`/`contract` 3/3 转绿再合**、钉 40 位 sha、落地树逐字、`scripts/` 位移检查）。
+   形态必为③：base `77c70d23` **不是** `875e8742` 的祖先（已实测 `merge-base --is-ancestor` = NO），
+   前进段**只有 `docs/37`** ⇒ 代码面零漂移，但**仍须重跑门禁**。
+   合入后信号：`owners` 里 `M3+` 消失、只剩 `M9=13`；`known_gap 13→?`、`local 530`。
+2. 收割后 B4 的 `target/` 迁给下一片 ⇒ 余量自回 ⇒ 派 **`LUM-1824`（M9-9，0 路由）**，再依次 `LUM-1819/1820/1821/1822/1823`（M9-4…M9-8）。
+3. 两条 INT（`LUM-1825` M9-10、`LUM-2111` M10-9）都是基线写者，**不得同轮**。
+4. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`，**需 owner 裁决**（第 N+3 次登记，未重复 @）。
+
+**号段**：`docs/32` 下一空号 `## 55.`/`### 9.25`（`51`=B2、`52`=B3、`54`=M10-5 已合，`53`=B4 在飞）；`docs/37` 本节 §166 ⇒ 下轮 **§167**。
