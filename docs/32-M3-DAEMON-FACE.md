@@ -1150,6 +1150,187 @@ D-6 体读错误一律按 413；D-7 错误信封是**嵌套**（上游扁平）+
 "挂上了 + 200 + body 是 JSON 对象"。字段级判据只有两处：**上游 `config_test.go`（`90e0bdf`）的 19 个断言**
 + 本片 `crates/mc-http/src/routes/config/tests.rs` 的 **18 条**用例。**任何**只报 ⑨ 变绿的交付都缺一半证据。
 
+## 48. M9-3（`LUM-1818`）：onboarding 5 条（档案/问卷/完成 + cloud waitlist + 2 条 DEPRECATED shim）的落点与偏离登记
+
+> **号段复核（当轮实测）**：`docs/32` 的 `## ` 末号 = **`## 47.`**（M9-2 / PR #124 已合）
+> ⇒ 本片取 **`## 48.`**；`### 9.x` 末号 = **`### 9.17`**（M9-2 的索引段）⇒ 本片取 **`### 9.18`**。
+> `### 9.18` 按 §41 / §43 / §46 / §47 的裁定只作**索引**（偏离的唯一完整登记在下面的 `## 48.`）。
+>
+> **起手 base（当轮实测）= `0e3e40f9`**（`git rev-parse origin/feat/multica-rs-initial`；
+> `multica repo checkout` 又一次落在 `main` 线，按纪律
+> `git checkout -B agent/devbox5/<run> origin/feat/multica-rs-initial` + `git config --worktree`）。
+
+**写集（9 个文件 = 5 个原地填充 + 4 个新建；唯一写者 M9-3）**：
+
+| 文件（逐字） | 动作 | 说明 |
+| --- | --- | --- |
+| `crates/mc-repos/src/onboarding.rs` | 原地填充（anchor 建的桩） | 4 条上游 SQL 逐字 + 1 个**只读**的 `read_waitlist_columns` |
+| `crates/mc-http/src/routes/onboarding/profile.rs` | 原地填充 | `PATCH /api/me/onboarding` + `POST /api/me/onboarding/complete` 的实现 |
+| `crates/mc-http/src/routes/onboarding/cloud_waitlist.rs` | 原地填充 | `POST /api/me/onboarding/cloud-waitlist` |
+| `crates/mc-http/src/routes/onboarding/shim.rs` | 原地填充 | 2 条 DEPRECATED shim 的**单事务** provision 链 |
+| `crates/mc-http/src/routes/onboarding/shim_content.rs` | **新建** | 文案常量（`DoD` 第 5 条的预判拆法：上游 623 行里约一半是文案） |
+| `crates/mc-http/src/routes/onboarding/tests.rs` | **新建** | 不碰库的那一半（门 ⑤） |
+| `crates/mc-http/src/routes/onboarding/tests/{support,db}.rs` | **新建** | 请求装置 / 真库那一半（门 ⑥） |
+| `crates/mc-http/src/routes/workspaces.rs` | **追加段** | `POST /api/me/onboarding/complete` 的一条注册 + 三个 `pub(crate)` 开口 |
+
+**anchor 冻结面一个字节未动**：`routes/onboarding/mod.rs`（因此 `mod shim_content;` 与
+`#[cfg(test)] mod tests;` 都用 `#[path]` 挂在本片自己的文件上，不碰它）、
+`routes/{mod,mount}.rs`、`mc-repos/src/lib.rs`、任何 `Cargo.toml` / `Cargo.lock`、
+`docs/fixtures/route-parity-baseline.json`（本片**不**跑 `--write-baseline`）。
+`docs/62` §9.7 的**禁改清单**四处（`mc-chat/src/onboarding.rs`、
+`mc-repos/src/chat_task/onboarding.rs`、`routes/chat/task/dispatch.rs`、`mc-repos/src/user.rs`）逐字只读。
+
+### 48.1 `workspaces.rs` 的接触面（两处，都登记在此）
+
+切片描述说「只加这一条 route，不动既有键」——**成立**，但为了让 5 个 handler 共用**一个**
+`userToResponse` 映射，本片在该文件里**另外**开了三个 `pub(crate)` 口径
+（`MeResponse::from_user` / `load_memberships` / 新增的 `me_response`）：
+
+* **为什么不是「各写一份形状」**：上游 5 条全部 `writeJSON(200, h.userToResponse(user))`
+  ⇒ 5 份副本必然漂移；`routes/{pins,notification_preferences}.rs` 等切片已确立
+  「共用 `MeResponse`」的口径。
+* **翻回成本**：三个词（`pub(crate)`）＋ 一个 6 行的 `me_response`；不动任何既有逻辑。
+
+### 48.2 授权链（A 行：user-scoped，零 workspace 上下文）
+
+上游 `router.go:1602-1628` 把 5 条与 `GET/PATCH /api/me` 放在**同一个**
+`middleware.Auth` 组里 ⇒ 本片 5 条**零** workspace 解析、**零** 角色判定
+（与 M9-1/M9-2 的 B 行「出站 + 机器凭据闸 + rollout flag」是两种完全不同的面）。
+无会话 ⇒ **401**；`runtime-bootstrap` / `no-runtime-bootstrap` 另有**成员**格：
+
+| 格 | `runtime-bootstrap` | `no-runtime-bootstrap` |
+| --- | --- | --- |
+| `workspace_id` 空 | 400 `workspace_id is required` | 同 |
+| `runtime_id` 空 | 400 `runtime_id is required` | **不查** |
+| `starter_prompt` > 2048 rune | 400 `starter_prompt exceeds 2048 characters` | **不查** |
+| 非成员 | **403** `not a member of this workspace` | 同 |
+| runtime 不属于本 workspace | 400 `invalid runtime_id` | **不查** |
+| 别人的 private runtime | 403 `this runtime is private; only its owner can create agents on it` | **不查** |
+
+⚠️ 非成员是 **403**（上游 `GetMemberByUserAndWorkspace` 失败即 403），**不是**本仓 member 口径的
+404 —— 与 §47 的 D-5（M9-2 的非成员 404）**故意不同**，因为上游那两条路由本身就这么写。
+
+### 48.3 逐条判据（`DoD` 第 1–3 条，每条都落在**可执行**断言上）
+
+1. **问卷状态机**：`complete` 的幂等由 `COALESCE(onboarded_at, now())` 承载 ⇒ 用例
+   **直读 `"user".onboarded_at` 两次调用后逐字相等**（不是比响应体）；v2 形状（`094`）**逐字段**
+   直读比对；省略 `questionnaire` ⇒ `COALESCE(NULL, col)` **保留**旧值。
+2. **`cloud-waitlist` 的对齐**（§9.7）：`OnboardingRepo::read_waitlist_columns` 是**唯一**判据口，
+   写入后直读 `cloud_waitlist_email` / `cloud_waitlist_reason` 两列与**请求体**逐字比对
+   （`email` 小写 + trim、`reason` 只 trim、空 reason ⇒ `NULL`、重复调用**覆盖**、
+   加入 waitlist **不**动 `onboarded_at`）。
+3. **两条 DEPRECATED shim 的 provision 链逐行断言**：Helper agent 的 6 列（name / visibility /
+   runtime_id / owner_id / `max_concurrent_tasks=6` / instructions 逐字）+ starter issue 的 6 列
+   （title / description / assignee_type / assignee_id / status / creator_id）+ `onboarded_at` +
+   `starter_content_state='imported'`；重复调用 ⇒ **复用**同一 agent 与同一 issue（并用
+   `COUNT(*)=1` 卡住「重建了」）；`no-runtime` 另有 EN / ZH **两相**正文（按 `user.language` 选）。
+   ⚠️ **按上游语义保留**（不做「必须 404」的反向验收）：这两条**是活路由**。
+
+### 48.4 登记的偏离（9 条）
+
+* **D-1（与 `DoD` 第 1 条冲突，按上游落地）**：`DoD` 写「缺 `role` / `use_case` ⇒ 400」，
+  而上游 `PatchOnboarding` 对**任何**问卷都 **200**（它不校验；缺项只影响漏斗计数，
+  这正是上游把 `complete()` 限定为 `role && use_case` 的原因）。**按上游落地**，
+  本片给出的可测等价物是：缺项问卷**逐字落库**，而 `QuestionnaireAnswers::in_flow_resolved()`
+  为 `false` ⇒ **不算问卷已答完**（`version != 2` 同理）。
+  **翻回点**：在 `profile::patch_onboarding` 里加一段 `in_flow_resolved()` 检查即可（一处）。
+* **D-2（`AuthUser` 提取器代替路由组 `route_layer`）**：本目录三个 `router()` 是 anchor 冻结的
+  **无 state** 签名，`axum::middleware::from_fn` 在 `Router<Arc<AppState>>` 上推不出 `S`
+  ⇒ 按本仓既有做法（`routes/agents.rs` 同一个形状）用 `routes::auth_user::AuthUser` 提取器判 401。
+  `complete` 那条在 `workspaces.rs` 的 `require_user` 之下（走 `x-multica-session`）。
+  ⇒ 测试装置**两个头都带**。
+* **D-3（发现到的既有缺陷，登记给 `/api/me` 的 owner）**：`MeResponse` 的
+  `onboarding_questionnaire` 字段当前投影的是**本地独有列** `onboarding_state`，
+  且**缺** `starter_content_state`；上游 `userToResponse`（`auth.go:86`）投影的是**真列**
+  `onboarding_questionnaire` + `starter_content_state`。本片 5 条的响应**继承**了这个偏差
+  （不修：`mc_core::user::User` 没有那两列，改它要动 anchor 冻结件）。
+  ⇒ 本片的判据因此**一律落在直读列上**，不拿响应体当「写进去了」的证据。
+* **D-4（邮箱校验更严）**：上游用 `net/mail.ParseAddress`；本仓**不**引入 RFC 5322 解析库
+  （依赖边被 anchor 冻结）⇒ 用 `mc_core::onboarding::is_acceptable_waitlist_email` 的保守校验。
+  偏离方向是**更严**（只会多拒，不会放过非法值）。判定顺序仍与上游逐字同（空 → 超长 → 格式）。
+* **D-5（`LockAndFindActiveDuplicate` 的本地等价）**：上游用 `SELECT … FOR UPDATE` + 更严的锁；
+  本片照落「`FOR UPDATE` 命中活跃行则复用、否则新建」，条件逐字同
+  （`workspace_id` + `title` + 无 parent + 无 project + `category <> 'closed'`）。
+  差异：并发下两次调用可能各建一条。
+* **D-6（分析事件不发）**：`OnboardingCompleted` / `AgentCreated` / `IssueCreated` / … 四个事件
+  本仓**不发**（funnel 面归 ⑨ 门与 autopilot 评估）⇒ `firstCompletion` 那两个读格
+  （`onboarded_at` 的 before 值）因此**不读**。**可观察的状态逐条照落**。
+* **D-7（body 上限的档位）**：上游 `MaxBytesReader` 的超限**表现为解码错误 ⇒ 400**（不是 413）
+  ⇒ 本片照抄那一档，不引入 413。
+* **D-8（问卷落库存**原始** JSON）**：上游是 `*json.RawMessage` ⇒ 任何合法 JSON 都接受、
+  且**原样**落库。本片因此在 handler 里取 `serde_json::Value` 交给仓储，
+  **不**经 `QuestionnaireAnswers` 重序列化（那会把客户端没写的字段补成默认值 = 改写用户数据）。
+  形状语义由 `mc_core::onboarding` 的纯函数在**读**侧负责。
+* **D-9（`docs/62` §6.5 的两处预期 delta 与实测不符）**：① ⑩ 预测 `1233 → 1238`，
+  实测 `1233 → 1237`（新建文件是 **4** 个，`shim_content.rs` 的拆分不新增**被跟踪**文件）；
+  ② 预测「⑨ 的 5 条 onboarding fixture `unmounted → pass`」——
+  **实测 `contracts/golden/` 里一条 onboarding fixture 都没有**（365 条中 0 条命中该面），
+  ⇒ ⑨ 读数**逐字不变**（`pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`），
+  `report.json` 未动。与 M9-1 / M9-2 的 §46 / §47 结论一致（M9 各片不新建 golden fixture）。
+
+### 48.5 门禁（10/10 PASS，逐字读数）
+
+离线集 `bash scripts/gates.sh`（持 `flock`）**8/8 PASS / 336s**；真库集
+`--only db,schema-drift`（持 `flock`，`--db-url` 指本片自建的 `multica_lum1818`）**2/2 PASS / 285s**
+（⑥ `migrate=0, e2e=0` / ⑧ `schema-drift=0`）⇒ **十道门 10/10**。
+
+* ⑦：`local 492 → 497`、`implemented 410 → 415`（real `407 → 412` + ph 3）、`known_gap 46 → 41`、
+  `owners.M9 18 → 13`、`baseline 473` **不动**、`regressions 0`、`unclaimed 0`、`local_only 8`；
+  不变式 `415 + 41 = 456` ✓。**与切片描述 §149.5 的预测逐项命中。**
+* ⑦b：`registered upstream-key literals 494 → 499` / shapes OK ⇒ **0 defect / 0 warning**。
+* ⑨：`365 fixtures / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`
+  —— **逐字不变**（原因见 D-9②；本片**真跑**了 ⑨，未走继承）。
+* ⑩：`limit=800 scanned=1233 → 1237 / baseline=10 / violations=0`；最大新文件
+  `tests/db.rs` = **605** 行（`shim.rs` = 490），全部 ≤ 800。
+* ⑥：本片新增 8 条 `#[ignore]` 真库用例，`MULTICA_TEST_DATABASE_URL` 下 **8/8 PASS**
+  （外加 11 条不碰库用例，合计 19 条；`cargo test -p mc-http --lib onboarding` 与
+  `… -- --ignored` 各一次全绿）。
+
+### 48.6 顺位与下一片的注意
+
+* **两处 shim 的 `agent` / `issue` 写入是 raw `sqlx`**（上游逐字「condensed to inline DB calls …
+  no service layer」），**不经** `AgentRepo::create` / `IssueRepo::create`
+  —— 因为那两条 repo 方法接 `Db` 而**不是** `&mut Transaction` ⇒ 无法进同一个事务。
+  后续片若要改 `agent` / `issue` 的写入路径，必须同时重读本节。
+* **`Id` 是 `Uuid::new_v4()`**（本仓口径），上游 shim 用 `dbid.NewV7()`；`issue.id` 的**时间序**
+  语义因此与上游不同（登记为 D-10：id 生成器口径，`mc_core::Id` 是 anchor 冻结件）。
+* M9 后续片（尤其 M9-7）若要复用 onboarding 的「取或建会话」语义，
+  仍**只读** `mc-chat/src/onboarding.rs` 与 `mc-repos/src/chat_task/onboarding.rs`（`docs/62` §9.7）。
+
+### 9.18 M9-3（`LUM-1818`）：onboarding 5 条的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 48.`（48.1–48.6）**。
+> （`### 9.15` = M10-4 的预留号仍未落地。）
+
+**写集（9 个文件 = 5 原地填充 + 4 新建，全文见 §48 开头的表）**：
+`crates/mc-repos/src/onboarding.rs` · `crates/mc-http/src/routes/onboarding/{profile,cloud_waitlist,shim}.rs`（原地填充）·
+`crates/mc-http/src/routes/onboarding/shim_content.rs`（新建，文案常量）·
+`crates/mc-http/src/routes/onboarding/tests.rs` + `tests/{support,db}.rs`（新建证据面）·
+`crates/mc-http/src/routes/workspaces.rs`（**一条 route + 三个 `pub(crate)` 开口**）。
+**anchor 冻结件一个字节未动**（含 `onboarding/mod.rs` ⇒ 子模块全部 `#[path]` 挂载）。
+
+**授权矩阵（5 条逐条，全文见 §48.2）**：A 行 = user-scoped，**零** workspace 解析、**零**角色判定、
+无会话 **401**；两条 shim 另有成员格（非成员 **403**，不是 404）+ runtime 三格（400 / 400 / 403）。
+
+**三条只属于本片的契约（全文见 §48.3）**：`complete` 的幂等**只**由
+`COALESCE(onboarded_at, now())` 承载（判据 = **直读那一列**两次逐字相等）；
+waitlist 的对齐**只**认 `read_waitlist_columns` 的**直读**（响应体有「handler 自说自话」的假绿）；
+两条 shim 的 provision 链**逐列**直读断言（含「重复调用复用同一 agent / 同一 issue」的
+`COUNT(*)=1`）。**零出站**（本片没有云侧替身）。
+
+**登记的偏离（10 条，全文见 §48.4）**：D-1 缺 `role`/`use_case` **不 400**（`DoD` 与上游冲突，
+按上游落地，附一行翻转点）；D-2 `AuthUser` 提取器代替路由组 `route_layer`（无 state 签名所致）；
+D-3 **发现到的既有缺陷**：`MeResponse.onboarding_questionnaire` 投影的是本地独有列
+`onboarding_state` 且缺 `starter_content_state`（登记给 `/api/me` 的 owner）；
+D-4 邮箱校验比 `net/mail` **更严**；D-5 `LockAndFindActiveDuplicate` 的本地等价（并发下可能各建一条）；
+D-6 四个分析事件**不发**；D-7 超限是 **400** 不是 413；D-8 问卷落库存**原始** JSON；
+D-9 两处 `docs/62` 预期 delta 与实测不符（⑩ `+4` 不是 `+5`；⑨ **没有** onboarding fixture 可翻）；
+D-10 issue/agent 的 id 是 `Uuid::new_v4()` 而非上游的 v7。
+
+**门禁**：十道门 **10/10 PASS**（逐字读数见 §48.5）；⑦ `local 492 → 497`、
+`implemented 410 → 415`、`known_gap 46 → 41`、`owners.M9 18 → 13`、`baseline 473` 不动、
+`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**（`report.json` 未动）；⑩ `scanned +4 / violations 0`。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**

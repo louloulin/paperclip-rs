@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use axum::extract::{Extension, Json, Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, patch};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use mc_core::member::WorkspaceMember;
 use mc_core::user::User;
@@ -177,7 +177,10 @@ pub struct MeResponse {
 }
 
 impl MeResponse {
-    fn from_user(user: User, memberships: Vec<MembershipResponse>) -> Self {
+    /// 🔴 `pub(crate)`（M9-3 / `LUM-1818` 开的口）：onboarding 面的 3 个 handler
+    /// （`PATCH /api/me/onboarding`、`POST /api/me/onboarding/{complete,cloud-waitlist}`）
+    /// 逐字回上游的 `userToResponse` ⇒ 复用**这一个**映射，而不是各写一份形状。
+    pub(crate) fn from_user(user: User, memberships: Vec<MembershipResponse>) -> Self {
         Self {
             id: user.id,
             name: user.name,
@@ -201,7 +204,12 @@ impl MeResponse {
 const MAX_PROFILE_DESCRIPTION_LEN: usize = 2000;
 
 /// 拉取当前用户的 memberships（member rows + 对应 workspace）。
-async fn load_memberships(state: &AppState, user_id: Id) -> ApiResult<Vec<MembershipResponse>> {
+///
+/// 🔴 `pub(crate)`（M9-3 / `LUM-1818` 开的口）：见 [`MeResponse::from_user`] 那条说明。
+pub(crate) async fn load_memberships(
+    state: &AppState,
+    user_id: Id,
+) -> ApiResult<Vec<MembershipResponse>> {
     let member_repo = MemberRepo::new(state.db.clone());
     let ws_repo = WorkspaceRepo::new(state.db.clone());
     let members = member_repo
@@ -226,6 +234,16 @@ async fn load_memberships(state: &AppState, user_id: Id) -> ApiResult<Vec<Member
         });
     }
     Ok(out)
+}
+
+/// `user row + memberships` → 上游 `userToResponse` 的**唯一**组装点。
+///
+/// 🔴 `pub(crate)`（M9-3 / `LUM-1818` 开的口）：onboarding 面的 4 个 handler 都回
+/// `MeResponse`（上游那 4 条全部 `writeJSON(200, h.userToResponse(user))`）⇒ 共用这一个，
+/// 免得 `/api/me` 的形状在两处漂移。
+pub(crate) async fn me_response(state: &AppState, user: User) -> ApiResult<Json<MeResponse>> {
+    let memberships = load_memberships(state, user.id).await?;
+    Ok(Json(MeResponse::from_user(user, memberships)))
 }
 
 /// `GET /api/me` — 当前 user + memberships。
@@ -592,6 +610,14 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
                     get(list_my_workspaces).post(create_workspace),
                 )
                 .route("/api/me", get(get_me).patch(update_me))
+                // M9-3（`LUM-1818`）：上游 `router.go:1618` 把 `complete` 挂在
+                // `/api/me/onboarding` 这个 `Route` 上（与 `/api/me` 同一 user-scoped 组），
+                // 而它的 handler 归属 `onboarding` 面 ⇒ 这**一条** route 就是本波对
+                // `workspaces.rs` 的全部接触（anchor 的模块头逐字点名了它）。
+                .route(
+                    "/api/me/onboarding/complete",
+                    post(crate::routes::onboarding::profile::complete_onboarding),
+                )
                 .route_layer(user_guard),
         )
         // member-scoped
