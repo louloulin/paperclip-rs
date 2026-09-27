@@ -13315,3 +13315,88 @@ ENOSPC 不是「运气不好」，是**必然**，而 09-26 的 29 小时停摆�
    写回收规则时要写清**作用域条件**，否则会一直有人不敢删。
 4. **「base 只走 docs-only ⇒ 门读逐字不变」是可用推论**，但要**跑一遍确认**（本轮 1s 的 ⑦ 成本极低），
    推论 + 复核各占一半，缺一半就会在 base 有代码位移时静默给出过期读数。
+
+## §151 23:30Z autopilot cycle（`LUM-2360`，23:30Z / 07:30 触发）—— **零合并 + 零派发轮**（第 4 次，daemon 3/3 = cycle ∥ M9-3 ∥ M10-4）；🔴 **本轮产出：⑨ 的 `report.json` 是「被跟踪的基线」，每片动路由都必须连它一起提交——否则要么门红、要么基线悄悄吞掉半成品覆盖**
+
+### §151.1 起手快照
+
+- **base = `1797d489`**（= `ff337816` + `docs/37` §150，唯一 delta 是那 95 行 docs-only）。
+- **GH 0 open PR**；`origin/feat/multica-rs-initial` 头 = `1797d489`，无前移 ⇒ 无可收割物。
+- **在飞 3/3 满载**（cycle 自身 ∥ M9-3 `LUM-1818` rev 9 ∥ M10-4 `LUM-2106` rev 10），两片**均未提交、未开 PR**。
+- **两片判活（判据 = 写集 mtime 落在最近 15min 内 + `target/` 尺寸）**：
+
+  | 片 | workdir | 脏文件 | 未跟踪 | diff 行 | 15min 内被写 | 40min 内被写 | `target/` |
+  |---|---|---|---|---|---|---|---|
+  | M9-3 | `lum-1818-5f64318a5a93` | 8 | 3 | `+1169/−70` | 6 | 9 | **17G** |
+  | M10-4 | `lum-2106-64cdde8d5add` | 7 | 0 | `+466/−139` | 2 | 6 | 3.7G |
+
+  ⇒ **两片全活**（M10-4 的 15min 内 2 个文件 + `target/` 已从 2.6G 长到 3.7G，都是增量编译在跑的旁证，不是静默死亡）。
+- 另有一个 `lum-2106-0071a2fc19dd`（62M，**零 `target/`**）= §147 抢救失败后 cancel 的旧 workdir，**不占盘**，不必回收也不必删。
+
+### §151.2 当轮门读（base `1797d489`，三条零编译门全 exit 0）
+
+- **⑦**（`--only route-parity`，秒级）：`upstream 456 (commit f41fae6b08fb) | local 492 registered | baseline 473`、
+  `implemented 407 real + 3 placeholder = 410 / 456`、`known_gap 46`、`unclaimed 0`、`regression 0`、`local_only 8`；
+  `gaps by owner: M9=18  M3+=16  M3=11  M10=1`（合计 46 = `known_gap` ✓）。
+- **⑦b**：`registered upstream-key literals: 494` / `=> 0 defect(s) from findings, 0 warning(s)`。
+- **⑩**：`limit=800 scanned=1233 baseline=10 violations=0`。
+- **⇒ 与 §150.3 逐字相同**，因为 `ff337816..1797d489` 的 four-surface diff = **0 个文件**
+  （`git diff --name-only ff337816 1797d489 -- crates contracts/golden docs/fixtures Cargo.lock | wc -l` = 0）。
+  **「base 只走 docs-only ⇒ 门读逐字不变」第 3 次成立**（§149.5 → §150.3 → §151.2），这条推论可以当默认路径用。
+- **0 条 cargo 门**（①②③④⑤⑥⑧⑨）：盘 **6.9G** < 20G 门槛；按 §150.2 第 1 条算，`Σ(在飞片 target 峰值) + 20G`
+  = `16G(M9-3) + 16G(M10-4 尚未长满) + 20G` = **52G > 49G 盘总量** ⇒ 算术上就不该起，遑论跑。
+  **补跑条件不变**：`df ≥ 20G` ∧ 无并发全量 ∧ 持**全生命周期** `flock`；且 ⑨ 属「动 `crates/**` 必须真跑」，不得继承。
+- **PG 健康**：`pg_lsclusters` = `16 main 5432 online`，`psql -tAc 'select 1'` = `1` ⇒ 09-26 事故未复发。
+
+### §151.3 🔴 本轮唯一实质发现：`crates/mc-conformance/report.json` 是**被跟踪的基线**，不是生成物
+
+- ⑨ 门（`scripts/gates.sh` 的 `conformance` 分支）跑的是
+  `cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`，
+  判据是 **`report.json` 逐字节比对**（漂移 → exit 1）。⇒ **凡是动了路由/fixture 的片，都必须把重新生成的
+  `report.json` 一起提交**，否则 ⑨ 必红。
+- 现场证据：M10-4 workdir 里 `crates/mc-conformance/report.json` **已是脏的**，
+  `git diff --numstat` = `+81/−82`，头部 totals 从 `pass 15 / unmounted 21` 变成 `pass 32 / unmounted 4`
+  —— 正是它给 `GET /api/config` 补上 fixture 之后应有的方向。
+- 🔴 **但这条「必须提交」带着一个反向陷阱**：基线是**逐字节快照**，谁最后生成谁说了算。
+  如果某片在**路由只接了一半**的时候就 `cargo run … --no-db` 生成并提交了 `report.json`，
+  那么 ⑨ 会**因为基线已经吸收了这半成品而变绿** ⇒ **⑨ 对该片正在写的那些路由失去牙**，
+  而且事后从 `report.json` 上**看不出**它盖的是哪个时刻的路由集。
+- **收割时的判据（写进 M9-3 / M10-4 的验收链）**：
+  ① 提交顺序上，`report.json` 的生成必须**晚于**该片最后一条路由/fixture 的改动
+  （`git log -1 --format=%cI -- <各路由文件>` vs `report.json` 的 mtime/commit 时间）；
+  ② ⑨ 必**真跑**（`--no-db` 也算真跑），不接受「继承上一轮读数」——`report.json` 变了就意味着 §150.2 第 4 条的
+  继承豁免**自动失效**；
+  ③ 合并树跑完 ⑨ 后，`totals` 的 `unevaluable` 应当**只减不增**（本轮基线 `unevaluable 306`）；
+     若 `unevaluable` 上升 = 基线吞掉了本该被判的用例，是负向信号，必须回退重生成。
+
+### §151.4 顺手结清的两笔小事
+
+- **状态残留**：`LUM-2354`（14:00Z cycle）在其 run 已交付结果评论后仍停在 `in_progress` ⇒ 已改为 `in_review`。
+  判活口径不变：**cycle issue 交完结果评论就该 `in_review`**，别让它在板上装成"还在跑"，占掉 3/3 的视觉预算。
+- **`multica repo checkout` 默认落在 `origin/main`**：本 checkout 给的是 `agent/devbox5/<id>` 跟踪 `origin/main`，
+  必须手动 `git checkout -B agent/devbox5/<id> origin/feat/multica-rs-initial` 才能看到 `docs/37`、`crates/mc-*`。
+  （第 N 次踩，成本约 1 分钟 + 一次 `git status -sb` 才能发现。）
+- **`--quiet` 会把读数吃掉**：`gates.sh` 里 ⑦b 与 ⑩ 都带 `--quiet`，而这两个脚本**在 `--quiet` 下一行输出都不打**
+  （只有 exit code）；`route_parity.py --quiet` 反而**照常打**。⇒ 想拿 `494` / `1233/10/0` 这类读数，
+  必须**直接调 python 去掉 `--quiet`**，从汇总表里是取不到的。
+
+### §151.5 下一轮顺位
+
+1. **收割 M9-3 / M10-4**（判据链：`--numstat` 逐字 → `merge-base` 祖先 → `merge-tree --write-tree` **按 exit code 判**
+   → 合并树当场重跑 ⑦/⑦b/⑩，**外加 §151.3 的 ⑨ 报告时间戳核对**）。
+2. **M10-4 的可验收信号 = 合并后 ⑦ `gaps by owner` 里 `M10` 归零**（当前 `M10=1`）。
+   M9-3 预期 `local 492→497 / implemented 410→415 / known_gap 46→41 / owners.M9 18→13`。
+3. **腾位即派 M9-11**（`LUM-2116` rev 6 已备妥，11 路由最大片 ⇒ **它自己是 §150.2 第 1 条的最大受害者**：
+   派它之前先确认盘上**没有另一条 15G+ 的 `target/`**）。
+4. `docs/32` 三片同锚点（`## 45.`=M10-4、`## 47.`=M9-2 已合、`## 48.`=M9-3、`## 49.`=M9-11）
+   ⇒ 后合并者走 §146.3 机械解、**解冲突提交推回该 PR 分支**。
+5. 任何动 `crates/**` 的片交付时**必须真跑 ⑨**（§151.3：基线会变，继承一律失效）。
+
+### §151.6 lesson
+
+1. 🔴 **「基线文件被跟踪」= 它同时是门禁输入和提交物**。`report.json` 这种逐字节比对的基线，
+   谁最后生成谁说了算 ⇒ 片可以在门还绿着的时候**把自己的欠账写进基线**。
+   交付判据不能只看「门绿不绿」，还要看**基线是在什么时刻的代码上生成的**。
+2. 🔴 **「轮型没变」不等于「本轮没产出」**。第 4 次零合并零派发轮里，
+   实质产出全部来自**读在飞 workdir 的脏状态**（`report.json` 被改这件事，base 上完全看不见）。
+3. **门禁汇总表给的是 exit code，不是读数**；要复述「多少条 / 多少违规」就得回到脚本本体。
