@@ -14301,3 +14301,64 @@ M10-B2 的 `porcelain` 里有 **`scripts/route_parity.py`（+16/−3）与 `scri
 **号段**：`docs/32` 下一空号 `## 55.`/`### 9.25`（`51`=B2、`52`=B3、`54`=M10-5 已合，`53`=B4 在飞，`git grep -c` 实测 0）；`docs/37` 本节 §164 ⇒ 下轮 **§165**（B4 自己占 §163，cycle 占 §164）。
 
 **观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
+
+## §165 06:00Z cycle（LUM-2386）—— 零收割监控轮（B4 在飞判活）；🔴 本轮产出：**「在飞片」判活的一条 `ps` 单行判据** + **回收扫描的假阴性**（`du` 查不到 ≠ 盘上没料）
+
+### 门读（base `0b15503c`，零编译门三条，三零编译门 0 条 cargo）
+
+| 门 | 读数 | 与上一 cycle（base `1e6c0865`）比 |
+| --- | --- | --- |
+| ⑦ route-parity | `upstream 456 / local 527 / baseline 473`；`implemented 438 real + 2 ph = 440`；`known_gap 16 / unclaimed 0 / regression 0 / local_only 8`（其中 1 ph）；`owners: M9=13, M3+=3` | **逐字相同** |
+| ⑦b slash_alias_audit | `exit 0` / 0 defect | 逐字相同 |
+| ⑩ file-size | `limit 800 / scanned 1271 / baseline 10 / violations 0` | 逐字相同 |
+
+`440 + 16 = 456` ✓ 自洽。**两条 docs-only 提交（`332b498c`→`0b15503c`，即 §164）不改变任何门读**——这是「docs-only ⇒ 门读不变」的第 N 次复现，可直接用作下一轮的 delta 基线。**门 ⑨ 本轮未跑**（`cargo run -p mc-conformance` 要编 workspace，见下面的算式否决），**不并入读数表**。
+
+### 🔴 判据 1（新增）：判「谁在编译」用一行 `ps`，不要靠翻 workdir
+
+`ps aux | grep rustc` 的命令行里带 `--out-dir …/<workdir>/paperclip-rs/target/debug/deps`，直接点名在飞片。压成一行：
+
+```bash
+ps -eo args | grep -oE 'lum-[0-9]+-[0-9a-f]+' | sort -u
+```
+
+本轮输出**只有** `lum-2115-2eabe601d19f`（B4），且当时正跑 `cargo clippy -p mc-http --all-targets -- -D warnings` ⇒ **B4 活且在自跑门禁**，`clippy-driver` 的 `--out-dir` 即证据。配合 `git status --porcelain` = **8 个脏文件**（3 个新增 `avatars.rs` / `sub_issues.rs` / `ws.rs` + 5 个改）⇒ 处于「写完、门禁中」阶段，**不是静默死亡**。
+
+- ⇒ **判活强度排序**：`ps --out-dir` 指向（**在动**）> `git status` 脏文件数（**在写**）> issue `last_activity_at`（**最弱**，只证明平台收到过事件）。前两轮我用过第三条，本轮起把第一、二条提到前面。
+- 顺带：`multica daemon status` 报 `active_task_count 2 / running_task_count 2` = **B4 + 本 cycle**，与 `ps` 的结论一致 ⇒ **两处读数互为交叉验证**，不必只信其一。
+
+### 🔴 判据 2（新增）：`du` 扫不到 `target/` 是**假阴性**，不是「没料可收」
+
+本轮起手 `df -h /` = **11G avail**，而按 §164 立的扫描口径跑
+
+```bash
+du -sh /home/devbox/multica_workspaces/*/*/workdir/paperclip-rs/target
+```
+
+**30 个 workdir 全部无输出**（`target` 目录已被平台在派发/终态时迁空，§164 已记过这点）。**若到此为止就收工，会得出「无料可收、11G 够派一片」的结论。** 实际占用全在**在飞片**上：
+
+```bash
+du -sh /home/devbox/multica_workspaces/*/*/workdir/paperclip-rs/target
+# lum-2115-… → 17G
+```
+
+- ⇒ **定式：余量算式必须显式包含「在飞片的 `target/`」这一项**，且**回收扫描命中 0 份时不得把 0 当成「盘是空的」**——0 只说明**已终态片的都搬空了**，恰是 §164 那条「不是 run 自清理，是迁给了下一片」的**反向推论**。
+- ⇒ 与 §164 末尾那句「不要为供体 target 预留第二份 16G」并读：那说的是**不额外预留**，**不是说不用把在飞片那份算进分母**。
+
+### 第 2 槽位**算术否决**（与上一轮第 3 槽位同因，量级更紧）
+
+- 可用余量 **11G**；B4 正在自跑 `clippy`，其 `target/` 已 **17G** 且门禁未走完；一片新 slice 冷/温建的峰值按历史 **12–17G**（`multica repo checkout` 自带约 3.3G 温 `target/`，其余需自编）。
+- `11G − 12G = −1G < 0`，且 B4 后续还要走 `--with-db`（峰值更高）⇒ 按 §150.2 ① **否决**。
+- **本轮起手实测：其余 29 个 workdir 的 `target/` 全被迁空 ⇒ 本机没有第二份可回收的编译产物**；唯一可回收项是 B4 的 `target/debug/incremental`，而它**正被 clippy 使用**（删它会让 B4 的门禁崩掉）⇒ **主动回收也不可用**。
+- ⇒ 结论：**在飞 1/3**（B4），**第 2、3 槽位空置**。这不是「偷懒不派」，是**算式否决 + 零可回收量**两条同时成立。
+
+### 下一轮顺位
+
+1. **收割 B4**（`## 53.`/`### 9.23`）⇒ 判据链七条；**先跑 `git diff --name-only <base>..<head> -- scripts/`**（B4 按 §163 描述不该再动门脚本，非 0 则弃 delta 算术）。信号 = **`gaps by owner` 里 `M3+` 整格消失**（现 3 = B4 的 3 行：`GET /api/avatars/{sig}/*`、`GET /api/comments/{commentId}/sub-issue-preview`、`GET /ws`），预期 `known_gap 16→13`、`implemented 440→443`、`local 527→530` 量级、**`ph` 停 2**。**M3+ 线至此退休。**
+2. 收割后 B4 的 `target/` 被平台迁给下一片 ⇒ **余量会自己回来**，届时派 **`LUM-1824`（M9-9，0 路由）** 作同飞搭档（硬前置 `M9-0` + M2-A 尾账 **均已落地**，实测 `crates/mc-entitlement/src/{client,cache,stub,types}.rs` 四文件齐备）；之后依次 `LUM-1819`(M9-4) / `LUM-1820`(M9-5) / `LUM-1821`(M9-6) / `LUM-1822`(M9-7) / `LUM-1823`(M9-8)。
+3. `owners.M9 = 13` 要到 stage 3 五片之后才可能清零；**M9-10 INT = `LUM-1825`、M10-9 INT = `LUM-2111`，两条都是基线写者，不得同轮**。
+4. 🔴 `LUM-2109`（M10-7）仍被 **docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），**需 owner 裁决**（第 N+2 次登记，未重复 @）。
+
+**号段**：`docs/32` 下一空号 `## 55.`/`### 9.25`（`51`=B2、`52`=B3、`54`=M10-5 已合，`53`=B4 在飞）；`docs/37` 本节 §165 ⇒ 下轮 **§166**（B4 自己占 §163，§164 = 上一 cycle）。
+
+**观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
