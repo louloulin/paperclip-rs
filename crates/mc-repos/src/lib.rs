@@ -63,7 +63,9 @@ use serde::Serialize;
 
 use mc_db::Db;
 
+// M10-B1（LUM-2112）的 `attachment` 表读写（上游 `attachment.sql`）。
 pub mod agent;
+pub mod attachment;
 pub mod autopilot;
 pub mod channel;
 pub mod chat_draft_restore;

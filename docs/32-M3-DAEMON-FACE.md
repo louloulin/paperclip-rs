@@ -1366,6 +1366,39 @@ D-9 非成员 404（上游中间件同款，登记以便与 M9-1 / M9-2 对齐�
 `regressions 0`、`unclaimed 0`、`local_only 8` 不增；⑦b `499 → 511`（+12 = 11 条 + `GET /api/cloud-runtime` 别名）/ **0 defect 0 warning**；
 ⑩ `scanned 1239 → 1243 / violations 0`（+4 个新文件；两个原地填充的文件不计入）。
 
+### 9.20 M10-B1（`LUM-2112`）：附件面 6 行的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 50.`（50.1–50.6）**。
+> 号段起手复核：`grep -cE '^## 50\.|^### 9\.20'` = **0**（`## 49.` / `### 9.19` 归在飞的 M9-11）。
+
+**写集（17 文件 = 12 新建 + 5 既有，各一条，全文见 §50 开头的表）**：
+`crates/mc-repos/src/attachment.rs`（新建）· `crates/mc-repos/src/lib.rs`（+1 行）·
+`crates/mc-http/src/routes/attachments/{mod,read,download,download_pure,delete}.rs`（新建）·
+`routes/attachments/tests{.rs,/fx.rs,/db.rs,/db_bytes.rs,/download.rs,/support.rs}`（新建证据面）·
+`routes/issues/mod.rs`（**只改那一行**占位升级）· `routes/mod.rs`（+1 行）· `routes/mount.rs`（+1 行 + 1 个新函数）·
+`crates/mc-http/tests/issues/auth.rs`（**换 501 落点**，见 D-11）。
+
+**两条最小冻结破例外**（cycle `LUM-2364` 逐条授权，**各只加不改**）：`routes/mod.rs` 的
+`pub mod attachments;` 与 `routes/mount.rs` 的 `.merge(mount_slice_attachments())` + 那个新函数。
+
+**授权矩阵（6 条逐条，全文见 §50.2）**：两条 workspace 头路由（`GET /api/attachments/{id}`、
+`.../content`）非成员 **404**；`/download` **自解析 workspace**、非成员 **404**（IDOR 形状）；
+`/signed-download` **无认证**、无签名 **403**（fail-closed）；`/api/issues/{id}/attachments`
+非成员 / 跨 workspace **404**；`DELETE` 唯一一条 **403**（非上传者且非 admin）。
+
+**登记的偏离（11 条，全文见 §50.4）**：D-1 HMAC 落点与 issue 描述不同（`mc-storage` 不在写集内 ⇒ 就地用
+`mc-http` 已有的 `sha2` 手写，**零新依赖**）；D-2 取密钥的 env 名；D-3 415/413 用 `respond_with`
+⇒ 错误体 `code` 退化；D-4 `issue_revision` 走 repo 而非直接查；D-5 **不删对象存储那份**（留孤儿）；
+D-6 四个可空列**不写键**（上游写 `null`）；D-7 **不实现** owner lock（并发双删走 `changed=false` ⇒ 仍 404）；
+D-8 `markdown_url` 落在上游 `publicURL == ""` 那一支；D-9 `(bucket, key)` 切分约定待 M10-B2 复核；
+D-10 列表**含**抓取上下文副本（上游同款）；D-11 `tests/issues/auth.rs` 的 501 落点换了。
+
+**门禁**：十道门 **10/10 PASS**（逐字读数见 §50.5）；⑦ `local 498 → 503`、
+`implemented 416 → 421`（real 413 → **419**、ph 3 → **2**）、`known_gap 40 → 35`、
+**`owners.M3+` 16 → 11**（**可验收信号，命中**）、`M9 13` / `M3 11` **不变**、`baseline 473` 不动、
+`regressions 0`、`local_only 8` 不增、不变式 `421 + 35 = 456` ✓；⑦b `499 → 504` / 0 defect；
+⑨ **逐字不变**（`report.json` 未动）；⑩ `scanned 1239 → 1251 / violations 0`。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -7892,3 +7925,137 @@ webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
 但**登记**给 `mc-server` 的 owner：那 2s 预算对一个 1s 轮询的 worker 来说**没有余量**，
 建议把 `:369` 的预算放宽到 5s 量级（`await_pool_idle` 那条已经是 5s，`:363`）。
 
+---
+
+## 50. M10-B1（`LUM-2112`）：附件面 6 行（5 缺口 + 1 占位升级）的落点与偏离登记
+
+> **起手 base**：`5467ef20`（当轮实测 `git rev-parse origin/feat/multica-rs-initial`，
+> 与 cycle `LUM-2364` rev 8 预告的**逐字相同**）。
+> **交片 base**：`1d80f331`（起手后 cycle 合并了 **#127 M9-11**（11 条 `/api/cloud-runtime/*`）
+> + §155/§156 两段 docs ⇒ 本片按 `docs/37` §146.3 **机械解**了 `docs/32` 的同锚点冲突
+> （两侧都保留 + 按号段排序 + 缝一行 `---`；`### 9.20` 索引段也按 9.18 → 9.19 → 9.20 重排）
+> 并 **rebase** 后**重跑了全量 `--with-db`** ⇒ 下表读数是 **rebase 之后**的当轮实测。
+> **上游 pin**：路由表读 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`，⑨ 契约 pin `90e0bdf…`
+> （本片 ⑨ 不位移 ⇒ 只用到前者；两者关系见 `docs/64` §1.6）。
+> **写集 delta**：`+3548 / −9`（17 个文件）。
+
+### 50.1 写集审计（两类，逐条）
+
+**① 新文件（12 个）**——`attachments/*` 是**新目录**，M10-0 的 `mount_slice_probes()` 不含它
+（`docs/64` §4.1 A 面 vs §4.2 B 面是两张表，anchor 不该为 B 面包）：
+
+| 文件 | 行数 | 内容 |
+| --- | ---: | --- |
+| `crates/mc-repos/src/attachment.rs` | 300 | 4 个查询 + `AttachmentRow` / `DeleteOutcome` / `UploaderType` |
+| `routes/attachments/mod.rs` | 71 | 聚合 + 3 个子 router + 接线纪律 |
+| `routes/attachments/read.rs` | 209 | `GET /api/attachments/:id` + `/api/issues/:id/attachments` |
+| `routes/attachments/download.rs` | 468 | `/content` · `/download` · `/signed-download` |
+| `routes/attachments/download_pure.rs` | 376 | 纯函数半边（门 ⑩ 的 800 行上限切出，见 50.6-③） |
+| `routes/attachments/delete.rs` | 141 | `DELETE /api/attachments/:id` |
+| `routes/attachments/tests.rs` | 264 | 形态门 + 认证 / workspace 前置 + 幂等断言对 |
+| `routes/attachments/tests/support.rs` | 246 | 请求装置 + `AppState` 字面量 + `TempDir` |
+| `routes/attachments/tests/fx.rs` | 149 | 真库夹具（`Fx` / `Att` / `fixture()`） |
+| `routes/attachments/tests/db.rs` | 349 | 元数据读 + repo 层 4 条 |
+| `routes/attachments/tests/db_bytes.rs` | 494 | 取字节三键 + `DELETE` 6 条 |
+| `routes/attachments/tests/download.rs` | 268 | 纯函数层（含 RFC 4231 向量） |
+
+**② 为让新文件可见要改哪个既有文件（5 个，逐条只加不改或只改一行）**：
+
+| 文件 | base 行数 | 动作 | 授权 |
+| --- | ---: | --- | --- |
+| `crates/mc-repos/src/lib.rs` | — | **+1 行** `pub mod attachment;` | issue 写集 |
+| `crates/mc-http/src/routes/mod.rs` | 183 | **+1 行** `pub mod attachments;` | 🔴 **冻结破例外 1** |
+| `crates/mc-http/src/routes/mount.rs` | 569 | **+1 行** `.merge(mount_slice_attachments())` + 文件**末尾**新增 1 个合并点函数 | 🔴 **冻结破例外 2** |
+| `crates/mc-http/src/routes/issues/mod.rs` | — | **只改那一行**：`not_implemented` → `attachments::read::list_issue_attachments` | issue 写集（占位升级点） |
+| `crates/mc-http/tests/issues/auth.rs` | — | **只改那一段**：501 断言的**落点**从 `/api/issues/:id/attachments` 换到 `/api/issues/:id/timeline` | 见 D-11 |
+
+**🔴 anchor 冻结件一个字节未动**（含 `routes/probes/*`、`mount_slice_probes`、
+`scripts/file_size_baseline.tsv`、`route-parity-baseline.json`、`report.json`）。
+
+### 50.2 六条键的授权矩阵（逐条）
+
+| # | 键 | 认证 | workspace 来源 | 跨 workspace / 非成员 | 上游 handler |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `GET /api/attachments/{id}` | 会话 | 头 / query | **404** | `file.go:671` |
+| 2 | `GET /api/attachments/{id}/content` | 会话 | 头 / query | **404** | `file.go:1285` |
+| 3 | `GET /api/attachments/{id}/download` | 会话 | **行本身** | **404**（IDOR 形状） | `file.go:849` |
+| 4 | `GET /api/attachments/{id}/signed-download` | **无** | 不适用 | 不适用 | `attachment_capability.go:198` |
+| 5 | `GET /api/issues/{id}/attachments` | 会话 | 头 / query | **404** | `file.go:642` |
+| 6 | `DELETE /api/attachments/{id}` | 会话 | 头 / query | **404**；非上传者且非 admin ⇒ **403** | `file.go:1413` |
+
+**只有第 6 条会返回 403**（`: ERR_NOT_AUTHORIZED`）——上游**故意**把「看不见」（404）与
+「看得见但没权限」（403）分成两种码。
+
+### 50.3 两条「刻意如此」的设计决定
+
+1. **第 5 条的注册点刻意留在 `routes/issues/mod.rs`**（不像 M9-0 对 `timeline` 那样搬走）：
+   搬走要动那个冻结文件的**删除**（本片对它只有一行写权限），且**原地换才让 ⑦ 记成
+   「占位升级」而不是「删一键 + 加一键」**。⇒ 副作用：`attachments/mod.rs` 的聚合 router
+   **不得**再注册这条（重复注册 ⇒ 启动 panic），已由 `router_builds_without_duplicate_registration` 钉住。
+2. **能力链接只出现在第 1 条**的响应里。列表（第 5 条）**绝不带**——
+   TTL 60s ≪ 列表的持有时间，嵌进去等于发一张已过期的票（上游注释逐字）。
+
+### 50.4 登记的偏离（11 条）
+
+| # | 偏离 | 理由 | 翻转点 |
+| --- | --- | --- | --- |
+| **D-1** | HMAC-SHA256 **就地**实现（`download_pure.rs`），**不**按 issue 描述放 `mc-storage` | `mc-storage` **不在本片写集内**；而 `mc-http` **已有** `sha2` 依赖 ⇒ 手写 20 行是**零新依赖、零写集扩大**的那条路（`hmac` 在 `Cargo.lock` 里但不在 `mc-http` 的依赖图上） | B 面收口时把这段搬进 `mc-storage::capability`，两个调用点改 `use` |
+| **D-2** | 取根密钥用 `ATTACHMENT_DOWNLOAD_SECRET` → 回退 `JWT_SECRET` | 先例 = `crates/mc-composio/src/state.rs:151` 的 `COMPOSIO_STATE_SECRET\|JWT_SECRET` **同款** | 改两个 env 常量即可 |
+| **D-3** | 415 / 413 用 `ApiError::respond_with` 覆盖状态码 ⇒ 错误体 `code` 退化成 `validation_error` | `mc_errors::Error` **没有** 415 / 413 变体（先例 = `routes/projects/helpers.rs:121`） | `mc-errors` 加两个变体 |
+| **D-4** | `DELETE` 的响应体带 `{id, issue_revision, comment_revision}`（上游落 200 空体） | 上游末尾只有 `deleteS3Object` + 两个 realtime 事件、不写体；写摘要让「真删了」在用例里**可观察**（`DoD` 第 5 条） | — |
+| **D-5** | **不删对象存储里那一份**（上游 `h.deleteS3Object`） | 本仓没有等价物：`mc_storage::Storage::delete` 的桶路由是**部署装配期**决定的，拿不到可靠解析就不猜 | **后果 = 删行会留孤儿对象**，由 GC（不在本片范围）收。用例只断言「行没了」 |
+| **D-6** | 四个可空列（`issue_id` / `comment_id` / `chat_session_id` / `chat_message_id`）**不写键** | 上游是 `*string` 且无 `omitempty` ⇒ 对 `null` 也写键；本仓全仓惯例是「可空列不写键」 | 去掉 `skip_serializing_if` 即翻回 |
+| **D-7** | **不实现** `withAttachmentOwnerLock`；改让 repo 返回 `changed` | 那是**并发护栏**不是契约，且它需要一张本仓没有的锁表。并发双删里后到那条拿 `changed == false` ⇒ handler 回 **404**，**与上游那条分支同码** | 补锁表 + 事务化 |
+| **D-8** | `markdown_url` 落在上游 `publicURL == ""` 那一支（站点相对路径） | 本仓 `ConfigSnapshot` **没有** `public_url` 字段；而上游在无 public URL 的部署下**本来就这样**（不是简化） | `ConfigSnapshot` 加 `public_url` |
+| **D-9** | `attachment.url → (bucket, key)` 的切分约定 = 首个 `/` 前为桶 | 与 `LocalDiskStorage::path_for`（`root/bucket/key`）**恰好互逆**；写侧属 **M10-B2** | **B2 落地时必须一起复核这一格** |
+| **D-10** | 列表**含**抓取上下文的副本 | 上游 `ListAttachmentsByIssue` **不带** `source_context_id IS NULL`（那是两个 `ListSourceContext*` 专用查询的口径）⇒ 照搬 | — |
+| **D-11** | `tests/issues/auth.rs` 的 501 断言**落点**换成 `/api/issues/:id/timeline` | 那条断言验的是「**还没实现的**上游键仍回 501」；附件面被本片实现掉后它自动失去判据意义 ⇒ 必须让位（本仓已换过五次落点）。timeline 与 quick-actions 是**余下仅有的 2 条** 501 占位 | 两条都被实现时再换 |
+
+### 50.5 门禁当轮实测（十道门 **10/10 PASS**，`--with-db`，**586s / rebase 之后**）
+
+| 门 | 读数 |
+| --- | --- |
+| ① `fmt` | `cargo fmt --all -- --check` **exit 0** |
+| ② `build` | **exit 0**（79s） |
+| ③ `clippy` | `-p mc-repos -p mc-http --all-targets` **0 warning 0 error**（pedantic 当错误） |
+| ④ `clippy-test-util` | **exit 0**（41s） |
+| ⑤ `test` | **exit 0**（169s）；`mc-http --lib` 里新增的 36 条零库用例全绿 |
+| ⑥ `db` | **exit 0**（160s，`migrate=0,e2e=0`）⇒ **22 条 `#[ignore]` 真库用例逐条真跑并通过**（判据：`grep -c 'attachments::tests.*\.\.\. ok'` > 0，且无 `skipping:`） |
+| ⑦ `route-parity` | **rebase 后实测**：`upstream 456 \| local **515** \| baseline 473`、`implemented **432** / 456`（real **430** + ph **2**）、`known_gap **24**`、`unclaimed 0`、`regression 0`、`local_only 8`（不增）、`gaps by owner: **M9 13** / **M3+ 11**`（`M3` 已随 #127 归零，是 M9-11 的信号不是本片的）⇒ 不变式 `432 + 24 = 456` ✓ | 
+| ⑦b `slash_alias_audit` | **rebase 后实测**：`registered upstream-key literals **516**` / `shapes OK` ⇒ **0 defect / 0 warning** |
+| ⑨ `conformance` | `report matches crates/mc-conformance/report.json`（**逐字不变**；`365 fixtures / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`）。附件面那 2 条 fixture（`DELETE 404` / `GET .../download 200`）**都是 member** ⇒ `--no-db` 层恒 `unevaluable`，注册后 `outcome` 不变 ⇒ **不需要刷 `report.json`** |
+| ⑩ `file-size` | **rebase 后实测**：`limit=800 scanned **1255** baseline=10 violations=0`（本片 12 个新文件 + #127 的 4 个；基线清单**未动**） |
+| ⑧ `schema-drift` | **exit 0**（26s；零新迁移，`migrations/**` 一个字节未动） |
+| ⑨ `conformance` | 见上（69s） |
+
+**⑦ 的 delta 核对（本片贡献量，与 base 无关）**：起手 base `5467ef20` 实测
+`local 498 / implemented 416（413 real + 3 ph）/ known_gap 40 / owners {M9 13, M3+ 16, M3 11}`
+⇒ 本片交付后（**同一 base 上**）实测
+`local **503** / implemented **421**（**419** real + 2 ph）/ known_gap **35** / owners {M9 13, **M3+ 11**, M3 11}`。
+算式：`+5` 新键（real +5、gap −5）+ `+1` 占位升级（real +1、ph −1，**不碰 `local`、不碰 `gap`**）
+⇒ 413+5+1 = **419** real、3−1 = **2** ph、40−5 = **35** gap、16−5 = **11** 个 `M3+`。
+不变式 `421 + 35 = 456` ✓、`regressions 0` ✓、`local_only 8` 不增 ✓。
+
+> ⚠️ issue rev 8 的表把 `implemented 421` 的括注写成「**418** real + 2 ph」——
+> 按它自己给的算式（`implemented_real +6`、`placeholder 3 → 2`）逐字复算应是 **419**，
+> 那行括注少算了一格。**总数 421 / `known_gap 35` / `owners.M3+ 16 → 11` 三格与预测逐字相符**，
+> **可验收信号（`M3+` 这一格必须动）命中**。**以实测为准，没有为凑这个数改过一行代码。**
+
+> 交片 base `1d80f331` 把 #127 的 11 条也算进来 ⇒ 绝对读数变成 `local 515 / implemented 432 /
+> known_gap 24 / owners {M9 13, M3+ 11}`（`M3` 归零）。**本片的贡献量恒为上面那组 delta。**
+
+### 50.6 三条留给后续片的判据（本轮踩过或差点踩的）
+
+1. 🔴 **门 ⑦ 的静态扫描用 `\b(?:get|post|delete|…)\s*\(` 认方法**（`scripts/route_parity.py:359`）。
+   写成 `use axum::routing::delete as axum_delete;` 的话，`_` 与 `d` 之间**没有词边界**
+   ⇒ `DELETE /api/attachments/{id}` 会被记进 `unsupported`、**不计入 `local`**
+   ⇒ 读数变成 `local 502 / known_gap 36 / owners.M3+ 12`，**看起来只差一条，很容易当成「预测错了」放过**。
+   正确写法：**handler 改名**（本片叫 `remove_attachment`），方法路由名原样出现在调用点上。
+2. 🔴 **`workspace.slug` 与 `user.email` 都有 UNIQUE** ⇒ 真库夹具里写死 `'a'` / `'user@x'`
+   会让**并行跑的每一条**用例互撞 `23505`（本轮实测 20 条全红在同一格）。
+   定式 = 唯一值由**本用例那枚 uuid** 派生（`w{tag}-{uuid::simple()}` / `u{uuid}@…`）。
+   与既有判例（空白邮箱要用 tag 映射成唯一值）同源。
+3. **门 ⑩ 的 800 行上限要按「真接缝」切，不要按「行数」硬切**。
+   本片两次切分都落在真接缝上：`download.rs` / `download_pure.rs` = **纯判定对 I/O**；
+   `tests/db.rs` / `tests/db_bytes.rs` = **元数据读取字节**。切完 `download.rs` 用
+   `pub use super::download_pure::*;` **原样再导出** ⇒ 外面一个调用点都不用改。

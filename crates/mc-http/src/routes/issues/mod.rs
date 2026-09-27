@@ -192,7 +192,19 @@ pub fn router() -> Router<Arc<AppState>> {
         // 到 `crate::routes::timeline`（handler 名仍是 `not_implemented`）——
         // 注册键与占位计数**逐字不变**，只是归属从 issue 子路由换到 M9 的商业面聚合
         // router。这样 M9-8 把占位换成真实现时不再改本文件（docs/62 §3.1）。
-        .route("/api/issues/:id/attachments", get(not_implemented))
+        // M10-B1（`LUM-2112` / `docs/64` §4.2 第 1 行）：这一行是本片 6 行里的
+        // **占位升级**（不是新增键）—— handler 从 `not_implemented` 换成
+        // `crate::routes::attachments::read::list_issue_attachments`（上游 `ListAttachments`）。
+        // ① **注册键逐字不变** ⇒ ⑦ 的 `local` 不动；② `implemented_placeholder 3 → 2`、
+        // `implemented_real +1`（占位升级的最小位移）。
+        // ⚠️ **注册点刻意留在本文件**（不像 M9-0 对 `timeline` 那样搬走）：搬走要动
+        // 这个冻结文件的**删除**（本片对它只有一行写权限），且原地换才让 ⑦ 记成
+        // 「占位升级」而不是「删一键 + 加一键」。因此 `attachments/mod.rs` 的聚合
+        // router **不得**再注册这条（同 path+method 重复注册 ⇒ 启动 panic）。
+        .route(
+            "/api/issues/:id/attachments",
+            get(crate::routes::attachments::read::list_issue_attachments),
+        )
         // M8 anchor（LUM-1797）：`/api/issues/:id/pull-requests` 的 501 占位已**原地搬运**
         // 到 `crate::routes::github::issue_pr`（handler 名仍是 `not_implemented`）——
         // 注册键与占位计数**逐字不变**，只是归属从 issue 子路由换到 github 聚合 router。

@@ -119,21 +119,26 @@ async fn issue_auth_workspace_and_not_implemented() {
     assert_eq!(quick["origin"], "quick_create");
     assert_eq!(quick["status"], "todo");
 
-    // 501 占位（M3 能力）。这条断言换过四次落点：先是 `/api/issues/table/groups`，
+    // 501 占位（M3 能力）。这条断言换过五次落点：先是 `/api/issues/table/groups`，
     // M2-D（LUM-1355）实现后改用 `preview-trigger`，M3-6（LUM-1429）把它也实现成
     // 真实路由（入队预演 200）后改用 `GET /api/issues/:id/labels`；M2-E（LUM-1370）
-    // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests`；**M8-4（LUM-1801）
-    // 又把它实现成真实读面**（GitHub / VCS 的 PR 卡片列表 ⇒ 这条路由不再是缺口），
-    // 于是改用 `GET /api/issues/:id/attachments`。
+    // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests`；M8-4（LUM-1801）
+    // 又把它实现成真实读面，于是改用 `GET /api/issues/:id/attachments`；
+    // **M10-B1（`LUM-2112`）把附件面也实现掉了**（6 行里的那 1 条占位升级），
+    // 于是最后一次改用 `GET /api/issues/:id/timeline`。
     //
-    // 为什么选 attachments：它是本仓**已登记**的最远缺口之一 —— `docs/61` §9.2 把附件面
-    // 维持判给 `M3+`、并作为 W8 的尾账登记（`docs/32` §19 的缺口清单里复述）。它**不是**
-    // 「等某个在飞切片顺手做掉」的能力，所以比其它候选更耐久。
+    // 为什么这条断言要一直换落点：它验的是「**还没实现的**上游键仍回 501」
+    // —— 一旦把落点实现掉，这格就自动失去判据意义，必须让位给另一条仍占位的键。
+    //
+    // 选 timeline 的理由：它是**本仓余下仅有的 2 条 501 占位之一**
+    // （另一条是 `/api/issues/:id/quick-actions`，归 **M10-B3**）⇒ 耐久。
+    // ⚠️ 写这条断言时若发现它红了，先看是不是**落点又被实现了**（那就再换一条），
+    // 而不是去改 handler（那是本仓反复踩过的坑，见上面那串换落点的历史）。
     let res = app
         .clone()
         .oneshot(req(
             "GET",
-            &format!("/api/issues/{}/attachments", Uuid::new_v4()),
+            &format!("/api/issues/{}/timeline", Uuid::new_v4()),
             ws,
             user,
             None,
@@ -145,6 +150,22 @@ async fn issue_auth_workspace_and_not_implemented() {
         body_json(res.into_body()).await["error"]["code"],
         "not_implemented"
     );
+
+    // M10-B1（`LUM-2112`）把 `GET /api/issues/:id/attachments` 从 501 占位**升级**成
+    // 真实现 ⇒ 这里钉住它**不再是** 501（一个随机 issue id ⇒ 404「issue 不存在」）。
+    // 这条是「占位升级真的落地了」的活判据。
+    let res = app
+        .clone()
+        .oneshot(req(
+            "GET",
+            &format!("/api/issues/{}/attachments", Uuid::new_v4()),
+            ws,
+            user,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
     let _ = sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
         .bind(outsider)

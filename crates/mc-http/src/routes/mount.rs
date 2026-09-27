@@ -135,6 +135,13 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 而上一行的七个合并点分属 M9-1..M9-8 —— 分开追加的理由与
         // `mount_slice_squad_evaluation()` 同款（一片一行，互不叠写）。
         .merge(mount_slice_cloud_runtime())
+        // ----- M10 B 面第 1 片（LUM-2112）：附件面 5 条新键 -----
+        // 锚点只预声明了 A 面（`probes` / `config`）；附件面是**新目录**，不在 M10-0 的
+        // 委托范围 ⇒ 本行是 cycle 逐条裁定授权的**最小冻结破例外**（各只加不改）。
+        // ⚠️ 第 6 条（`GET /api/issues/:id/attachments`）**不在**本合并点里：它是
+        // `routes/issues/mod.rs` 里那一行 501 占位的**原地升级**（`local` 不变、
+        // `implemented_placeholder 3 → 2`）⇒ 在这里再注册一次会 panic。
+        .merge(mount_slice_attachments())
 }
 
 /// workspace + member + me 切片。
@@ -566,4 +573,20 @@ fn mount_slice_commercial() -> Router<Arc<AppState>> {
 /// 两条判据与裁定见 `crates/mc-http/src/routes/cloud_runtime.rs` 的模块头与 `docs/32` §9.13。
 fn mount_slice_cloud_runtime() -> Router<Arc<AppState>> {
     Router::new().merge(super::cloud_runtime::router())
+}
+
+/// M10-B1（`LUM-2112`）的附件面切片（`docs/64-M10-PLAN.md` §4.2 第 1 行）。
+///
+/// **5 条新键**：`GET /api/attachments/{id}`（`read.rs`）、`.../{id}/content` ·
+/// `.../{id}/download` · `.../{id}/signed-download`（`download.rs`）、
+/// `DELETE /api/attachments/{id}`（`delete.rs`）。
+///
+/// 🔴 **第 6 条不在这儿**：`GET /api/issues/{id}/attachments` 是既有 501 占位的**原地升级**
+/// （仍注册在 `routes/issues/mod.rs`，只换 handler 名）—— 在这里再注册一次就是同
+/// path+method 重复注册 ⇒ axum 启动时 panic（`docs/15` §9.6.6）。
+///
+/// 形态：5 条**全是上游 plain 注册**（`router.go:2149/2155/1655/1447/2156`）
+/// ⇒ **只注册无尾斜杠**那一形态（补尾斜杠 = `EXTRA_ALIAS` 硬失败）。
+fn mount_slice_attachments() -> Router<Arc<AppState>> {
+    Router::new().merge(super::attachments::router())
 }

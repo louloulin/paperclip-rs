@@ -149,6 +149,13 @@ pub mod squad_evaluations;
 pub mod config;
 pub mod probes;
 
+// M10-B1（LUM-2112 / docs/64 §4.2 第 1 行）：**B 面第 1 片**的附件面（6 行 = 5 缺口 +
+// 1 占位升级）。它是**新目录**，`attachments/mod.rs` 自己聚合 read / download / delete
+// 三个子 router（本行 + `mount.rs` 的一个合并点 = 两条最小冻结破例外，各**只加不改**）。
+// ⚠️ M10-0 anchor 只预声明了上面那两个面（A 面），B 面不在它的委托范围 ⇒ 本行是破例。
+// 形态：6 条**全是上游 plain 注册** ⇒ 只注册无尾斜杠那一形态。路径参数写 `:id`。
+pub mod attachments;
+
 // M9 anchor scaffold（`LUM-1815` / `docs/62-M9-PLAN.md` §3.1 / §5）：**八个**面一次性声明，
 // 让 M9-1..M9-11 的九个切片不再同时编辑本文件。按形态分两类：
 // - **目录切片**（各自的 `mod.rs` 自己聚合子 router）：`cloud`（3 子文件）、
