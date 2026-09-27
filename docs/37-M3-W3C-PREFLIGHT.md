@@ -12748,3 +12748,77 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 3. 🔴 **逐步数的错误会互相抵消**：B2 的 ⑦ 写 `+3`（实为 `+2`）、B4 写 `+2`（实为 `+3`）⇒ **合计 494 完全正确**。⇒ **总账/终值对不上不是唯一判据**：逐片预测必须**用自己的权威账（这里是 `upstream-routes.tsv` 的 `M3+` 17 行）重新数**，否则两处错误会长期互相掩护。
 4. **「⑨ 快照写者冲突」可以在 0 成本下证伪**：`report.json` 的 365 条 fixture 每条自带 `outcome` ⇒ 候选片的 fixture 是 `unmounted`（会位移）还是 `unevaluable`/不存在（不位移）**一眼可判**，不必先跑再发现。本轮据此把「stage 3 三片同飞是否撞 `report.json`」从「待裁定」变成「已证不冲突」。
 5. **读数是时间的函数，不是 base 的函数**：base 只差 docs ⇒ 四组读数逐字不变 ⇒ 本轮**故意不 bump** 那四片。判据化：`git diff --name-only <上轮 base> <当轮 base>` 只有 docs ⇒ 不 bump；有代码位移 ⇒ 必须 bump。
+
+## §146 12:54Z autopilot cycle（`LUM-2348`）—— **非只读轮**：判据链合并 **#122（M9-1）⇒ `dd415fbd`**；🔴 **兄弟 PR 后合并者变成真冲突**（`docs/32` 同锚点 append ×2）⇒ **解冲突落在 PR 分支上**（merge `3436a13d`）+ 新 head CI 3/3 ⇒ 合并 **#123（M10-2）⇒ `9f88c118`**；派 **M9-2（`LUM-1817`）**；M10-4（`LUM-2106`）备至 rev 5 等槽位；并发 cycle 回归
+
+### §146.1 起手读数（三连 + 逐 PID）
+
+| 读数 | 当轮实测 |
+| --- | --- |
+| base（起手） | **`b2a650a8`**（`git ls-remote origin feat/multica-rs-initial`；自 2026-09-26 07:38Z 起 **29 小时未动**） |
+| GH open PR（起手） | **2** — `#122`（M9-1，head `80ba34b8`）∥ `#123`（M10-2，head `0d3e4754`），两条 `mergeable: clean`，两条 head 上 **CI 3/3 全绿**（`fast` / `contract` / `db`） |
+| daemon（起手） | `running_task_count = 1 / active_task_count = 1` ⇒ **只有 cycle 自身**，**零在飞切片** ⇒ 切片位 **2/2** |
+| 磁盘 | 起手 **28G / 41%**（连采两次一致）⇒ 收尾 28G（**零回收**：全盘无任何 `target/`，`.repos` 1.8G 是全项目共享裸库，只登记不删） |
+| 并发 cycle | 🔴 **有**（第 24 轮）：`LUM-2350` 13:0xZ 起 run（workdir `lum-2350-d09e17febb70`，pid 55283）⇒ 与本 run 同飞 |
+| 本机 `git` | `/usr/bin/git`（**不是** Paperclip broker 包装）；worktree 身份为空 ⇒ 先 `git config --worktree user.name devbox5 && … user.email devbox5@multica.local` |
+| checkout | `multica repo checkout` 落 `main` 线（**第 11 次**）⇒ 起手 `git checkout -B <br> origin/feat/multica-rs-initial`（本轮 HEAD 曾是 `4fc96f30`） |
+
+- 两片**都早已终态**（`in_review`、PR 已开、CI 已绿）⇒ 本轮无须判活，直接进判据链。
+- **两份 PR 的写集零交集**（代码面）：M9-1 = `crates/mc-cloud/src/billing.rs` + `crates/mc-http/src/routes/cloud/billing.rs`(+`/tests.rs`)；M10-2 = `Cargo.lock` + `crates/mc-http/Cargo.toml` + `crates/mc-http/src/routes/probes/ready.rs`(+`/tests.rs`)。**唯一交集 = `docs/32-M3-DAEMON-FACE.md`**。
+
+### §146.2 判据链 A：`#122`（M9-1）—— 形态 ②，五读数逐字命中
+
+| 步 | 读数 |
+| --- | --- |
+| ① `numstat` | `git diff --numstat $(git merge-base base head) head` = `4 文件 +1828 −54`，与 PR API `files` **逐字相等**（`460/37`、`395/17`、`783/0`、`190/0`） |
+| ② 形态 | **②**：`merge-base(base, head) == base == b2a650a8` ⇒ 合并树 ≡ head 树 |
+| ③ 三哈希 | `git merge-tree --write-tree base head` = **`850fc4d1…`** == `head^{tree}` = `850fc4d1…` |
+| ④ 证据 | head 上 **CI 3/3 绿**（`fast` 07:49:17Z / `contract` 07:44:51Z / `db` 07:48:06Z）⇒ **零门禁重跑** |
+| ⑤⑥ 落地 | API `PUT /pulls/122/merge`（钉 40 位 sha + `merge_method=merge`）⇒ **`dd415fbd`**；`git rev-parse dd415fbd^{tree}` = **`850fc4d1…`** == ③ 的预测 |
+
+### §146.3 判据链 B：`#123`（M10-2）—— 🔴 **兄弟 PR 的冲突形态 + 解冲突落在 PR 分支**
+
+**事实链（可复现）**：
+
+1. 合掉 #122 **之前**，#123 与 base 无冲突：`merge-tree --write-tree b2a650a8 pr/123` = `73ce25e4…`，**exit 0**，与 `pr/123^{tree}`（`c6a3d880`）之差 = **只有 `docs/37` §143–145（229 行，base 前进段）⇒ docs-only**（仍满足「零门禁重跑」的两半）。
+2. 合掉 #122 **之后**，base `dd415fbd` 已含 M9-1 的 `docs/32` 段 ⇒ 同一命令变 **exit 1**、`CONFLICT (content): Merge conflict in docs/32-M3-DAEMON-FACE.md`；`git merge-tree --write-tree pr/122 pr/123` 同样 exit 1、**唯一冲突文件也是它**。⇒ **冲突是两片之间的，与 base 无关**，换序也躲不掉（`## 44.` / `### 9.14` 与 `## 46.` / `### 9.16` 的插入锚点**相同**：都在 `## 10.` 之前 + 都在文件尾）。
+3. **解冲突（机械式，逐字保留两侧 + 按号段排序）**：`### 9.14`（M10-2）在前、`### 9.16`（M9-1）在后；`## 44.` 在前、`## 46.` 在后，并在两段之间补一行 `---` 分隔（与前文风格一致）。复核：冲突标记 **0**、号段单调、`docs/32` 由 base 的 6833 行 → **7023 行**。
+4. **落地位置 = PR 分支**：把解冲突的 merge（parents = `0d3e4754` + `dd415fbd`，sha **`3436a13d`**）**推回 `agent/devbox5/6bd9f408ea20`**（不直推 base、不改历史）。
+5. **新 head 自带证据**：push 后 GitHub 按 `pull_request` 事件重跑 **CI 3/3 全绿**（`contract` → `db` → `fast`，本轮实测约 5 分钟）⇒ 解冲突这一提交**本身**过了十道门。
+6. **形态 ③ → ②**：push 后 `merge-base(base, head) == base == dd415fbd` ⇒ `merge-tree --write-tree base head` = **`30b68146…`** == `head^{tree}` = `30b68146…`。
+
+| 步（合并前的最终读数） | 值 |
+| --- | --- |
+| ① `numstat` | `merge-base..head` = `5 文件 +1277 −11`，与 PR API **逐字相等**（`Cargo.lock 1/0`、`mc-http/Cargo.toml 6/0`、`probes/ready.rs 342/11`、`probes/ready/tests.rs 738/0`、`docs/32 190/0`） |
+| ② 形态 | **②**（`base` 是 head 祖先） |
+| ③ 三哈希 | `merge-tree` = head tree = **`30b68146…`** |
+| ④ 证据 | 新 head **CI 3/3 绿** ⇒ 零门禁重跑 |
+| ⑤⑥ 落地 | API merge（钉 `3436a13d…`）⇒ base **`9f88c118`**，落地树 `30b68146…` == 预测 ✓ |
+
+- 🔴 **① 的读数会因解冲突而变，必须重新对账**：`docs/32` 的 additions 由 **191 → 190**。逐行多重集比对（`git diff -U0` 的 `+` 行集合）证明差异**只有一个空行**（`Counter(A) - Counter(B) == {'': 1}`，反向为空）⇒ **净内容零增减**，代码 4 个文件逐字相等。
+- 收尾：GH `pulls?state=open` = **0**；`dd415fbd` → **`9f88c118`**。
+
+### §146.4 ⑦/⑦b/⑩ 在当轮 base（`9f88c118`）上当场重跑；⑨ 按「门输入恒等」继承（**第 13 次**）
+
+- ⑦ = `upstream 456 (commit f41fae6b08fb) | local 485 registered | baseline 473`、`implemented 400 real + 3 placeholder = 403 / 456`、`known_gap 53`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner: M9=25  M3+=16  M3=11  M10=1`
+  —— 与 §143/§144/§145 的差值**恰好等于两片的 delta 之和**：`local 475 + 8 + 2 = 485` ✓、`implemented 393 + 8 + 2 = 403` ✓（real 390 + 8 + 2 = 400）、`known_gap 63 − 8 − 2 = 53` ✓、`owners.M9 33 → 25`（−8）✓、`owners.M10 3 → 1`（−2）✓。
+- ⑦b = `registered upstream-key literals 487` / `0 defect`（`475 + 8 + 2 = 485` 个键 + 2 条别处注册 ⇒ 与 ⑦ 的 `local` 不是同一个量，勿混用）。
+- ⑩ = `limit=800  scanned=1230  baseline=10  violations=0`（`1228 + 1 + 1 = 1230`，两片各加一个测试文件）。
+- ⑨ 三个门输入与 §143 验收树**逐 blob 恒等**（`crates/mc-conformance/report.json` = `db173fe8409d514fc6d52b1f7844d7b051916e0a`、`crates/mc-conformance` tree = `6a3984fee8985cb0405dfe73c656e58d5ab0db06`、`docs/fixtures` tree = `e331e706ac95d84dd9a47061efe5065e12ef6a24`）⇒ 主动**不冷编**，继承 `365 fixtures / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`。
+- **不变式复核**：`implemented + known_gap = 403 + 53 = 456` ✓；`regressions 0` ✓；`unclaimed 0` ✓；`baseline 473` 未动 ✓（唯一刷新者仍是两个 INT）。
+
+### §146.5 派发、备妥与号段（槽位 1 → 0）
+
+- **派发 1 片**：`LUM-1817`（M9-2，7 路由）—— 描述 rev 2 → **3**（追加「起手补充 3」：当轮 base/⑦/⑦b/⑩/⑨ + 号段 `## 47.` + `### 9.17` + delta 平移预测）；`assign --to-id … --no-start` + `status todo` 两步 ⇒ run 起手（workdir `lum-1817-91256411808f`，pid 58366）。
+- **备妥 1 片、未派**：`LUM-2106`（M10-4，1 路由）—— 描述 rev 4 → **5**（追加「起手补充 4」：硬前置 M10-2 已终态并可动 `mc-feature-flags/Cargo.toml` + 根 `Cargo.lock`；`## 45.`/`### 9.15`；预期 `owners.M10 1 → 0`；⑨ 由它自己刷 `report.json`）。**未派的原因 = 槽位**：派完 M9-2 后 daemon 实测 **3/3**（cycle 自身 ∥ `LUM-1817` ∥ **并发 cycle `LUM-2350`**）⇒ 零切片位。⇒ 它即下一轮空位出现时的**第一顺位**，可直接两步起跑。
+- **号段（当轮 `grep` 实测）**：`docs/32` 顶层末号 = **`## 46.`**、`### 9.x` 末号 = **`### 9.16`** ⇒ 递补表：`## 45.`/`### 9.15` = M10-4（`LUM-2106`，已落地在 base，尚未被任何片占用）、`## 47.`/`### 9.17` = M9-2（已派）、`## 48.`/`### 9.18` = M9-3（`LUM-1818`）、`## 49.`/`### 9.19` = M9-11（`LUM-2116`）。
+- **未 bump 的两片**（`LUM-1818` / `LUM-2116`）：判据沿用 §145.5 —— 当轮 base 的代码位移**全部**来自两片自己的产物（`git diff --name-only b2a650a8 9f88c118` 只有两片的写集）⇒ §144 给它们写的读数**已过期**（`local 475` 已变 `485`）。⇒ 🔴 **口径修订**：§145.5 的「不 bump」只在 base **无代码位移**时成立；本轮 base 有位移 ⇒ 这两片**应当**在下一轮派发前刷新（与 M10-4 同理）。本轮因槽位为 0 且它们不在第一顺位，**登记欠账**、不在本轮写。
+
+### §146.6 lesson
+
+1. 🔴 **兄弟 PR 的「谁先合」是一步不能省的预判**：合第一片**之前**必须算 `merge-tree --write-tree <第一片的落地树预测> <第二片的 head>`；本轮该命令 **exit 1**。⇒ 判据化动作：**合第一片前把「第二片对『第一片落地后的 base』」预演一遍**，红了就**先把第二片的解冲突准备好**（本轮因此没有在半途才发现）。
+2. 🔴 **解冲突的落地位置 = PR 分支**（不是本地产物、更不是直推 base）：推 merge commit 到片分支可以**一次拿到三重收益** —— ① 解冲突提交本身过 CI（新 head 3/3 绿）；② 形态 ③（非祖先）**自动变形态 ②**（base 成为 head 祖先）⇒ 合并落地树 ≡ 已验收的 head 树；③ 免掉「本地解完再跑一遍 `--with-db`」的整轮构建。代价 = 一次 push + 一次 CI 等待（本轮 ≈5 分钟）。
+3. 🔴 **`git merge-tree --write-tree` 冲突时仍打印树哈希** ⇒ 它**不能**当 ③ 读数，判据是 **exit code**（本轮 `exit=1` + `CONFLICT (content)`）。旧定式只写「单哈希」，此处**补钉**：`exit=0` 是「可作读数」的前置。
+4. 🔴 **`multica issue update --description-file <不存在的路径>` exit 0 且打印 `✓ Markdown clean`，但不写库**（本轮 `mv` 失败 ⇒ rev 停在 2）。⇒ 旧口径「写入后回读 `revision`」是**唯一**判据，本轮第 1 次实证其必要（第二条 `## 起手补充 3` 是否进库都查不出来时，只有 `revision` 会告诉你）。
+5. **并发 cycle 会吃掉切片位预算**（第 24 轮）：起手 `1/3`（cycle + 零在飞）本可派 2 片，但派第 1 片时 `LUM-2350` 已经起 run ⇒ 派完即 `3/3`。⇒ 「每次 `status todo` **之前**重读 daemon」的老口径本轮直接避免了一次 4/3 超编。
+6. **`docs/32` 是两个号空间的共享热点**：`## N.`（顶层，末号 `## 46.`）与 `### 9.x`（索引系列，末号 `### 9.16`）**各自独立递增**，两条相邻片只要插入锚点相同就必然冲突 ⇒ 判据化：**凡写 `docs/32` 的片同轮在飞 ≥2，就默认它们在 `docs/32` 上冲突**，按 §146.3 的机械解处理，不必逐个去查锚点。
