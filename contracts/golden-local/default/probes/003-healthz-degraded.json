@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "probes-local/003-HealthzDegraded-GET-healthz",
+  "method": "GET",
+  "path": "/healthz",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 503,
+    "json_subset": {
+      "status": "not_ready",
+      "checks": {
+        "db": "error",
+        "migrations": "unknown"
+      }
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "003-HealthzDegraded-GET-healthz",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "/healthz 与 /readyz 同款降级体。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

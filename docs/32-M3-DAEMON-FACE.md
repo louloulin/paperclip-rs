@@ -8433,3 +8433,75 @@ known_gap −5 / M3+ −5`，与 §155 对 B1 的预测**逐项吻合**。
 + `run_posts_one_ordinary_comment_and_touches_usage` 钉行为）。**零** `health::placeholder`。
 
 ---
+
+### 9.24 M10-5（`LUM-2107`）：本仓自造面 `contracts/golden-local/**` 的落点与**工具能力边界**（**索引段**）
+
+**0 路由 / 0 注册键 / 0 生产代码改动。** 本片是 config / probes 四条路由**字段级契约**的
+唯一机器判据承担者：上游抽取面（`contracts/golden/**`，365 条）的 `json_subset` **100% 为空**
+⇒ 它只证明"挂上了 + 状态码对"，证明不了字段集。
+
+- 落点：`contracts/golden-local/{default,token}/**`（13 条 fixture）+ 两份
+  `report.json` + `contracts/golden-local/PIN` + `scripts/mc_golden_local_check.sh`。
+- 入口：`bash scripts/mc_golden_local_check.sh`（`--write` 重生成报告）。
+  🔴 **不在任何 CI job 里**（`gates.sh` 的 `ALL_GATES` 不含它）⇒ 这是本片唯一的未挂 CI 判据。
+
+#### 🔴 四条从 `mc-conformance` **源码**推出来的能力边界（原设计里三条被高估了）
+
+1. **`json_subset` 是纯"存在性子集"**（`lib.rs:502-537`）：期望里的每个键都必须在响应里**存在**。
+   ⇒ **它无法断言"键不得出现"**。原覆盖面表的第 4/5 条（`cdn_signed` 不出现、omitempty 簇不出现）
+   在本工具里**不可表达**；这些键集由 `config.rs` / `live.rs` / `ready.rs` 自己的**纯序列化
+   键集用例**钉住，不由本地面钉。
+2. **JSON 对象的键序不可断言**：比较走 `a.get(k)`，与顺序无关。⇒ `feature_flags` 的
+   `BTreeMap` 排序键序（对齐上游 Go `map[string]bool`）**没有**本地面判据。
+3. 🔴 **`Expect.headers` 是一个死字段**：`judge()`（`lib.rs:540-609`）从头到尾**没有读过它**。
+   ⇒ 401 那条的 `WWW-Authenticate: Bearer realm="metrics"` **不能**用 fixture 断言；
+   行为判据在 `probes/realtime.rs` 的 `tests.rs`。
+4. **`/health/realtime` 的四态访问门在 handler 里是 if/else 二选一**（`realtime.rs:130-146`）：
+   token 已设 ⇒ 只走 bearer（不匹配即 401）；token 未设 ⇒ 只走 loopback（不满足即 404）。
+   ⇒ **401 与 404 互斥，一条报告装不下** ⇒ 拆成 `default/`（token 未设）与 `token/`（已设）
+   **两个 golden 根**，由脚本钉住各自 env 分别回放。状态 #3（token 未设 + loopback ⇒ 200）
+   **本工具不可达**（harness 走 `oneshot`，不注入 `ConnectInfo` ⇒ 恒 fail closed 走 #4）。
+
+#### 当轮实测（base `351af5e7`，三条零编译门 + 全量门禁 8/8）
+
+- `default/` 10 条 `pass 10 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 0`；
+  `token/` 3 条 `pass 3 / 同样五个 0`。两份 `contract_equivalence_rate` 都是 **1.0**
+  （上游面是 0.0877）—— 这正是本地面存在的理由，**是预期形态不是缺陷**。
+- 反向变异两次都变红（`rc=1`，`worst mismatch`）：① 往能力键期望集里加一个实现不吐的键
+  （模拟"实现丢键"）② 把 `/readyz` 的期望状态码从降级 `503` 改成 `200`。还原后 `rc=0`。
+- 🔴 门禁首次跑出 **ENOSPC（os error 28）**：④⑤ 退出码 101 **不是**测试红，是
+  `target/debug/incremental` 涨到 9.6G 把盘吃满。`rm -rf incremental` + `deps` 同 stem
+  留最新（回收 0.64G）后重跑 ⇒ ④⑤ `exit 0`、全量 `bash scripts/gates.sh` **8/8 绿**。
+  形态与 09-26 那次同源：**门红先 `grep -a 'os error 28' <log>`，再看断言**。
+- ⑦ `local 525 / 436 real + 2 ph = 438 / 456 / gap 18 / unclaimed 0 / regression 0 /
+  local_only 8`（`438+18=456` ✅），⑦b `526`，⑩ `scanned 1263 → 1264 / violations 0`
+  （+1 = 新增的 `.sh` 入 `git ls-files`）。**⑨ `report matches` 逐字不变** ⇒ 上游 365 分母未动。
+- 已知耦合：`config-local/006` 断言 `server_version == "0.1.0"`，即钉住 `mc-http` 的 crate
+  版本。版本号一变，该 fixture 与两份 `report.json` 同时漂移 ⇒ 走 `--write` 重生成。
+
+---
+
+## 54. M10-5（`LUM-2107`）：`contracts/golden-local/**` 的落点与偏离登记
+
+本片 0 路由、0 注册键、0 生产代码改动，**不引入任何偏离**；`## 54.` 的内容是
+**「本仓自造面 vs 上游抽取面」的分工登记** + 一组**工具能力边界**（见 `### 9.24`）。
+
+### 54.1 两个面的分工
+
+| 面 | 目录 | 条数 | 断言什么 | 谁写 |
+| --- | --- | ---: | --- | --- |
+| 上游抽取面 | `contracts/golden/**` | 365 | 挂载 + 状态码（`json_subset` 全空） | `scripts/extract_upstream_fixtures.py`，pin `90e0bdf` |
+| 本仓自造面 | `contracts/golden-local/**` | 13 | **字段级**（`json_subset` 非空）、四态访问门 | 手写，M10-5 |
+
+🔴 **绝不写 `contracts/golden/**`**（改它就是改 ⑨ 的 365 分母）；🔴 **不复用
+`crates/mc-conformance/report.json`**（`Report` 把 `golden_dir` 逐字写进 JSON，本地面拿去比
+必然漂移）⇒ 两个根各带一份自己的 `report.json`，`--golden` 传**仓库相对路径**。
+
+### 54.2 偏离与未接线
+
+- **无路由偏离。** 13 条 fixture 全部 `pass`，`mismatch 0 ∧ unmounted 0`。
+- **未接线（唯一一条）**：`scripts/mc_golden_local_check.sh` **不在 CI 里**
+  （`gates.sh` 的 `ALL_GATES` 无此项，`.github/workflows/ci.yml` 的 `contract` job 只跑上游面）。
+  本片 0 路由 ⇒ ⑦ 与 ⑨ 必然逐字不变 ⇒ 那两个 job 的绿灯**不覆盖**本地面。
+- **断言不了、改由单测承担**的：`json_subset` 表达不了的键缺失 / 键序 / 响应头三类断言
+  （四条能力边界见 `### 9.24`）。

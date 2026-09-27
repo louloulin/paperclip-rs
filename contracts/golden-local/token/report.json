@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "golden_dir": "contracts/golden-local/token",
+  "bindings": {
+    "user_id": "00000000-0000-0000-0000-000000000001",
+    "workspace_id": "00000000-0000-0000-0000-000000000002"
+  },
+  "totals": {
+    "fixtures": 3,
+    "pass": 3,
+    "mismatch": 0,
+    "unmounted": 0,
+    "placeholder": 0,
+    "unevaluable": 0,
+    "by_actor": {
+      "anonymous": {
+        "pass": 3
+      }
+    },
+    "by_via": {
+      "router": {
+        "pass": 3
+      }
+    },
+    "tiers": {
+      "stateless": {
+        "pass": 3
+      }
+    }
+  },
+  "contract_equivalence_rate": 1.0,
+  "mounted_equivalence_rate": 1.0,
+  "offline_decidable": {
+    "fixtures": 3,
+    "pass": 3
+  },
+  "fixtures": [
+    {
+      "id": "realtime-local/001-RealtimeTokenOk-GET-health-realtime",
+      "domain": "realtime-local",
+      "method": "GET",
+      "path": "/health/realtime",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "realtime-local/002-RealtimeTokenMissing-GET-health-realtime",
+      "domain": "realtime-local",
+      "method": "GET",
+      "path": "/health/realtime",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 401,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 401,
+      "offline": "pass",
+      "database": null,
+      "detail": "status matched"
+    },
+    {
+      "id": "realtime-local/003-RealtimeTokenWrong-GET-health-realtime",
+      "domain": "realtime-local",
+      "method": "GET",
+      "path": "/health/realtime",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 401,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 401,
+      "offline": "pass",
+      "database": null,
+      "detail": "status matched"
+    }
+  ]
+}

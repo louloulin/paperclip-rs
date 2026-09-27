@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "realtime-local/001-RealtimeTokenOk-GET-health-realtime",
+  "method": "GET",
+  "path": "/health/realtime",
+  "path_params": {},
+  "query": {},
+  "headers": {
+    "Authorization": "Bearer golden-local-token"
+  },
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {
+      "connects_total": 0,
+      "active_connections": 0,
+      "redis": {},
+      "daemonws": {
+        "connects_total": 0,
+        "wakeup_delivered_hit_total": 0
+      }
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "001-RealtimeTokenOk-GET-health-realtime",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "四态访问门之 #1。14 个顶层键 = 13 realtime + daemonws；计数器在纯回放进程里恒 0。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "probes-local/002-ReadyzDegraded-GET-readyz",
+  "method": "GET",
+  "path": "/readyz",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 503,
+    "json_subset": {
+      "status": "not_ready",
+      "checks": {
+        "db": "error",
+        "migrations": "unknown"
+      }
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "002-ReadyzDegraded-GET-readyz",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "stateless 层用不可达库（127.0.0.1:1）⇒ 恒走降级分支；三键无 omitempty，必现。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

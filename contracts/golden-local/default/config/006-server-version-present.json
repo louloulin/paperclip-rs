@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "config-local/006-ServerVersionPresent-GET-api-config",
+  "method": "GET",
+  "path": "/api/config",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {
+      "server_version": "0.1.0"
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "006-ServerVersionPresent-GET-api-config",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "仅自建版的第 17 个字段。⚠️ 耦合 mc-http 的 crate 版本：版本号一变本 fixture 与 report.json 同时漂移，重生成见 mc_golden_local_check.sh --write。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

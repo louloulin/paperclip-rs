@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "golden_dir": "contracts/golden-local/default",
+  "bindings": {
+    "user_id": "00000000-0000-0000-0000-000000000001",
+    "workspace_id": "00000000-0000-0000-0000-000000000002"
+  },
+  "totals": {
+    "fixtures": 10,
+    "pass": 10,
+    "mismatch": 0,
+    "unmounted": 0,
+    "placeholder": 0,
+    "unevaluable": 0,
+    "by_actor": {
+      "anonymous": {
+        "pass": 10
+      }
+    },
+    "by_via": {
+      "router": {
+        "pass": 10
+      }
+    },
+    "tiers": {
+      "stateless": {
+        "pass": 10
+      }
+    }
+  },
+  "contract_equivalence_rate": 1.0,
+  "mounted_equivalence_rate": 1.0,
+  "offline_decidable": {
+    "fixtures": 10,
+    "pass": 10
+  },
+  "fixtures": [
+    {
+      "id": "config-local/001-AlwaysPresentStrings-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "config-local/002-AllowSignupDefaultOpen-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "config-local/003-CapabilityFlagsTrue-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "config-local/004-IssueCreatePropertiesFailClosed-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "config-local/005-FeatureFlagsSixPublicKeys-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "config-local/006-ServerVersionPresent-GET-api-config",
+      "domain": "config-local",
+      "method": "GET",
+      "path": "/api/config",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "probes-local/001-LiveStatusOk-GET-health",
+      "domain": "probes-local",
+      "method": "GET",
+      "path": "/health",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 200,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 200,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "probes-local/002-ReadyzDegraded-GET-readyz",
+      "domain": "probes-local",
+      "method": "GET",
+      "path": "/readyz",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 503,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 503,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "probes-local/003-HealthzDegraded-GET-healthz",
+      "domain": "probes-local",
+      "method": "GET",
+      "path": "/healthz",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 503,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 503,
+      "offline": "pass",
+      "database": null,
+      "detail": "status + json_subset matched"
+    },
+    {
+      "id": "probes-local/004-RealtimeNoTokenNonLoopback-GET-health-realtime",
+      "domain": "probes-local",
+      "method": "GET",
+      "path": "/health/realtime",
+      "actor": "anonymous",
+      "via": "router",
+      "status_expected": 404,
+      "source": "contracts/golden-local:0",
+      "outcome": "pass",
+      "tier": "stateless",
+      "status_observed": 404,
+      "offline": "pass",
+      "database": null,
+      "detail": "status matched"
+    }
+  ]
+}
