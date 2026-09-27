@@ -2794,6 +2794,7 @@ dependencies = [
  "chrono-tz",
  "futures-util",
  "hex",
+ "hmac 0.12.1",
  "http-body-util",
  "hyper 1.11.1",
  "mc-auth",

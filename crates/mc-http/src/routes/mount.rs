@@ -153,6 +153,23 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 就是有条件的（上游 `if _, ok := store.(*storage.LocalStorage); ok`）⇒ 条件在
         // `uploads::mount()` 里判，返回**空** router 时这条键根本不存在。
         .merge(mount_slice_uploads(state.clone()))
+        // ----- M10-B4（LUM-2115）：签名头像面 + realtime hub 端点 2 条 -----
+        // `GET /api/avatars/:sig/*key`（`router.go:1456`）+ `GET /ws`（`router.go:1424`）。
+        // ⚠️ 与上一行不同：这一行**不带** `state.clone()` —— 两条都是**无条件**挂载。
+        // `/uploads/*` 的注册本身是有条件的（上游 `if _, ok := store.(*storage.LocalStorage)`），
+        // `/api/avatars/*` 没有这层（上游注释逐字：桶私有时头像才会走这条路）。
+        .merge(mount_slice_avatars_ws())
+}
+
+/// M10-B4（`LUM-2115`）的头像 + `/ws` 2 条切片。
+///
+/// **这是 M10-0 锚点冻结面的一处最小破例**：`routes/mod.rs` / `routes/mount.rs` 两行
+/// 由 `docs/64` §3.1 的锚点冻结，而本片的 2 条键**不在**锚点预建的 `probes/` /
+/// `config.rs` 面里 ⇒ cycle §145 授权「各只加不改」。登记见 `docs/32` §9.23。
+fn mount_slice_avatars_ws() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(super::avatars::router())
+        .merge(super::ws::router())
 }
 
 /// M10-B3（`LUM-2114`）的 quick-action 6 条切片。

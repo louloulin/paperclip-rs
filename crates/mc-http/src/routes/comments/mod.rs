@@ -63,6 +63,7 @@ use crate::routes::invitations::not_found;
 use crate::state::AppState;
 
 mod dto;
+mod sub_issues;
 
 use self::dto::ts;
 pub use self::dto::{
@@ -114,6 +115,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/comments/:commentId/sub-issues",
             post(create_comment_sub_issue),
         )
+        // M10-B4（LUM-2115）：`sub-issue-preview`（上游 `router.go:2160`，`Route` 里的
+        // 子路由 `Get("/sub-issue-preview")`，**不是** `Get("/")`）⇒ 与本表其余 plain
+        // 子路由同款：只注册无尾斜杠形态。实现见 `comments/sub_issues.rs`。
+        .merge(sub_issues::router())
 }
 
 // ---------------------------------------------------------------------------

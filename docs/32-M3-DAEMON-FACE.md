@@ -8434,6 +8434,39 @@ known_gap −5 / M3+ −5`，与 §155 对 B1 的预测**逐项吻合**。
 
 ---
 
+### 9.23 M10-B4（`LUM-2115`）：头像 + `/ws` + sub-issue-preview 3 行的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 53.`（53.1–53.5）**。
+
+**写集（9 个文件 = 5 新建 + 4 既有，全文见 §53.1 的表）**：`routes/avatars.rs`（**新建**）·
+`routes/ws.rs`（**新建**）· `routes/comments/sub_issues.rs`（**新建**）·
+`routes/comments/sub_issues/{snapshot,tests}.rs`（🔴 门 ⑩ 拆分，**新建**，全文见 §53.3）·
+`routes/mod.rs`（+2 行）· `routes/mount.rs`（+1 行 +1 函数）· `routes/comments/mod.rs`（+2 行）·
+`crates/mc-http/Cargo.toml`（🔴 写集外扩，+1 条 `hmac` 边）。
+
+**两处最小冻结破例外**（各只加不改）：`routes/mod.rs`、`routes/mount.rs`。
+
+**授权矩阵（3 条，全文见 §53.2）**：`/api/avatars/*` **无认证**、四种失败**一律 404**；
+`/ws` 缺工作区 **400** / 认证失败 **401** / 非成员 **403**，**只读复用** `mc-ws` hub；
+`sub-issue-preview` 人类闸 **403** / 跨租户 **404** / 三类失败 **409 · 422 · 500**。
+
+**路径穿越三条反例**（与 M10-B2 的 `uploads/serve.rs` 逐字复用同一套判据）：`..`（含 `%2e%2e`
+解码后）与绝对路径由 `guard_static_key` 这一**纯函数**在读盘之前拒；**符号链接逃逸**由
+`resolve_under` 的包含性判定拒。三者对外**都是 404**。
+
+**登记的偏离（7 条，全文见 §53.4）**：D-1 签名失败是 **404** 不是 403；D-2 `/ws` **首帧认证
+未实现**；D-3 `/ws` 保留上游裸错误体；D-4 🔴 写集外扩到 `Cargo.toml`（`hmac`，零新包）；
+D-5 preview 的 400/403 合并成 404；D-6 时间戳字面量（`AutoSi` vs `RFC3339Nano`）；
+D-7 `comment.type` 自己查列。
+
+**门禁**：⑦ `local 527 → 530`、`implemented 440 → 443`、`known_gap 16 → 13`、不变式
+`443 + 13 = 456` ✓、🔴 **`gaps by owner` 里 `M3+` 归零（`{M9: 13}`）⇒ `M3+` 线整条退休**、
+`placeholder` 停在 2、`regressions 0`、`local_only 8` 不增；⑦b `528 → 531` / **0 defect 0 warning**；
+⑨ **逐字不变**（新挂载键 ∩ golden fixture = ∅ ⇒ **不**重生成 `report.json`）；
+⑩ `scanned 1271 → 1276 / violations 0`；门 ⑤ `mc-http --lib` **635 / 0**，本片 **24 条**新用例。
+
+---
+
 ### 9.24 M10-5（`LUM-2107`）：本仓自造面 `contracts/golden-local/**` 的落点与**工具能力边界**（**索引段**）
 
 **0 路由 / 0 注册键 / 0 生产代码改动。** 本片是 config / probes 四条路由**字段级契约**的
@@ -8478,6 +8511,93 @@ known_gap −5 / M3+ −5`，与 §155 对 B1 的预测**逐项吻合**。
   （+1 = 新增的 `.sh` 入 `git ls-files`）。**⑨ `report matches` 逐字不变** ⇒ 上游 365 分母未动。
 - 已知耦合：`config-local/006` 断言 `server_version == "0.1.0"`，即钉住 `mc-http` 的 crate
   版本。版本号一变，该 fixture 与两份 `report.json` 同时漂移 ⇒ 走 `--write` 重生成。
+
+---
+
+## 53. M10-B4（`LUM-2115`）：头像 + `/ws` + sub-issue-preview 3 行的落点与偏离登记
+
+> 号段起手复核（当轮实测）：`## 53.` 与 `### 9.23` 的命中数**都是 0**（空置）
+> （`## 51.` / `### 9.21` = 已合的 M10-B2、`## 52.` / `### 9.22` = 已合的 M10-B3、
+> `## 54.` / `### 9.24` = 已合的 M10-5）。
+>
+> **本片是 `M3+` 尾账的最后 3 行** ⇒ 交片后 **`gaps by owner` 里 `M3+` 归零**，
+> 该 owner 线整条退休（见 53.5）。
+
+### 53.1 写集（9 个文件 = 5 新建 + 4 既有，各一条）
+
+| # | 文件 | 动作 |
+|---|---|---|
+| 1 | `crates/mc-http/src/routes/avatars.rs` | **新建**（`GET /api/avatars/:sig/*key`） |
+| 2 | `crates/mc-http/src/routes/ws.rs` | **新建**（`GET /ws`） |
+| 3 | `crates/mc-http/src/routes/comments/sub_issues.rs` | **新建**（路由面 / 错误面 / 纯函数） |
+| 4 | `crates/mc-http/src/routes/comments/sub_issues/snapshot.rs` | **新建**（🔴 门 ⑩ 拆分，见 53.3） |
+| 5 | `crates/mc-http/src/routes/comments/sub_issues/tests.rs` | **新建**（证据面） |
+| 6 | `crates/mc-http/src/routes/mod.rs` | +2 行 `pub mod avatars;` / `pub mod ws;`（**最小冻结破例外**） |
+| 7 | `crates/mc-http/src/routes/mount.rs` | +1 行 `.merge(...)` + 1 个新函数（**最小冻结破例外**） |
+| 8 | `crates/mc-http/src/routes/comments/mod.rs` | +2 行 `mod sub_issues;` + 1 个 `.merge(...)`（M2-B 的文件，**只追加**） |
+| 9 | `crates/mc-http/Cargo.toml` | 🔴 **写集外扩**，+1 条 `hmac` 边（见 D-4） |
+
+`Cargo.lock` 随 `Cargo.toml` 重新生成（`hmac` **已是 workspace 成员** ⇒ **零新包**，
+只多 `mc-http` 依赖列表一行）。
+
+**两处最小冻结破例外**（cycle §145 逐条授权，**各只加不改**）：`routes/mod.rs` 与
+`routes/mount.rs`。`routes/comments/mod.rs` **不属** M10-0 冻结面（M2-B 的文件）⇒ 那里不是破例。
+
+### 53.2 三条路由的授权矩阵
+
+| 路由 | 上游 | 认证 | 形状 |
+|---|---|---|---|
+| `GET /api/avatars/:sig/*key` | `router.go:1456` → `avatar.go:398` `ServeAvatar` | **无**（签名即凭据） | 签名错 / 未知 key / 非图片 / 非 avatar-class **一律 404** |
+| `GET /ws` | `router.go:1424` → `realtime/hub.go:775` | 会话 cookie 或 dev-mode 头 | 缺工作区 **400**；认证失败 **401**；非成员 **403** |
+| `GET /api/comments/:commentId/sub-issue-preview` | `router.go:2160` → `source_context.go:406` | 会话 + 成员门 + **人类闸** | 人类闸 **403**；跨租户 **404**；三类失败 **409 / 422 / 500** |
+
+`/ws` **只读复用** `mc_ws::hub::Hub::handle_websocket`（硬前置 M10-0 / 「不新写 hub」）——
+与 `routes/daemon/lifecycle.rs::ws` 同一个入口；hub 侧的连接表 / 扇出 / 去重 / 慢客户端驱逐 /
+收发泵**一行都没有重写**。
+
+### 53.3 🔴 门 ⑩ 拆分记录（写集从 3 个新文件长到 5 个）
+
+`sub_issues.rs` 首版 **1097** 行 ⇒ 门 ⑩ 判红（`不在基线里且超过 800 行上限`）
+⇒ 按 `routes/comments/dto.rs`（M2-B）与 `routes/uploads/serve.rs`（M10-B2）的同一手法拆成
+`sub_issues.rs`（**453**）+ `sub_issues/snapshot.rs`（**413**）+ `sub_issues/tests.rs`（**248**）。
+`scripts/file_size_baseline.tsv` **一个字节未动**（新文件不得进基线）。
+
+### 53.4 登记的偏离
+
+- **D-1**：切片描述写「未签名 ⇒ **403**」；上游 `ServeAvatar` 对**四种**失败**一律**
+  `http.NotFound`（注释逐字：为了「让这条路由不是任何一种情况的 oracle」）⇒ 本仓照搬 **404**。
+- **D-2**：`/ws` 的**首帧认证**（上游「先升级、再用第一帧交 token」）**未实现**：本仓在升级**之前**
+  判身份（dev-mode 头 + cookie 都拿不到 ⇒ 401）。理由：`Hub::handle_websocket` 一次性接管
+  `on_upgrade`，插首帧握手就得绕开 hub 的升级入口 —— 那正是「不新写 hub」不许做的事。
+- **D-3**：`/ws` 的错误体**逐字保留上游的裸 `{"error":"…"}`**，不是全仓统一的
+  `{"error":{"code","message"}}`：它与 `Hub::handle_websocket` 自己回的 `{"error": …}`
+  是**同一个解析器**的两种输入。
+- **D-4**：🔴 **写集外扩**到 `crates/mc-http/Cargo.toml`（+1 条 `hmac` 边）。`hmac` 已是
+  workspace 成员 ⇒ **零新包**；若不引这条边就得手写 HMAC-SHA256。
+- **D-5**：`sub-issue-preview` 的**非法 id / 不存在 / 跨租户**合并成 **404**（上游分别是
+  `parseUUIDOrBadRequest` 400 与 `workspaceMember` 403）—— 与 `comments/mod.rs` 的
+  「跨租户探测一律 404、不泄露评论是否存在」口径一致。
+- **D-6**：时间戳字面量用 chrono 的 `SecondsFormat::AutoSi`，上游是 Go 的 `RFC3339Nano`
+  （去尾部零的分数秒）⇒ 摘要的**输入字节**可能不同，但摘要只在本仓内自洽
+  （消费它的 `POST …/sub-issues` 本仓仍是 501）。
+- **D-7**：`comment.type` **不在** `CommentRow` 的选列里（见 `comments/mod.rs` 的偏差清单）
+  ⇒ 本文件**自己**查这一列并照上游判 `anchor.Type != "comment"` ⇒ 409。
+
+### 53.5 门禁（当轮实测，base `332b498c`）
+
+- ⑦ `local 527 → 530`、`implemented 440 → 443`（**441 real + 2 placeholder**）、
+  `known_gap 16 → 13`、`baseline 473` 不动、`unclaimed 0`、`regressions 0`、`local_only 8` 不增；
+  不变式 **`443 + 13 = 456` ✓**。
+  🔴 **`gaps by owner: M9=13 / M3+=3 → {M9: 13}`** ⇒ **`M3+` 归零、该 owner 线整条退休**。
+  `placeholder` 停在 2 不动（本片三条全是纯新增，无占位升级）。
+- ⑦b `528 → 531` 注册字面量 / **0 defect / 0 warning**。
+- ⑨ **逐字不变**（`365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`），
+  **不重生成 `report.json`** —— 静态查证（§158.2 的收紧判据）：三条新挂载键在
+  `contracts/golden/` 的命中数 `avatars` **0**、`sub-issue-preview` **0**、`/ws` 命中的两处
+  是 `/api/daemon/ws`（另一条已注册键）与工作区 slug `ws-1` ⇒ **新挂载键 ∩ golden fixture 键 = ∅**。
+- ⑩ `scanned 1271 → 1276 / baseline 10 / violations 0`。
+- 用例：门 ⑤ `mc-http --lib` **635 passed / 0 failed**，本片 **24 条**新用例
+  （avatars 9 + sub_issues 10 + ws 5），三条路由**各至少一条路由级用例**；**零** `health::placeholder`。
 
 ---
 
