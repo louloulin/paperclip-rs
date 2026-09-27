@@ -14209,3 +14209,34 @@ M10-B2 的 `porcelain` 里有 **`scripts/route_parity.py`（+16/−3）与 `scri
 **号段**：`docs/32` 下一空号仍是 `## 55.`/`### 9.25`（`51`=B2 在飞、`52`=B3 已合、`53`=B4 已预留、`54`=M10-5 在飞，当轮 `grep -c` 四者全 0）；`docs/37` 本节 §161 ⇒ 下轮 **§162**。
 
 **观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
+
+---
+
+## §162 —— 05:00 cycle（`LUM-2382`）零收割监控轮（0 PR + daemon 3/3 第 6 次满载）；🔴 本轮产出：**派发期的峰值算式不保证稳态存活，余量要按「当下可回收量」量**
+
+**base** `bd5f1f7f`（= §161 docs-only 直推；`git ls-remote` 实测，**第 16 次** `multica repo checkout` 落 `main` 线 `4fc96f30` ⇒ 仍须 `git checkout -B … origin/feat/multica-rs-initial`）。**GH 0 open PR**。**daemon 3/3** = cycle ∥ `LUM-2107`（M10-5）∥ `LUM-2113`（M10-B2）⇒ **空位 0，零派发**。**PG 5432 `online`**（起手必查项，第 8 轮例行）。起手 `df -h /` 连采两次 = **6.8G / 86%**（`§161` 收尾记 18G ⇒ 20 分钟内被两片冷建吃掉 11.2G）。
+
+**两片均判活**（判活三件套取二）：`LUM-2107` 15 分钟内 `target/` 命中 20287 个文件、`.logs/2107_gates45.log` 在写，`porcelain` 17 项全在 `contracts/golden-local/**`（门 ⑨ 生成物）、**0 提交/未推/无 PR**；`LUM-2113` `target/` 5326、`.logs/2113_gates45.log` 在写、`porcelain` 9 项（2 改 + 1 新 + `routes/uploads/` + **2 个门禁脚本**）、**0 提交/未推/无 PR**。两片都处在**门禁迭代段**（`2107` 8 门 `6/8`→`--only` 补跑；`2113` 10 门 `7/10`→`8/10`→`--only` 3/3 全绿）⇒ **不介入**（§158 判据）。
+
+**门读（base `bd5f1f7f` 上当场重跑，零编译门，1.4s）**：⑦ `local 525 / 456 / baseline 473 / implemented 436 real + 2 ph = 438 / known_gap 18 / unclaimed 0 / regression 0 / local_only 8`、`gaps by owner: M9=13  M3+=5`；⑦b `526 literals / 0 defect 0 warning`；⑩ `scanned 1263 / baseline 10 / violations 0`；`438+18=456` ✓。**与 §161 逐字相同（第 9 次）**，理由命令化：`git diff --name-only 351af5e7 bd5f1f7f -- crates contracts docs/fixtures scripts Cargo.lock migrations | wc -l` = **0**（本轮特意把 `scripts` 也纳入否定清单，因为 §161 刚判出在飞片在改门禁脚本）。⑨ 继承 `365/32/23/4/0/306`（**不冷编**：盘 6.8G，且门 ⑨ 冷编实测 14G）。
+
+### 🔴 判据（本轮唯一实质产出）：**峰值算式是「派发准入」，不是「稳态存活」；余量必须按当下可回收量现量**
+
+§161 派 M10-5 时用 `Σ(16+16) + 20G = 52G > 49G` **否决了 B4**、却仍然派了 M10-5（与在飞的 B2 并存）。这条算式保证的是**派发那一刻**的峰值不越界；本轮实测给出它的失效面：
+
+- 起手两片都已过编译段、在门禁段，**峰值早已付清**；此刻决定存活的不是峰值，而是**当下可回收量**。
+- 实测：可用 6.8G，而**唯一能立刻变现的死物 = `LUM-2107` 的 `target/debug/incremental` = 5225M / 195 个桶（全部 `-mmin +1` 陈旧）**。按 §2151 的外科公式（`find incremental -maxdepth 1 -mmin +1 -type d | xargs rm -rf`；cargo fresh 只认 `.fingerprint/` + dep-info，**不读 incremental** ⇒ 零风险、不触发重编）删掉 ⇒ **可用 6.7G → 11.9G（+5.18G）**，在飞片零中断。**换言之：算式里的「20G 余量」本轮实际已被上一轮吃掉，安全垫 100% 靠死缓存借来。**
+- ⇒ **定式（替换算式的第二半）**：派发准入仍用 `Σ在飞峰值 + 20G ≤ 49G`；但**在飞期间每轮起手要重算 `avail − 可回收量(incremental 陈旧桶 + 已终态片 target)`**，这个差值才是真余量。<8G 就先外科再谈别的（本轮 6.8G → 11.9G）。
+- 🔴 **同源修正：`incremental` 体量不是阶段信号，也不是存活信号**。本轮 `LUM-2107` = 5.2G/195 桶、`LUM-2113` = **1M/0 桶**，两个数差 5000 倍；按「桶少 ⇒ 快完了」去推 `LUM-2113` 会**判反**（它当时同样在门禁迭代段、离交付还早）。判活只认 §158 三件套（`/proc` 逐 PID 存活 ∨ session jsonl 增长 ∨ 写侧产物增加），`incremental` 只能当**可回收量**用。
+
+### 账本闭合：`owners.M3+ = 5` 恰好 = B2 的 2 + B4 的 3 ⇒ M3+ 线**再无第三片**
+
+当轮 `gaps by owner: M9=13  M3+=5`，而 `M3+` 名录里只剩 B2（`LUM-2113`，`POST /api/upload-file` + `GET /uploads/{...}` 2 行）与 B4（`LUM-2115`，avatars / `/ws` / sub-issue-preview 3 行）⇒ **5 = 2 + 3**。两片合入即 `M3+ → 0`（预期 `known_gap 18 → 13`、`local 525 → 530` 量级、**`ph` 停在 2**，M3+ 三行都不是占位），此后 `M3+` 线整条退休。`owners.M10` 已为 **0**（`LUM-2106` M10-4 在 §152 随 PR #125 合入，issue 仍挂 `in_review` 属正常：`done` 归人工），M10 侧只剩 M10-5（在飞）、M10-7/8（docker 缺失硬阻塞）、M10-9 INT（`LUM-2111`）。
+
+### 下一轮顺位
+
+**收割 B2（`LUM-2113`）** ⇒ 判据链**七条**（六条半 + §161 新增的第 ⑦ 条：先 `git diff --name-only <base>..<head> -- scripts/` 非 0 ⇒ 弃 delta 算式，改 `git show <base>:scripts/route_parity.py > /tmp/old.py` 新旧双跑逐字段比，并把「真新增」与「口径重分类」分开记账）⇒ 合后**立刻派 B4**（`LUM-2115` rev 4 已就绪，`## 53.`/`### 9.23`；届时 M10-5 若仍在飞 ⇒ 同飞上限 1 M10-B + 1 M10-5，**须用本轮的新定式重算余量**）⇒ `M3+ → 0` ⇒ `LUM-2111`（M10-9 INT，**唯一 `--write-baseline`**，与 `LUM-1825` 不同轮）。M9 侧 `owners.M9=13` 未动。🔴 `LUM-2109`（M10-7）仍被 **docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），**需 owner 裁决**（本轮第 N 次登记，未重复 @）。
+
+**号段**：`docs/32` 下一空号仍是 `## 55.`/`### 9.25`（`51`=B2 在飞、`52`=B3 已合、`53`=B4 预留、`54`=M10-5 在飞，`grep -c` 四者全 0）；`docs/37` 本节 §162 ⇒ 下轮 **§163**。
+
+**观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
