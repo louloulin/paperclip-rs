@@ -8184,8 +8184,17 @@ webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
 ### 52.5 门禁当轮实测读数（**不是**切片描述里的预测值）
 
 **起手 base** = `47cb9f6a`。门禁命令 =
-`flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db`，
-日志 `…/workdir/paperclip-rs/.logs/gates_lum2114.log`，**`GATES_EXIT=0` / 10-10 PASS / 349s**（收尾那一轮；首轮 518s 因 fmt+clippy 红，修完复跑）。
+`flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db`，日志落
+`<workdir>/paperclip-rs/.logs/`（`gates_lum2114.log` = 起手 base 那一轮 349s；
+`gates_lum2114_rebase.log` = **交片前 rebase 到 `3d298bf8` 之后**的收尾那一轮 592s），
+两轮都是 **`GATES_EXIT=0` / 10-10 PASS**。
+
+⚠️ **下表是「起手 base `47cb9f6a`」那一轮**（本片增量看得最清）。**rebase 后**（= B1 已合入的
+合并树）当轮实测另给：⑦ `local 525 / implemented 436 real + 2 ph = 438 / known_gap 18 /
+unclaimed 0 / regression 0 / local_only 8 / owners {M9 13, M3+ 5}`（`438 + 18 = 456` ✓）、
+⑦b **0 defect 0 warning**、⑩ `scanned 1263 / baseline 10 / violations 0`、⑨ `report matches`
+（`report.json` **仍未位移**）。两个口径的差 = B1 的 `local +5 / implemented +5 / ph −1 /
+known_gap −5 / M3+ −5`，与 §155 对 B1 的预测**逐项吻合**。
 
 | 门 | 起手（`47cb9f6a`） | 本片后 | 判据 |
 | --- | --- | --- | --- |
