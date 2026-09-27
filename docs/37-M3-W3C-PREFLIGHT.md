@@ -14152,3 +14152,60 @@ M9 侧 `owners.M9=13` 未动，stage 3 与 M10-B 共用注册段 ⇒ **同飞上
 **号段**：`docs/32` 下一空号 `## 54.`/`### 9.24`（`53`/`9.23` 已被 B4 预留，M10-5 也已指向 `54`/`9.24` ⇒ **两片同段会撞，下轮须给其中一片改段**）；`docs/37` 本节 §160 ⇒ 下轮 **§161**。
 
 **观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
+
+## §161 · 04:30 cycle（`LUM-2380`，2026-09-27 20:30Z）—— **零收割监控轮**；产出：一条**「门禁脚本位移 ⇒ 读数不可比」**的判据 + 派 M10-5（附一次 `target/` 复用）
+
+**起手**：`multica repo checkout` 落 `main` 线（HEAD `4fc96f30`）⇒ `git checkout -B agent/devbox5/030ebe5c3d9e origin/feat/multica-rs-initial` 后真实 base = **`351af5e7`**（`docs/37` §160，docs-only）。GH **0 open PR**，daemon **2/3**，df 起手 **21G/57%** → 轮末 **19G/61%**，PG 5432 `online`。0 提交 / 无 PR。
+
+**判型**：零收割物。`LUM-2113`（M10-B2）**全活** —— `porcelain` 8 项（3 个 `.py` 脚本 + `routes/{mod,mount}.rs` + `mc-storage/{lib,local}.rs` + 新文件 `routes/uploads.rs` 与 `routes/uploads/`）、**0 提交 / 分支未推 / 无 PR**、`target/` 4.2G→4.8G（近 20 分钟持续在写）、`uploads/tests.rs` 与四个门禁日志都在动 ⇒ 无可收割。
+
+**门读（base `351af5e7`，三条零编译门全 exit 0，自身 workdir 零 `target/`）**
+- ⑦ `local 525 / implemented 436 real + 2 placeholder = 438 / upstream 456 / known_gap 18 / unclaimed 0 / regression 0 / local_only 8`，`gaps by owner: M9=13  M3+=5`；`438 + 18 == 456` ✅ 现场复核。
+- ⑦b `registered upstream-key literals: 526` / `0 defect(s), 0 warning(s)`。
+- ⑩ `limit=800 scanned=1263 baseline=10 violations=0`。
+- 与 §160 逐字相同 ⇒ `git diff --name-only 24050676 351af5e7 -- crates contracts/golden docs/fixtures Cargo.lock | wc -l` = **0**（「base 只走 docs-only ⇒ 门读逐字不变」**第 8 次成立**）。⑨ 继承：`365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`。**0 条 cargo 门**（盘 19–21G，`Σ(16+16)+20G = 52G > 49G` 算术否决）。
+
+---
+
+### 🔴 本轮新判据：**读到「在飞片改了 `scripts/` 里的门禁脚本」⇒ ⑦/⑦b 的读数跨那次合并不再可比**
+
+M10-B2 的 `porcelain` 里有 **`scripts/route_parity.py`（+16/−3）与 `scripts/slash_alias_audit.py`（+17/−2）**，且改的是**判定的核心**：
+
+| 文件 | 改动 | 为什么会改读数 |
+|---|---|---|
+| `route_parity.py` `normalize()` | 把 catch-all 判定**挪到** `{…}` 之前，并把 `*` / `*name` / `{*` / `{*name}` 四种写法全折成 `:wildcard`（原顺序下 `{*name}` 被上一支先吃掉成 `:param` = 死代码，`/uploads/*` 更是**根本注册不了**：matchit 0.7 要求 `*name`） | 本地**键的形状**变了 ⇒ 与上游 456 条的比对结果变 |
+| `slash_alias_audit.py` `fold()` | 叠一层 `re.sub(r"\*[^/]*", "*", …)` | ⑦b 的字面量计数与 alias 判定同样可能变 |
+
+**为什么这条必须单独记**：此前所有轮次的验收方式都是**算术平移**（「本片 delta = `local +N / implemented +N / gap −N / owners.M× −N`，合并树读数应当等于 base 读数 + delta」）。**这个算式的前提是计数函数不变**。一旦某片把计数函数本身改了，**算术平移失效**，必须改为**逐项实测比对新旧输出**。
+
+**判据化动作（下轮收割 B2 时照做）**：
+1. 先 `git diff --name-only <base>..<pr-head> -- scripts/ | wc -l`；**非 0 ⇒ 禁用 delta 算式**。
+2. 改为在**同一条命令**下分别跑旧脚本与新脚本各一遍（`git stash` 不用，用 `git show <base>:scripts/route_parity.py > /tmp/old.py` 后同参数跑），**逐字段比 `local / implemented / known_gap / gaps by owner / local_only`**，把差异逐条记账。
+3. 报告里必须写清「哪些数是本片真新增、哪些数是口径变化造成的重分类」——尤其 `/uploads/*` 这类**真实现了却被旧口径误判成「新本地键 + 缺口仍在」**的条目。
+4. 同源提醒：**`--write-baseline`（`route_parity.py --write-baseline`）的 `baseline 473` 是一次性快照**；B2 顺手给 `--write-baseline` 补了 `baseline is None` 的显式报错（好改动），但**本片不得写基线**（写基线的是 INT 片 `LUM-2111` / `LUM-1825`，且不同轮）。
+
+### 派发：M10-5（`LUM-2107`，0 路由）—— **为什么不是 B4**
+
+起手 daemon `2/3` ⇒ 有 1 个空位。**但「有空位」与「可以派 1 片」是两个命题**（§159 判据），本轮按**峰值**算：B4 是**第二个注册段写者**（与在飞的 B2 共用 `routes/{mod,mount}.rs` + `docs/32` 同锚点），且要跑 `gates.sh` 8/8 ⇒ 峰值 15–16G；`Σ(16+16) + 20G = 52G > 49G` ⇒ **B4 算术上被否决**。M10-5 **0 注册键**，写集只有 `contracts/golden-local/**` + 一个新 `.sh` + `docs/32` 的 `## 54.`/`### 9.24` ⇒ **与 B2 的代码面交集为空**（唯一交集是 `docs/32` 同锚点 append，§146.3 可机械解），且 0 路由 ⇒ ⑦/⑨ 必不变（§158 判据 2 第 3 次应用）。
+
+- 描述 **rev 2 → 3**（9337 → 12270 字符，回读复核 6 个关键子串逐字命中）：追加「§161 起手补充」= 当轮实测三门 + **可执行的省盘动作** + **「B2 在改门禁脚本，你的起点读数可能已经变了」**的处置。
+- 起跑配方第 N 次验证：`assign --to "编程助手devbox5" --no-start` + `status todo --no-start` + **`rerun`**（`status: queued`）⇒ workdir **`lum-2107-1cedd663e1ff`**，20:33Z `in_progress`，daemon 3/3。checkout 仍需 `git checkout -B … origin/feat/multica-rs-initial`。
+
+### 🔴 省盘判据：**可复用 `target/` 的三条件 + 本轮实操（省下约 12G）**
+
+起手盘只有 20G，而任何跑 `gates.sh` 8/8 的片冷编峰值 15–16G ⇒ **两条并发全量必 ENOSPC**。M9-3 那次的教训（把上一片已合的 `target/` `mv` 过来当 `CARGO_TARGET_DIR`）本轮**升级成三条件的可执行判据**：
+
+1. 宿主 run **已终态**（`multica issue get <key>` 的 status 不是 `in_progress`）；
+2. **`pgrep -af 'lum-<id>'` 零命中**（本轮实测 `PGREP_RC=1`）；
+3. 目录**不在自己的 workdir 下**。
+
+本轮候选 = 上一轮 cycle（04:00）的 workdir `lum-2378-14db1d9d503e`，`target/` **3.3G / `debug/deps` 984 个件 / 含 `libmc_conformance.rlib` 与 `mc-conformance` 二进制** ⇒ 是**全工作区**构建（不是只有 ⑨），对 M10-5 直接可用。已 `mv` 到 `lum-2107-1cedd663e1ff/workdir/paperclip-rs/target`（**cargo 的默认路径，不需要 `CARGO_TARGET_DIR`**）⇒ 零额外吃盘、零重编。**cycle 侧纪律随之补一条：跑完零编译门（或任何门）后立刻删自己 workdir 的 `target/` —— 上一轮留下 3.3G 正是没执行 §160 的第 3 条；而这份残留刚好成了下一轮的复用供体，「回收」与「复用」不是二选一，先看有没有下一个人需要它。**
+
+### 下一轮顺位
+
+**收割 B2（`LUM-2113`）** ⇒ 判据链六条半，但**本轮新增第 ⑦ 条：先查 `scripts/` 是否位移，是则禁用 delta 算式、改为旧/新脚本双跑逐字段比对**（见上表）。可验收信号仍是 `M3+ 5 → 3` 且 `ph` 停在 2，但**这个信号本身要用新口径复核**。合后 base 预期 `527 / 440 / 16 / owners {M9 13, M3+ 3}`（若口径变化则以实测为准）。
+⇒ B2 合后**立刻派 B4**（`LUM-2115` rev 3 已就绪，`## 53.`/`### 9.23`；届时 M10-5 在飞 ⇒ 同飞上限 1 M10-B + 1 M10-5，需重算峰值）⇒ M3+ 归零 ⇒ `LUM-2111`（M10-9 INT，唯一 `--write-baseline`，与 `LUM-1825` **不同轮**）。M9 侧 `owners.M9=13` 未动，同飞上限 1 M9 + 1 M10-B。🔴 `LUM-2109` 仍被 **docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`，需 owner 裁决。
+
+**号段**：`docs/32` 下一空号仍是 `## 55.`/`### 9.25`（`51`=B2 在飞、`52`=B3 已合、`53`=B4 已预留、`54`=M10-5 在飞，当轮 `grep -c` 四者全 0）；`docs/37` 本节 §161 ⇒ 下轮 **§162**。
+
+**观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
