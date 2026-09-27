@@ -1331,6 +1331,41 @@ D-10 issue/agent 的 id 是 `Uuid::new_v4()` 而非上游的 v7。
 `implemented 410 → 415`、`known_gap 46 → 41`、`owners.M9 18 → 13`、`baseline 473` 不动、
 `regressions 0`、`local_only 8` 不增；⑨ **逐字不变**（`report.json` 未动）；⑩ `scanned +4 / violations 0`。
 
+### 9.19 M9-11（`LUM-2116`）：cloud-runtime 11 条（节点池出站代理）的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 49.`（49.1–49.6）**。
+
+**写集（6 个文件 = 2 原地填充 + 4 新建，全文见 §49 开头的表）**：
+`crates/mc-cloud/src/runtime.rs`（**原地填充** anchor 桩）+ `crates/mc-http/src/routes/cloud_runtime.rs`
+（**原地填充** anchor 桩）+ `crates/mc-cloud/src/runtime/tests.rs` 与
+`crates/mc-http/src/routes/cloud_runtime/tests.rs` + `tests/{support,db}.rs`（新建证据面）。
+**anchor 冻结件一个字节未动**（`routes/{mod,mount}.rs` / `mc-cloud/src/lib.rs` 已被 M9-0 预声明好 ⇒ **零注册键、零 manifest**）。
+
+**🔴 本片推翻了 anchor 桩文档的路径表（全文见 §49.1 的 D-1）**：桩里那张
+`/api/cloud-runtime/nodes/{id}` 十行表**不是**上游形状 —— 11 条**零路径参数**（节点 id 走**体**），
+且 `GET` 那条的键是 **`/api/cloud-runtime/`（带尾斜杠）**。
+
+**授权矩阵（11 条逐条，全文见 §49.2）**：**member 面**（上游 `router.go:1948` 的
+`RequireWorkspaceMember` 组，组内**无** `r.Use`）⇒ workspace 四个来源都缺 ⇒ **400**、非成员 ⇒ **404**、
+无会话 ⇒ **401**。🔴 **本簇不挂机器凭据闸**（与 §46 / §47 相反，逐字对齐上游，见 D-2）。
+
+**登记的偏离（10 条，全文见 §49.3）**：D-1 anchor 桩路径表被推翻；D-2 **不挂**机器凭据闸；
+D-3 错误信封**嵌套**（上游扁平）；D-4 零 `X-Request-ID` 不盖章；D-5 超时 code 是本地补的
+（上游那一行没有 code）；D-6 云侧非 JSON 体**原样**转发（上游包进 `{"error": …}`）；
+D-7 体不 trim（上游 `writeCloudRuntimeResponse` trim）；D-8 读体失败的两种来源归并到 413；
+D-9 非成员 404（上游中间件同款，登记以便与 M9-1 / M9-2 对齐）；D-10 计量桶**不**显式钉（照上游留空推导）。
+
+**功能性为 0 / 未接线（全文见 §49.4）**：`MULTICA_CLOUD_URL` **未配置时 11 条全部 403**（自托管形态，
+上游逐字「self-hosted deployments return 503」而本地走 403 —— 见 D-11）；**504 仍无端到端用例**
+（`CloudConfig` 没有超时注入口，与 §46 / §47 同）；**本地 0 张节点池表**（`docs/62` §9.4 双侧实测）
+⇒ 本片**零迁移**。
+
+**门禁**：十道门 **10/10 PASS**（逐字读数见 §49.5）；⑦ `local 498 → 510`、
+`implemented 416 → 427`（real `424` + placeholder `3`）、`known_gap 40 → 29`、
+**`gaps by owner: M3+=16 M9=13` ⇒ `M3` 清零**（本片可验收信号）、`baseline 473` 不动、
+`regressions 0`、`unclaimed 0`、`local_only 8` 不增；⑦b `499 → 511`（+12 = 11 条 + `GET /api/cloud-runtime` 别名）/ **0 defect 0 warning**；
+⑩ `scanned 1239 → 1243 / violations 0`（+4 个新文件；两个原地填充的文件不计入）。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -7625,3 +7660,235 @@ M9-0 anchor 的 `crates/mc-cloud/src/transport/tests.rs`。**若评审认为该�
 日志落 `<workdir>/.logs/`（**不要**落 `/tmp` 固定名 —— 本仓撞过名、读到过别人的摘要）。
 **本片零条 `#[ignore]` 用例** ⇒ ⑥ 补跑不涉及新增的真库用例；`/api/config` 本身**不触库**，
 它的"离线可答"已由 `config_route_is_public_and_offline`（库 URL **不可达**仍 200）钉住。
+
+---
+
+## 49. M9-11（`LUM-2116`）：cloud-runtime 11 条（节点池出站代理）的落点与偏离登记
+
+> **号段复核（两个号空间，当轮实测）**：`docs/32` 的 `## ` 末号 = **`## 48.`**（M9-3 / 已合）
+> ⇒ 本片取 **`## 49.`**；`### 9.x` 末号 = **`### 9.18`**（M9-3）⇒ 本片取 **`### 9.19`**。
+> `grep -cE '^## 49\.|^### 9\.19'` 起手实测 = **0**（两个号都空着）。
+> **起手 base（当轮实测）= `d5e429d8`**（= `merge(PR #126): M9-3`），与切片描述 §152 记的 base **逐字相同**。
+>
+> **anchor 冻结面一个字节未动**：`routes/mod.rs`（`pub mod cloud_runtime;`）、
+> `routes/mount.rs`（`.merge(mount_slice_cloud_runtime())` + `fn mount_slice_cloud_runtime()`）、
+> `mc-cloud/src/lib.rs`（`pub mod runtime;`）三者已由 **M9-0**（`LUM-1815`）预声明 ⇒
+> 本片**零注册键、零 manifest、零 frozen 破例**，`routes/cloud/mod.rs` 也**不需要**动
+> （M9-0 特意把本簇的落点预声明成**顶层单文件** `crate::routes::cloud_runtime`，
+> 而不是 `cloud/` 下的第三个子文件）。
+
+**写集执行说明（逐字，6 个文件）**：
+
+| 文件（逐字） | 动作 | 说明 |
+| --- | --- | --- |
+| `crates/mc-cloud/src/runtime.rs` | **原地填充** | anchor 建的**空桩**（只有模块头）⇒ 本片填 11 条出站路径常量 + 11 个请求构造函数 |
+| `crates/mc-cloud/src/runtime/tests.rs` | **新建** | 11 条出站形状的**纯函数**判据（不碰网络） |
+| `crates/mc-http/src/routes/cloud_runtime.rs` | **原地填充** | anchor 建的空 `Router` ⇒ 11 个 handler + `router()` |
+| `crates/mc-http/src/routes/cloud_runtime/tests.rs` | **新建** | 不碰库的那一半（门 ⑤） |
+| `crates/mc-http/src/routes/cloud_runtime/tests/support.rs` | **新建** | 云侧替身 / `AppState` 字面量 / 请求装置 |
+| `crates/mc-http/src/routes/cloud_runtime/tests/db.rs` | **新建** | 真库那一半（门 ⑥，`#[ignore]`） |
+| `docs/32-M3-DAEMON-FACE.md` | 本节 + `### 9.19` | 号段登记 |
+
+拆三个测试文件是门 ⑩（单文件 800 行）的布局要求，先例 = §30 的 **D10** 与 §46 / §47 的证据面布局。
+**本片零路径参数** ⇒ 匹配层没有「`{…}` vs `:…}`」的取舍，**所有键都是字面量**。
+
+### 49.1 上游依据（本片起手**逐字复核**的结果）
+
+上游两处：`server/cmd/server/router.go:2299-2311`（11 行注册）+ `server/internal/handler/
+cloud_runtime.go`（208 行，11 个 handler 全部是 `proxyCloudRuntime` 的纯透传）。
+`internal/cloudruntime/client.go`（255 行）= 本仓**已冻结**的 `mc-cloud/src/transport.rs`。
+
+**路由表（`docs/fixtures/upstream-routes.tsv` 的 11 行，`$3 == "M3"`）与出站契约逐字**：
+
+| 本地路由 | 方法 | 出站路径 | `withUserID` | `withQuery` | `withBody` | 推导桶 |
+| --- | :-: | --- | :-: | :-: | :-: | --- |
+| `GET /api/cloud-runtime/` | GET | `/api/v1/` | ✓ | | | `fleet` |
+| `GET /api/cloud-runtime/healthz` | GET | `/healthz` | | | | `status` |
+| `GET /api/cloud-runtime/readyz` | GET | `/readyz` | | | | `status` |
+| `GET /api/cloud-runtime/nodes` | GET | `/api/v1/nodes` | ✓ | ✓ | | `status` |
+| `POST /api/cloud-runtime/nodes` | POST | `/api/v1/nodes` | ✓ | | ✓ | `provision` |
+| `DELETE /api/cloud-runtime/nodes` | DELETE | `/api/v1/nodes` | ✓ | | ✓ | `terminate` |
+| `POST /api/cloud-runtime/nodes/start` | POST | `/api/v1/nodes/start` | ✓ | | ✓ | `provision` |
+| `POST /api/cloud-runtime/nodes/stop` | POST | `/api/v1/nodes/stop` | ✓ | | ✓ | `terminate` |
+| `POST /api/cloud-runtime/nodes/reboot` | POST | `/api/v1/nodes/reboot` | ✓ | | ✓ | `terminate` |
+| `POST /api/cloud-runtime/nodes/status` | POST | `/api/v1/nodes/status` | ✓ | | ✓ | `status` |
+| `POST /api/cloud-runtime/nodes/exec` | POST | `/api/v1/nodes/exec` | ✓ | | ✓ | `gateway` |
+
+**🔴 D-1（本片最重要的一条登记）：anchor 桩文档的路径表是错的，本片把它推翻了。**
+`crates/mc-cloud/src/runtime.rs` 的**原桩文档**（M9-0 写）列了一张
+`/api/cloud-runtime/nodes/{id}`、`…/nodes/{id}/reboot` 之类的十行表。逐字复核的结论：
+
+1. **11 条里 0 条有路径参数** —— 上游把节点 id 放在**请求体**里
+   （`POST /api/v1/nodes/start` 收的是 `{"node_id": …}`），不是 `…/nodes/{id}/start`；
+2. `GET` 那条的键是 **`/api/cloud-runtime/`（带尾斜杠）** —— 上游 `r.Route("/api/cloud-runtime")`
+   + 组内 `r.Get("/")` 的拼接结果，`upstream-routes.tsv` 第 1 行逐字如此；
+3. 两条探针的出站路径是**云侧根** `/healthz` / `/readyz`（**没有** `/api/v1` 前缀）。
+
+桩文档自己写了「本表是**形状提示**，不是判据」并要求「M9-11 起手逐字复核」⇒ 本节就是那份复核。
+**原桩文档已被本片就地改写**（同一个文件是本片写集），改写后的模块头逐条列了上面的实测表。
+
+**授权层的逐字复核（用括号配平做的，不是目测）**：对 `router.go` 做花括号配平后，
+`2299` 行处仍打开的帧是 `[397 NewRouterWithOptions, 1602 r.Group, 1948 r.Group, 2299 r.Route]`
+⇒ `/api/cloud-runtime` **确实**落在 `1948` 那个组里，而该组的 `r.Use(...)` 逐字是
+`middleware.RequireWorkspaceMember(queries)`（`router.go:1949`）⇒ **11 条全是 member 面**，
+组内**没有** `handler.RequireHumanActor`（那两个在 `1911` / `1931`，是 billing 与 subscriptions 的组）。
+
+### 49.2 授权矩阵（11 条逐条）
+
+| 层 | 判据 | code | 备注 |
+| --- | :-: | --- | --- |
+| ① workspace 解析 | 四个来源都缺 ⇒ **400** | `validation_error` | 本仓既有 `resolve_workspace` |
+| ② 成员校验 | 非成员 ⇒ **404** | `workspace` | 隐藏资源存在性，与全仓 member 口径一致 |
+| ③ 会话 | 缺 `X-Multica-User-Id` ⇒ **401** | `unauthorized` | `AuthUser` 提取器 |
+| ④ 未配置 | `MULTICA_CLOUD_URL` 缺/空 ⇒ **403** | `cloud_runtime_not_configured` | 上游 `writeFeatureDisabled` |
+| ④ 非法 | 配了但非法 ⇒ **500** | `cloud_runtime_misconfigured` | 上游 `ErrInvalidBaseURL` |
+| ⑤ 传输 | 超时 ⇒ **504**；其余 ⇒ **502** | `cloud_runtime_timeout` / `upstream_error` | `docs/62` §2.6 |
+
+**🔴 D-2：本片**不挂**机器凭据闸**（与 §46 / §47 相反，但**逐字对齐上游**）。**
+M9-1 的 billing 8 条与 M9-2 的 subscriptions 7 条都在路由组上挂了 `require_human_actor`；
+本簇上游**没有**（`cloud_runtime.go` 全文无任何 actor 判定，所在组只有 `RequireWorkspaceMember`）
+⇒ 挂上去会把节点池面**收窄**成上游允许的面之外的面。**「不挂」是对齐，不是漏写** ——
+判据是 `machine_credentials_still_reach_the_fleet_when_they_are_real_members`（真库那一半：
+机器凭据 + **真成员** ⇒ 200 且照常出站）与 `machine_credentials_are_not_gated_by_this_slice`
+（离线那一半：不得出现 `this endpoint is only available to human actors`）。
+
+**错误映射四行**与 §46 / §47 同款；**云侧的 4xx / 5xx 不是错误**（`Client::send` 对任何状态都返回
+`Ok(Response)`，上游 `doInner` 的语义），由 `all_eleven_routes_proxy_verbatim_and_stamp_the_identity`
+与 `cloud_side_errors_are_passed_through_verbatim` 钉住。
+
+### 49.3 登记的偏离
+
+- **D-1** 🔴 anchor 桩的路径表被推翻（11 条零路径参数 + 尾斜杠键 + 探针无前缀）—— 全文见 §49.1。
+- **D-2** 🔴 **不挂**机器凭据闸（逐字对齐上游）—— 全文见 §49.2。
+- **D-3** 错误信封**嵌套**（`{"error":{"code":…,"message":…}}`），上游 `writeError` 是扁平的
+  `{"error":"…","code":…}`。本仓既有约定（`routes/cloud/{billing,subscriptions}` 与
+  `routes/{vcs,github,composio,channels}` 各自持有本地副本）⇒ 沿用。
+- **D-4** 零 `X-Request-ID` ⇒ 出站不盖章（上游 `cloudRuntimeRequestID` 的第二支读 chi 的进程内
+  request id，本仓**没有** request-id 中间件；只透传调用方给的那个）。与 §46 的 D-5 同源。
+- **D-5** 超时的 code（`cloud_runtime_timeout`）是**本地补的** —— 上游那一行
+  `writeError(w, 504, "cloud runtime request timed out")` **没有** code，本地按本仓信封补。
+- **D-6** 云侧响应体**不是**合法 JSON 时，本地**原样**转发；上游把它**包进** `{"error": "<云侧体>"}`。
+  与 M9-1 的同一取舍同理由：包进去会把任意云侧内容塞进**错误信封**，与 `docs/62` §2.4 判据 ③ 的取向相反。
+- **D-7** 云侧响应体**不 trim**（上游 `writeCloudRuntimeResponse` 先 `bytes.TrimSpace`）；
+  「全空白 ⇒ 无体」那一支保留。理由同 M9-1：逐字透传是本片 `DoD` 的要求。
+- **D-8** 读入站体失败的两种来源（超限 / 连接中断）**归并**到 **413**；上游把连接中断归 400
+  「invalid request body」，而客户端断开时响应没人看 ⇒ 取上限那一支。
+- **D-9** 非成员是 **404**（上游中间件同款）—— 登记是为了与 §46 / §47 的编号对齐，不是偏离。
+- **D-10** 计量桶**不显式钉**（`Request.op` 留空，由 `transport::infer_op` 按路径推导）——
+  上游 `proxyCloudRuntime` 也**不传** `Op`。M9-1 显式钉了 `OP = "billing"`（它的路径全部含
+  `/billing`，推导与写死同值）；本簇 11 条的桶**互不相同**（`fleet` / `status` / `provision` /
+  `terminate` / `gateway`），写死一个常量会丢掉逐条信息，故照上游留空并由
+  `derived_op_buckets_match_upstream`（`mc-cloud` 侧）逐条钉住推导结果。
+- **D-11** 未配置时上游回 **503**（`router.go:2297` 注释：「self-hosted deployments return 503」），
+  而 handler 的 `writeFeatureDisabled` 回的是**功能未配置**那条（`docs/62` §2.5 的 A 行定的是 **403**）。
+  本地按 §2.5 落 **403**，与 §46 / §47 逐字一致；这里登记上游注释与实际 handler 行为的**自相矛盾**
+  （注释说 503，代码走 `writeFeatureDisabled`），以**代码**为准。
+
+### 49.4 功能性为 0 / 未接线
+
+- **本地 0 张节点池表**（`docs/62` §9.4 双侧实测：上游与本地都没有 `cloud_runtime_*` /
+  `node_pool` 之类的表，节点在 `multica-cloud` 自己的库里）⇒ 本片**零迁移**、`migrations/**` 零改动。
+- **零路径参数** ⇒ 无「参数 allowlist」这道护栏（对比 M9-1 的 `is_valid_stripe_session_id`：
+  那边必须先把 `{sessionId}` 过 allowlist 才能拼进出站 URL；本簇的 id **从不出现在 URL 里**，
+  永远在体里 ⇒ 结构上不存在路径穿越面）。
+- **11 条全部是 member 面且无 fixture** ⇒ ⑨ 的 `contracts/golden/` 里**零条**命中本簇
+  （⑨ 读数逐字不变，见 §49.5）。**本地 0 张表**同时也是「体字段无法从库反推」的原因：
+  出站体的字段级契约只能来自上游 `cloud_runtime_test.go` + 本片用例，**⑨ 证明不了**。
+- **504 仍无端到端用例** —— `CloudConfig` 没有超时注入口（`from_env_with` / `with_settings` 都走
+  `transport` 的默认 35s）⇒ 与 §46 / §47 同一条登记，映射本身由纯函数用例逐格钉住。
+- **零 `X-Request-ID` 时不盖章** ⇒ 11 条都不落 `X-Request-ID` 头（判据同 M9-1 的 D-5）。
+
+### 49.5 门禁（当轮实测，非抄写）
+
+**门禁命令**（`flock` 持全生命周期锁，日志落 `<workdir>/.logs/`，🔴 禁落 `/tmp` 固定名）：
+
+```
+flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db
+# MULTICA_TEST_DATABASE_URL=postgres://mc_dev:***@127.0.0.1:5432/multica_lum2116
+```
+
+**当轮实测读数（base `d5e429d8` → 交片树 `ae0df28d`；rebase 到的 `e00088a6` / `5467ef20`
+两条提交**只碰 `docs/37-M3-W3C-PREFLIGHT.md`** ⇒ 与本片写集零交集）**：
+
+| 门 | 结果 | 耗时 | 读数 |
+| --- | :-: | ---: | --- |
+| ① `fmt` | **PASS** | 4s | — |
+| ② `build` | **PASS** | 155s | — |
+| ③ `clippy` | **PASS** | 67s | 0 warning（`-D warnings`） |
+| ④ `clippy-test-util` | **PASS** | 53s | 0 warning |
+| ⑤ `test` | **PASS** | 168s | 不带 `MULTICA_TEST_DATABASE_URL`（`smoke` 集成测试用它） |
+| ⑥ `db` | **PASS** | 189s | `migrate=0, e2e=0` |
+| ⑦ `route-parity` | **PASS** | 0s | 见下 |
+| ⑧ `schema-drift` | **PASS** | 27s | — |
+| ⑨ `conformance` | **PASS** | 69s | 见下 |
+| ⑩ `file-size` | **PASS** | 1s | 见下 |
+
+**十道门 10/10 PASS，`GATES_EXIT=0`。**
+
+**⑦（`python3 scripts/route_parity.py`）**：
+`upstream 456 (commit f41fae6b08fb) | local 510 registered | baseline 473`、
+`implemented 424 real + 3 placeholder = 427 / 456`、`known_gap 29`、`unclaimed 0`、
+`regression 0`、`local_only 8`、**`gaps by owner: M3+=16 M9=13`**。
+不变式复核：`427 + 29 = 456` ✓、`unclaimed == 0` ✓、`regressions == 0` ✓、`baseline 473` 不动 ✓。
+**🔴 `M3` 从 `gaps by owner` 里消失**（本片前是 `M3+=16 M9=13 M3=11`）= 本片的可验收信号。
+与切片描述 §152 预测的 delta **逐项命中**（`local 498→509`、本片因多注册
+`GET /api/cloud-runtime` 别名而为 **510**；`implemented 416→427` / real `413→424`；
+`known_gap 40→29`）。**owner 单元格的 `M3 → M9` 迁移仍归 M9-10**（`docs/62` §9.2），
+本片**未**改 `scripts/route-owners.tsv` 与 `docs/fixtures/upstream-routes.tsv` ——
+所以 `gaps by owner` 里那一格仍显示旧的 `M3+` / `M9` 归属，`M3` 清零是因为**实现**完成。
+
+**⑦b（`python3 scripts/slash_alias_audit.py`）**：`registered upstream-key literals 511`
+（+12 = 11 条 + `GET /api/cloud-runtime` 别名）⇒ **`0 defect / 0 warning`**，
+`shapes OK: every registered upstream key matches the form upstream serves`。
+⚠️ **本片第一次跑这一门是红的**（1 个 `MISSING_ALIAS`）：只注册 `/api/cloud-runtime/` 会让
+不带尾斜杠的客户端拿到 **404**。已按 `routes/runtimes.rs:83-84` 的既有做法把两个形态都注册
+（上游 `r.Route` + child `r.Get("/")` 让两种写法都命中同一个 handler，axum/matchit 没有 Mount
+概念）。⑦ 把这一对**折叠**比较（`same route with and without trailing slash (legal; folded in
+comparison)`）⇒ 不影响 `implemented` / `known_gap` 的口径。
+
+**⑨（真跑，69s）**：`365 fixtures / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 /
+unevaluable 306`。**逐字不变**，且这是**结构性**的：本片不新建 golden fixture
+（11 条**零** fixture —— member 面 + 本地 0 张表），`git diff --stat <base> HEAD --
+crates/mc-conformance/ contracts/golden/ docs/fixtures/ Cargo.lock` = **空**
+（⑨ 的四面真实输入**零位移**）⇒ `crates/mc-conformance/report.json` **一个字节未动**。
+`totals.unevaluable` 仍是 **306**（只减不增 ✓）。
+⚠️ 按 `docs/64` §2.2 的硬警告复核：**⑨ 变绿 ≠ 做完** —— 本簇 11 条**零 fixture**，
+⑨ 对它们**什么都没证明**；出站契约的证据全部来自 §49.1 的上游表 + 本片 22 条用例。
+
+**⑩（`python3 scripts/file_size_check.py`）**：`limit=800 scanned=1243 baseline=10 violations=0`
+（1239 → 1243 = **+4 个新文件**：两个 `tests.rs` + `tests/{support,db}.rs`；两个被原地填充的文件
+不计入）。`scripts/file_size_baseline.tsv` **未动**（`git status scripts/` 空）。
+最大新文件 470 行（`db.rs`），**距 800 上限留 ≥50 行余量**。
+
+**本片新增用例（22 条 + 6 条纯函数）**：
+- 门 ⑤ **11 条**（不碰库）：两半同键 / 尾斜杠与别名两形态 / 11 个字面量在位且无路径参数幽灵 /
+  出站前三层 × 11 条 / **机器凭据不被拦** × 11 条 / `withQuery` 位置 / `withBody` 恰好 7 条 /
+  `withUserID` 恰好两条探针关闭 / **服务探针与 fleet 探针打到不同目标** / 错误表总性 / 体三道门。
+- 门 ⑥ **11 条**（真库，`#[ignore]`）：11 条逐条出站逐字 + 头逐字 / `withQuery` 位置 /
+  7 条体逐字节 / 体三道门 × 7 条 / **成员矩阵**（owner + member 200、外人 404 且零出站）/
+  **机器凭据 + 真成员 ⇒ 200**（D-2 的加强判据）/ 云侧 4xx-5xx 与非 JSON 逐字透传 /
+  超大响应 502 不回显 / 未配置 403 × 11 / 非法基址 500 × 11 / 连不上 502 × 11。
+- `mc-cloud` 侧 **6 条**纯函数：11 条出站形状 / 两条探针是唯一匿名 / 体逐字节 / query 保序保多值 /
+  两个前缀被 pin / 服务根的尾斜杠 / 传输常量未被本片改动。
+
+#### 49.5.1 🔴 一条**既有**的边缘用例（不在本片写集内，登记给它的 owner）
+
+门 ⑥ 在**前两轮**里红过两次，红的都是同一条**别的 crate** 的用例：
+
+```
+apps/mc-server/src/webhook_worker/tests.rs:317
+webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
+  「投递 … 在 2s 内仍是 `queued` ⇒ 入站落下的那一行从未被消费」
+```
+
+**它与本片零关系**（本片写集 = 2 个原地填充 + 4 个新建，全在 `mc-cloud` / `mc-http` /
+`docs/32`；`apps/mc-server/**` 一个字节未动），且**第三条全量跑它绿了**（`⑥ e2e=0`）。
+**它是一条时间预算本身就贴边的用例**：worker 自己的 `poll_interval()` 断言是 **1s**
+（`tests.rs:359`），而这条用例给 `await_terminal` 的预算是 **2s**（`:369`），
+轮询步长 50ms（`:321`）⇒ 满负载下多线程抢 CPU 时那 1s 的 tick 很容易被推过 2s。
+**单跑 6/6 全绿**（总耗时 2.24s–3.36s，紧贴 2s 预算）。
+
+⇒ **本片的交付结论不受它影响**（第三条全量 `--with-db` 是 `10/10 PASS / GATES_EXIT=0`），
+但**登记**给 `mc-server` 的 owner：那 2s 预算对一个 1s 轮询的 worker 来说**没有余量**，
+建议把 `:369` 的预算放宽到 5s 量级（`await_pool_idle` 那条已经是 5s，`:363`）。
+
