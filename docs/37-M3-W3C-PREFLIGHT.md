@@ -13684,3 +13684,91 @@ stage 5 还有 3 个。上一轮只把答案写进 §153.8 的一句话，**下�
 3. **任一槽空 ⇒ 派 `LUM-2114`（M10-B3，rev 3 已备妥）**；**B1 合入 ⇒ `LUM-2113`（M10-B2，rev 3 已备妥）解锁**。
 4. **两片都合 ⇒ `LUM-2107`（M10-5，rev 1，派前需补描述）**；M10-9 INT（`LUM-2111`）与 M9-INT（`LUM-1825`）**不得同轮刷基线**。
 5. **磁盘**：起手 15–17G，两片 `target/` 3.9G + 4.9G 在写。任一终态即按 §150.2 ④ 回收（先 `incremental`，`-mmin +3`；`deps` 永不删）。
+
+## §155 01:30 autopilot cycle（`LUM-2368`，2026-09-28 01:30 触发）—— **收割轮**：合并 PR #127（M9-11），`gaps by owner` 里 **`M3` 归零**；派 M10-B3
+
+### §155.1 起手判型
+
+- **起手 base** = `bdcf024d`（= `e00088a6` + §154 docs-only）。`multica repo checkout` 第 N 次落 `origin/main` 线 ⇒ 手动 `git checkout -B agent/devbox5/b482cc99fa7e origin/feat/multica-rs-initial`。
+- **GH `pulls?state=open` = 1**（#127 M9-11，head `d8e253eb`，`mergeable true`）⇒ **收割轮**（与 §154.1 的零合并轮相反）。
+- **daemon `running_task_count` = 2**（cycle 自身 + `LUM-2112` M10-B1）⇒ 1 个空位可派。
+- `df -h /` 起手 **13G / 73%**；在飞 `LUM-2112` 正持 `flock` 跑 `--with-db`（`rustc --crate-name mc_http` 在跑，`target/` 6.9G）⇒
+  **磁盘算术否决本轮任何 cargo 门**（`Σ(16G+16G)+20G = 52G > 49G`，§150.2 ①）⇒ 只跑三条零编译门。
+- 🔴 **git 身份坑第 N 次复现，且这次它**先失败后成功**：`git merge --no-ff` 报 `fatal: empty ident name (for <>) not allowed`
+  —— **合并被静默拒绝，但 `git rev-parse HEAD` 仍返回旧 base**，`PUSH_EXIT=0` 也照样打（推的是"没变"的分支）。
+  ⇒ **判据化动作：merge 之后必须断言 `git rev-parse HEAD` 变了**，别只看 push 的退出码。
+  修法仍是 `git config --worktree user.name/user.email`（worktree `include.path` 覆盖链使仓库级 `user.name` 无效）。
+
+### §155.2 收割判据链（六条半全过，§154.5 首次完整执行）
+
+| 判据 | 实测 |
+| --- | --- |
+| ① numstat 逐字 | 分支 `bdcf024d..pr/127` = **7 文件 +2694/−77** == PR API files **逐字相等** |
+| ② 形态判定 | `merge-base = bdcf024daf7dc…` == 当前 base ⇒ **形态②**（前进段全 `docs/32`，无 `crates/**` 竞争面） |
+| ③ `merge-tree --write-tree` | **exit 0**（按 exit code 判），树 `0ce6554831c9…` **== head 树 `0ce6554831c9…`** |
+| ④ 等 CI 转绿（§152.7 硬约束） | `db` / `fast` / `contract` **3/3 success** ⇒ 上一轮登记的唯一不完整处**本轮结清** |
+| ⑤ 证据 | 形态② + CI 3/3 绿 + 合并树 ≡ head 树 ⇒ 无需本地 `--with-db` |
+| ⑥ API 钉 sha | `--no-ff` 合并直推 `bdcf024d..47cb9f6a`；落地 `^{tree}` 逐字 == 预演树 |
+
+**新 base = `47cb9f6a`。** `docs/32` **同锚点未冲突**（`## 49.` 由本片独占，base 上 `## 50./51./52.` 全空）⇒ 无需 §146.3 机械解。
+
+### §155.3 门读（base `bdcf024d` 预演 / `47cb9f6a` 合并树，三条零编译门全 exit 0）
+
+| 门 | 合并树实测 | 与 §154.2 比 |
+| --- | --- | --- |
+| ⑦ | `upstream 456 (f41fae6b08fb) \| local 510 registered \| baseline 473`、`implemented 424 real + 3 placeholder = 427 / 456`、`known_gap 29`、`unclaimed 0`、`regression 0`、`local_only 8`、**`gaps by owner: M3+=16  M9=13`** | `498/416/40` → `510/427/29` |
+| ⑦b | `registered upstream-key literals: 511` / `0 defect(s), 0 warning(s)` | `499` → `511` |
+| ⑩ | `limit=800 scanned=1243 baseline=10 violations=0` | `1239` → `1243` |
+
+- **`427 + 29 = 456` ✓** 现场复核。
+- 🔴 **可验收信号命中：`gaps by owner` 里 `M3` 那一格消失**（§153 / §154.6 写下的 M9-11 信号，11 → 0）。
+  ⇒ **M9 侧的 owner 面只剩 `M9=13` 与 `M3+=16` 两格**。
+- ⚠️ **`gaps by owner` 只在不带 `--quiet` 时打印**（`scripts/route_parity.py:640`）。
+  本轮三门是直接调 python 取的读数；`route_parity.py --quiet` 照常打是**反常**，别当常态。
+- **⑨ 未跑**（盘 13G + 并发全量）。继承 `365 / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 / unevaluable 306`，
+  依据有二且都是**命令核出来的**：① M9-11 **自己那轮真跑过** ⑨（69s / exit 0 / `report matches`）；
+  ② `git diff --name-only bdcf024d 47cb9f6a -- crates/mc-http/src/routes/{mount,mod}.rs` = **空**
+  ⇒ 按 §152.4 的结构性判据（报告只取决于挂载路由集），**报告必然逐字不变**。
+  **注意这与 §147.2 的「四面任一有位移就真跑」并不矛盾**：本例的位移面（`crates/**` handler 实现）落在判据面之外。
+  ⇒ **两轮经验合起来是一条更准的口径**：`crates/**` 有位移时，先看 `routes/{mount,mod}.rs`；
+  无位移且**交片侧已真跑过** ⑨ ⇒ 可继承；有位移 ⇒ 必须真跑并重生成 `report.json`。
+- **未跑的门**：①②③④⑤⑥⑧⑨（0 条 cargo 门）。①②③④⑤⑥⑧ 的证据由 §155.2 判据 ④⑤ 承担（CI 3/3 + 形态②）；
+  **⑨ 是本轮唯一「靠继承而非靠 CI」的项**，已按上条双重理由登记在案。
+
+### §155.4 派发：`LUM-2114`（M10-B3，6 行 quick-actions）
+
+- 按 §154.3 的**下三角第 2 条**（「任一槽先空 ⇒ B3 可立即派，无未满足前置」）在 3/3 满载前把空位用掉。
+- 描述 **rev 3 → 4**（回读复核：rev 4 / 14558 字符 / 含 `47cb9f6a` 与 `§155` 两个子串），追加「起手补充（cycle §155）」：
+  当轮 base 与**当场实测**三门（`510/427/29`、`M3+=16 M9=13`、`511`、`1243/10/0`）、
+  **两种起手点的增量预测表**（单飞 `516/433/23/M3+ 10`；B1 先合 `521/438/18/M3+ 4`）、
+  号段复核（`## 52.` / `### 9.22`，`grep -c` 实测 `## 5x.` 与 `### 9.2x` 命中数均为 **0**，文件末号 `## 49.`）、
+  **本片必然位移 `routes/{mod,mount}.rs` ⇒ 交付时必须真跑 ⑨ 且重生成 `report.json`**（`unevaluable 306` 只减不增）、
+  在飞矩阵改为「与 M10-B1 交集仅 `mod.rs`/`mount.rs` 相邻追加段 + `docs/32` 同锚点」、
+  以及「`gaps by owner` 需不带 `--quiet` 复述」这条新口径。
+- 起跑：`assign --to <agent 名> --no-start` + `status todo --no-start` + **`rerun`**（`status: queued`）
+  ⇒ workdir `lum-2114-3189611bc2a0` 生成、**daemon 3/3**、该 workdir 的 checkout **直接落在 `47cb9f6a`**（= 本轮合并后的 base，零前移损耗）。
+- 收尾 **3/3 满载**（cycle ∥ M10-B1 ∥ M10-B3）。**下一槽归 `LUM-2113`（B2）**，但它**要等 M10-B1 合入**才解锁 ⇒ 下一轮大概率是「零合并监控轮」。
+
+### §155.5 三条 lesson
+
+1. 🔴 **`git merge` 因身份缺失失败时，`PUSH_EXIT=0` 依然成立** —— 整轮「合并 + 直推」可以在**一个字节都没落地**的情况下
+   全绿收尾，而 `git rev-parse HEAD` 只会返回**旧 base**（本轮我先打印了 `NEW_BASE=bdcf024d` 才当场发现）。
+   **通用判据：任何写远端 base 的动作，判据必须是「远端 ref 真的前移了」**（`git ls-remote` 或 push 后的 `rev-parse`），
+   不是命令退出码。`git config --worktree user.name` 写不进去这件事本身不报错，所以要**先写身份再 merge**，不是事后救。
+2. 🔴 **「继承 ⑨」需要**两条**独立证据，缺一条就是在赌**：M9-11 的 `mount/mod.rs` 无位移（结构性）**且**交片侧真跑过（经验性）。
+   §147.2 的四面判据在这轮被单方面违反（`crates/**` 明明动了），却仍然判对 ⇒ **判据要从机制推，不能从清单抄**：
+   `report.json` 的内容 = f(挂载路由集)，与 handler 实现无关。**先把「报告依赖什么」写清，再决定继承条件**。
+3. **收割判据链六条半首次全过**（含 §152.7 那条「等 CI 转绿」的硬约束）⇒ 上一轮唯一登记在案的不完整处**结清**。
+   配套提醒：CI 全绿 + 形态② + `merge-tree` 树 ≡ head 树**三者同时成立**时，本地 `--with-db` 是冗余的；
+   但**它只在「代码面零位移」时有意义**（本例 `docs/32` 是纯文档）。
+
+### §155.6 下一轮顺位
+
+1. **收割 M10-B1（`LUM-2112`）**：可验收信号 = `owners.M3+ 16 → 11` 且 `implemented_placeholder 3 → 2`（§153.4 记账表）、
+   `local 510→515 / real 424→430 / ph 2 / implemented 432 / known_gap 29→24`。
+2. **收割 M10-B3（`LUM-2114`）**：信号 = `owners.M3+ −6`、`local_only 8` 不增、**`report.json` 已重生成**、`unevaluable ≤ 306`。
+3. **B1 合入 ⇒ `LUM-2113`（B2，rev 4 已备妥）解锁**；B2 与 B3 交集仅 `mod.rs`/`mount.rs` 相邻追加段，可同飞。
+4. **B 面全合 ⇒ `LUM-2107`（M10-5，0 路由填空位）**；`LUM-2111`（M10-9 INT）与 `LUM-1825`（M9-INT）**不得同轮刷基线**。
+5. **M9 侧 stage 3（`LUM-1819` M9-4 / `LUM-1820` M9-5 / `LUM-1821` M9-6）已解锁**，但三者都写 `mod.rs`/`mount.rs`
+   ⇒ **同飞上限 = 1 片 M9 + 1 片 M10-B**（§154.3 第 5 条）。
+6. **磁盘**：起手 13G，`LUM-2112` 的 `target/` 6.9G 在写。任一终态即按 §150.2 ④ 回收（**先删已终态片，再看在飞片**）。
