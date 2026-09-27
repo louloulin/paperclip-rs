@@ -1,0 +1,37 @@
+# 本仓自造的本地面（golden-local）—— **不属于上游抽取面**
+#
+# 🔴 这个目录里的 fixture **不是**从上游 `louloulin/multica` 抽取出来的。它们由本仓
+#   （paperclip-rs / multica-rs）自己写，存在的唯一理由是：
+#   上游抽取面（`contracts/golden/**`，365 条）的 `json_subset` **100% 为空**
+#   （`config/` 17 条全空，整仓 0/365 非空）⇒ 它只能证明"挂上了 + 状态码对"，
+#   **证明不了字段级契约**。本地面就是那个字段级判据。
+#
+# upstream_repo     https://github.com/louloulin/multica
+# upstream_contract_pin 90e0bdf830436b3981b32a7017e1c18d41c7cdea   ← 与 contracts/golden/PIN 同一个 pin
+# upstream_route_pin  f41fae6b08fb                                   ← ⑦ 路由表的 pin（docs/64 §1.6）
+# upstream_status    NOT EXTRACTED —— 本地面 0 条来自上游抽取器
+# extractor         （无）手写；格式对齐 scripts/extract_upstream_fixtures.py 的 schema_version 1
+# schema_version    1
+# fixtures          13 条（default 10 + token 3）
+# owner             M10-5 / LUM-2107
+#
+# ---------------------------------------------------------------------------------------
+# 为什么是**两个** golden 根（`default/` 与 `token/`），而不是一个
+# ---------------------------------------------------------------------------------------
+# `mc-conformance` 的 `load_dir`（crates/mc-conformance/src/lib.rs:207-221）**只下潜一层**：
+# 根目录下的非目录项直接 `continue`，第二层只收 `.json`。⇒ 每条 fixture 必须落在
+# `<root>/<subdir>/<file>.json`，**不能**多一层。
+#
+# `/health/realtime` 的四态访问门（`routes/probes/realtime.rs:130-146`）在 handler 里是
+# **if / else 二选一**：`token` 已设 ⇒ 只走 bearer 比对（不匹配即 401）；`token` 未设 ⇒ 只走
+# loopback 判定（不满足即 404）。⇒ **401 与 404 在同一个进程 env 下互斥**，一条报告装不下。
+# 所以拆成两个根，由 `scripts/mc_golden_local_check.sh` 钉住各自的 env 分别回放。
+#
+# ---------------------------------------------------------------------------------------
+# 报告（`--check` 的比对对象）
+# ---------------------------------------------------------------------------------------
+# 🔴 **不复用** `crates/mc-conformance/report.json`：`Report` 把 `golden_dir` **逐字**写进
+#   JSON，拿本地面去比上游面必然漂移（首行 diff 就是 `golden_dir`）。
+# report_default contracts/golden-local/default/report.json
+# report_token   contracts/golden-local/token/report.json
+# regenerate     bash scripts/mc_golden_local_check.sh --write

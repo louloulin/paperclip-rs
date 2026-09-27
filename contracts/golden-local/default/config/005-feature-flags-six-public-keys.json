@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "config-local/005-FeatureFlagsSixPublicKeys-GET-api-config",
+  "method": "GET",
+  "path": "/api/config",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {
+      "feature_flags": {
+        "agents_agent_builder": true,
+        "agents_skill_toggles": true,
+        "billing_workspace_subscriptions": false,
+        "composio_mcp_apps": true,
+        "plugins_v1": true,
+        "settings_resource_labels": true
+      }
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "005-FeatureFlagsSixPublicKeys-GET-api-config",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "6 个公开 flag 的键集与取值（3 恒 true + 3 由 FF_* 求值）；取值依赖脚本钉死的 FF_* env。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

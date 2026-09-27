@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "config-local/001-AlwaysPresentStrings-GET-api-config",
+  "method": "GET",
+  "path": "/api/config",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {
+      "cdn_domain": "",
+      "posthog_key": "",
+      "posthog_host": "",
+      "analytics_environment": "dev"
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "001-AlwaysPresentStrings-GET-api-config",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "无 omitempty 的 4 个字符串键必现；analytics_environment 缺省是 \"dev\" 而非空串。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}

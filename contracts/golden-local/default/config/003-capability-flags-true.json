@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "config-local/003-CapabilityFlagsTrue-GET-api-config",
+  "method": "GET",
+  "path": "/api/config",
+  "path_params": {},
+  "query": {},
+  "headers": {},
+  "actor": {
+    "kind": "anonymous"
+  },
+  "body": null,
+  "expect": {
+    "status": 200,
+    "json_subset": {
+      "local_worktree_supported": true,
+      "agent_conversation_starters_supported": true,
+      "comment_delete_keep_replies_supported": true
+    },
+    "headers": {}
+  },
+  "source": {
+    "file": "contracts/golden-local",
+    "line": 0,
+    "test": "003-CapabilityFlagsTrue-GET-api-config",
+    "site": "http.Get",
+    "via": "router",
+    "commit": "local"
+  },
+  "extraction": {
+    "notes": [
+      "3 个恒 true 的能力声明键必现（客户端 fail-closed 的判据）。 mc_golden_local: 字段级断言由本仓自造（上游抽取面在 contracts/golden/**，365 条）。"
+    ],
+    "bindings": {}
+  }
+}
