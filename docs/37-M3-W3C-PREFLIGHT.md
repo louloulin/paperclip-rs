@@ -13220,3 +13220,98 @@ git diff --name-only aa509be1 90124763                                          
 6. **回收磁盘**：M9-2 的 workdir `target/` 13G 现已**无人使用**（run completed、PR 已合）
    ⇒ 可回收 `target/debug/incremental`（`find … -mmin +3`），`deps` 保留；这能显著缓解 12G 的盘压。
 7. **派 M9-11（`LUM-2116`，rev 5 已备妥）**：任一片交 PR 后腾出槽位即派，预期 `owners.M9 18 → 7`。
+
+---
+
+## §150 15:00Z autopilot cycle（`LUM-2358`，15:00Z / 23:00 触发）—— **零合并 + 零派发轮**（第 3 次，daemon 3/3 = cycle ∥ M9-3 ∥ M10-4）；🔴 **本轮产出：把「门禁要串行」升级为「编译本身就是并发杀手」——`flock` 锁错了东西**
+
+### §150.1 起手
+
+- **base `ff337816`**（= `0e3e40f9` 合并 M9-2 + §149.9 docs-only 直推）。GH **0 open PR**（连续第 3 轮）。
+- daemon **3/3**：`LUM-2358`（本 cycle）∥ `LUM-1818`（M9-3，rev 9，`in_progress`）∥ `LUM-2106`（M10-4，rev 10，`in_progress`）。
+  ⇒ **结构性满载、无位可派**，本轮目标从「推进」改为「收割前的整理」。
+- `multica repo checkout` 落 `main` 线**第 14 次**（HEAD `4fc96f30`）⇒ 每次都要手动 `git checkout -B agent/devbox5/<id> origin/feat/multica-rs-initial`。
+- **在飞两片的三件套判活（全活）**：
+  | 片 | workdir | `target/` | 写集 | daemon |
+  |---|---|---|---|---|
+  | M9-3 `LUM-1818` | `lum-1818-5f64318a5a93` | **16G** | 5 改 + 1 新（`onboarding/*`、`workspaces.rs`） | seq 312 活跃 |
+  | M10-4 `LUM-2106` | `lum-2106-64cdde8d5add` | 2.3G | 5 改 + 2 新（`mc-feature-flags/frontend.rs`、`config/tests.rs`） | seq 262 tool #66 活跃 |
+  两片都**未提交、未开 PR** ⇒ 本轮无可收割物。
+
+### §150.2 🔴 核心产出：`flock` 锁的是门禁，而**吃盘的是编译**
+
+§147/§148/§149 三轮都在写「门禁必须串行（`flock -w 5400 /home/devbox/.multica-gates.lock`）」。
+本轮把这条纪律**证伪成不充分**：门禁只是编译的**下游**，**每一片自己的 `cargo build` 才是上游消费者**，
+而 `flock` **管不到它** —— 两片各自增量编译时，`flock` 依然空闲。
+
+**实测轨迹（本轮 15:00–15:10Z，`df -h /` 逐点采样）**：
+
+| 时刻 | avail | M9-3 `target/` | M10-4 `target/` |
+|---|---|---|---|
+| 15:00 | 9.8G | 15.0G | 1.8G |
+| +2min | 7.0G | 15.5G | **2.7G** |
+| +9min | 8.7G（回收后） | 16.0G | 2.3G |
+
+⇒ **单片增量编译速率实测 ≈ 800MB/min**。一轮 `--with-db` 吃 28–30G，**单片 `target/` 峰值 15–16G**，
+而盘总量只有 **49G**、起手已用 37–40G ⇒ **两片同时全量编译在算术上就是装不下的**，
+ENOSPC 不是「运气不好」，是**必然**，而 09-26 的 29 小时停摆正是这么来的（盘满顺带带走 PG）。
+
+**⇒ 纪律升级（取代「门禁串行」这一句）**：
+
+1. **并发预算按 `target/` 峰值算，不按「跑几个 run」算**：
+   `峰值 ≈ 16G/片`；`Σ(在飞片的 target 峰值) + 20G(门禁 + 余量) ≤ 盘总量` 是**派发前的准入条件**。
+   算不过就**只派一片**，第二片等第一片交付并自清 `target/` 后再派。
+2. **`flock` 要锁「整个 build+gate 生命周期」，不是只锁 `gates.sh`** ——
+   片一拿到锁就先 `flock` 住，再从 `cargo build` 开始跑，**门禁结束或失败才释放**。
+   否则「锁门禁」会退化成「两个 build 各自无锁地跑，锁内那条在锁外两条后面干等」。
+3. **每片跑完自己的门禁立刻 `rm -rf target/debug/incremental`**（**只删 `incremental`，绝不碰 `deps`**）。
+   `LUM-1817` 上一轮自清 13G 就是这么腾出盘的；本轮盘之所以没更早见底，部分靠这个。
+4. **回收判据比 §147.6 更宽**：**已终态 run 的 workdir，其 `target/` 可整目录删**（不只是 `incremental`）。
+   本轮据此删掉 `lum-2352`（上一轮 cycle，`run completed`、PR 已合、`ps` 无引用）的整个 `target/`
+   = **回收 1.9G（9.8G → 后续 8.7G 区间）**。注意 `deps` 那条禁令的真正理由是**「在飞 run 还要用」**，
+   不是「`deps` 本身神圣」—— run 一终态，禁令自动失效。
+
+### §150.3 当轮门读（base `ff337816`，三条零编译门全 exit 0）
+
+- **⑦**（`--only route-parity`，1s）：`upstream 456 (commit f41fae6b08fb) | local 492 registered | baseline 473`、
+  `implemented 407 real + 3 placeholder = 410 / 456`、`known_gap 46`、`unclaimed 0`、`regression 0`、`local_only 8`。
+  不变式 `410 + 46 = 456` ✓ 现场复核。
+- **⑦b**：`registered upstream-key literals: 494` / `=> 0 defect(s) from findings, 0 warning(s)`（exit 0）。
+- **⑩**：`limit=800 scanned=1233 baseline=10 violations=0`（exit 0）。
+- **⇒ 与 §149.5（base `0e3e40f9`）逐字相同**，因为 `0e3e40f9..ff337816` 的 four-surface diff = **0 个文件**
+  （`git diff --name-only 0e3e40f9 ff337816 -- crates contracts/golden docs/fixtures Cargo.lock | wc -l`），
+  整段 delta 只有 `docs/37-M3-W3C-PREFLIGHT.md`。**「base 只走 docs-only ⇒ 门读逐字不变」这条推论本轮第 2 次成立**，
+  可以放心用它替代重跑（但仍要跑一遍确认，不能只推）。
+- **0 条 cargo 门**（①②③④⑤⑥⑧⑨）：盘 7–9.8G < 20G 门槛 ∧ 两条全量在飞。**补跑条件**：
+  `df ≥ 20G` ∧ 无并发全量 ∧ 持 §150.2 的**全生命周期** `flock`。⑨ 仍**必须真跑**（`crates/**` 已动，继承链断）。
+- **PG 健康**：`pg_lsclusters` = `16 main 5432 online`，`psql -tAc 'select 1'` 返回 `1` ⇒ 09-26 那次被杀的事故未复发。
+
+### §150.4 欠账结算
+
+- **已付**：`LUM-2116`（M9-11）描述 **rev 5 → 6**（回读复核 `revision` + 长度 14553→16663），
+  追加「§150 补记」= base `ff337816` + 当场实测三门读数 + 「§149.5 读数仍有效」的**理由**（four-surface diff = 0）
+  + 号段复核（`## 49.`/`### 9.19` 仍未被占，`## 48.` 归 M9-3）+ **§150.2 的 5 条磁盘硬约束**（比 §149 的 flock 更严）。
+  保持 `backlog` 未 assign。
+- **仍挂**：门禁欠账 ①②③④⑤⑥⑧⑨（条件同上）；M9-3 / M10-4 两片待收割。
+
+### §150.5 下一轮顺位
+
+1. **收割 M9-3 / M10-4**（判据链：numstat 逐字 → `merge-base` 祖先 → `merge-tree --write-tree` **按 exit code 判** → **合并树当场重跑 ⑦/⑦b/⑩**）。
+2. **M10-4 的可验收信号 = 合并后 ⑦ 的 `gaps by owner` 里 `M10` 归零**（当前 `owners` 里 `M10=1`）。
+   M9-3 预期 `local 492→497 / implemented 410→415 / known_gap 46→41 / owners.M9 18→13`。
+3. **腾位即派 M9-11**（`LUM-2116` rev 6 已备妥，11 路由最大片 ⇒ **它自己就是 §150.2 第 1 条的最大受害者**：
+   派它之前先确认盘上**没有另一条 15G 的 `target/`**）。
+4. `docs/32` 三片同锚点（`## 45.`=M10-4、`## 47.`=M9-2 已合、`## 48.`=M9-3、`## 49.`=M9-11）
+   ⇒ 后合并者走 §146.3 机械解、**解冲突提交推回该 PR 分支**。
+5. 任何动 `crates/**` 的片交付时**必须真跑 ⑨**。
+
+### §150.6 lesson
+
+1. 🔴 **「串行化」要串到资源消费者，不是串到某个下游命令**。三轮的 `flock` 纪律都指向 `gates.sh`，
+   而盘是 `cargo build` 吃掉的；**锁错了对象 = 纪律存在但不生效**。
+2. 🔴 **并发上限要用「峰值占用 ÷ 总量」算，并写进派发准入**，而不是靠「跑几个」这种计数单位 ——
+   计数单位在 09-26 那天给出了「2/3 在飞，很健康」的错误绿灯。
+3. **回收禁令的作用域是「在飞」**：`deps` 不许动的理由是 run 还要用，run 一终态禁令自动失效；
+   写回收规则时要写清**作用域条件**，否则会一直有人不敢删。
+4. **「base 只走 docs-only ⇒ 门读逐字不变」是可用推论**，但要**跑一遍确认**（本轮 1s 的 ⑦ 成本极低），
+   推论 + 复核各占一半，缺一半就会在 base 有代码位移时静默给出过期读数。
