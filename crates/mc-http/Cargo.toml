@@ -48,6 +48,12 @@ mc-storage = { path = "../mc-storage" }
 mc-secrets = { path = "../mc-secrets" }
 mc-feature-flags = { path = "../mc-feature-flags" }
 mc-db = { path = "../mc-db" }
+# M10-2（LUM-2104 / docs/64 §2.1 第 3 行）：`/readyz` 的"迁移齐否"判定**复用**
+# `mc_migrate::verify()`（`Readiness{pending, missing_tables}`），**不在路由里**另写一份
+# `SELECT COUNT(*)`。`mc-migrate` 已是 workspace 成员且在 lock 内 ⇒ **无新 package**，
+# 只多这一条边（`Cargo.lock` 重新生成即可）。方向无环：`mc-migrate` 只依赖
+# `mc-config` / `mc-db` + 第三方 crate，**不依赖** `mc-http`。
+mc-migrate = { path = "../mc-migrate" }
 mc-repos = { path = "../mc-repos" }
 # M4-3（LUM-1474）：chat 面的纯领域规则（标题校验/游标分页/置顶容量/草稿消费语义）。
 # 本 crate 此前零依赖者；切片只新增这一条依赖边（非顶层 API 变更）。
