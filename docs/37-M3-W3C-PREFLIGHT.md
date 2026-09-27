@@ -13516,3 +13516,93 @@ ENOSPC 不是「运气不好」，是**必然**，而 09-26 的 29 小时停摆�
    **合之前先预演** `merge-tree <base> <pr-head>`（本轮提前 15 分钟知道要解，零意外）。
 3. `M9` 剩 13 条缺口（`owners.M9=13`）⇒ 收割 M9-11 后开下一片；`M3+=16` 是另一条线。
 4. 收割判据链要**等 CI `fast` / `db` 转绿**（本轮 §152.7 登记的唯一不完整处）。
+
+## 153. 00:30 cycle（`LUM-2364`）—— 零合并监控轮 + 派 M10-B1（B 面第一块）；本轮产出：把「占位升级」在 ⑦ 里的记账效应**算成一张表**，并把 `docs/32` 号段**按在飞片占用**分配
+
+### §153.0 一句话
+
+起手 **0 open PR**、在飞 1/3（M9-11 正在跑第一轮 `--with-db`）⇒ 判型 = **只读监控 + 派发轮**；
+不收割任何东西，只做三件事：把三门读数**实测**一遍、把 M10-B1 派出去、把本段写下来。
+
+### §153.1 当轮实测（base `5467ef20`，`git fetch` 后 `rev-parse` 复核）
+
+- **⑦**：`upstream 456 (commit f41fae6b08fb) | local 498 registered | baseline 473`、
+  `implemented 413 real + 3 placeholder = 416 / 456`、`known_gap 40`、`unclaimed 0`、`regression 0`、`local_only 8`、
+  `gaps by owner: M3+=16  M9=13  M3=11` ⇒ **`owners.M10` 归零**（§152 写下的可验收信号，命中并保持）。
+- **⑦b**：`registered upstream-key literals 499` / `shapes OK` ⇒ **0 defect / 0 warning**。
+- **⑩**：`limit=800 scanned=1239 baseline=10 violations=0`。
+- **⑨**：真跑 `--no-db --check` ⇒ **`report matches crates/mc-conformance/report.json`**（exit 0）。
+  三 blob：`report.json c828c8d1…` / `docs/fixtures e331e706…` / `crates/mc-conformance 59e1669e…`。
+
+### §153.2 在飞盘点（判型依据）
+
+| issue | 片 | 状态 | 判读 |
+|---|---|---|---|
+| `LUM-2116` | M9-11 cloud-runtime 11 条 | `in_progress`，**第一轮 `--with-db` 正在跑** | 分支 **0 提交**、工作区 4 改 2 新目录；`target/` 7G |
+| `LUM-2112` | M10-B1 附件面 6 行 | 本轮**新派** | workdir `lum-2112-4ddfde8c712d` |
+| `LUM-2126` | 10:00 cycle（更早一轮） | 仍 `in_progress` | 那轮 run 已不在（无 workdir 活动、无 `rustc`）⇒ **僵尸 cycle，不占并发**；下轮顺手收成 `in_review`/`done` |
+
+⇒ **2/3**（M9-11 ∥ B1 ∥ 本 cycle），**第三个槽位刻意不填**：M9-11 正处在它自己最吃盘的时刻（§152.8 的准入条件反过来说：它在飞 ⇒ 不再叠加第二条全量编译面）。
+
+### §153.3 M9-11 第一轮门禁的中间读数（**只读观察，不干预**）
+
+`.logs/gates_lum2116.log`（落本 workdir `.logs/`，符合 §151 坑 1）：`fmt **1**` / `build 0` / `clippy 0` / `clippy-test-util 0` /
+`test 0` / `db-migrate 0` / **`db-e2e 101`** / `schema-drift 0` / `route-parity 0`。
+两条红的性质不同，交片侧自己会处理，这里只留判读口径：
+① `fmt` 红是 `crates/mc-cloud/src/runtime/tests.rs` 的**数组排版**（`cargo fmt` 想把 11 元组的元素拆多行）⇒ 机械；
+② `db-e2e` 红是**两条真用例**：`routes::cloud_runtime::tests::db::all_eleven_routes_proxy_verbatim_and_stamp_the_identity`、
+`…::the_member_gate_admits_members_and_hides_the_workspace_from_outsiders`（`46 passed; 2 failed`）⇒ 真逻辑问题。
+
+### §153.4 本轮产出：把「占位升级」在 ⑦ 里的记账效应写成一张可复算的表
+
+M10-B1 有一个容易被算错的成分：`/api/issues/:id/attachments` 是**占位升级**，不是新增键。
+`route_parity.py` 把它计入 `implemented_placeholder`，所以升级只动 `real`/`ph` 两格，
+**`local` 与 `known_gap` 都不动**。写成表（B1 的验收表，逐格）：
+
+| 成分 | `local` | `implemented_real` | `implemented_placeholder` | `known_gap` |
+|---|---:|---:|---:|---:|
+| 起点（`5467ef20` 实测） | 498 | 413 | 3 | 40 |
+| 5 条缺口变真实现 | **+5** | **+5** | 0 | **−5** |
+| 1 条占位升级 | 0 | **+1** | **−1** | 0 |
+| 交付后应为 | **503** | **419** | **2** | **35** |
+
+不变式：`implemented + known_gap = 421 + 35 = 456` ✓（`implemented` 总数 416 → 421）。
+🔴 **推论（下次派 B2/B3/B4 直接套用）**：B 面 4 片里**只有 B1 含占位升级**；B2/B3/B4 是纯新增 ⇒
+`local += 缺口行数`、`implemented += 缺口行数`、`known_gap −=`、`ph` 三格不动。
+⇒ **B2+B3+B4 全合后**：`local 503 + 11 = 514`… 以实测为准，但 `ph` 应始终停在 **2**（B1 之后不再有占位可升）。
+
+### §153.5 `docs/32` 号段按「在飞占用」分配
+
+`grep -o '^## [0-9]*' docs/32-M3-DAEMON-FACE.md | sort -n | tail` = `44 45 46 47 48`；
+`### 9.x` 末号 `9.18`（`9.15` 被 M10-4 的索引段 + `9.15.1` 占）。而 **`## 49.` / `### 9.19` 已被在飞的 M9-11 预留**
+（它的描述里逐字写着「本片取 `## 49.` + `### 9.19`」）⇒ **B1 取 `## 50.` / `### 9.20`**，起手 `grep -c` 实测 0 命中。
+**纪律补一条**：号段不是「当前最大号 + 1」，而是「**当前最大号与在飞片已预留号一并取过之后的**下一号」——
+只看文件会与在飞片撞号（本轮若按文件取 49，两片就会在同一锚点上写同一个标题）。
+
+### §153.6 磁盘：起手 22G → 跑门后 15G → 自回收回 20G
+
+本轮实测复现了 §150.2 的形状，但顺序是反的：
+① 起手 `df` **22G**，跑完自己的 ⑨ 真跑后掉到 **15G**（`cargo run -p mc-conformance` 在**本 cycle 自己的 workdir** 里
+拉起 4G `target/`——**cycle 自己的门禁也会吃盘，这一点之前没写进 §150.2**）；
+② 本轮读到 ⑨ 已 `report matches` ⇒ 本 cycle 不会再编译 ⇒ **删自己 workdir 的 `target/`，立刻回 20G**。
+⇒ **新纪律：cycle 自己的零编译门跑完就删自己的 `target/`**，别把 4G 留给下一轮的自己。
+（在飞 M9-11 `target/` 7G 未动：它 ⑥ 红 ⇒ 还要重跑，不满足 §150.2 ④。）
+
+### §153.7 派发
+
+- **M10-B1（`LUM-2112`）`backlog → todo`（rev 8）**：整段历史读数作废，替换为本段实测（base `5467ef20`、⑦ `498/416/40`、
+  owners `M3+=16 M9=13 M3=11`、⑦b `499`、⑩ `1239/10/0`、⑨ `report matches` + 三个 blob）+ §153.4 的记账表 +
+  号段 `## 50.` / `### 9.20` + §153.6 的 flock/回收纪律 + 同飞矩阵（M9-11 的 `crates/**` 与 B1 **∅**，只有 `docs/32` 同锚点）。
+  **回读复核**：描述长度 `7317 → 14965` 字符（`update --description-file` 的 exit-0-不写库坑，§152.8 已记）。
+- 起跑配方第 N 次验证：`assign --to-id … --no-start` → `status todo --no-start` → **`rerun`**（`status: queued`）
+  ⇒ workdir `lum-2112-4ddfde8c712d` 生成、`LUM-2112 → in_progress`。（`--to-id` 仍必须 canonical UUID，名字 `--to` 会被拒。）
+
+### §153.8 下一轮顺位
+
+1. **收割 M9-11**（`LUM-2116`）：它的 ⑥ 两条红必须先在它自己那轮里转绿再交 PR；交 PR 后走 §152 的判据链，
+   **本轮起加一条硬约束：等 CI `fast` / `db` 转绿再合**（§152.7 的欠账）。可验收信号 = `gaps by owner` 里 **`M3` 归零**。
+2. **收割 M10-B1**（`LUM-2112`）：可验收信号 = `gaps by owner: M3+ 16 → 11` 且 `implemented_placeholder 3 → 2`。
+3. 两片都动 `docs/32` ⇒ 后合并者走 §146.3 机械解，**合前先 `merge-tree` 预演**。
+4. 空位一出现 ⇒ 晋升 **M10-B3（`LUM-2114`，stage 4，6 行 quick-actions）**：写集 `routes/quick_actions/*` 与 B1 的
+   `routes/attachments/*` **∅**；注意它上游 4 条**带尾斜杠**（`docs/64` §8.2）。
+5. 僵尸 cycle `LUM-2126` 收尾（`in_progress → in_review`），别让看板长期显示假的在飞。
