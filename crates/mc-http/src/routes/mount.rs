@@ -147,6 +147,12 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // 写法都服务）⇒ `quick_actions::router()` 内部把两形态都注册了；issue 侧两条是
         // **plain** `r.Post` ⇒ 只注册无尾斜杠。别在这里“帮忙”改形态。
         .merge(mount_slice_quick_actions())
+        // ----- M10-B2（LUM-2113）：上传与静态分发面 2 条 -----
+        // `POST /api/upload-file` + `GET /uploads/*`（上游 `router.go:1633` / `1435`）。
+        // ⚠️ 与前两行不同：这一行带 `state.clone()`，因为 `/uploads/*` 的**注册本身**
+        // 就是有条件的（上游 `if _, ok := store.(*storage.LocalStorage); ok`）⇒ 条件在
+        // `uploads::mount()` 里判，返回**空** router 时这条键根本不存在。
+        .merge(mount_slice_uploads(state.clone()))
 }
 
 /// M10-B3（`LUM-2114`）的 quick-action 6 条切片。
@@ -603,4 +609,21 @@ fn mount_slice_cloud_runtime() -> Router<Arc<AppState>> {
 /// ⇒ **只注册无尾斜杠**那一形态（补尾斜杠 = `EXTRA_ALIAS` 硬失败）。
 fn mount_slice_attachments() -> Router<Arc<AppState>> {
     Router::new().merge(super::attachments::router())
+}
+
+/// M10-B2（`LUM-2113`）的上传与静态分发切片（`docs/64-M10-PLAN.md` §4.2 第 2 行）。
+///
+/// **2 条新键**：`POST /api/upload-file`（落 `mc-storage` + 写 `attachment` 行）与
+/// `GET /uploads/*`（本地磁盘的公开静态分发）。
+///
+/// 🔴 与前两个 M10 合并点的唯一形状差别：**这一行带 `state`**，因为上游对
+/// `/uploads/*` 是**条件注册**（`router.go:1434-1436`：只有 `storage.LocalStorage`
+/// 才挂载）⇒ 本仓在 `uploads::mount()` 里判「该桶是否落在本地磁盘 provider 上」，
+/// 否则返回**空** router（不是 403、也不是 501）。
+///
+/// 形态：两条**全是上游 plain 注册** ⇒ **只注册无尾斜杠**那一形态（补尾斜杠 =
+/// `EXTRA_ALIAS` 硬失败）。写集偏离登记见 `docs/32` §9.21。
+#[allow(clippy::needless_pass_by_value)] // 同 `mount_slice_workspace_member`：切片签名保持 Arc 传入。
+fn mount_slice_uploads(state: Arc<AppState>) -> Router<Arc<AppState>> {
+    super::uploads::mount(&state)
 }

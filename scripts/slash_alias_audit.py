@@ -81,6 +81,8 @@ def load_extractor():
     spec = importlib.util.spec_from_file_location(
         "w3b_premerge_audit", os.path.join(HERE, "w3b_premerge_audit.py")
     )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load the route extractor from {HERE}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -91,8 +93,15 @@ def fold(path: str) -> str:
 
     Both halves matter: upstream writes `{id}`, axum writes `:id`, and the trailing
     slash is the very thing under audit, so it cannot survive into the comparison key.
+
+    The catch-all fold is the third half (M10-B2 / `LUM-2113`): upstream chi spells
+    it `/uploads/*` (unnamed) while matchit 0.7 **requires** a name (`/uploads/*key`
+    — an unnamed `*` is rejected outright with "parameters must be registered with
+    a name"). Both sides therefore fold `*<anything>` back to a bare `*`, so a
+    genuinely implemented catch-all is not reported as "no route" plus a bogus
+    local-only key.
     """
-    return re.sub(r"[:{][^/}]*}?", ":param", path).rstrip("/") or "/"
+    return re.sub(r"\*[^/]*", "*", re.sub(r"[:{][^/}]*}?", ":param", path)).rstrip("/") or "/"
 
 
 def canon(path: str) -> str:
@@ -292,7 +301,11 @@ def main(argv=None) -> int:
 
     upstream = load_upstream(args.upstream)
     report = {"upstream": args.upstream, "upstream_keys": len(upstream),
-              "allowlist": os.path.relpath(allowlist_path, ROOT) if allow else None,
+              "allowlist": (
+                  os.path.relpath(allowlist_path, ROOT)
+                  if allow and allowlist_path is not None
+                  else None
+              ),
               "allowlist_rows": len(allow)}
 
     lines: list[str] = []
