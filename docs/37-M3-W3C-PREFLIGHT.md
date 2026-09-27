@@ -14096,3 +14096,59 @@ M9 侧 `owners.M9=13` 未动，stage 3 与 M10-B 共用注册段 ⇒ **同飞上
 - 上文 §152.8 记的是「文件放 `workdir/paperclip-rs/` 子目录 ⇒ 回 `✓ Markdown clean` 但 `revision` 不动」。本轮**文件已放 workdir 根**，仍出现**同形假成功**：命令回 `✓ Markdown clean · 616ms`、`exit 0`，而回读 `revision` 仍是 **2**、`chars` 仍是 **6834**。
 - 🔴 **归因修正：真正的判据不是「文件放哪」，而是「有没有真的发出那一次 update」** —— 本轮首次假成功时**根本没执行 `issue update`**，草稿已写好就当成了已提交。⇒ 定式：**写描述 = `cat` 追加 → `issue update` → 回读 `revision`**，三步缺一不可，且**回读 `revision` 永远是唯一判据**。
 - 另：回读校验要**逐条核对关键子串**，不能只对长度 —— 本轮第一次回读有 4 个 `OK` 命中，实为**旧 §145 正文里的同名字符串**（`## 53.` / `### 9.23` / `owners.M3+ 3 → 0` 三处旧文本里本来就有）。**长度 + 关键子串两条一起过才算落库。**
+
+## §160 · 04:00 cycle（LUM-2378，2026-09-27 20:00Z）—— **零合并监控轮**；产出：M10-5 描述 rev 2（把「自造 fixture 面」的三条源码机制写成硬纪律）+ 一条新的「不要用 `--check` 跨面比对」判据
+
+**起手**：base `4fc96f30` 是 `multica repo checkout` 落的 `main`（pc-* 世代）线 ⇒ `git checkout -B agent/devbox5/14db1d9d503e origin/feat/multica-rs-initial` 后真实 base = **`c78e37ac`**（`docs/37` §159，docs-only）。GH **0 open PR**，daemon **2/3**，df 起手 **25G/47%** → 轮末 **20G/58%**，PG 5432 `online`。
+
+**判型**：零收割物。`LUM-2113`（M10-B2）**全活** —— `porcelain` 8 项、**0 提交 / 分支未推 / 无 PR**、`target/` 2.8G→4.2G（60s 内 +0.6G，实测在编译）、近 5 分钟持续在写 ⇒ 无可收割。§159 的「不派」判据本轮**继续成立**（见下）。
+
+**门读（base `c78e37ac`，三条零编译门全 exit 0）**
+- ⑦ `local 525 / implemented 436 real + 2 placeholder = 438 / upstream 456 / known_gap 18 / unclaimed 0 / regression 0 / local_only 8`、`gaps by owner: M9=13 M3+=5`
+- ⑦b `registered upstream-key literals 526 / 0 defect 0 warning`；⑩ `limit=800 scanned=1263 baseline=10 violations=0`
+- `438+18=456` ✓ 现场复核。**与 §159 读数逐字相同** ⇒「base 只走 docs-only ⇒ 门读逐字不变」**第 7 次成立**。
+
+---
+
+### 🔴 本轮新判据：**`--check` 绑的是「面」，不是「仓」—— 报告里逐字烙着 `golden_dir`**
+
+`mc-conformance` 的 `Report` 把 `golden_dir` **原样写进 JSON 第 3 行**。当轮实测三步：
+
+| 命令 | 报告里的 `golden_dir` |
+|---|---|
+| `--golden /tmp/gl_t` | `/tmp/gl_t`（**绝对路径被烙进快照**） |
+| `--golden contracts/.tmp_probe` | `contracts/.tmp_probe`（相对路径逐字保留） |
+| `--golden /tmp/gl_t --check crates/mc-conformance/report.json` | **exit 1**，diff 首行 = `"golden_dir": "contracts/golden"` vs `"/tmp/gl_t"` |
+
+⇒ 两条定式：① **任何自造 fixture 面必须配自己的已提交 `report.json`**（M10-5 因此新增写集 `contracts/golden-local/report.json`）；② **`--golden` 只传仓库相对路径** —— 绝对路径会让快照换台机器就漂。这解释了为什么「拿本地面去比上游面」在机制上**必然**红，而不是「配置没调对」。
+
+### 🔴 第二条：`load_dir` 只下潜一层 ⇒ 自造面的 fixture 必须放子目录
+
+`crates/mc-conformance/src/lib.rs:207-221`：第一层 `file_type().is_dir()` 为假直接 `continue`，第二层只收 `.json`。当轮实测：`contracts/golden-local/config/001-x.json` ✅ 被加载；**扁平** `contracts/golden-local/001-x.json` ❌ 报 `no fixtures under …`。rev 1 描述的写集恰好写的是带子目录形态（`config/` `probes/`），**侥幸正确但从未验证** ⇒ 现已写成硬纪律。
+
+### 第三条：`--require-pass` 顶不了「mismatch 0 ∧ unmounted 0」
+
+`--help` 逐字：它只断言 `pass >= N`，不足 ⇒ **exit 3**，**不检查** mismatch / unmounted。⇒ 验收脚本必须额外解析 `--json` 输出（`python3 -c`，不引 jq）自己断那两个数。rev 1 写的「断言 `mismatch 0 ∧ unmounted 0`」是对的，但没说清 `--require-pass` 不够。
+
+### 第四条（支撑本片存在理由）：上游 365 条 fixture 的 `json_subset` **100% 为空**
+
+当轮静态实测：`contracts/golden/config/` 17 条，`json_subset` **17/17 为空**；整仓 `0/365` 非空。⇒ 上游抽取器只能带出状态码，**字段级断言只能靠本仓自造** —— 这不是抽取器的缺陷，是 M10-5 存在的结构性理由。推论：M10-5 的本地面 `contract_equivalence_rate` 会显著高于 ⑨ 的 `0.0877`，**这是预期形态，不是缺陷**，别在 review 时当回归报。
+
+### 本轮产出：M10-5（`LUM-2107`）描述 **rev 1 → 2**（3676 → 9337 字符）
+
+- `revision` 回读 **1 → 2** ✅（沿用 §159 定式：`cat` → `issue update` → 回读 `revision`，本轮一次过，无假成功）。
+- rev 1 的「门禁预测」段以 base `c23fcfad` 为基准、**过期 13 轮**（`local 474` / `owners {M9 33, M3+ 16}` / `⑩ scanned 1147`），整段作废并替换为当轮实测 + **本片 delta（三条门 0 变化，唯一可观察的 ⑩ 变化是 `scanned 1263→1264`，因为新 `.sh` 入 `git ls-files`）**。
+- 号段 `## 37.` / `9.11`（rev 1 自称，**已过期 6+ 轮**）更正为 **`## 54.` + `### 9.24`**（当轮 `grep -c` 实测 `9.21/9.23/9.24` 与 `51./53./54.` 全为 0 ⇒ 空置）。
+- 覆盖面从散文（"17 字段的关键子集"）改成 **6 条 config 断言表 + 逐状态常量引用**（`ready.rs:102-108` 的 `STATUS_NOT_READY`/`DB_ERROR`；`realtime.rs:130-146` 的四态门），并标注 **401/404 是 `text/plain` ⇒ 那两条 `json_subset` 只能是 `{}`**。
+- DoD 新增第 11 条 **反向变异**（改坏一条 `json_subset` 的键 ⇒ 脚本必须变红）：门有牙的判据是「反向能红」，不是「正向能绿」。
+- 登记本片**唯一未挂 CI 的判据**：`mc_golden_local_check.sh` **不在 `gates.sh` 的 `ALL_GATES`**（逐字 `fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size`）⇒ 只能本地跑，PR 描述须明说。反过来 ⑦ 与 ⑨ 因本片 0 注册键而必然不变 ⇒ **等 head CI 3/3 绿即已验，不必本地冷编**（§158 判据 2 的第 2 次应用）。
+
+### 下一轮顺位
+
+**收割 B2（`LUM-2113`）** ⇒ 判据链六条半（含 ④ 等 CI 3/3）；可验收信号 `M3+ 5 → 3` 且 `ph` 停在 2。合后 base 预期 `527 / 440 / 16 / owners {M9 13, M3+ 3}` ⇒ **立刻派 B4（`LUM-2115` rev 3 已就绪）** ⇒ M3+ 归零 ⇒ **派 M10-5（`LUM-2107` rev 2 本轮已就绪，可直派）** ⇒ `LUM-2111`（M10-9 INT，唯一 `--write-baseline`，与 `LUM-1825` 不同轮）。M9 侧 `owners.M9=13` 未动 ⇒ 同飞上限 1 M9 + 1 M10-B。🔴 `LUM-2109` 仍被 **docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`，需 owner 裁决。
+
+**回收**：本轮零回收（全盘唯一 `target/` 是 B2 的活物，已 4.2G）。**补跑门条件**：`df ≥ 20G` ∧ 无并发全量 ∧ 持全生命周期 `flock`。
+
+**号段**：`docs/32` 下一空号 `## 54.`/`### 9.24`（`53`/`9.23` 已被 B4 预留，M10-5 也已指向 `54`/`9.24` ⇒ **两片同段会撞，下轮须给其中一片改段**）；`docs/37` 本节 §160 ⇒ 下轮 **§161**。
+
+**观察项（连续多轮）**：autopilot 建单护栏仍未落地；积压 `todo` cycle 单只登记不动状态。
