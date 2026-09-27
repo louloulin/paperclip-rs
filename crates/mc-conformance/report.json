@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 15,
+    "pass": 32,
     "mismatch": 23,
-    "unmounted": 21,
+    "unmounted": 4,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -18,8 +18,8 @@
       },
       "anonymous": {
         "mismatch": 23,
-        "pass": 15,
-        "unmounted": 21
+        "pass": 32,
+        "unmounted": 4
       },
       "member": {
         "unevaluable": 293
@@ -28,30 +28,29 @@
     "by_via": {
       "handler": {
         "mismatch": 23,
-        "pass": 8,
+        "pass": 24,
         "unevaluable": 280,
-        "unmounted": 20
+        "unmounted": 4
       },
       "router": {
-        "pass": 7,
-        "unevaluable": 26,
-        "unmounted": 1
+        "pass": 8,
+        "unevaluable": 26
       }
     },
     "tiers": {
       "stateless": {
         "mismatch": 23,
-        "pass": 15,
+        "pass": 32,
         "unevaluable": 306,
-        "unmounted": 21
+        "unmounted": 4
       }
     }
   },
-  "contract_equivalence_rate": 0.0410958904109589,
-  "mounted_equivalence_rate": 0.39473684210526316,
+  "contract_equivalence_rate": 0.08767123287671233,
+  "mounted_equivalence_rate": 0.5818181818181818,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 15
+    "pass": 32
   },
   "fixtures": [
     {
@@ -1615,12 +1614,12 @@
       "via": "router",
       "status_expected": 200,
       "source": "server/cmd/server/integration_test.go:263",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigDeclaresAgentConversationStartersSupport@server/internal/handler/config_test.go:541#15",
@@ -1631,12 +1630,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:541",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigDeclaresCommentDeleteKeepsReplies@server/internal/handler/config_test.go:590#17",
@@ -1647,12 +1646,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:590",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigDeclaresIssueCreatePropertiesSupport@server/internal/handler/config_test.go:564#16",
@@ -1663,12 +1662,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:564",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigDeclaresLocalWorktreeSupport@server/internal/handler/config_test.go:512#14",
@@ -1679,12 +1678,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:512",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigExposesEnabledPluginsV1Flag@server/internal/handler/config_test.go:490#13",
@@ -1695,12 +1694,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:490",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigExposesFrontendFeatureFlags@server/internal/handler/config_test.go:424#11",
@@ -1711,12 +1710,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:424",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigExposesFrontendFeatureFlags@server/internal/handler/config_test.go:472#12",
@@ -1727,12 +1726,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:472",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigExposesServerVersion@server/internal/handler/config_test.go:361#10",
@@ -1743,12 +1742,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:361",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigExposesWorkspaceCreationDisabled@server/internal/handler/config_test.go:332#9",
@@ -1759,12 +1758,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:332",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigIncludesRuntimeAuthConfig@server/internal/handler/config_test.go:70#2",
@@ -1775,12 +1774,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:70",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigOmitsCloudDaemonSetupForConfiguredAppURL@server/internal/handler/config_test.go:279#8",
@@ -1791,12 +1790,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:279",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL@server/internal/handler/config_test.go:252#7",
@@ -1807,12 +1806,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:252",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigOmitsOfficialCloudDaemonSetup@server/internal/handler/config_test.go:218#6",
@@ -1823,12 +1822,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:218",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigUsesAppURLForSameOriginDaemonSetup@server/internal/handler/config_test.go:167#4",
@@ -1839,12 +1838,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:167",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigUsesDaemonServerURLOverride@server/internal/handler/config_test.go:116#3",
@@ -1855,12 +1854,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:116",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "config/TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup@server/internal/handler/config_test.go:193#5",
@@ -1871,12 +1870,12 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/config_test.go:193",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 200,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 200"
+      "detail": "status matched"
     },
     {
       "id": "context/TestPluginActionRequiresTheFeatureFlag@server/internal/handler/plugin_action_test.go:86#1",

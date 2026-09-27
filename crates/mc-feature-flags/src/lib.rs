@@ -5,6 +5,11 @@ use std::collections::HashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+// M10-4（LUM-2106 / docs/64 §2.2 第 12 行）：`GET /api/config` 发布的 6 个前端公开 flag
+// （`EvaluateFrontendPublicFlags` 的等价物）。本模块**只**回答"匿名公开面"那一层，
+// 不与下面的进程内 catalog 抢职责（catalog 是业务代码的注册表，本模块是 env/YAML 只读求值）。
+pub mod frontend;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FeatureKey(String);
