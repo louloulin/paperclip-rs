@@ -441,10 +441,18 @@ def normalize(path: str, strip_trailing_slash: bool = True) -> str:
         path = path[:-1]
     segments = []
     for seg in path.split("/"):
-        if seg.startswith(":") or (seg.startswith("{") and seg.endswith("}")):
-            segments.append(":param")
-        elif seg == "*" or seg.startswith("{*"):
+        # catch-all **先判**（M10-B2 / `LUM-2113` 补）：matchit 0.7 的语法是
+        # `*name`（**必须带名字** —— `Router::route("/uploads/*", …)` 会被
+        # `InsertError::ParamNameMissing` 拒绝："parameters must be registered
+        # with a name"），matchit 0.8 才换成 `{*name}`。上游 chi 的 `/uploads/*`
+        # 没有名字，四种写法（`*` / `*name` / `{*` / `{*name}`）必须折成同一个
+        # `:wildcard`，否则一条**真的实现了**的路由会被判成「新路由 + 缺口仍在」。
+        # ⚠️ 这条分支原先排在 `{…}` 之后 ⇒ `{*name}` 会被上一支先吃掉成 `:param`
+        #（死代码）；`/uploads/*` 则是反过来**根本注册不了**。
+        if seg == "*" or seg.startswith("*") or seg.startswith("{*"):
             segments.append(":wildcard")
+        elif seg.startswith(":") or (seg.startswith("{") and seg.endswith("}")):
+            segments.append(":param")
         else:
             segments.append(seg)
     out = "/".join(segments)
@@ -735,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
                     "refusing to write a baseline while registrations are unresolved: "
                     + "; ".join(extraction.unsupported)
                 )
+            if baseline is None:
+                raise ValueError("--write-baseline requires --baseline <path>")
             os.makedirs(os.path.dirname(baseline), exist_ok=True)
             write_baseline(baseline, registration_keys(extraction.routes), args.routes_dir, root)
         rep = build_report(args.routes_dir, args.upstream, root, baseline)

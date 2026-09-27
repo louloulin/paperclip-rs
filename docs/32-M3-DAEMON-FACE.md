@@ -1398,6 +1398,50 @@ D-10 列表**含**抓取上下文副本（上游同款）；D-11 `tests/issues/a
 `regressions 0`、`local_only 8` 不增、不变式 `421 + 35 = 456` ✓；⑦b `499 → 504` / 0 defect；
 ⑨ **逐字不变**（`report.json` 未动）；⑩ `scanned 1239 → 1251 / violations 0`。
 
+### 9.21 M10-B2（`LUM-2113`）：上传与静态分发面 2 行的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 51.`（51.1–51.7）**。
+> 号段起手复核（当轮实测）：`## 51.` 与 `### 9.21` 的命中数**都是 0**（空置）
+> （`## 50.` / `### 9.20` 归已合的 M10-B1、`## 52.` / `### 9.22` 归已合的 M10-B3）。
+
+**写集（11 个文件 = 7 新建 + 4 既有，各一条，全文见 §51.1 的表）**：
+`crates/mc-http/src/routes/uploads.rs`（**新建**）+ `routes/uploads/serve.rs`（**新建** ——
+切片描述「超 700 行按『上传 / 静态分发』拆两文件」那次拆分，**逐字补进写集**）+
+`routes/uploads/tests{.rs,/support.rs,/pure.rs,/fx.rs,/db.rs}`（**新建**证据面，5 个）·
+`routes/mod.rs`（+6 行 `pub mod uploads;`）· `routes/mount.rs`（+1 行 `.merge(...)` + 1 个新函数）·
+`crates/mc-storage/src/{lib,local}.rs`（🔴 **写集外扩**，各 +2/+3 行，见 D-1）·
+`scripts/{route_parity,slash_alias_audit}.py`（🔴 **门脚本改动**，见 D-2）·
+`docs/32-M3-DAEMON-FACE.md`（本段 + `## 51.`）。
+
+**两条最小冻结破例外**（cycle §145 逐条授权，**各只加不改**）：`routes/mod.rs` 的
+`pub mod uploads;` 与 `routes/mount.rs` 的 `.merge(mount_slice_uploads(state.clone()))` + 那个新函数。
+
+**授权矩阵（2 条，全文见 §51.2）**：`POST /api/upload-file` 会话 + 成员门（非成员 **403**）、
+workspace 上下文**缺则不报错**（走上游「无上下文」那一支，只落对象不写行）；
+`GET /uploads/*` **无认证**、🔴 **只在本地 provider 下注册**（上游 `router.go:1434-1436` 逐字）。
+
+**路径穿越三条反例（全文见 §51.3）**：`..`（含 `%2e%2e` 解码后）与绝对路径由 `guard_static_key`
+这一**纯函数**在读盘之前拒；**符号链接逃逸**由 `resolve_under` 的包含性判定拒 ——
+那一条**只有**拿到本地根目录才判得出来（`validate_key` 与键守卫都放行干净的键）⇒ D-1 的全部理由。
+三者对外**都是 404**（上游逐字）。
+
+**登记的偏离（9 条，全文见 §51.4）**：D-1 写集外扩到 `mc-storage`（`local_root()`，纯追加）；
+D-2 🔴 **改了门脚本的 catch-all 折叠**（matchit 0.7 的 catch-all **必须带名字** ⇒ `/uploads/*`
+在本仓**根本注册不了**；`route_parity.py::normalize` 的 catch-all 分支是**死代码** ⇒ 本片修了它，
+全文见 §51.5，**本片最需要人工复核的一条**）；D-3 切片描述的「413 / 415」在本路由上**不存在**
+（那是 M10-B1 的 `/content` 的验收项，被写串了；上游这里恒 **400**）；D-4 「类型白名单」不存在
+（上游是嗅探字节 + 六项扩展名覆盖）；D-5 UUID v7 → v4；D-6 `chat_session_id` / `task_id`
+两道门 **fail-closed 403**；D-7 非 multipart 的 content-type 是 **panic** 不是 4xx；
+D-8 实际上限被全仓 25 MB 中间件压制（`MAX_UPLOAD_SIZE` 仍记上游的 100 MB）；
+D-9 桶 / URL 的本仓口径（**收口** §50 的 D-9）。
+
+**门禁**：十道门 **10/10 PASS**；⑦ `local 525 → 527`、`implemented 438 → 440`、`known_gap 18 → 16`、
+**`gaps by owner: M3+=5 → 3`（可验收信号，命中）**、`baseline 473` 不动、`regressions 0`、
+`unclaimed 0`、`local_only 8` 不增、不变式 `440 + 16 = 456` ✓；⑦b `526 → 528` / **0 defect 0 warning**；
+⑨ **逐字不变**（`365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`，新挂载的两条键在
+`contracts/golden/` 无 fixture ⇒ 按 §158.2 的收紧判据**不**重生成 `report.json`）；
+⑩ `scanned 1263 → 1270 / violations 0`；用例门 ⑤ **29** + 门 ⑥ **7** 全绿，**零** `health::placeholder`。
+
 ### 9.22 M10-B3（`LUM-2114`）：quick-actions 6 条（目录 4 条 + issue 侧 render/run 2 条）的偏离登记（**索引段**）
 
 > **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 52.`（52.1–52.4）**。
@@ -8084,6 +8128,181 @@ webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
    本片两次切分都落在真接缝上：`download.rs` / `download_pure.rs` = **纯判定对 I/O**；
    `tests/db.rs` / `tests/db_bytes.rs` = **元数据读取字节**。切完 `download.rs` 用
    `pub use super::download_pure::*;` **原样再导出** ⇒ 外面一个调用点都不用改。
+
+## 51. M10-B2（`LUM-2113`）：上传与静态分发面 2 行的落点与偏离登记
+
+> **起手 base（当轮实测）= `24050676`**（`git rev-parse origin/feat/multica-rs-initial`；
+> 与 cycle §158 记的 base **逐字相同** ⇒ **零 base 前移损耗**）。
+> **硬前置**：M10-B1（PR #128，落地 `8b6f5f49`）与 M10-B3（PR #129，落地 `24050676`）
+> **均已合入** ⇒ 本片是 M10-B 波最后一片，冻结面上 B1/B3 的追加行都已在 base 里，
+> 本片**只追加**自己的行。
+> **上游 pin**：路由表读 `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`；上游只读副本
+> **克隆进本 run 的 workdir**（`workdir/upstream-ref`），不依赖别的 run。
+>
+> **号段（当轮 `grep -c` 实测）**：`^## 51.` = 0、`^### 9.21` = 0 ⇒ 本片取
+> **`## 51.` / `### 9.21`**（`50`/`9.20` 归已合的 B1、`52`/`9.22` 归已合的 B3）。
+
+### 51.1 写集审计（两类，逐条）
+
+**① 新文件（7 个）**——`uploads.rs` 是**新模块**，M10-0 锚点只预声明了 `probes` / `config`
+两个面（`docs/64` §4.1 A 面 vs §4.2 B 面是两张表）：
+
+| 文件 | 行数 | 内容 |
+| --- | ---: | --- |
+| `crates/mc-http/src/routes/uploads.rs` | 629 | 上传那一半：router / `upload_file` / 表单读取 / 嗅探 / 扩展名覆盖 |
+| `crates/mc-http/src/routes/uploads/serve.rs` | 205 | 静态分发那一半：`GET /uploads/*key` / 键守卫 / `resolve_under` / 百分号解码 |
+| `crates/mc-http/src/routes/uploads/tests.rs` | 492 | 形态门 + 不碰库的那一半（门 ⑤，22 例） |
+| `crates/mc-http/src/routes/uploads/tests/support.rs` | 383 | `AppState` 字面量 + multipart 装置 + `TempDir`（含符号链接夹具） |
+| `crates/mc-http/src/routes/uploads/tests/pure.rs` | 116 | 纯函数层（键守卫三分支 / 解码 / 魔数嗅探） |
+| `crates/mc-http/src/routes/uploads/tests/fx.rs` | 116 | 真库夹具（`Fx` / `fixture()`） |
+| `crates/mc-http/src/routes/uploads/tests/db.rs` | 219 | 真库那一半（门 ⑥，`#[ignore]`，7 例） |
+
+🔴 **「拆两文件」那一次拆分已发生**（切片描述的写集原文：「若超 700 行按『上传 / 静态分发』
+拆两文件，**拆了要在写集里逐字补**」）⇒ 上表前两行就是补进去的两个逐字路径；
+`uploads.rs` 用 `pub use serve::{…}` 把静态分发那一半的公开面**平铺**回本模块，
+调用方与用例不必知道拆过。
+
+**② 为让新文件可见要改哪个既有文件（4 个）**：
+
+| 文件 | base 行数 | 动作 | 授权 |
+| --- | ---: | --- | --- |
+| `crates/mc-http/src/routes/mod.rs` | 192 | **+6 行**（注释块 + `pub mod uploads;`） | 🔴 **冻结破例外 1**（cycle §145 授权「各只加不改」） |
+| `crates/mc-http/src/routes/mount.rs` | 606 | **+1 行** `.merge(mount_slice_uploads(state.clone()))` + 文件**末尾**新增 1 个合并点函数 | 🔴 **冻结破例外 2**（同上） |
+| `crates/mc-storage/src/lib.rs` | — | **+2 处**：`StorageProvider::local_root` 默认实现 + `Storage::local_root` 门面 | 🔴 **写集外扩，见 D-1** |
+| `crates/mc-storage/src/local.rs` | — | **+3 行**：`LocalDiskStorage` 覆写 `local_root` | 🔴 **写集外扩，见 D-1** |
+
+**🔴 anchor 冻结件一个字节未动**（含 `routes/probes/*`、`mount_slice_probes`、
+`scripts/file_size_baseline.tsv`、`route-parity-baseline.json`、`report.json`）。
+
+### 51.2 两条键的授权矩阵（逐条）
+
+| # | 键 | 认证 | workspace 来源 | 非成员 / 跨 workspace | 注册条件 | 上游 handler |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | `POST /api/upload-file` | 会话 | 头 / query（**缺则不报错**，走上游「无上下文」那一支） | **403** `not a member of this workspace` | **无条件** | `file.go:379` |
+| 2 | `GET /uploads/*` | **无** | 不适用 | 不适用 | 🔴 **只在本地 provider 下注册**（`router.go:1434-1436`） | `file.go:962` |
+
+**形态**：两条**全是上游 plain 注册**（`router.go:1633` / `1435`）⇒ **只注册无尾斜杠**
+那一形态（本波 allowlist 0 数据行、没有豁免退路）。⑦b `0 defect 0 warning`。
+
+### 51.3 静态分发面的三条路径穿越反例（**各由哪一层拒**）
+
+| 反例 | 拦它的判据 | 层 | 用例 |
+| --- | --- | --- | --- |
+| `..` 段（`%2e%2e` 解码后同样命中） | [`guard_static_key`] → `KeyError::DotDot` | 纯函数（**读盘之前**） | `pure::key_guard_rejects_dot_dot` + `static_route_rejects_dot_dot_in_both_encodings` |
+| 绝对路径（`/etc/passwd`、`C:\…`） | [`guard_static_key`] → `KeyError::Absolute` | 纯函数 | `pure::key_guard_rejects_absolute_paths` + `static_route_rejects_an_absolute_path` |
+| **符号链接逃逸** | [`resolve_under`] 的包含性判定（**解析符号链接之后**） | 读盘之前的 `canonicalize` | `static_route_rejects_a_symlink_escape` |
+
+三者的对外状态码**都是 404**（上游对三段都是 `http.NotFound`）。
+另有一条上游逐字的门：**内部路径**（`.meta.json` sidecar / `.` 开头 `.tmp` 结尾的暂存文件）
+在**任何磁盘工作之前**就拒（`storage/local.go::isInternalLocalPath`）。
+
+🔴 **符号链接那条**是本片唯一**不能**靠键的字符串判据拦住的：`validate_key` 与
+`guard_static_key` 都放行干净的 `escape.txt` ⇒ 必须拿到本地根目录做包含性判定
+⇒ 这就是 D-1 那条 `mc-storage` 外扩的**唯一**理由。
+
+### 51.4 登记的偏离（9 条）
+
+- **D-1 🔴 写集外扩到 `mc-storage`（2 文件、5 行）**：给 `StorageProvider` 加一个
+  **带默认实现**的 `local_root()`（默认 `None`）、给 `Storage` 加同名门面、
+  `LocalDiskStorage` 覆写。**理由**：符号链接逃逸那条反例必须知道根目录（见 §51.3）；
+  `validate_key` 只看键的字符串。**纯追加、零破坏**（默认实现 ⇒ 其他 provider 不受影响），
+  且仍然只服务「读之前做路径包含性判定」这一个用途（注释里写死了这条边界）。
+- **D-2 🔴 改了门脚本 `route_parity.py` 与 `slash_alias_audit.py`（各 +7 / +9 行）**：
+  见 §51.5 的整段说明。**这是本片最需要人工复核的一条。**
+- **D-3 切片描述的「413 / 415」在本路由上不存在**：上游 `file.go:393-397` 把
+  「超限」与「multipart 畸形」并成**同一条** `file too large or invalid multipart form`
+  + **400**。上游 `file.go` 里的 413（`:1319`）与 415（`:1293`）属于
+  **`GET /api/attachments/{id}/content`**，是 **M10-B1** 的验收项，被写串了。
+  本片按**上游逐字**落 400，并登记此差异。
+- **D-4 切片描述的「类型白名单」不存在**：上游**嗅探字节**（`http.DetectContentType`）
+  再用扩展名覆盖**六个**嗅探错的类型（`.svg/.css/.js/.mjs/.json/.wasm`）⇒ 照搬，
+  **不新增拒绝面**。本仓的魔数表是 Go 那张 15 项表的**子集**（PNG/JPEG/GIF/WebP/PDF/ZIP/GZIP
+  + 文本兜底），其余落 `application/octet-stream`（Go 的兜底值逐字相同）—— 不引 mime 猜测库。
+- **D-5 UUID v7 → v4**：上游用 UUIDv7 同时当 attachment id 与存储键（时间有序 ⇒
+  对象存储里按时间聚簇）；本仓用 `Uuid::new_v4()` —— `uuid` crate 的 `v7` 特性在本仓
+  未启用，启用它要动共享 manifest（写集外）。**唯一性与不可猜测性都成立**，功能无差。
+- **D-6 `chat_session_id` / `task_id` 两道门 fail-closed 403**：上游分别是
+  「成员可见的 chat 投影」与「task 令牌边界 + 必须等于令牌的 task」两道门；本仓的
+  认证链**没有** task 令牌那一支（`X-Actor-Source` 永远是空）⇒ **一律 403**
+  （`ERR_TASK_UNSUPPORTED` 的文案逐字取自上游 `file.go:522` 的第一道门）。
+  **宁可拒收，也不要静默地把附件挂到不受校验的会话/任务上。**
+- **D-7 非 multipart 的 `content-type` 是 **panic** 不是 4xx**：axum 0.7 的
+  `Multipart::from_request` 对非 multipart 的 content-type 直接
+  `panic!("Invalid \`boundary\` for \`multipart/form-data\` request")`
+  ⇒ 「发一个 JSON body 上去」这种反例在本仓**测不了**（上游 Go 那边是 400）。
+  畸形 multipart（content-type 对、body 坏）仍走 400。
+- **D-8 上传大小上限受全局中间件压制**：`MAX_UPLOAD_SIZE` 是上游逐字的 100 MB，
+  但 `middleware::apply_default` 有一条**全仓**的
+  `RequestBodyLimitLayer::new(25 MB)` ⇒ 实际生效上限 = **25 MB**，且超限时本仓读到的是
+  **截断的 body**（不是 Go 的 `MaxBytesReader` 那种干净的 400）⇒ 落 `FormError::Malformed`
+  ⇒ 仍是 **400 + 上游那句文案**。那条中间件是全仓共享件（写集外），不在本片改动范围。
+- **D-9 桶 / URL 的本仓口径**：上游 `LocalStorage.Upload` 返回**绝对 URL**，本仓
+  `mc-storage::put` 返回 `Object` ⇒ URL 由本片自拼：`attachment.url` = `/uploads/<键>`，
+  桶名恒 `uploads`。**这与 M10-B1 的 `split_object_ref` 约定自洽**（它取第一段当桶名，
+  得到的正是 `(uploads, <键>)`）⇒ §50 的 D-9「`(bucket, key)` 切分约定待 M10-B2 复核」
+  在本片**收口**。
+
+### 51.5 🔴 D-2：门脚本的 catch-all 折叠是**坏的**，本片修了它（本片最需要复核的一条）
+
+**症状**：`Router::route("/uploads/*", …)` 在本仓**根本注册不了** ——
+matchit 0.7.3 的 catch-all **必须带名字**，无名的 `*` 被
+`InsertError::ParamNameMissing` 拒绝：`Invalid route "/uploads/*": parameters must be
+registered with a name`（本轮实测，18 条用例全红在这一行）。
+
+**为什么这是门脚本的 bug 而不是本片的选型问题**（三条独立证据）：
+
+1. matchit 0.7 的文档与实现：catch-all 语法是 `/*name`；matchit **0.8** 才改成 `{*name}`。
+2. `route_parity.py::normalize` 里那一支 `elif seg == "*" or seg.startswith("{*")`
+   排在 `{…}` → `:param` **之后** ⇒ `{*name}` 永远先被上一支吃掉 ⇒ **这一支是死代码**。
+   也就是说门脚本的 wildcard 支持**从未被真正执行过**。
+3. 本仓两条上游 catch-all（`/uploads/*`、`/api/avatars/{sig}/*`）此前**零**本地实现
+   ⇒ 这是第一次撞上；M10-B4（`LUM-2115`）会立刻再撞一次。
+
+**改法（两处，各一处折叠）**：
+
+- `route_parity.py::normalize` —— 把 wildcard 判据**提到 `:param` 之前**，并接受
+  `*` / `*name` / `{*` / `{*name}` 四种写法，全部折成同一个 `:wildcard`；
+- `slash_alias_audit.py::fold` —— 追加 `re.sub(r"\*[^/]*", "*", …)`，让上游的无名
+  `*uploads/*` 与本地的 `/uploads/*key` 折成同一个比较键。
+
+**为什么仍然可信**：折叠只影响 **catch-all 段**这一个形状，其余段的判定逻辑逐字未动；
+改完之后 ⑦ 的 `local` / `implemented` / `known_gap` / `local_only` 与 §158 的预测
+**逐项吻合**（见 §51.6），且 ⑦b **0 defect 0 warning**。**本片另外顺手补了两个
+既有的空值崩溃点**（`spec_from_file_location` 返回 `None`、`--write-baseline` 缺
+`--baseline` 时 `os.path.dirname(None)`）—— 两处都在这两个文件里，属**同一批触碰**。
+
+**给 M10-B4（`LUM-2115`）的交接**：`/api/avatars/{sig}/*` 落地时**照抄 `serve.rs` 的做法**
+（注册 `*key` 形式 + 复用 `resolve_under` 那一套包含性判定），**不要**再去改门脚本。
+
+### 51.6 门禁（当轮实测）
+
+十道门 **10/10 PASS**（逐条退出码见交付说明）。当轮读数：
+
+- ⑦ `upstream 456 (commit f41fae6b08fb) | local 525 → **527** | baseline 473`、
+  `implemented 438 real + 2 placeholder = 438 → **440** / 456`、
+  `known_gap 18 → **16**`、`unclaimed 0`、`regression 0`、`local_only 8` **不增**；
+  不变式 `440 + 16 = 456` ✓
+- ⑦ **可验收信号命中**：`gaps by owner: M3+=**5 → 3**`（剩下的 3 条是
+  `GET /api/avatars/{sig}/*`、`GET /api/comments/{commentId}/sub-issue-preview`、`GET /ws`，
+  全部归 M10-B4）
+- ⑦b `526 → **528**`（+2 = 本片两条）/ **0 defect 0 warning**
+- ⑨ `365 fixtures / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 /
+  unevaluable 306` —— **逐字不变**。判据按 §158.2 的收紧版：本片新挂载的两条键在
+  `contracts/golden/` 里**没有**对应用例 ⇒ 报告必然不变 ⇒ **没有**重生成
+  `report.json`（改了反而会让 ⑨ 红）。
+- ⑩ `scanned 1263 → **1270** / baseline 10 / violations 0`（**+7** 个被跟踪新文件；
+  ⚠️ 门 ⑩ 只数 `git ls-files` 里的文件 ⇒ **必须先 `git add`** 再跑，否则新文件不参与计数）
+- 用例：门 ⑤ 不碰库的 **29 例**全绿（含三条路径穿越反例 + 符号链接那条的
+  「根内链接放行 / 根外链接 404」双向判据）；门 ⑥ 真库 **7 例**全绿。
+
+### 51.7 每条路由的用例对照（`DoD` 第 5 条）
+
+| 键 | 形态门 | 不碰库（门 ⑤） | 真库（门 ⑥） |
+| --- | --- | --- | --- |
+| `POST /api/upload-file` | `no_trailing_slash_form_is_registered` | 无会话 **401** · 未配存储 **403** · 缺 `file` **400** · 畸形 multipart **400** · `task_id`/`chat_session_id` fail-closed **403** · 成员门先于 `issue_id` 解析（**403**）· 无上下文端到端落对象 + 键布局 | 落行逐字段 · 挂 issue · 跨 workspace 的 `issue_id` **403** · 非成员 **403 且不留对象** · 无上下文**不写行** · slug 头解析 |
+| `GET /uploads/*` | 同上（`/uploads/` 尾斜杠 **404**） | 字节逐字 + `Content-Type` + `Content-Length` + 预览 CSP · 无会话可取 · **非本地 provider 不挂载** · 三条穿越反例 **404** · 内部路径 **404** · 不存在 **404** · 畸形百分号 **404** · 上传完立刻取回同样字节 | 上传（带 workspace）⇒ 静态面取回同样字节 |
+
+**零 `health::placeholder`**（M10-0 已删该函数）· **零出站**（两条都是本地路由）。
 
 ## 52. M10-B3（`LUM-2114`）：quick-actions 6 条（目录 4 条 + issue 侧 render/run 2 条）的落点与偏离登记
 

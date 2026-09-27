@@ -83,6 +83,10 @@ impl StorageProvider for LocalDiskStorage {
         }
     }
 
+    fn local_root(&self) -> Option<PathBuf> {
+        Some(self.root.clone())
+    }
+
     async fn head(&self, bucket: &str, key: &str) -> Result<Object> {
         let path = self.path_for(bucket, key)?;
         let meta = tokio::fs::metadata(&path)

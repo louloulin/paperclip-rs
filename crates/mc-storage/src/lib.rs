@@ -59,6 +59,19 @@ pub trait StorageProvider: Send + Sync {
     async fn delete(&self, bucket: &str, key: &str) -> Result<()>;
 
     async fn head(&self, bucket: &str, key: &str) -> Result<Object>;
+
+    /// 本地磁盘后端的**根目录**（M10-B2 / `LUM-2113` 追加）。
+    ///
+    /// 默认 `None`（非本地后端）。**为什么需要它**：静态分发面
+    /// `GET /uploads/*`（上游 `storage.LocalStorage.ServeFile`）要在**读盘之前**做
+    /// 「解析符号链接后仍在根目录之下」的包含性判定，而 `validate_key` 只看**键的字符串**
+    /// （拒 `..` 与绝对路径），**看不见**磁盘上的符号链接 ⇒ 没有根目录就判不了。
+    ///
+    /// ⚠️ 它**只**该给「要在读之前做路径包含性判定」的调用方用；其余读路径仍走
+    /// [`Storage::get`] / [`StorageProvider::get`]，不要绕过 provider 抽象。
+    fn local_root(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// 顶层 Storage facade：bucket → provider 路由。
@@ -125,6 +138,15 @@ impl Storage {
     pub async fn head(&self, bucket: &str, key: &str) -> Result<Object> {
         let provider = self.provider_for(bucket)?;
         provider.head(bucket, key).await
+    }
+
+    /// 该桶**是否**落在本地磁盘 provider 上；是则给出它的根目录。
+    ///
+    /// M10-B2 的 `GET /uploads/*` 用它当**上游逐字的那个注册条件**（上游
+    /// `router.go:1435` 的 `if _, ok := store.(*storage.LocalStorage); ok`）：
+    /// 只有返回 `Some` 时那条路由才挂载，否则本地静态分发面根本不存在。
+    pub fn local_root(&self, bucket: &str) -> Option<std::path::PathBuf> {
+        self.provider_for(bucket).ok().and_then(|p| p.local_root())
     }
 }
 
