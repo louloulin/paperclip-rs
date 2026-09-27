@@ -13772,3 +13772,93 @@ stage 5 还有 3 个。上一轮只把答案写进 §153.8 的一句话，**下�
 5. **M9 侧 stage 3（`LUM-1819` M9-4 / `LUM-1820` M9-5 / `LUM-1821` M9-6）已解锁**，但三者都写 `mod.rs`/`mount.rs`
    ⇒ **同飞上限 = 1 片 M9 + 1 片 M10-B**（§154.3 第 5 条）。
 6. **磁盘**：起手 13G，`LUM-2112` 的 `target/` 6.9G 在写。任一终态即按 §150.2 ④ 回收（**先删已终态片，再看在飞片**）。
+
+## §156 02:00 autopilot cycle（`LUM-2370`，2026-09-28 02:00 触发）—— **零合并监控轮**（0 open PR + daemon 3/3，第 6 次满载）；本轮产出：把「同飞交集」从**声明**换成**实测**，逮到 §154.3 漏掉的一对写者
+
+### §156.1 起手判型
+
+- **base `4675166c`**（= `47cb9f6a` 合并 M9-11 + §155 docs-only）。起手 `git rev-parse HEAD` **对** `git ls-remote` 实测（checkout 默认落 `main` 线，第 N 次）。
+- GH `pulls?state=open` = **0**；daemon `running_task_count` = **3**（含 cycle 自身）⇒ 切片位 **2/2 满** ⇒ 结构性无位可派。
+- PG 16:5432 `online`（09-26 那次 ENOSPC 连坐 PG 的事故未复发）。`df` 连采两次 = **11G / 11G / 78%**。
+- **从 `/` 起手逐 PID 扫 `/proc/*/cwd`**：两片全活且都在写 ——
+  `LUM-2112`（M10-B1，`rustc --crate-name mc_http` 在跑，**17 项已入索引**、`target/` 11G）、
+  `LUM-2114`（M10-B3，`.logs/t1.log` 与 `quick_actions/*` 15 分钟内有写入、`target/` 4.9G）。
+  **两片都 0 提交、分支都没推 ⇒ 本轮无可收割物。**
+- **磁盘算术当场否决本轮任何 cargo 门**：`Σ(15–16G × 2) + 20G = 50–52G > 49G`（§150.2 ①）⇒ 只跑零编译门。
+- **轮末复扫**（§149 lesson：「起手判型 15 分钟内过期」）：`open PR = 0`、daemon 仍 3/3、两片仍 0 commits ⇒ 判型未被推翻。
+
+### §156.2 当轮门读（base `4675166c`，三条零编译门全 exit 0）
+
+| 门 | 当轮实测 | 与 §155.4 比 |
+| --- | --- | --- |
+| ⑦ `route_parity.py` | `upstream 456 (f41fae6b08fb) \| local 510 registered \| baseline 473`、`implemented 424 real + 3 placeholder = 427 / 456`、`known_gap 29`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner: M3+=16  M9=13` | **逐字相同** |
+| ⑦b `slash_alias_audit.py` | `registered upstream-key literals: 511` / `0 defect(s), 0 warning(s)` | 逐字相同 |
+| ⑩ `file_size_check.py` | `limit=800 scanned=1243 baseline=10 violations=0` | 逐字相同 |
+| ⑨ | **继承**（未跑，两条独立证据见下） | 逐字相同 |
+
+- **`427 + 29 = 456` ✓** 现场复核。
+- **「base 只走 docs-only ⇒ 门读逐字不变」第 5 次成立**（§149.5 → §150.3 → §151.2 → §154.2 → 本轮）；仍跑一遍确认（成本 1s）。
+- **⑨ 继承按 §155.5 lesson 2 给足两条独立证据**：① 结构性 `git diff --name-only 47cb9f6a 4675166c -- crates/mc-http/src/routes/{mount,mod}.rs | wc -l` = **0**（挂载路由集无位移 ⇒ `report.json` 内容必然不变）；
+  ② 经验性：M9-11 交片侧**真跑过**（69s / exit 0 / `report matches`）⇒ 继承 `365 / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 / unevaluable 306`。
+- **未跑的门**：①②③④⑤⑥⑧⑨（0 条 cargo 门）。补跑条件 `df ≥ 20G` ∧ 无并发全量 ∧ 持全生命周期 `flock`。**交片侧承担全量。**
+- ⚠️ `--quiet` 吃掉读数（第 4 次复现）⇒ 上表**直接调 python 去掉 `--quiet`** 取的；`route_parity.py --quiet` 仍是唯一反常（照常打）。
+
+### §156.3 本轮产出：🔴 **同飞交集必须实测，「声明」会漏写者对**
+
+§154.3 刚把「下一槽派谁」变成一张可执行的下三角，代价是那张表里有一格**写错了**：
+它按各片**描述里声明的写集**列交集，得出「B2 × B3 争 `mod.rs`/`mount.rs`、B1 不在其中」。
+当轮**逐文件 `git status --porcelain` 实测**两条在飞切片：
+
+| 文件 | M10-B1（`LUM-2112`，`M ` 已入索引） | M10-B3（`LUM-2114`，仅工作树） |
+| --- | --- | --- |
+| `crates/mc-http/src/routes/mod.rs` | `183 → 190`（`pub mod attachments;` + 占位升级注释块） | `+2`（`pub mod quick_actions;` + 注释） |
+| `crates/mc-http/src/routes/mount.rs` | `569 → 592`（`.merge()` + 新 fn） | `.merge(mount_slice_quick_actions())` + 新 fn |
+| `crates/mc-repos/src/lib.rs` | `171 → 173`（`pub mod attachment;`） | `pub mod quick_action;` |
+| `crates/mc-http/src/routes/issues/mod.rs` | `259 → 271`（**占位升级的注册点原地替换**：`get(not_implemented)` → 真 handler） | ∅ |
+
+⇒ **B1 × B3 也是一对真写者，且共用 3 个文件**；收割这两片时后合并者必然在这 3 个文件上撞**真冲突**（不只是 `docs/32` 的同锚点）。
+**解法不变（§146.3）**：两侧块**都保留 + 按名字段序排**（`attachments` < `quick_actions`；`lib.rs` 同理），**解冲突提交推回该 PR 分支**（§134 lesson 2）⇒ 形态③自动变②、免一轮本地 `--with-db`。
+
+**两条由此长出来的判据**：
+
+1. 🔴 **`issues/mod.rs` 是本轮唯一一处「不可机械合并」的位置** —— B1 把 `not_implemented` **原地替换**成真 handler（占位升级的记账效应要求注册键逐字不变，§153.4）。
+   「两侧都保留 + 只追加」在这里**不成立**（那会注册两次同 path+method ⇒ 启动 panic）。
+   B3 不碰它 ⇒ 本轮两片之间无此风险；**但若将来第三片要动同一行，必须逐字重判，不能沿用机械解**。
+2. **交集表的取值来源必须是「在飞工作树的 `porcelain`」，不是 issue 描述**。理由与 §152.4 改写 `report.json` 判据同源：
+   **描述是计划，索引是事实**；而 B1 早在 §153 就把 `pub mod attachments;` 写进自己的正典写集，
+   只是 §154.3 做表时按「B2/B3 相邻追加段」归类，**没把 B1 一起排进去**。
+   判据化动作：每次收割前，对**每条在飞片**跑一次
+   `git -C <workdir> status --porcelain -- crates/mc-http/src/routes/{mod,mount}.rs crates/mc-repos/src/lib.rs`，
+   交集由**输出**决定，不由描述决定。
+
+### §156.4 欠账已付：B2 描述 `rev 3 → 4`
+
+§154.4 付过一次，但**其后 base 又前进一整个 M9-11** ⇒ `LUM-2113`（M10-B2）的 rev 3 读数（base `e00088a6` / `local 498` / `owners {M3+=16 M9=13 M3=11}`）**再过期一轮**。
+按 §147.6「只能由 cycle 自己消掉的欠账当场就做」+ §145.5「**base 有代码位移就必须刷**」（`M3` 那一格归零即代码位移），本轮追加「起手补充（§156）」：
+
+- 当轮 base `4675166c` + ⑦/⑦b/⑩ 实测 + 不变式现场复核 + ⑨ 继承的**两条独立证据**（不是 blob 清单）；
+- 预测表**重排为两行绝对数**（`4675166c` 起手 → `512/426+3/429/27/M3+ 14/⑦b 513`；B1 先合 → `517/432+2/434/22/M3+ 9/⑦b 518`），
+  B1 的 delta 由 §155 锁定（`local 510→515 / real 424→430 / ph 3→2 / known_gap 29→24 / M3+ 16→11`）⇒ 增量式预测 `+2/+2/−2` 仍有效；
+- **§156.3 的交集修正写进本片**（B1×B3 三个文件 + `issues/mod.rs` 不可机械合并的位置）；
+- 号段 `## 51.` / `### 9.21` 当轮 `grep -c` 复核**仍为 0**（`50`/`9.20` 归 B1、`52`/`9.22` 归 B3）；
+- §150.2 五条磁盘约束 + §153 第 3 条（禁进程名轮询）+ `flock` 覆盖全生命周期 + worktree 身份**必须在 merge 之前**写好（§155.5 lesson 1）。
+- **回读复核**：`rev 3 → 4`、长度 `10453 → 16040`、`4675166c` / `§156` / `B1×B3` / `scanned=1243` / `local 510` 子串均在。
+- 🔴 **复现 `update --description-file` 的坑（§152.8）的确切触发条件**：文件放在 `workdir/paperclip-rs/`（**子目录**）⇒
+  命令**回 `✓ Markdown clean` 但 `revision` 不动**（len 仍 10453）；同一文件移到 **workdir 根**再提交 ⇒ `rev 4 / len 16040`。
+  ⇒ **文件必须落在 run workdir 根，不是它的子目录**；「写入后回读 `revision`」仍是唯一判据。
+
+### §156.5 下一轮顺位
+
+1. **收割 M10-B1**（`LUM-2112`，17 项已入索引、`target/` 11G）：判据链**六条半**（§154.5），本轮追加一条 ——
+   **④ 等 CI 三 job 转绿再合**（§152.7 的欠账，已连续两轮执行）；
+   可验收信号 = `gaps by owner: M3+ 16 → 11` 且 `implemented_placeholder 3 → 2`（§153.4 记账表），
+   预期 `local 515 / real 430 / ph 2 / implemented 432 / known_gap 24`。
+2. **收割 M10-B3**（`LUM-2114`，6 路由 + `report.json` 已重生成）：可验收信号 = `owners.M3+ 11 → 5`、`unevaluable ≤ 306`。
+3. 🔴 **合 B1 之前先预演 B3 对「新 base」的 `git merge-tree --write-tree`**（**按 exit code 判**，冲突时仍打印树哈希）——
+   §156.3 已实测二者共用 3 个文件 ⇒ **这次预演大概率 exit 1**，请提前备好 §146.3 的机械解并**推回 PR 分支**。
+4. **槽位链**：B1 合入 ⇒ `LUM-2113`（B2，rev 4 已备妥）解锁；任一槽空 ⇒ B2 可派（与 B3 交集仅相邻追加段）。
+   B 面全合 ⇒ `LUM-2107`（M10-5，rev 1，**派前需补描述**）。M10-9 INT（`LUM-2111`）与 M9-INT（`LUM-1825`）**不得同轮刷基线**。
+   M9 侧 stage 3（`LUM-1819`/`1820`/`1821`）已解锁，但都写 `mod.rs`/`mount.rs` ⇒ **同飞上限 = 1 片 M9 + 1 片 M10-B**。
+5. **磁盘**：起手 11G，两片 `target/` 11G + 4.9G 且都在写。任一终态即按 §150.2 ④ 回收（**先删已终态片，再看在飞片** —— §152.6；先 `incremental`（`-mmin +3`），`deps` 永不删）。
+6. **号段**：`docs/32` 顶层末号 `## 49.`、预留 `50`/`9.20`=B1、`51`/`9.21`=B2、`52`/`9.22`=B3 ⇒ **下一个空号 = `## 53.` / `### 9.23`**；
+   `docs/37` 末号 **§156** ⇒ 下轮 **§157**。
