@@ -14581,3 +14581,69 @@ du -sh /home/devbox/multica_workspaces/*/*/workdir/paperclip-rs/target
 5. `multica issue runs LUM-1819` 查 status/error（**PR 开出 ≠ run 终态**）；终态才进判据链。
 6. **槽位一空即派**：`LUM-1819` 终 ⇒ 判据链合入（核对 `local 536 / implemented 449 / known_gap 7 / owners M9 7`）⇒ 递补 **M9-5**（`LUM-1820`，5 条：notification×3 + feedback + contact-sales）⇒ `M9-6`（`LUM-1821`，stripe 1 条）⇒ `M9-7`（`LUM-1822`，mika 1 条）⇒ `M9-8`（`LUM-1823`）⇒ `M9-9`（`LUM-1824`）⇒ `owners M9 → 0` ⇒ **`LUM-1825`（M9-10 INT，唯一 `--write-baseline`）**。
 7. **禁同轮**：两个 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线；普通片禁 `--write-baseline`。
+
+## §168 —— 07:30 cycle（`LUM-2392`）零收割预飞轮：无 PR 可收、第 3 槽按算式留空；产出 = **M9-5 逐条预飞**（下一片可零延迟派发）
+
+### §168.1 起手三连
+
+- base `29d41bb4`（`git rev-parse` + `git fetch` 后与 `origin/feat/multica-rs-initial` 逐字相等 ⇒ 本轮**零 delta**）。
+- `df -h /` = **28G used / 20G avail / 59%**（比 §167 收尾的 29G avail 少 9G，全被在飞的 `LUM-1819` 吃掉，见 §168.3）。
+- GH **0 open PR**（`pulls?state=open&base=feat/multica-rs-initial` 返回 `[]`）⇒ **收割面为空**，本轮不进入判据链的任何一条。
+- daemon `running_task_count = 2` = cycle 自己 ∥ `LUM-1819` ⇒ 起手即 2/3。
+
+### §168.2 判活 `LUM-1819`（M9-4，dashboard 6 条）
+
+按 §165 定的判活序（`--out-dir` 指向 > `git status` 脏文件 > `last_activity_at`）实测：
+
+| 判据 | 实测 | 结论 |
+|---|---|---|
+| 编译器进程 | `ps -eo pid,etime,args \| grep -E 'cargo\|rustc'` **零命中** | 中性（不证明死） |
+| 脏文件 mtime | `routes/dashboard/{usage,runtime,failures}.rs` = **23:29/23:29/23:30**、`mc-repos/src/dashboard.rs` = 23:21 | **活跃**（采样时刻 23:30） |
+| `last_activity_at` | `2026-09-27T23:06:00Z` | 24 分钟前，与 mtime 一致 |
+| `target/` | 9.1G 且在涨 | 在编译/编译过 |
+
+⇒ **判活，不抢救**。这是 §165 那条 `ps` 判据的第二次派上用场：零编译进程 **不等于** 静默死亡（本轮 mtime 与采样同分钟），单看 `ps` 会误杀。
+
+### §168.3 第 3 槽：按算式**刻意留空**（不是漏派）
+
+沿用 §167 的余量算式：一片全量 `--with-db` 的峰值实测 **18–30G**，两片并发需 **36–60G**。
+本轮 `avail 20G`、**可回收量 = 0**（全盘唯一 `target/` 就是在飞那片自己的 9.1G，其余 workdir 均 <150M）
+⇒ `20 − 0 < 36 − 60G` **成立** ⇒ 多跑一片的期望收益为负（ENOSPC 已 9 次，至少一次连带杀 PG 5432）。
+
+🔴 **本轮把「可回收量」这一项单独记下来**：§167 只写了 `avail 29G`，没写「零可回收量」是算式的**独立输入**。
+写成 `avail − reclaimable < peak` 之后，本轮是 `20 − 0`，一眼可判；否则读者会误以为还有 9G 的 `target/` 可以拿来派活。
+
+### §168.4 本轮主产出：`LUM-1820`（M9-5）逐条预飞 —— 下一片可零延迟派发
+
+`docs/62-M9-PLAN.md` 的 M9 账在 base 上已**全部建好 issue**（`LUM-1816`…`LUM-1825`），无一遗漏、无一在飞 ⇒
+本轮不需要新 author 任何东西，只需要确认「下一个槽位空出来时，派哪一片、它的写集与形态债是否已实测」。逐条实测结果：
+
+| 预飞项 | 实测 | 判定 |
+|---|---|---|
+| M9 名下 34 条按切片归属 | M9-1(8) / M9-2(7) / M9-3(5) / M9-4(6) / **M9-5(5)** / M9-6(1) / M9-7(1) / M9-8(1) / M9-11(11) = 40（含 M9-11 的 11 条不在 34 账内） | 与 §5 stage 表逐字相等 |
+| 13 个 `known_gap` 的归属 | **全部 `owner=M9`**；6 条 dashboard = `LUM-1819`，余 **7 条** = M9-5(5) + M9-6(1) + M9-7(1) | 与 §167 锁的「`owners {M9: 13}`」逐字相等 |
+| M9-5 写集 6 个文件是否都在 | `routes/{notification_preferences,feedback,contact_sales}.rs`（38/31/35 行，空 `Router::new()`）+ `mc-repos` 三件（`lib.rs:99` 已挂 `notification_preference`） | **6/6 在**，第二类漏项 = 0，**不需要改 `mod.rs` / `mount.rs`** |
+| 合并点是否已接好 | `mount.rs:598–600` 三行 `.merge(...)` 已在（M9-0 anchor 期接的） | 零 anchor 破例 |
+| 形态债 | `slash_alias_audit.py --declared docs/fixtures/m9-declared-routes.tsv` ⇒ `declared 34 / dual-form required: 3 / single-form: 31`，**3 条全是 `notification-preferences` 的 GET/PATCH/PUT** | M9-5 是本波**唯一**的双形态片；M9-6/7/8 一律单形态（补尾斜杠 = `EXTRA_ALIAS` 硬失败） |
+| 与 M9-4 写集是否相交 | M9-4 = `dashboard/{mod,runtime,usage,failures}.rs` + `mc-repos/src/dashboard.rs`；M9-5 = 上表 6 个 | **∅**（stage 3 并发安全，`docs/62` §5 已如此声明，本轮复核成立） |
+| 限流器是否已有可复用件 | DoD 第 5 条点名 `crates/mc-autopilot/src/webhook/ratelimit.rs` 的 `SlidingWindowLimiter` | 复用点存在，无第二份限流器 |
+
+⇒ **结论：下一个槽位空出来时直接 `LUM-1820`（`backlog` → 派发），不需要再做任何预飞。**
+
+### §168.5 顺手锁定的 ⑦ 预测（供下一轮判据链逐字比对）
+
+`LUM-1820` 落地后（5 条新注册键，3 个双形态键被 ⑦ 的尾斜杠折叠规则算作 1 个 ⇒ 净 +5）：
+
+```
+local 530 → 535 | upstream 456 | baseline 473（不动）
+implemented 443 → 448 | known_gap 13 → 8 | owners {M9: 13 → 8} | unclaimed 0 | regressions 0 | local_only 8
+不变式：448 + 8 == 456 ✅
+```
+
+`LUM-1819` 落地后（§167 已锁，本轮复核 base 未动 ⇒ 仍然有效）：`local 536 / implemented 449 / known_gap 7 / owners {M9: 7}`。
+**两片都落地后**：`local 541 / implemented 454 / known_gap 2 / owners {M9: 2}`（M9-6 stripe + M9-7 mika 两条仍在账上）。
+
+### §168.6 本轮一句话
+
+**零收割、零派发、零编译**（只跑了不编译的 ⑦），产出是把「下一片」从「需要预飞」变成「已预飞完毕」——
+外加一条算式纪律：`余量 = avail − 可回收量`，两项都要实测。
