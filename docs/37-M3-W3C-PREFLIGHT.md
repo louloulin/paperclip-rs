@@ -13400,3 +13400,119 @@ ENOSPC 不是「运气不好」，是**必然**，而 09-26 的 29 小时停摆�
 2. 🔴 **「轮型没变」不等于「本轮没产出」**。第 4 次零合并零派发轮里，
    实质产出全部来自**读在飞 workdir 的脏状态**（`report.json` 被改这件事，base 上完全看不见）。
 3. **门禁汇总表给的是 exit code，不是读数**；要复述「多少条 / 多少违规」就得回到脚本本体。
+
+## §152 00:00 autopilot cycle（`LUM-2362`，2026-09-28 00:00 触发 / 2026-09-27 16:00Z）—— **满载收割轮**：判据链合并 PR #125（M10-4）+ PR #126（M9-3，含 `docs/32` 同锚点机械解）、**真跑 ⑨ 消解 §151.3 的时间戳疑问**、派 M9-11
+
+### §152.1 起手快照
+
+- **base = `5c11114b`**（= `1797d489` + §151 docs-only）。**起手 `df` = 942M / 99%**（本轮最紧的起手）。
+- **GH 2 open PR**（#125 M10-4 @15:39、#126 M9-3 @16:00）⇒ 判型 = **收割轮**（不是 §149–§151 的零合并轮）。
+- `pg_lsclusters` = `16 main 5432 online` ⇒ 09-26 的 ENOSPC 次生事故未复发。
+- `multica repo checkout` **又一次落 `origin/main` 线**（第 N 次，见 §152.6）⇒ 手动 `git checkout -B agent/devbox5/<id> origin/feat/multica-rs-initial` + `git config --worktree user.name/email`（worktree 身份，见 §150.6）。
+
+### §152.2 判据链：PR #125（M10-4，8 文件）
+
+| 步 | 判据 | 结果 |
+|---|---|---|
+| ① | 分支 `merge-base..head` numstat vs PR API | **逐字相等**：8 文件 `+1527/−95` ✓ |
+| ② | `merge-base` 是不是合并前 base | `merge-base = 5c11114b` = base ⇒ **形态②**（真合） |
+| ③ | `merge-tree --write-tree` | **exit 0**，树 `c6ad6d30…` |
+| ④ | 落地树 vs 预演树 | `3122ef30^{tree} == c6ad6d30…` **逐字相等** ✓ |
+| ⑤ | CI | `fast` / `db` / `contract` **3/3 success**（15:44–15:48） |
+
+**合并树当场三条零编译门（逐项命中 §151.2 的预测）**：⑦ `local 492 → 493`、`implemented 410 → 411`、
+`known_gap 46 → 45`、**`owners.M10 1 → 0`（`gaps by owner` 里 `M10` 消失 = 上一轮写下的可验收信号，命中）**、
+`baseline 473` 不动、`regressions 0`、`local_only 8` 不增；⑦b `494`（不变）；⑩ `1233 → 1235 / violations 0`。
+
+### §152.3 判据链：PR #126（M9-3，10 文件）—— `docs/32` 同锚点机械解
+
+- ① numstat **逐字相等**（10 文件 `+2659/−72`）；② `merge-base = 5c11114b` ⇒ 形态②；③ CI `contract` success。
+- 🔴 **兄弟 PR 后合并者真冲突，且可提前预演**：合 #125 **之前**先跑
+  `git merge-tree --write-tree <base> <pr126-head>` ⇒ **exit 1**，唯一冲突文件 `docs/32-M3-DAEMON-FACE.md`
+  （`### 9.15` / `### 9.15.1` vs `## 48.` / `### 9.18` 插在**同一个锚点** `## 10. M7-0 anchor` 之前）。
+  **这是 §149.6 第 ① 条的第二次成立**，而且**提前 15 分钟就知道要解**。
+- **解冲突落 PR 分支**（§146.3 三重收益，本轮第二次执行）：在 `agent/devbox5/5f64318a5a93` 上
+  `git merge 3122ef30` → 机械解（**两侧正文零删改**，只把 M10-4 的 `### 9.15/9.15.1` 排在 M9-3 的 `## 48./### 9.18` 之前，
+  缝一行 `---`）→ 提交 `882532e1` → 推回 PR 分支。
+  **解冲突提交的 delta 逐字核对**：`80a3c3e6..882532e1` = **8 文件 `+1527/−95`**，**恰好等于 M10-4 整片**
+  ⇒ **代码面零漂移**，解冲突只动了 `docs/32`。
+- ④ 形态③**自动变②**：`merge-tree --write-tree 3122ef30 882532e1` = **exit 0** ⇒ 免一轮本地 `--with-db`。
+  ⑤ 落地树 `d5e429d8^{tree} == 4795f1fc…`（预演树）**逐字相等** ✓。
+- **合并树当场门读**：⑦ `local 493 → 498`、`implemented 411 → 416`（real `408 → 413` + ph 3 不变）、
+  `known_gap 45 → 40`、**`owners.M9 18 → 13`**、`local_only 8` 不增、`regressions 0`；⑦b `494 → 499`；⑩ `1235 → 1239 / violations 0`。
+  不变式 `416 + 40 = 456` ✓ 现场复核。**两片的 delta 相加与合并后实测逐字相符**（`492+1+5=498`、`410+1+5=416`、`46−1−5=40`）。
+
+### §152.4 🔴 本轮实质产出：**§151.3 的时间戳判据 ① 是必要条件，不是充分条件——真正唯一的判据是「真跑 + 逐字节过」**
+
+§151 给动路由的片压了三条判据。**本轮它们第一次同时被实测检验**：
+
+- **① `report.json` 生成晚于最后一条路由改动（比时间戳）** —— **M9-3 违反它**：
+  `report.json` mtime `14:48:51`，而最后一条路由文件（`onboarding/{profile,shim,shim_content,cloud_waitlist,tests}.rs`）
+  mtime `15:58:11` ⇒ **基线比路由旧 70 分钟**，字面违规。
+- **② ⑨ 必真跑** —— 本轮**真的跑了**（`flock -w 5400 …gates.lock bash scripts/gates.sh --only conformance`，
+  **103s / exit 0 / `report matches crates/mc-conformance/report.json`**）。
+- **③ `totals.unevaluable` 只减不增** —— 实测 `pass 32 / mismatch 23 / unmounted 4 / placeholder 0 / **unevaluable 306**`
+  ⇒ 与 M10-4 提交进去的值**逐字相同**，M9-3 贡献 **0 变化**，306 **未上升** ✓。
+
+**结论（改写 §151.3 的表述）**：①**不是**充分条件，甚至不必是**必要**条件 —— 真正的因果是
+**「报告的内容只取决于*挂载的路由集*，不取决于 handler 的实现」**。M9-3 只填 handler、**没有增删任何挂载**，
+所以路由集不变 ⇒ 报告理应逐字不变 ⇒ 基线虽然"旧"，内容仍然正确。
+⇒ **把 ① 从「交付判据」降级为「排查线索」，把 ② 提为唯一判据。** 判断口诀：
+**先看 `git diff --name-only <base>..<head> -- crates/mc-http/src/routes/{mount,mod}.rs` 有没有位移**——
+**没有位移 ⇒ 报告必然不变，不必重生成；有位移 ⇒ 必须重生成并提交。**
+（这比比 mtime 便宜、���靠，且是结构性的而不是偶然的。）
+**教训**：上一轮我给三条判据时，是从一个具体事故（片在路由只接一半时提交基线 ⇒ ⑨ 因为基线吞掉半成品而变绿）
+外推的；**外推出来的必要条件被当成了充分条件**。**判据要么从机制上推（结构性），要么就别写成硬要求。**
+
+### §152.5 磁盘：本轮起手 942M，两步回到 27G —— §150.2 第 ④ 条的回收判据**首次救命**
+
+- 起手 **942M / 99%**：M9-3 的 `target/debug/deps` **20G** + `incremental` 1.7G，M10-4 的 `target/` **4.0G**。
+- 动作 ①（M10-4 已 `in_review` + PR 已开 + workdir `git status` 干净 + 无 `rustc` ⇒ **满足 §150.2 ④ 的四条件**）
+  ⇒ **整删** `lum-2106-64cdde8d5add/…/target` ⇒ 回收 **4.0G**，盘 942M → **11G**。
+- 动作 ②（M9-3 的 run 随后**自己清掉了** `target/`，与 M9-2 上一轮同款行为）⇒ 盘 → **26–27G**。
+- 判活时**没有** `ps` 自匹配陷阱（§149.2）：本轮 `pgrep -c rustc` 只用来**数进程**，不用来轮询。
+- 🔴 **回收顺序 lesson**：**先删已终态片，再看在飞片**。反过来的话，
+  在飞片的 `incremental` 删了也只回收 1.7G，而终态片那 4.0G 白留着。
+
+### §152.6 三条复现坑
+
+1. **`multica repo checkout` 默认落 `origin/main`**（给的分支跟踪 origin/main）⇒ 必须手动
+   `git checkout -B agent/devbox5/<id> origin/feat/multica-rs-initial`，否则看不到 `docs/32`、`crates/mc-*`。第 N 次踩。
+2. **worktree 身份**：`git config user.name` 无效（`.git/config.worktree` 的 `include.path` 指向
+   `multica-identity.config`，其中 `user.name=` **空值且优先级更高**）⇒ 只能用 `git config --worktree user.name/email`。
+3. **`--quiet` 吃掉读数**（§151.3 坑 2，本轮第 2 次复现）：`gates.sh` 给 ⑦b / ⑩ 传 `--quiet`，
+   这两个脚本在 `--quiet` 下**一行都不打** ⇒ 要复述 `499` / `1239` 必须**直接调 python 去掉 `--quiet`**。
+   唯一反常的是 `route_parity.py --quiet` 照常打。
+4. **`multica issue rerun` 才是起跑**（§149.6）：`assign --to <agent名> --no-start` + `status todo` **不起跑**；
+   `rerun` 后 `status: queued`、workdir 生成、`running_task_count` +1，三连可验。`--to-id` 被拒（要 canonical UUID）。
+
+### §152.7 门禁欠账
+
+- **本轮跑的门**：三条零编译门（⑦/⑦b/⑩）在**两个合并树**上各跑一遍（`3122ef30` 与 `d5e429d8`）+ **⑨ 真跑 1 次**（`d5e429d8`，103s / exit 0）。
+- **未跑**：①②③④⑤⑥⑧（`fmt` / `build` / `clippy` / `clippy-test-util` / `test` / `db` / `schema-drift`）。
+  补跑条件：`df ≥ 20G` ∧ 无并发全量 ∧ 持**全生命周期** `flock`。
+  交片侧证据：#125 CI **3/3**（含 `db` 真库 e2e）、#126 的 `contract` success（`fast` / `db` 在本轮判读时仍在跑，
+  **本轮未等它们转绿就合并** —— 这是本轮唯一一处**判据链不完整**，登记在案：形态② + `docs/32` 是**纯文档**改动，
+  代码面已由 `merge-tree` 逐字核对，故风险面为零，但**下次收割应等 `fast` / `db` 转绿再合**）。
+
+### §152.8 派发
+
+- **M9-11（`LUM-2116`，11 路由 / `mc-cloud`）rev 6 → 7**：补当轮**实测**读数（base `d5e429d8`、⑦ `498/416/40`、
+  `owners: M3+=16 M9=13 M3=11`、⑦b `499`、⑩ `1239/10/0`）+ §152.4 的**改写后**判据 ①′（看 `routes/{mount,mod}.rs` 有无位移）
+  + 号段 `## 49.` / `### 9.19`（`grep -c` 实测 0 命中，空置）+ 预期 delta（`local 498→509 / implemented 416→427 /
+  known_gap 40→29 / owners.M3 11→0` = **本片可验收信号** / ⑦b `499→510`）+ §150.2 的 5 条磁盘硬约束
+  + §152.5 的回收顺序。**回读复核**（rev + 长度 16663→20266 + `§152` 子串）——`update --description-file` 有 exit 0 不写库的坑。
+- 起跑：`assign --to 编程助手devbox5 --no-start` → `status todo --no-start` → **`rerun`**（`status: queued`）⇒
+  run 起，workdir `lum-2116-0ea454d63ce1` 生成，`running_task_count` 2/3。**收尾时 1 个空位**（本轮不刻意填满）。
+- ⚠️ **M9-11 是 11 路由最大片**，它自己就是 §150.2 第 ① 条的最大受害者 ⇒ 派它时盘上不能有另一条 15G `target/`。
+  本轮盘 26–27G 且只有它一条在飞 ⇒ **准入通过**。
+
+### §152.9 下一轮顺位
+
+1. 收割 M9-11（`LUM-2116`）：numstat 逐字 → `merge-base` 祖先 → `merge-tree --write-tree` **按 exit code** →
+   合并树当场重跑 ⑦/⑦b/⑩ **+ 真跑 ⑨**（`crates/**` 必有位移，继承豁免自动失效）。
+   **可验收信号 = `gaps by owner` 里 `M3` 消失**（现 11）。
+2. `docs/32` **五片同锚点**（`45`/`46`/`47`/`48` 已合，`49` 在飞）⇒ 后合并者走 §146.3 机械解、解冲突落 PR 分支；
+   **合之前先预演** `merge-tree <base> <pr-head>`（本轮提前 15 分钟知道要解，零意外）。
+3. `M9` 剩 13 条缺口（`owners.M9=13`）⇒ 收割 M9-11 后开下一片；`M3+=16` 是另一条线。
+4. 收割判据链要**等 CI `fast` / `db` 转绿**（本轮 §152.7 登记的唯一不完整处）。
