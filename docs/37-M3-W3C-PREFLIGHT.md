@@ -13606,3 +13606,81 @@ M10-B1 有一个容易被算错的成分：`/api/issues/:id/attachments` 是**�
 4. 空位一出现 ⇒ 晋升 **M10-B3（`LUM-2114`，stage 4，6 行 quick-actions）**：写集 `routes/quick_actions/*` 与 B1 的
    `routes/attachments/*` **∅**；注意它上游 4 条**带尾斜杠**（`docs/64` §8.2）。
 5. 僵尸 cycle `LUM-2126` 收尾（`in_progress → in_review`），别让看板长期显示假的在飞。
+
+## §154 01:00 autopilot cycle（`LUM-2366`，2026-09-28 01:00 触发）—— **零合并监控轮**（0 open PR + daemon 3/3，第 5 次满载）；本轮产出：把「下一槽派谁」从临场判断变成**可执行的下三角**
+
+### §154.1 起手判型
+
+- **base `e00088a6`**（= `5467ef20` + §153 docs-only），起手一律 `git rev-parse` 对 `git ls-remote` 实测（checkout 默认落 `main` 线，第 N 次）。
+- **GH `pulls?state=open` = 0**；**daemon `running_task_count` = 3**（含 cycle 自身）⇒ 切片位 2/2 满 ⇒ **结构性无位可派**。
+- **从 `/` 起手逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）**：两片全活且都在**编译/门禁段**——
+  `LUM-2116`（M9-11）持 `flock -w 5400 …gates.lock bash scripts/gates.sh --with-db`（`rustc` 在跑）、
+  `LUM-2112`（M10-B1）在跑 `cargo-clippy` + `cargo test`。**两片都 0 提交、分支都没推 ⇒ 本轮无可收割物。**
+- **PG 16:5432 `online`**（09-26 那次 ENOSPC 连坐 PG 的事故未复发）；**起手 `df` 连采两次 = 17G / 16G**。
+- **磁盘算术当场否决本轮任何 cargo 门**：`Σ(15–16G + 15–16G) + 20G = 50–52G > 49G`（§150.2 ①）⇒ 只跑零编译门。
+
+### §154.2 当轮门读（base `e00088a6`，三条零编译门全 exit 0）
+
+| 门 | 当轮实测 | 与 §153 比 |
+| --- | --- | --- |
+| ⑦ `route_parity.py` | `upstream 456 (f41fae6b08fb) \| local 498 registered \| baseline 473`、`implemented 413 real + 3 placeholder = 416 / 456`、`known_gap 40`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner: M3+=16  M9=13  M3=11` | **逐字相同** |
+| ⑦b `slash_alias_audit.py` | `registered upstream-key literals: 499` / `0 defect(s), 0 warning(s)` | 逐字相同 |
+| ⑩ `file_size_check.py` | `limit=800 scanned=1239 baseline=10 violations=0` | 逐字相同 |
+| ⑨ | **继承**（未跑） | 见下 |
+
+- **`416 + 40 = 456` ✓** 现场复核。
+- **⑨ 继承合法，且是用命令核出来的**（不是抄 §152 的三个 blob）：
+  `git diff --name-only 5467ef20 e00088a6 -- crates contracts/golden docs/fixtures Cargo.lock | wc -l` = **0**，
+  整段 diff 只有 `docs/37-M3-W3C-PREFLIGHT.md` ⇒ §147.2 的四面判据成立 ⇒ 继承 `365 / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 / unevaluable 306`。
+  ⇒ **「base 只走 docs-only ⇒ 门读逐字不变」第 4 次成立**（§149.5 → §150.3 → §151.2 → §154.2），**可当默认路径**，但仍要跑那 1 秒的确认。
+- **未跑的门**：①②③④⑤⑥⑧⑨（0 条 cargo 门）。补跑条件 = `df ≥ 20G` ∧ 无并发全量 ∧ 持全生命周期 `flock`。全量由交片侧承担。
+- ⚠️ `--quiet` 吃掉读数（第 3 次复现）：`gates.sh` 给 ⑦b / ⑩ 传 `--quiet`，这两个脚本在该模式下**一行不打** ⇒ 上表是**直接调 python 去掉 `--quiet`** 取的。`route_parity.py --quiet` 仍是唯一反常（照常打）。
+
+### §154.3 本轮实质产出：**「下一槽派谁」应当是一张表，而不是临场判断**
+
+问题：两片都终态时会**同时**空出 2 个槽，而 stage 4 有 3 个候选（`LUM-2107` M10-5 / `LUM-2113` M10-B2 / `LUM-2114` M10-B3），
+stage 5 还有 3 个。上一轮只把答案写进 §153.8 的一句话，**下一轮仍要重推一遍**。本轮把三片的硬前置**当轮实测**并落进各自描述：
+
+| 候选 | 行数 | 硬前置 | 当轮实测 | 写集 | 与在飞两片的交集 | 号段 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `LUM-2114` M10-B3 | 6 | **M10-0（已合）** ⇒ **无未满足前置** | `backlog`/rev 2/无 assignee | `routes/quick_actions/{mod,list,lifecycle,invoke}.rs` + `mod.rs`/`mount.rs` 各加 | `mod.rs`/`mount.rs` 追加段（与 M9-11 有） | `## 52.` / `### 9.22` |
+| `LUM-2113` M10-B2 | 2 | **M10-B1 须先落地** ⇒ **本轮不可派** | 同上 | `routes/uploads.rs` + `mod.rs`/`mount.rs` 各加 | 同上 | `## 51.` / `### 9.21` |
+| `LUM-2107` M10-5 | 0 | M10-B1 全部合入（要读 golden-local） | `backlog`/rev 1 | `contracts/golden-local/**` | ∅ | 待占 |
+
+⇒ **下三角（可执行）**：
+1. **M10-B1（`LUM-2112`）一合入 ⇒ B1 的 `mc-repos/attachment.rs` 就在 base 上 ⇒ `LUM-2113`（B2）解锁**，与 B3 争同一个槽；
+2. **任一槽先空 ⇒ `LUM-2114`（B3）可立即派**（无未满足前置，且它是 `docs/64` §8.2 里唯一带**尾斜杠双形态键**的片 ⇒ 占位更长、价值更高）；
+3. **B2 与 B3 可同飞**（交集仅 `mod.rs`/`mount.rs` 相邻追加段，后落地者「两侧都保留 + 只追加」并**重跑 ⑦**）；
+4. **M10-5（`LUM-2107`）要等 B 面全合**才排得上 ⇒ 0 路由、零交集，是**两片都忙时的填空位**。
+5. **M9 侧 stage 3（`LUM-1819` M9-4 / `LUM-1820` M9-5 / `LUM-1821` M9-6）同样解锁**（M9-0 锚点已预声明全部注册面 ⇒ 零「第二类漏项」），但它们都写 `mod.rs`/`mount.rs` ⇒ **同飞上限 = 1 片 M9 + 1 片 M10-B**。
+
+### §154.4 欠账已付：两片待派描述刷到 rev 3
+
+`LUM-2113` 与 `LUM-2114` 的 rev 2 都还带着 §145 那一轮的读数（base `b2a650a8`、`local 475`、owners `M9 33 / M3+ 16 / M3 11 / M10 3`），
+而当轮实测是 `e00088a6` / `498` / `M3+=16 M9=13 M3=11` ⇒ **两个整轮之差**（其间 M10-0…6 与 M9-0…3 全部合入）。按 §147.6
+「只能由 cycle 自己消掉的欠账当场就做」，本轮给两片各追加一节「起手补充（§154）」：
+
+- 当轮 base / ⑦ / ⑦b / ⑩ 实测 + **⑨ 继承的四面判据命令**（不是 blob 清单）；
+- **增量式预测改成三行表**（当轮起手 / M9-11 先合 / M10-B1 先合三种起手点各给绝对数）——这是本轮新增的写法：
+  过去只给「片自身的 delta」，导致片在错误的起手点上自测；给三行表后，片**无论何时起手都能对上一行**；
+- 号段 `51`/`9.21` 与 `52`/`9.22`（`grep -c` 实测三个号全为 0 ⇒ 预留未落盘，`50`/`9.20` 归在飞 M10-B1）；
+- §150.2 五条磁盘约束 + §153 新增的「禁任何进程名轮询」+ `flock` 覆盖全生命周期 + worktree git 身份 + `checkout` 落 `main` 线。
+- **回读复核**：两片 `rev 2 → 3`、长度 `5977 → 10453` / `6846 → 10551`、`§154` 与 `e00088a6` 子串均在（`update --description-file` 的 exit-0-不写库坑，§152.8）。
+
+### §154.5 收割判据链（本轮起为**六条半**，加一条硬约束）
+
+① 预检 `merge-base..head` numstat **逐字** == PR API files；
+② 形态判定（判据是「前进段非 docs 路径 = 0」，**不是**「base 必须是 head 祖先」）；
+③ `git merge-tree --write-tree` —— **按 exit code 判**（冲突时仍打印树哈希，只看哈希会误判为已算成功）；
+④ **等 CI 三 job 转绿再合**（§152.7 的欠账，本轮起为硬约束）；
+⑤ 证据两条路任一：合并树**当场**重跑 `--with-db` 10/10（真库当轮新建、角色带 `CREATEDB`）**或**形态② + head CI 3/3 绿 + 合并树 ≡ head 树；
+⑥ API 钉 40 位 head sha + `merge_method=merge` ⇒ 落地 `^{tree}` 逐字 == 预演树 + `git diff` 空。
+**`docs/32` 同锚点（`50`/`51`/`52` 三片都在同一锚点 append）⇒ 合第一片之前先预演第二片对「新 base」的 `merge-tree`**（§134/§146.3 两次实证，本轮继续沿用）。
+
+### §154.6 下一轮顺位
+
+1. **收割 M9-11**（`LUM-2116`，11 路由 / `mc-cloud`）：**可验收信号 = `gaps by owner` 里 `M3` 归零**（11 → 0），预期 `local 498→509 / implemented 416→427 / known_gap 40→29 / ⑦b 499→510`；它 ⑥ 两条红必须先在它自己那轮转绿；**本轮起必须等 CI `fast`/`db` 转绿再合**。
+2. **收割 M10-B1**（`LUM-2112`）：可验收信号 = `gaps by owner: M3+ 16 → 10` 且 `implemented_placeholder 3 → 2`（§153.4 的记账表）。
+3. **任一槽空 ⇒ 派 `LUM-2114`（M10-B3，rev 3 已备妥）**；**B1 合入 ⇒ `LUM-2113`（M10-B2，rev 3 已备妥）解锁**。
+4. **两片都合 ⇒ `LUM-2107`（M10-5，rev 1，派前需补描述）**；M10-9 INT（`LUM-2111`）与 M9-INT（`LUM-1825`）**不得同轮刷基线**。
+5. **磁盘**：起手 15–17G，两片 `target/` 3.9G + 4.9G 在写。任一终态即按 §150.2 ④ 回收（先 `incremental`，`-mmin +3`；`deps` 永不删）。
