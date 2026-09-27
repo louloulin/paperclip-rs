@@ -12842,3 +12842,60 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
   ⇒ **3/3 满载时门禁必须串行**：并发两条全量门禁会重演 ENOSPC，而 ENOSPC 会（本轮实证）**连 PG 一起杀掉**。
   判据化动作：任何片跑全量门禁前 `df -h /` **连采两次**，且确认「可用 ≥ 32G **且** 同轮无第二条全量门禁在飞」。
 - 本节是 §146 之后的第二个 docs-only 直推 ⇒ 下一轮起手 base = **`fc67bd15` + 本节**（起手一律 `git rev-parse` 实测，禁抄）。
+
+## §147 13:30Z autopilot cycle（`LUM-2352`，13:30Z / 21:30 触发）—— **零合并轮**（GH 0 open PR）+ 派 **M10-4（`LUM-2106`）**；🔴 **⑨ 由「继承」改「真跑」（151s 实测）**：13 轮继承的**结论成立**、但**输入面清单本身有两个洞**；磁盘提前止血 2.0G + 「门禁串行化」首次写进片描述
+
+### §147.1 起手读数与轮型判定
+
+- **base** = `aa509be1`（`git rev-parse origin/feat/multica-rs-initial` 当轮实测；相对 §146 的 `9f88c118` 只多**两个 docs-only** 提交 `fc67bd15` / `aa509be1`）⇒ **代码面零位移**。
+- **GH**：`pulls?state=open` ⇒ **0 open PR** ⇒ **本轮零合并**（12:54Z 那两条已在 `LUM-2348` 合完 ⇒ `dd415fbd` / `9f88c118`）。
+- **daemon 起手 `2/2`**（**含 cycle 自身**）= 本 cycle ∥ **`LUM-1817`（M9-2）**；**并发 cycle 不在场**（`LUM-2350` 13:1xZ 已收尾）⇒ 本 run 持合并 / 派发 / 号段权（不必让位）。
+- **在飞片活跃性（可复用三连，本轮判「活」）**：① daemon `running_task_count = 2`；② 13:36:xx `ps` 见 `rustc --crate-name mc_http … --test`（在它的 `target/` 里编译）；③ `~/.multica/daemon.log` 里它的 `task=01a0e2fb-…` 最近一次 `tool #142: bash` = 13:40:48Z。**三者都动 ⇒ 非静默死亡**，省掉一次抢救。工作树快照：`crates/mc-cloud/src/subscriptions.rs` **+667**、`crates/mc-http/src/routes/cloud/subscriptions.rs` **+709**、新目录 `crates/mc-http/src/routes/cloud/subscriptions/`（`tests.rs` + `tests/`）= **2 文件 +1333 / −43**。
+- **PG**：`16 main 5432 online`（§146.7 的抢修仍在生效）；**`multica repo checkout` 落 `main` 线第 12 次**（HEAD `4fc96f30`，一次都不报错）⇒ 固定动作 `git checkout -B agent/devbox5/bb959e5bac8c origin/feat/multica-rs-initial` + `git config --worktree user.name/email`。
+- **df**：起手 27G used / **21G avail**（60%）；门读期间在飞片同时编译，读数在 26–30G used（17–21G avail）之间摆动。
+
+### §147.2 🔴 ⑨ 的「门输入恒等」**输入面勘误**：13 轮继承的结论成立，但判据漏了两个面
+
+- **动作**：本轮**真跑** ⑨（`bash scripts/gates.sh --only conformance` ⇒ **exit 0 / 151s**，日志落 `<workdir>/.logs/gate9.log`），输出 `report matches crates/mc-conformance/report.json` ⇒ totals **实测** `365 fixtures / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306`。
+- **结论**：自 §140 起用「三 blob 恒等 ⇒ 继承」到 §146 共 **13** 次，其**结论**在 `aa509be1` 上被实测确认 —— 自 §143 最后一次真跑以来 `crates/**` 变了（M9-1 的 8 路由、M10-2 的 2 路由），而 ⑨ **没有**累积出红或位移。
+- 🔴 **但判据本身漏了两个面**（逐字读 `crates/mc-conformance/src/main.rs:22` 与 `crates/mc-conformance/src/harness.rs:43`）：
+  1. **⑨ 挂的是「活 router」**：`harness::stateless_router()` → `mc_http::routes::router(state)` ⇒ **`crates/mc-http/**` 是 ⑨ 的真实输入**，而三 blob 清单里只有 `report.json` / `crates/mc-conformance` 树 / `docs/fixtures` 树（**不含 `crates/mc-http`**）⇒ 「三 blob 恒等」**推不出**「⑨ 的输出不变」。这与门禁文件自己的 **① 号规则**（「diff 里出现任何 `crates/**` … 就必须真跑」）**直接冲突** ⇒ §146.4 那次继承**违反了 ① 号规则**（只是这次结论恰好成立）。
+  2. **`contracts/golden/**` 不在任何清单里**：`main.rs` 的 `--golden` 默认值就是 `contracts/golden`，而门禁文件列的输入面是 `crates/**`、`scripts/**`、`docs/fixtures/**`、`Cargo.lock`、`migrations/**` —— **没有 `contracts/**`** ⇒ 一片只改 golden fixture 就能让 ⑨ 漂移，而链式判据看不见。
+- **判据化（本轮起生效）**：⑨ 的**真实输入面 = `crates/**` ∪ `contracts/golden/**` ∪ `docs/fixtures/**` ∪ `Cargo.lock`**（`scripts/**` / `migrations/**` 不改 ⑨ 的输出，但各自是别的门的输入面）⇒ **四面任一有位移就真跑 ⑨**（成本实测 **151s / +3.3G `target/`**，冷）；「三 blob 恒等」只在**四面全不动**时可作继承判据，且必须把 `contracts/golden` 树**一并**纳入 blob 清单。
+
+### §147.3 派发 1 片：**M10-4（`LUM-2106`）** rev 5 → **6**（槽位 2 → 3 = 上限）
+
+- **两步起跑**：`assign --to-id 3c6087f9-… --no-start` → `status todo`；13:40:58Z daemon `picked task`（run `01a0e318-f56b-7d5e-8568-0071a2fc19dd`，workdir `lum-2106-0071a2fc19dd`）⇒ 派后 daemon **3/3**（cycle ∥ M9-2 ∥ M10-4）。
+- **描述 rev 5 → 6**（追加「起手补充 5」）：当轮 base `aa509be1` + ⑦/⑦b/⑩ **实测** + **⑨ 真跑实测** + 号段裁定 + **预期 delta 平移** + 🔴 **磁盘串行化纪律**（§147.5）+ 订正正文过期基线（`pass 14 / unmounted 22` → **`15 / 21`**）。
+- **号段（当轮 `grep` 实测）**：`docs/32` 顶层末号 = `## 46.`、`### 9.x` 末号 = `### 9.16`；**`## 45.` 与 `### 9.15` 实测 0 命中（空置）** ⇒ M10-4 取 `## 45.` / `### 9.15`（与 §146 的预留一致）。同批递补：`47`/`9.17` = M9-2（在飞）、`48`/`9.18` = M9-3、`49`/`9.19` = M9-11。
+- **为什么是它**：它是 §146 判决的**第一顺位**（描述已备妥到「可直接两步起跑」）；写集与在飞 M9-2 **零交集**，唯一可能共享面 `Cargo.lock` 本片是**唯一写者**（M9-2 不动 lock）。
+- **预期（下一轮验）**：`local 485 → 486`、`implemented 403 → 404`（real 401 + ph 3）、`known_gap 53 → 52`、**`owners.M10 1 → 0`**、`baseline 473` 不动、`regressions 0`；⑩ `1230 → 1231`；⑨ 的 17 条 `config/*` fixture `unmounted → pass` 由**该片自己**刷新 `report.json`。
+
+### §147.4 当轮门读（base `aa509be1`）
+
+- ⑦ 第一条（`python3 scripts/route_parity.py --quiet`，**exit 0**）= `upstream 456 (commit f41fae6b08fb) | local 485 registered | baseline 473`、`implemented 400 real + 3 placeholder = 403 / 456`、`known_gap 53`、`unclaimed 0`、`regression 0`、`local_only 8`、`gaps by owner: M9=25 M3+=16 M3=11 M10=1` —— 与 §146 **逐字相同**（当轮 base 只多 docs）。
+- ⑦ 第二条（`python3 scripts/slash_alias_audit.py --quiet`，**exit 0**）；**⑦b**（不带 `--quiet`）= `registered upstream-key literals 487` / `shapes OK` ⇒ **0 defect / 0 warning**。
+- ⑩（`python3 scripts/file_size_check.py --quiet`，**exit 0**）= `limit=800 scanned=1230 baseline=10 violations=0`。
+- ⑨ = **真跑**（不再继承）⇒ `365 / 15 / 23 / 21 / 0 / 306`，见 §147.2。
+- **不变式复核**：`implemented + known_gap = 403 + 53 = 456` ✓、`regressions 0` ✓、`unclaimed 0` ✓、`baseline 473` 未动 ✓（唯一刷新者仍是两个 INT）。
+
+### §147.5 磁盘：提前止血 2.0G + 「门禁串行化」从散文变成片描述里的可执行动作
+
+- 现场：起手 21G avail；在飞 M9-2 的 `target/` = **7.1G**（`deps` 3.0G / `incremental` 4.1G）。
+- 止血（§141 的**停用单元**纪律，`-mmin +3` 排除正在写的那个单元）：M9-2 的 `incremental` 回收 **2063 MB / 68 个目录** ⇒ 19G avail（随后在飞片继续编译又回落到 17–18G）。判据：`incremental` 是**纯加速物**（删掉只损失增量编译速度），`deps` 是**产物**（不许删）。
+- 🔴 **结构化动作（本轮新增）**：把「一轮全量 `--with-db` ≈28G / 盘 49G ⇒ 3/3 满载时门禁**必须串行**」（§146.7 的散文口径）落成**片描述里的可执行动作**（M10-4「起手补充 5」第 6 条）：① `df -h /` 连采两次且**两次 ≥ 20G**；② 开跑前 `pgrep -af 'scripts/gates.sh'` 看有没有别的 run 在跑；③ `flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db` 持锁跑完整轮（`/usr/bin/flock` 实测在位；**禁止** `while`+`sleep` 轮询 —— 本仓有「跨 run 轮询自锁 38 分钟」的实证）；④ 盘 < 20G 就先跑离线集、盘回升后 `--only db,schema-drift` **补跑**并**逐条登记两次退出码**。
+- ⚠️ **本轮锁的覆盖是部分的**：在飞的 M9-2（13:08 派出）描述里**没有**这条纪律、**不持锁** ⇒ 本轮两条门禁仍可能相撞，`flock` 只从**下一个新派片**起全程生效。⇒ 下一轮的派发描述必须复述该纪律，覆盖才完整。
+
+### §147.6 欠账登记（下一轮派发前必须付）
+
+1. **`LUM-1818`（M9-3）/ `LUM-2116`（M9-11）**：描述里的 ⑦ 读数仍是 §144 的 `local 475`（现 **485**）⇒ 派发前必须补当轮实测（§146.5 登记、本轮**仍未付**：两片都不在本轮顺位）。
+2. **`LUM-2106` 正文「专属验收」的等价率要按当轮 `--json` 重算**：基线已从 `pass 14 / unmounted 22` 变为 **`15 / 21`**（已在 rev 6 里订正，交付仍以该片自己的实测为准）。
+3. **`docs/32` 同锚点冲突（预判）**：M9-2（`## 47.`）与 M10-4（`## 45.`）**同轮在飞**且都追加 `docs/32` ⇒ 按 §146.6 第 6 条 lesson，**默认它们会在 `docs/32` 上冲突**；后合并者走 §146.3 的机械解（**解冲突落 PR 分支**，新 head 过 CI 后形态③自动变②）。
+
+### §147.7 lesson
+
+1. 🔴 **「便宜的判据」会掩盖「贵的真相」**：13 轮「三 blob 恒等 ⇒ 继承 ⑨」每轮省 ~2.5min，但**输入面清单本身写错了**。⇒ **判据化**：继承类判据的输入面必须**从被继承对象的代码里读出来**（`main.rs` 的 `--golden` 默认值、`harness.rs` 挂了什么），**不能从上一轮的文档抄**。对照成本：真跑 ⑨ = **151s / 3.3G**。
+2. 🔴 **同一份门禁文件里的两套口径冲突时，以严格者为准**：① 号规则（任何 `crates/**` 位移 ⇒ 真跑）与「三 blob 清单」冲突时，前者胜；本轮把 `contracts/golden/**` 补进清单。
+3. **在飞片活跃性 = 三连（daemon 计数 / `rustc` 进程 / daemon 日志里它的 `tool #N` 时间戳）**，三者都动才算活 —— 单看任一都可能误判（本轮三连省掉一次抢救）。
+4. **盘紧时先按「停用单元」止血，再决定派不派**：`-mmin +3` 的 `incremental` 零风险、可重复；`deps` 与在飞片的 `target/` **不许**动。
+5. **`multica repo checkout` 落 `main` 线第 12 次**（一次都不报错）⇒ `checkout -B … origin/feat/multica-rs-initial` + worktree 级身份是**固定动作**，不是「如果」。
