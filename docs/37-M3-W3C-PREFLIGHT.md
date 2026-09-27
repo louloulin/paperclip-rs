@@ -14490,3 +14490,94 @@ du -sh /home/devbox/multica_workspaces/*/*/workdir/paperclip-rs/target
 4. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`，**需 owner 裁决**（第 N+3 次登记，未重复 @）。
 
 **号段**：`docs/32` 下一空号 `## 55.`/`### 9.25`（`51`=B2、`52`=B3、`54`=M10-5 已合，`53`=B4 在飞）；`docs/37` 本节 §166 ⇒ 下轮 **§167**。
+
+## §167 —— 07:00 cycle（`LUM-2390`）收割轮：PR #132（B4）判据链全过、**`M3+` owner 线整条退休**；派 M9-4
+
+### §167.1 起手三连
+
+- `df -h /` = **4.7G / 91%** 🔴；`pg_lsclusters` = `16 main 5432 online`（PG 健在，这是全量门禁能跑的前提）。
+- 唯一 `target/` = 终态片 `LUM-2115` 的 **23G** ⇒ 回收后 **27G**，再清 `~/.npm/_npx`（1.5G 缓存）⇒ **29G / 40%**。
+- base `dea8b02e`（起手 `git rev-parse` 实测，非记忆值）；GH **1 open PR = #132**；daemon 起手 **1**（只有 cycle 自己）。
+
+### §167.2 回收（🔴 本轮第一风险就是它）
+
+`LUM-2115` 四判据逐条实测后才删：
+
+| 判据 | 实测 |
+|---|---|
+| run 终态 / issue `in_review` | ✅（PR #132 已开出） |
+| 产物在远端 | ✅ `agent/devbox5/2eabe601d19f` = `8a88c070` = PR head |
+| 工作树干净 | ✅ `git status --porcelain` **空**（HEAD `8a88c070`） |
+| `/proc/*/cwd` 零命中 | ✅（从 `/` 起手逐 PID 扫，先读 `cmdline`） |
+
+`du` 实测 **23G**，`rm -rf` 后 `df` 从 4.7G → 27G（**回收量只认 `df` 前后差**）。
+**教训复用**：§166 记过「`du` 扫不到 `target/` 是假阴性」——本轮反过来，`du` **扫得到**但**不代表该删**：判活四判据才是准入，`du` 只是事后对账。
+
+### §167.3 PR #132 判据链（六条全过）
+
+形态 = **③ base 非 head 祖先**（`merge-base 77c70d23 ≠ base dea8b02e`）⇒ 按定式本应「真合 base + 同树重跑 `--with-db` 10/10」。本轮走**免跑分支**，两条都成立：
+
+| # | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API | **12/12 逐字相等**（`+2243/−0`，按 filename 排序亦相等） |
+| ② | base 前进段非 docs 路径 = 0 | `77c70d23..dea8b02e` = **仅 `docs/37`**，非 docs **0** |
+| ③ | 三读数 | `merge-tree --write-tree` = `refs/pull/132/merge^{tree}` = **`0b757cc3`**（自己算 + GH 各算一次，互证） |
+| ④ | head CI 3/3 绿 ⇒ 免 `--with-db` | `db` ✅ 22:58:46Z / `contract` ✅ 22:55:39Z / `fast` ✅（本轮**阻塞等它**才取到的绿） |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | `8a88c07012b89709669431d2366e5f31fc705029` |
+| ⑥ | 落地树逐字 + diff 空 | 落地 `d4a7a848^{tree}` = **`0b757cc3`** = 预测树；`diff head→落地` = **仅 `docs/37` +81** |
+
+**④ 与 ⑤ 之间重取了一次 head sha**（§39.2 的老规矩：PR 开出后 head 还会后移）。落地 `d4a7a848`。
+
+### §167.4 合并后当轮读数（三零编译门，纯 Python，`df` 不涨）
+
+| 门 | 读数 | 与 §162 对 B4 的预测 |
+|---|---|---|
+| ⑦ | `local 530 / upstream 456 / baseline 473 / implemented 443（441 real + 2 ph）/ known_gap 13 / unclaimed 0 / regressions 0 / local_only 8` | ✅ **逐字命中** |
+| ⑦ owners | **`{M9: 13}`** —— `M3+` 整格消失 | ✅ §162 写死「M3+ 3→0，该线整条退休」 |
+| ⑦b | `registered_keys 531 / findings 0 / stale_allowlist 0` | ✅ |
+| ⑩ | `scanned 1276 / baseline 10 / violations 0` | ✅ |
+
+不变式 `443 + 13 = 456` ✓。**`M3+` 这条 owner 线自 M2-A 尾账起累计 3 片（B2 2 行 / B4 3 行）到此整条退休**，`known_gap` 从 §162 时的 18 收到 **13**。
+
+⑨ **不冷编**（省 ≈14G）：三个门输入与上轮验证树**逐 blob 恒等** ——
+`report.json`=`c828c8d1` / `docs/fixtures`=`e331e706` / `mc-conformance`=`59e1669e` ⇒ 继承 `365 / 32 pass / 23 mismatch / 4 unmounted / 0 ph / 306 unevaluable`。
+**注意**：B4 动了 `routes/{mod,mount}.rs`，所以**不能**用「无位移」当证据，只能用 blob 恒等（§113 以来第 7 次生效）。
+
+### §167.5 派发：`LUM-1819`（M9-4，dashboard 6 条）
+
+`M10-9 INT`（`LUM-2111`）**本轮不可派**，硬前置「全波 M10-0…M10-8」不成立：
+
+- `LUM-2109`（M10-7，`deploy/Dockerfile`）与 `LUM-2110`（M10-8，`scripts/stop_condition.sh`）仍 `backlog`；
+- 本轮**实测复核**：`docker` / `podman` / `buildah` **三者皆无**（`which` 空、`docker info` 失败）；`deploy/` 与 `scripts/stop_condition.sh` 在 base **均不存在**；
+- 而 `LUM-2111` 的 DoD 第 2 条**硬依赖** `bash scripts/stop_condition.sh` 的输出 ⇒ INT 提前跑必然缺证据。
+
+⇒ 改派 **M9 线**（`owners M9 = 13`，正是 M9-4…M9-9 六片）。选 **M9-4**（dashboard 6 条 = 单片缺口最大，6/13）。
+
+**预飞（本轮实测，非抄描述）**：
+- 写集 5 项**全部存在**，且 anchor 已预声明全部注册面 ⇒ **第二类漏项 = 0**：
+  `mc-repos/src/dashboard.rs`（空桩）+ `mc-repos/src/lib.rs:84 pub mod dashboard;` + `routes/mod.rs:203 pub mod dashboard;` + `dashboard/mod.rs:28-30` 三个 `pub mod failures/runtime/usage` 已声明。
+- ⇒ 本片 3 个新文件**直接进编译，不需要改 `mod.rs`**。
+- 描述 rev 1 → **rev 2**，追加「§167 起手补充」：当轮实测九数 + delta 平移预测（`local 530→536` / `implemented 443→449` / `known_gap 13→7` / `owners M9 13→7`，`449+7=456`）+ 号段预约（`docs/32` `## 55.` / `### 9.25`）+ 禁 `--write-baseline` + 磁盘算式。
+- 派发 = `assign --to-id … --no-start` → `status todo` 两步；**前一刻重扫 `/proc`** 确认仍只有 cycle 自己。
+
+### §167.6 🔴 第 2 个槽位**刻意留空**（算式，不是遗漏）
+
+`avail 29G` vs「全量 `--with-db` 峰值实测 **18–30G**」⇒ **两片同飞必然 ENOSPC**。
+按定式写成不等式：`可用(29G) − 同机在飞片增长(0) < 两片冷建峰值之和(36–60G)` ⇒ 成立 ⇒ **留空**。
+理由不止于本轮：ENOSPC 在本项目已发生 **9 次**，且**至少一次连带杀掉 PG 5432**（09-26 07:46 停摆 29 小时的根因），触发期 ENOSPC 还是 autopilot cycle 单堆积在 `todo` 的**签名**。为多跑一片而赌一次 ENOSPC，期望收益为负。
+
+### §167.7 遗留（登记，不动状态）
+
+- 🔴 `LUM-2109`（M10-7，**docker 缺失**）⇒ 连带 `LUM-2110`（M10-8）⇒ 连带 `LUM-2111`（M10-9 INT）。**需 owner 裁决**（装 docker / 改 DoD 去掉镜像面 / 明确不做）。按既定口径**不重复 @**。
+- 观察项：`todo` 里 **22 条** autopilot cycle 单长期堆积（`1521`…`2211`），与 §146 起登记的「触发期 ENOSPC 签名」一致，**只登记不动状态**。
+- `blocked` = 0；`in_progress` 仅 cycle 自己。
+
+### §167.8 next cycle 第一动作
+
+1. `df -h /` **连采两次** + `pg_lsclusters`（5432 须 online）。
+2. `git rev-parse origin/feat/multica-rs-initial`（**起手一律实测，禁抄本节的 `d4a7a848`**）。
+3. 认证 GH `pulls?state=open`（`git credential fill` 取 token，**勿回显**）。
+4. 从 `/` 起手逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）拆槽位。
+5. `multica issue runs LUM-1819` 查 status/error（**PR 开出 ≠ run 终态**）；终态才进判据链。
+6. **槽位一空即派**：`LUM-1819` 终 ⇒ 判据链合入（核对 `local 536 / implemented 449 / known_gap 7 / owners M9 7`）⇒ 递补 **M9-5**（`LUM-1820`，5 条：notification×3 + feedback + contact-sales）⇒ `M9-6`（`LUM-1821`，stripe 1 条）⇒ `M9-7`（`LUM-1822`，mika 1 条）⇒ `M9-8`（`LUM-1823`）⇒ `M9-9`（`LUM-1824`）⇒ `owners M9 → 0` ⇒ **`LUM-1825`（M9-10 INT，唯一 `--write-baseline`）**。
+7. **禁同轮**：两个 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线；普通片禁 `--write-baseline`。
