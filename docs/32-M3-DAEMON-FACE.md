@@ -1363,8 +1363,8 @@ D-9 非成员 404（上游中间件同款，登记以便与 M9-1 / M9-2 对齐�
 **门禁**：十道门 **10/10 PASS**（逐字读数见 §49.5）；⑦ `local 498 → 510`、
 `implemented 416 → 427`（real `424` + placeholder `3`）、`known_gap 40 → 29`、
 **`gaps by owner: M3+=16 M9=13` ⇒ `M3` 清零**（本片可验收信号）、`baseline 473` 不动、
-`regressions 0`、`unclaimed 0`、`local_only 8` 不增；⑦b `499 → 511` / **0 defect 0 warning**；
-⑩ `scanned 1239 → 1245 / violations 0`。
+`regressions 0`、`unclaimed 0`、`local_only 8` 不增；⑦b `499 → 511`（+12 = 11 条 + `GET /api/cloud-runtime` 别名）/ **0 defect 0 warning**；
+⑩ `scanned 1239 → 1243 / violations 0`（+4 个新文件；两个原地填充的文件不计入）。
 
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
@@ -7800,5 +7800,95 @@ M9-1 的 billing 8 条与 M9-2 的 subscriptions 7 条都在路由组上挂了 `
 
 ### 49.5 门禁（当轮实测，非抄写）
 
-<!--GATES-->
+**门禁命令**（`flock` 持全生命周期锁，日志落 `<workdir>/.logs/`，🔴 禁落 `/tmp` 固定名）：
+
+```
+flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db
+# MULTICA_TEST_DATABASE_URL=postgres://mc_dev:***@127.0.0.1:5432/multica_lum2116
+```
+
+**当轮实测读数（base `d5e429d8` → 交片树 `ae0df28d`；rebase 到的 `e00088a6` / `5467ef20`
+两条提交**只碰 `docs/37-M3-W3C-PREFLIGHT.md`** ⇒ 与本片写集零交集）**：
+
+| 门 | 结果 | 耗时 | 读数 |
+| --- | :-: | ---: | --- |
+| ① `fmt` | **PASS** | 4s | — |
+| ② `build` | **PASS** | 155s | — |
+| ③ `clippy` | **PASS** | 67s | 0 warning（`-D warnings`） |
+| ④ `clippy-test-util` | **PASS** | 53s | 0 warning |
+| ⑤ `test` | **PASS** | 168s | 不带 `MULTICA_TEST_DATABASE_URL`（`smoke` 集成测试用它） |
+| ⑥ `db` | **PASS** | 189s | `migrate=0, e2e=0` |
+| ⑦ `route-parity` | **PASS** | 0s | 见下 |
+| ⑧ `schema-drift` | **PASS** | 27s | — |
+| ⑨ `conformance` | **PASS** | 69s | 见下 |
+| ⑩ `file-size` | **PASS** | 1s | 见下 |
+
+**十道门 10/10 PASS，`GATES_EXIT=0`。**
+
+**⑦（`python3 scripts/route_parity.py`）**：
+`upstream 456 (commit f41fae6b08fb) | local 510 registered | baseline 473`、
+`implemented 424 real + 3 placeholder = 427 / 456`、`known_gap 29`、`unclaimed 0`、
+`regression 0`、`local_only 8`、**`gaps by owner: M3+=16 M9=13`**。
+不变式复核：`427 + 29 = 456` ✓、`unclaimed == 0` ✓、`regressions == 0` ✓、`baseline 473` 不动 ✓。
+**🔴 `M3` 从 `gaps by owner` 里消失**（本片前是 `M3+=16 M9=13 M3=11`）= 本片的可验收信号。
+与切片描述 §152 预测的 delta **逐项命中**（`local 498→509`、本片因多注册
+`GET /api/cloud-runtime` 别名而为 **510**；`implemented 416→427` / real `413→424`；
+`known_gap 40→29`）。**owner 单元格的 `M3 → M9` 迁移仍归 M9-10**（`docs/62` §9.2），
+本片**未**改 `scripts/route-owners.tsv` 与 `docs/fixtures/upstream-routes.tsv` ——
+所以 `gaps by owner` 里那一格仍显示旧的 `M3+` / `M9` 归属，`M3` 清零是因为**实现**完成。
+
+**⑦b（`python3 scripts/slash_alias_audit.py`）**：`registered upstream-key literals 511`
+（+12 = 11 条 + `GET /api/cloud-runtime` 别名）⇒ **`0 defect / 0 warning`**，
+`shapes OK: every registered upstream key matches the form upstream serves`。
+⚠️ **本片第一次跑这一门是红的**（1 个 `MISSING_ALIAS`）：只注册 `/api/cloud-runtime/` 会让
+不带尾斜杠的客户端拿到 **404**。已按 `routes/runtimes.rs:83-84` 的既有做法把两个形态都注册
+（上游 `r.Route` + child `r.Get("/")` 让两种写法都命中同一个 handler，axum/matchit 没有 Mount
+概念）。⑦ 把这一对**折叠**比较（`same route with and without trailing slash (legal; folded in
+comparison)`）⇒ 不影响 `implemented` / `known_gap` 的口径。
+
+**⑨（真跑，69s）**：`365 fixtures / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 /
+unevaluable 306`。**逐字不变**，且这是**结构性**的：本片不新建 golden fixture
+（11 条**零** fixture —— member 面 + 本地 0 张表），`git diff --stat <base> HEAD --
+crates/mc-conformance/ contracts/golden/ docs/fixtures/ Cargo.lock` = **空**
+（⑨ 的四面真实输入**零位移**）⇒ `crates/mc-conformance/report.json` **一个字节未动**。
+`totals.unevaluable` 仍是 **306**（只减不增 ✓）。
+⚠️ 按 `docs/64` §2.2 的硬警告复核：**⑨ 变绿 ≠ 做完** —— 本簇 11 条**零 fixture**，
+⑨ 对它们**什么都没证明**；出站契约的证据全部来自 §49.1 的上游表 + 本片 22 条用例。
+
+**⑩（`python3 scripts/file_size_check.py`）**：`limit=800 scanned=1243 baseline=10 violations=0`
+（1239 → 1243 = **+4 个新文件**：两个 `tests.rs` + `tests/{support,db}.rs`；两个被原地填充的文件
+不计入）。`scripts/file_size_baseline.tsv` **未动**（`git status scripts/` 空）。
+最大新文件 470 行（`db.rs`），**距 800 上限留 ≥50 行余量**。
+
+**本片新增用例（22 条 + 6 条纯函数）**：
+- 门 ⑤ **11 条**（不碰库）：两半同键 / 尾斜杠与别名两形态 / 11 个字面量在位且无路径参数幽灵 /
+  出站前三层 × 11 条 / **机器凭据不被拦** × 11 条 / `withQuery` 位置 / `withBody` 恰好 7 条 /
+  `withUserID` 恰好两条探针关闭 / **服务探针与 fleet 探针打到不同目标** / 错误表总性 / 体三道门。
+- 门 ⑥ **11 条**（真库，`#[ignore]`）：11 条逐条出站逐字 + 头逐字 / `withQuery` 位置 /
+  7 条体逐字节 / 体三道门 × 7 条 / **成员矩阵**（owner + member 200、外人 404 且零出站）/
+  **机器凭据 + 真成员 ⇒ 200**（D-2 的加强判据）/ 云侧 4xx-5xx 与非 JSON 逐字透传 /
+  超大响应 502 不回显 / 未配置 403 × 11 / 非法基址 500 × 11 / 连不上 502 × 11。
+- `mc-cloud` 侧 **6 条**纯函数：11 条出站形状 / 两条探针是唯一匿名 / 体逐字节 / query 保序保多值 /
+  两个前缀被 pin / 服务根的尾斜杠 / 传输常量未被本片改动。
+
+#### 49.5.1 🔴 一条**既有**的边缘用例（不在本片写集内，登记给它的 owner）
+
+门 ⑥ 在**前两轮**里红过两次，红的都是同一条**别的 crate** 的用例：
+
+```
+apps/mc-server/src/webhook_worker/tests.rs:317
+webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
+  「投递 … 在 2s 内仍是 `queued` ⇒ 入站落下的那一行从未被消费」
+```
+
+**它与本片零关系**（本片写集 = 2 个原地填充 + 4 个新建，全在 `mc-cloud` / `mc-http` /
+`docs/32`；`apps/mc-server/**` 一个字节未动），且**第三条全量跑它绿了**（`⑥ e2e=0`）。
+**它是一条时间预算本身就贴边的用例**：worker 自己的 `poll_interval()` 断言是 **1s**
+（`tests.rs:359`），而这条用例给 `await_terminal` 的预算是 **2s**（`:369`），
+轮询步长 50ms（`:321`）⇒ 满负载下多线程抢 CPU 时那 1s 的 tick 很容易被推过 2s。
+**单跑 6/6 全绿**（总耗时 2.24s–3.36s，紧贴 2s 预算）。
+
+⇒ **本片的交付结论不受它影响**（第三条全量 `--with-db` 是 `10/10 PASS / GATES_EXIT=0`），
+但**登记**给 `mc-server` 的 owner：那 2s 预算对一个 1s 轮询的 worker 来说**没有余量**，
+建议把 `:369` 的预算放宽到 5s 量级（`await_pool_idle` 那条已经是 5s，`:363`）。
 
