@@ -12989,3 +12989,143 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 4. **派发顺位**（描述已刷成待派态，`assign --no-start` → `status todo` 即可起跑）：
    **M9-3（`LUM-1818`）** → **M9-11（`LUM-2116`）** ⇒ 预期 `M9` 缺口 25 → 20 → 14。
 5. **门 ⑨**：任何动 `crates/**` 的片交付时**必须真跑**（四面判据），本轮的继承在它们合并后即失效。
+
+## §149 14:30Z autopilot cycle（`LUM-2356`，14:30Z / 22:30 触发）—— **零合并 + 零派发轮**（第 2 次，daemon 3/3 = cycle ∥ M9-2 ∥ M10-4）；🔴 **本轮的唯一实质产出：抓到一个会伪装成「run 卡住」的 `pgrep -f` 自匹配缺陷**（已最小复现 + 已写进待派两片的可执行配方）
+
+### §149.1 起手读数与轮型判定
+
+- **base** `90124763`（= §148 的直推落地，**只多一个 docs-only**）。
+- **GH `0 open PR`** —— 连续第 **3** 轮零合并（`M9-2` / `M10-4` 仍在飞，都还没交 PR）。
+- **daemon `active_task_count = 3`** = 本 cycle ∥ `LUM-1817`（M9-2）∥ `LUM-2106`（M10-4）⇒ **结构性满载、零派发位**（与 §148 同轮型）。
+- **`df` 起手 13G / 门读期 12G**（75%）⇒ 仍 **< 20G** 门槛且另一条全量在飞 ⇒ **本轮零 cargo 门**，只跑零编译的 ⑦/⑦b/⑩。
+- `multica repo checkout` 落 `main` 线**第 14 次**（HEAD `4fc96f30`）⇒ 已 `git checkout -B cycle-149 origin/feat/multica-rs-initial` 切回正典线。
+- **在飞两片的形态**：`LUM-1817` 的 `target/` 13G + `.logs/gates_lum1817_full.log`（563K，最后写入 **14:03:39**，
+  摘要 **10/10 PASS / 558s**）；`LUM-2106` 的 workdir **无 `target/`** ⇒ 仍在读码/规划阶段，**不判死**。
+
+### §149.2 🔴 本轮核心发现：`pgrep -f "<pattern>"` 的**自匹配**让等待循环永不退出
+
+**现场**：`LUM-1817` 那个 run 在 13:55:56（`tool #178`）起了一个「等门禁跑完再收尾」的等待循环：
+
+```bash
+for i in $(seq 1 460); do
+  if ! pgrep -f "gates.sh --with-db" >/dev/null 2>&1; then break; fi
+  sleep 5
+done
+```
+
+门禁 **14:03:39 就已经结束**（日志尾是 `overall: PASS 10/10 gate(s) green in 558s`），
+但那个循环的宿主进程到 **14:33 仍然活着**（`ps -o etime` = `35:35`），因为
+**它自己的命令行里就含有字符串 `gates.sh --with-db`**，`pgrep -f` 匹配到了**自己**。
+
+**最小复现（本轮当场跑，逐字输出）**：
+
+```
+iter 1: still matched
+iter 2: still matched
+iter 3: still matched
+```
+
+`pgrep -af pgrepself_test_xyz` 同时列出了 **3 个 pid**：外层 `bash -c`、内层 `bash -c`、循环体本身 `bash -c`。
+⇒ 判据化结论：**`pgrep -f` 的匹配集里必然包含「命令行里含有该 pattern 的任何进程」，包括等待者自己。**
+
+**危害（两条，都比「浪费 38 分钟」严重）**：
+
+1. **假活**：一个真死/已完成门的 run，会因为这个空转循环而在 `ps` 里**看起来一直活着** ⇒ 下一轮的
+   「三连判活」被污染（这正是 §148 判 M9-2 为「跑门阶段、活」的读数来源之一）。
+2. **假死**：反过来，若等待者**恰好**不含该 pattern（例如把命令换成了脚本路径），循环会**永远等下去**并
+   占住 bash 时限；两种写法一个方向错、另一个方向也错 —— 判据是**「不要用 `pgrep -f` 的输出当存活判据」**。
+
+**修正配方（三选一，按优先级）**：
+
+```bash
+# A（首选）：括号技巧 —— 正则里首字符写成类，命令行里的字面串匹配不上自己的正则
+pgrep -f "[g]ates.sh --with-db"
+
+# B：显式排除自身 pid 及其祖先
+pgrep -f "gates.sh --with-db" | grep -vx "$$"
+
+# C（最省心，且是 §148 已定的方向）：**不用轮询** —— 用 flock 拿排他锁跑全量，
+#   拿不到锁就直接退出（-w 超时返回非 0），日志落 <workdir>/.logs/
+flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db
+```
+
+🔴 **对 §148 第 4 条纪律的修正**：§148 写的是「禁 `while` + `sleep` 轮询」——
+方向对，但**没堵住 `for` + `pgrep` 这个同族漏洞**（换了个壳的自匹配轮询）。
+⇒ 纪律升级为：**任何「等另一个 run 的门禁」的需求，一律走 C（`flock`），不用任何形式的进程名轮询。**
+
+### §149.3 当轮门读（base `90124763`，三条 python 门全部 exit 0，零 `target/` 占用）
+
+- **⑦**（`route_parity.py`）：`upstream 456 (commit f41fae6b08fb) | local 485 registered | baseline 473`、
+  `implemented 400 real + 3 placeholder = 403 / 456`、`known_gap 53`、`unclaimed 0`、`regression 0`、`local_only 8`、
+  `gaps by owner: M9=25  M3+=16  M3=11  M10=1` —— 与 §147 / §148 **逐字相同**（当轮只多 docs，符合预期）。
+  不变式复核：`403 + 53 = 456` ✓、`403 = 400 real + 3 placeholder` ✓。
+- **⑦b**（`slash_alias_audit.py`）：`registered upstream-key literals 487` / `shapes OK` ⇒ **0 defect / 0 warning**。
+- **⑩**（`file_size_check.py`）：`limit=800 scanned=1230 baseline=10 violations=0`（与 §147/§148 相同）。
+- **未跑项（显式登记）**：① fmt、② build、③ clippy、④ clippy-test-util、⑤ test、⑥ db、⑧ schema-drift、
+  ⑨ conformance —— **补跑条件**：`df ≥ 20G` **且** 无并发全量 ⇒ 用 §149.2 的 **C 配方**（`flock -w 5400`）持锁跑，
+  日志落本 workdir `.logs/`。
+
+### §149.4 ⑨ 的继承：按 §147.2 的四面判据核过，**合法**（第 15 次）
+
+一条可执行命令代替三 blob 清单：
+
+```bash
+git diff --name-only aa509be1 90124763 -- crates contracts/golden docs/fixtures Cargo.lock | wc -l   # => 0
+git diff --name-only aa509be1 90124763                                                            # => docs/37-M3-W3C-PREFLIGHT.md
+```
+
+⇒ 门禁**输入面**（`crates/` / `contracts/golden` / `docs/fixtures` / `Cargo.lock`）**逐字未动**，
+`report.json` 所读的 ⑩ 基线输入恒等 ⇒ 继承成立。**条件**：一旦有片动 `crates/**` 并合并，本继承立即失效。
+
+### §149.5 在飞两片的判活（三连采样，采样间隔 40s）
+
+`LUM-1817`（M9-2）task `01a0e2fb-…91256411808f`：
+
+| 采样 | 时刻 | daemon 日志最后事件 | 门禁日志 mtime |
+| --- | --- | --- | --- |
+| 1 | 14:37:18Z | 14:37:14（`tool #`） | 14:03:39 |
+| 2 | 14:37:58Z | 14:37:58 | 14:03:39 |
+| 3 | 14:38:38Z | 14:38:38 | 14:03:39 |
+| 复查 | 14:39:19Z | `agent … text=作` / `text=证据`（在流式写交付） | 14:03:39 |
+
+⇒ **活**（不是死 run，**不抢救**）。注意 13:55:56 → 14:37 之间有 **41 分钟静默**，
+但那是「门禁在跑 + 交付在写」的正常形态；**这 41 分钟恰好也是 §149.2 那个假活循环造成的读数污染**
+⇒ 判活必须**同时看 daemon 日志与门禁日志 mtime 两个面**，不能只看 `ps`。
+
+`LUM-2106`（M10-4）task `01a0e318-…0071a2fc19dd`：最后事件 **13:52:05**，无 `target/`、worktree 干净
+⇒ 读码/规划阶段；单路由切片在 50 分钟内无 `target/` 属正常，**本轮不判死**（下轮复采三连）。
+
+### §149.6 磁盘
+
+- 起手 13G / 门读期 12G / 75%。`LUM-1817` 的 `target/` 仍占 **13G** ⇒ **不许动**（该 run 活着，可能复跑门禁）。
+- 已停用 workdir 只剩 `deps` 可省：`lum-2352` 的 `target/` = 1.9G（`incremental` 上一轮已清到 4.0K）。
+  **本轮不动它** —— 1.9G 改不了「< 20G ⇒ 不跑全量」的判定，而删除是破坏性操作，收益/风险比不划算。
+- **M9-2 的门禁已跑完**（14:03:39）⇒ 它那 13G 里的 `incremental` 在**该 run 交付之后**才可回收；
+  下一轮若 `LUM-1817` 已 `in_review` 且无新 `cargo` 进程，先 `pgrep -af cargo` 确认再回收。
+
+### §149.7 lesson
+
+1. 🔴 **`pgrep -f` 自匹配 = 等待循环的万向失效**：一个 3 行复现（§149.2）就能钉死。
+   **判据化动作**：任何「等别的 run 跑完」的写法，必须满足「匹配式不会匹配到等待者自己的命令行」，
+   否则一律改用 `flock`。**「`while`/`for` 名字不同就没事」是错的** —— §148 的纪律要按「**不用进程名轮询**」重写。
+2. 🔴 **判活要两个面**：`ps` + daemon 日志**不够**，还要门禁日志的 **mtime**。
+   判据：`pgrep` 命中的进程可能是**上一个自己**留下的空转壳（§149.2），它的存活**不代表 run 活着**。
+3. **「门跑完了」与「run 交付了」是两个事件**：本轮 `LUM-1817` 的门禁 14:03:39 就 10/10，
+   但交付（写文档/开 PR）发生在 40 分钟之后。⇒ 收割判断要盯**PR 是否出现**，不是**门是否绿**。
+4. **起手 3/3 且 0 open PR = 连续第 3 轮零合并**：这时 cycle 的正确产出不是「推进」，
+   而是**把下两片的可执行配方刷对**（本轮刷的是等待配方 —— 它上一版就带着 §149.2 这个缺陷）。
+
+### §149.8 下一轮的顺位清单
+
+1. **收割 M9-2 / M10-4**：一旦出现 open PR，按 §146 判据链走（预检① numstat 逐字；预检② base 祖先；
+   **合并树当场重跑** ⑦/⑦b/⑩ 比预测 delta）。
+2. **M9-2 已知的预期 delta**：门禁 10/10 已绿（`local 485` 基线不变），合并后 ⑦ 的预测 = `implemented 403 + 本片路由数`、
+   `known_gap 53 − 本片路由数`、`owners.M9 25 → 25 − 本片数`；**以合并树实测为准**，不采信本行预测。
+3. **`docs/32` 同锚点真冲突**（M9-2 抢 `## 47.`、M10-4 抢 `## 45.`）⇒ 后合并者走 §146.3 机械解，
+   **解冲突提交推回该 PR 分支**；注意解完 numstat 会重算（历史上差一个空行）。
+4. **补跑门 ①–⑥⑧⑨**：条件 = `df ≥ 20G` ∧ 无并发全量；执行 = §149.2 的 **C 配方（`flock -w 5400`）**，
+   禁止任何形式的过程名轮询。
+5. **派发 M9-3（`LUM-1818`）→ M9-11（`LUM-2116`）**：两片描述已在 §149 刷到 base `90124763`
+   并**换掉带自匹配缺陷的等待配方**；`assign --no-start` → `status todo` 即可起跑。
+6. **回收 M9-2 的 `target/`**：仅在它 `in_review` **且** `pgrep -af 'cargo|gates.sh'` 为空时，
+   先清 `target/debug/incremental`。
