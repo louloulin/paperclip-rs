@@ -13960,3 +13960,101 @@ B2 的 rev 4 读数（base `4675166c` / `local 510`）因 #128 落地而**整轮
    或登记为已知不可达并把它移出收口关键路径。**在此之前 M10-8（`LUM-2110`）连带阻塞。**
 7. **号段**：`docs/32` 顶层末号 `## 50.`、预留 `51`/`9.21`=B2、`52`/`9.22`=B3 ⇒ 下一空号 **`## 53.` / `### 9.23`**；
    `docs/37` 末号 **§157** ⇒ 下轮 **§158**。
+
+---
+
+## §158 · 03:00 cycle（LUM-2374，2026-09-27 19:00Z）—— 收割轮：合并 PR #129（M10-B3），派 M10-B2
+
+### §158.1 起手判型
+
+- base `3d298bf8`、GH **1 open PR = #129**（M10-B3 / `LUM-2114`，head `4ea3f3816`）、daemon **2/3** = cycle ∥ B3 ⇒ **1 个切片位**。
+- df 19G → 收尾 28G；PG 5432 `online`（09-26 那次 ENOSPC 事故未复发）。
+- **B3 的 run 在起手时仍 `running`**（`gates.sh --with-db` 在 ⑧ 段），且工作树 HEAD `4e27b329` ≠ 远端 head `4ea3f3816`
+  ⇒ 切片**正在自行 rebase**（日志名 `gates_lum2114_rebase.log`）。§155.5 lesson 1 生效：**先看它有没有自己解冲突，别重复劳动**。
+  20 分钟后它自己把新 head `51f72c92` 推上来，run 于 19:05:46Z `completed`。
+- 本机 `multica repo checkout` 落 `main` 线**第 15 次**（HEAD 曾 `4fc96f30`）⇒ 起手仍须 `git checkout -B agent/devbox5/68488b850a6f origin/feat/multica-rs-initial`。
+
+### §158.2 收割判据链（#129，六条全过，§152.7「等 CI 转绿」欠账第 4 轮执行）
+
+| 判据 | 结果 |
+|---|---|
+| ① numstat vs PR API | **12 文件 `+2991 / −1` 逐字相等**（含 `docs/32` `+156/−1`，即 rebase 后新增的 §52.5 段） |
+| ② 形态 | `merge-base = 3d298bf8 = base` ⇒ **base 是 head 祖先（形态②）**，合并树 ≡ head 树 |
+| ③ `merge-tree --write-tree` | **exit 0**，树 `50253337627382a071170aadc53b11307d912190` == `head^{tree}`（**两次读数相等**） |
+| ④ CI | **`contract` / `fast` / `db` 3/3 全绿**（一次前台阻塞轮询收齐，9 次采样约 4.5 min） |
+| ⑤ API 钉 sha | `PUT /pulls/129/merge`，钉 40 位 `51f72c92…`，`merge_method=merge` ⇒ 落地 `24050676` |
+| ⑥ 落地树 | `24050676^{tree}` = `50253337…`（**与预演树逐字相等**），`git diff <base> <head>` = **0 文件** |
+
+**注意**：起手时 `merge-tree` 对 `3d298bf8` 是 **exit 1**（冲突文件 `mount.rs` + `docs/32`，正是 §156 实测出的 B1×B3 共用面）。
+切片自己 rebase 之后形态②自动成立 ⇒ **本轮不需要 §146.3 机械解**。这是「先量在飞工作树、后决定要不要自己解」的第二个正例。
+
+### §158.3 当轮门读
+
+- **base `3d298bf8`（B1 已合、B3 未合）**：⑦ `local 515 / baseline 473 / implemented 430 real + 2 ph = 432 / 456 / known_gap 24 / unclaimed 0 / regression 0 / local_only 8`、`gaps by owner: M9=13 M3+=11`；⑦b `516 literals / 0 defect 0 warning`；⑩ `scanned 1255 / baseline 10 / violations 0`。
+  ⇒ **§155 为 B1 锁的 delta 逐字命中**（`local 510→515 / real 424→430 / ph 3→2 / gap 29→24 / M3+ 16→11`、⑦b `511→516`）。
+- **⑨ 在 base `3d298bf8` 上真跑**：`flock -w 1800 …gates.sh --only conformance` ⇒ **119s / exit 0 / `report matches`**，
+  totals `365 / pass 32 / mismatch 23 / unmounted 4 / placeholder 0 / unevaluable 306`（与 M9-11 逐字相同）。
+- **合并树 `24050676`**：⑦ `local 525 / implemented 436 real + 2 ph = 438 / 456 / known_gap 18 / unclaimed 0 / regression 0 / local_only 8`、
+  `gaps by owner: M9=13 M3+=5`；⑦b `526`；⑩ `1263/10/0`。`438+18=456` ✓。
+- **B3 的实测 delta**：`local 515→525`（**+10 注册点**）、`implemented 432→438`（**+6 折叠键**）、`known_gap 24→18`、`M3+ 11→5`、⑦b `516→526`、⑩ `1255→1263`。
+  🔴 **`local` 与 `implemented` 的增量不相等是正常的**：`local` 数**未折叠的注册点**（B3 把 5 个新键注册成**双形态** ⇒ 10 个注册点），
+  `implemented`/`known_gap`/`owners` 走**折叠键**。§155.5 的「双形态片按注册点算 `local`」第 2 次坐实。
+  **`ph` 停在 2 不动** ⇒ **B3 没有做占位升级**：`/api/issues/:id/quick-actions` 在合并后**仍是 placeholder**
+  （`routes/issues/mod.rs:220`）⇒ §153.4 的「B 面 4 片中只有 B1 含占位升级」成立，B2/B3/B4 都不会动 `ph`。
+- **0 条 cargo 门**（①②③④⑤⑥⑧）：形态② + CI 3/3 ⇒ 见 §158.4 的新判据。收尾 df 28G。
+
+### §158.4 🔴 本轮唯一实质产出：**CI 的 `contract` job 就是门 ⑨，「有注册位移必须重生成 report.json」要再收紧一层**
+
+1. **CI `contract` = ⑦ + ⑨**。`.github/workflows/*.yml:134` 的 job 名逐字是 `contract — route parity + conformance`，
+   注释逐字写「⑨ 需要 cargo（`cargo run -q -p mc-conformance -- --no-db --check …`）」。
+   ⇒ **形态②（base 是 head 祖先）+ head 上 CI 3/3 绿 ⇒ ⑦ 与 ⑨ 都已在 CI 上验过，cycle 不必本地冷编这两门。**
+   这把「形态② + CI 3/3 ⇒ 免本地 `--with-db`」从「省掉全量」精确化到「**连 ⑨ 都不用跑**」——
+   而 ⑨ 曾是本仓最贵的一门（自建 workdir 冷编 3–4G，本轮实测 119s + 吃掉 3G）。
+2. **旧判据「注册位移 ⇒ 必须重生成 `report.json`」过强**。B1 合入时**位移了 `routes/mod.rs`、`routes/mount.rs`、
+   `routes/issues/mod.rs` 三个注册文件，却一字节没动 `crates/mc-conformance/report.json`**；按 §152.4 的字面判据这应当是红的，
+   实测 ⑨ **仍绿且 totals 逐字不变**。根因：**conformance 报告是 f(golden fixture 集)，不是 f(全部挂载路由)**——
+   B1 新挂载的 6 条附件路由在 `contracts/golden/` 里没有对应用例（`grep -rl attachments contracts/golden` 只命中 3 个文件，
+   但都不是这 6 条键的 (method, path) 用例；B3 的 quick-actions 面命中 **0**）。
+   ⇒ **新判据：先静态看新挂载的 (method, path) 模板在 `contracts/golden/` 有没有对应用例；没有 ⇒ 报告必然不变、不必重生成
+   （省一次冷编）；有 ⇒ 必须重生成并提交。** 这是 §152.4 → §158.4 的第二次收紧，**方向与 §151.3 的教训一致：
+   判据要么从机制推，要么别写成硬要求。**
+3. **回收顺序第 2 次验证有效**：B3 终态后**先**按 §152.6 四判据整删它的 `target/`（9.2G），df 19G → 28G，
+   才有余量派 B2。**反过来（先派片再回收）会卡在 19G**。
+
+### §158.5 派发：M10-B2（`LUM-2113`）
+
+- **描述 rev 5 → 6**（19572 → 22683 字符，回读复核含 `§158` 与 `24050676`）：正文整段「门禁预测」以 `c23fcfad` 为基准、**已过期 5 轮，作废**；
+  追加当轮实测（⑦ `525/438/18`、owners `M9=13 M3+=5`、⑦b `526`、⑩ `1263`、⑨ `365/32/23/4/0/306`）+ 预期 delta 表
+  （`local 525→527 / implemented 438→440 / known_gap 18→16 / owners.M3+ 5→3 / ⑦b 526→528 / ⑩ 1263→1264`）
+  + 号段 **`## 51.` + `### 9.21`**（`grep -c` 实测两者命中 0；`50/9.20`=B1、`52/9.22`=B3 已占）+ §158.4 三条新判据。
+- 起跑配方第 N 次验证：`assign --to '编程助手devbox5' --no-start` + `status todo --no-start` + **`rerun`** ⇒
+  run `01a0e447-fff9-7c97-b05c-de3c6026bcc4` 19:11:59Z 起，workdir `lum-2113-de3c6026bcc4` 已生成。
+
+### §158.6 空位刻意留空（把 §157 的不等式写成算式）
+
+起手空位 1 个、派完 B2 后 daemon 2/3 仍余 1 位。**仍然不派**，判据化动作：
+
+```
+avail(28G) − 在飞片冷建峰值(16G) − 一轮 --with-db 余量(20G) = −8G < 0
+⇒ 一片冷建已在门限内（28 − 16 = 12G，勉强），两片并发必然 ENOSPC
+⇒ ENOSPC 会顺带带走 PG 5432（09-26 已实证：29 小时停摆的根因）
+⇒ 空位刻意留空
+```
+
+候选与阻塞原因：**M10-B4（`LUM-2115`）** 与刚派的 B2 同写 `routes/{mod,mount}.rs` 追加段（同锚点）⇒ 并发即冲突，
+且冷建第二份 16G 直接把上式推向 ENOSPC；**`LUM-2107`（M10-5）** rev 1 **需补描述**；
+**两条 INT（`LUM-2111` M10-9 / `LUM-1825` M9-10）** 都是基线写者，**硬约束：不得与任何加路由片同轮**（B2 在飞）⇒ 两条都不可用。
+
+### §158.7 下一轮顺位（起手一律 `git rev-parse` 实测，勿抄本行）
+
+1. **收割 B2**（`LUM-2113`）：起点应是 `24050676`（本 cycle 收尾 base）。信号 = `gaps by owner` 里 `M3+ 5 → 3`、
+   `local 525 → 527`、`ph` **停在 2 不动**。它与 B3 共用 `routes/{mod,mount}.rs` + `docs/32`，但 B3 已在 base ⇒ 形态② 大概率成立。
+2. **B2 合 ⇒ 立刻派 B4**（`LUM-2115`，3 行，avatars + `/ws` + sub-issue-preview，**M3+ 尾账收口**）⇒ 预期 `M3+ 3 → 0`。
+   **派前必须先补它的描述**（与 B2 同款过期读数），并按 §158.4 新判据先静态看 golden 有无对应用例。
+3. **M3+ 归零后**：`LUM-2107`（M10-5，rev 1 需补描述）→ `LUM-2111`（M10-9 INT，唯一 `--write-baseline`，等 `owners.M10 → 0`）。
+4. **M9 侧**：`owners.M9 = 13` 未动；stage 3（`LUM-1819`/`1820`/`1821`）与 M10-B 共用 `mod.rs`/`mount.rs`
+   ⇒ **同飞上限 = 1 M9 + 1 M10-B**；两条 INT（`LUM-2111` / `LUM-1825`）**不得同轮刷基线**。
+5. **M10-7（`LUM-2109`）仍被 docker 缺失硬阻塞**（本机无 `docker`/`podman`/`buildah`），连带 `LUM-2110`（M10-8）——
+   需 owner 裁决三条出路之一（提供 docker / 改 DoD 只交 Dockerfile+CI job 文本 / 登记不可达并移出收口关键路径）。
+6. **号段**：`docs/32` 顶层末号 `## 52.`、`### 9.x` 末号 `### 9.22`；`## 51.`/`### 9.21` 已派给 B2 ⇒
+   下一空号 **`## 53.` / `### 9.23`**（给 B4）；`docs/37` 末号 **§158** ⇒ 下轮 **§159**。
