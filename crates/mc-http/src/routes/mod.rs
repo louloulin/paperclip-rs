@@ -91,6 +91,8 @@ pub mod properties;
 pub mod issue_view_preferences;
 pub mod issue_views;
 pub mod pins;
+// M10-B3（LUM-2114）：quick-action 目录 4 条 + issue 侧 render/run 2 条。
+pub mod quick_actions;
 
 // M7 anchor scaffold（LUM-1765 / docs/60-M7-PLAN.md §3.1 / §5）：**一个**面一次声明，
 // 24 条渠道路由按 5 个平台分文件（`channels/{slack,telegram,dingtalk,lark,wecom}.rs`），
