@@ -165,6 +165,18 @@ pub mod attachments;
 // ⚠️ `/uploads/*` 的 `*` **必须逐字**（门 ⑦ 的 `normalize` 只认整段等于 `*`）。
 pub mod uploads;
 
+// M10-B4（`LUM-2115` / `docs/64` §4.2 第 3、4 行）：**B 面第 4 片**的
+// `GET /api/avatars/{sig}/*`（`router.go:1456`）与 `GET /ws`（`router.go:1424`）——
+// 各 1 行、**两条都是缺口** ⇒ `local +2` / `implemented +2` / `known_gap −2`。
+// 本行 + `mount.rs` 的一个合并点 = 两条最小冻结破例外，各**只加不改**
+// （`docs/32` §9.23 登记）。
+// 形态：两条**全是 plain 注册**（裸 `r.Get`）⇒ 只注册无尾斜杠形态。
+// ⚠️ `/api/avatars/{sig}/*` 的 `*` 写成 matchit 0.7 的**具名** catch-all（`*key`）：
+// 无名的 `*` 会被 `InsertError::ParamNameMissing` 拒绝（门 ⑦ 的 `normalize` 四形态
+// 都折成 `:wildcard`，但注册本身必须带名字 —— `docs/32` §9.23 记这条实测）。
+pub mod avatars;
+pub mod ws;
+
 // M9 anchor scaffold（`LUM-1815` / `docs/62-M9-PLAN.md` §3.1 / §5）：**八个**面一次性声明，
 // 让 M9-1..M9-11 的九个切片不再同时编辑本文件。按形态分两类：
 // - **目录切片**（各自的 `mod.rs` 自己聚合子 router）：`cloud`（3 子文件）、
