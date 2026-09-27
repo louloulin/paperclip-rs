@@ -106,6 +106,8 @@ pub mod plugin;
 pub mod project;
 pub mod project_resource;
 pub mod property;
+// M10-B3（LUM-2114）：`quick_action` 目录 + 执行目标解析（上游 237/238 两张表，本仓已带）。
+pub mod quick_action;
 pub mod runtime;
 pub mod scheduler;
 pub mod share_link;

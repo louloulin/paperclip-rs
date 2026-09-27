@@ -142,6 +142,20 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // `routes/issues/mod.rs` 里那一行 501 占位的**原地升级**（`local` 不变、
         // `implemented_placeholder 3 → 2`）⇒ 在这里再注册一次会 panic。
         .merge(mount_slice_attachments())
+        // ----- M10-B3（LUM-2114）：quick-action 目录 4 条 + issue 侧 render/run 2 条 -----
+        // ⚠️ 形态：目录那 4 条的上游是 `Route(...)` + child `"/"`（chi 的 Mount **两种**
+        // 写法都服务）⇒ `quick_actions::router()` 内部把两形态都注册了；issue 侧两条是
+        // **plain** `r.Post` ⇒ 只注册无尾斜杠。别在这里“帮忙”改形态。
+        .merge(mount_slice_quick_actions())
+}
+
+/// M10-B3（`LUM-2114`）的 quick-action 6 条切片。
+///
+/// **这是 M10-0 锚点冻结面的一处最小破例**：`routes/mod.rs` / `routes/mount.rs` 两行
+/// 由 `docs/64` §3.1 的锚点冻结，而本片的 6 条键**不在**锚点预建的 `probes/` /
+/// `config.rs` 面里 ⇒ cycle §145 授权「各只加不改」。登记见 `docs/32` §9.22。
+fn mount_slice_quick_actions() -> Router<Arc<AppState>> {
+    Router::new().merge(super::quick_actions::router())
 }
 
 /// workspace + member + me 切片。

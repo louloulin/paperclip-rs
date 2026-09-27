@@ -1365,7 +1365,6 @@ D-9 非成员 404（上游中间件同款，登记以便与 M9-1 / M9-2 对齐�
 **`gaps by owner: M3+=16 M9=13` ⇒ `M3` 清零**（本片可验收信号）、`baseline 473` 不动、
 `regressions 0`、`unclaimed 0`、`local_only 8` 不增；⑦b `499 → 511`（+12 = 11 条 + `GET /api/cloud-runtime` 别名）/ **0 defect 0 warning**；
 ⑩ `scanned 1239 → 1243 / violations 0`（+4 个新文件；两个原地填充的文件不计入）。
-
 ### 9.20 M10-B1（`LUM-2112`）：附件面 6 行的偏离登记（**索引段**）
 
 > **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 50.`（50.1–50.6）**。
@@ -1398,6 +1397,32 @@ D-10 列表**含**抓取上下文副本（上游同款）；D-11 `tests/issues/a
 **`owners.M3+` 16 → 11**（**可验收信号，命中**）、`M9 13` / `M3 11` **不变**、`baseline 473` 不动、
 `regressions 0`、`local_only 8` 不增、不变式 `421 + 35 = 456` ✓；⑦b `499 → 504` / 0 defect；
 ⑨ **逐字不变**（`report.json` 未动）；⑩ `scanned 1239 → 1251 / violations 0`。
+
+### 9.22 M10-B3（`LUM-2114`）：quick-actions 6 条（目录 4 条 + issue 侧 render/run 2 条）的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 52.`（52.1–52.4）**。
+
+**写集（10 个文件，全文见 §52 开头的表）**：`crates/mc-repos/src/quick_action.rs`（**新建**，
+切片描述写集之外的第 7 个文件，见 D-1）+ `crates/mc-repos/src/lib.rs`（+1 行 `pub mod`）
++ `routes/quick_actions/{mod,list,lifecycle,invoke}.rs` 与 `tests.rs` / `tests/{support,db}.rs`
+（6 个新建）+ `routes/{mod,mount}.rs`（🔴 **裁剪件破例**，各只加不改，见 D-2）。
+**零迁移、零 manifest 改动**（`quick_action` 表来自本仓 `migrations/upstream/237_quick_action.up.sql`）。
+
+**形态（全文见 §52.1）**：**6 条上游键 / 10 个注册点** —— 目录 4 条是上游 `Route(...) + child "/"`
+⇒ **两形态都注册**；issue 侧 2 条是 **plain** ⇒ **只**无尾斜杠。⑦ 的 `local` 按**注册点**口径 +10。
+
+**中间件（全文见 §52.2）**：6 条全在 `router.go:1948` 的 `RequireWorkspaceMember` 组内、
+组内**无** `r.Use` ⇒ 🔴 **本片不挂机器凭据闸**（与 §46 / §47 相反），用**反向**用例钉住。
+
+**登记的偏离（8 条，全文见 §52.3）**：D-1 写集扩到 `mc-repos`（新建单文件模块 + `lib.rs` 一行）；
+D-2 `routes/{mod,mount}.rs` 裁剪件破例；D-3 agent 身份的管理面 403 不可实现；
+D-4 **`run` 不触发任务 / 不广播 / 不回写 revision**（本仓无触发链，**不伪造** `trigger_outcomes`）；
+D-5 目标解析逐行做（上游是批量 catalog，语义等价）；D-6 dispatch 错误用本仓 `Error` 表达（409/403/403）；
+D-7 `routes/issues/mod.rs:208` 的 501 幽灵占位 `GET /api/issues/:id/quick-actions` **未动**（不在写集）；
+D-8 删面上游那条 403 **不可达**，本仓照抄可达的 404。
+
+**权限模型（全文见 §52.4）**：目录读**不做**权限工作（`private` 在 SQL 里折叠）；写面
+`public` 要 owner/admin；可达性收在一处（非创建者的 private ⇒ **404**）；`visibility` 是心意不是判决。
 
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
@@ -8059,3 +8084,133 @@ webhook_worker::tests::shutdown_stops_the_loops_within_the_timeout
    本片两次切分都落在真接缝上：`download.rs` / `download_pure.rs` = **纯判定对 I/O**；
    `tests/db.rs` / `tests/db_bytes.rs` = **元数据读取字节**。切完 `download.rs` 用
    `pub use super::download_pure::*;` **原样再导出** ⇒ 外面一个调用点都不用改。
+
+## 52. M10-B3（`LUM-2114`）：quick-actions 6 条（目录 4 条 + issue 侧 render/run 2 条）的落点与偏离登记
+
+> **号段复核（当轮实测）**：`## ` 末号 = **`## 49.`**（M9-11 / 已合）⇒ 本片取 **`## 52.`**；
+> `### 9.x` 末号 = **`### 9.19`** ⇒ 本片取 **`### 9.22`**（`50`/`9.20` 归在飞 M10-B1、
+> `51`/`9.21` 归 `LUM-2113`；cycle §153 lesson 2：**号段按在飞片预留，不是文件末号 +1**）。
+> **起手 base（当轮实测）= `47cb9f6a`**（= `--no-ff` 合并 PR #127「M9-11」），与切片描述 §155 记的 base **逐字相同**。
+>
+> **交片期 base 前移 + §146.3 机械解**：PR #128（M10-B1 / `LUM-2112`）在本片写完
+> 之后合入（base → `3d298bf8`）⇒ 交片前 `git rebase` 到新 base，冲突 2 处
+> （`routes/mount.rs` 的 `.merge(...)` 追加段 + 本节的号段），**两侧都保留、只追加**
+> （`mount.rs`：B1 的 `mount_slice_attachments()` 在前、本片的 `mount_slice_quick_actions()`
+> 在后；号段：`9.20`（B1）排在 `9.22`（本片）之前、`## 50.` 排在 `## 52.` 之前）
+> ⇒ **两侧正文零删改**。机械解后**重跑门 ⑦**（见 §52.5 的复跑读数）。
+
+**写集执行说明（逐字，10 个文件）**：
+
+| 文件（逐字） | 动作 | 说明 |
+| --- | --- | --- |
+| `crates/mc-repos/src/quick_action.rs` | **新建** | `quick_action` 表访问 + 目标解析 + invoke 判定（**不在**切片描述的写集里 —— 见 D-1） |
+| `crates/mc-repos/src/lib.rs` | **+1 行** | `pub mod quick_action;`（同上） |
+| `crates/mc-http/src/routes/quick_actions/mod.rs` | **新建** | 聚合 + 路由表 + DTO + 四个 validator + 门 |
+| `crates/mc-http/src/routes/quick_actions/list.rs` | **新建** | 目录读 / 建（2 条） |
+| `crates/mc-http/src/routes/quick_actions/lifecycle.rs` | **新建** | PATCH / DELETE（2 条） |
+| `crates/mc-http/src/routes/quick_actions/invoke.rs` | **新建** | issue 侧 render / run（2 条） |
+| `crates/mc-http/src/routes/quick_actions/tests.rs` | **新建** | 不碰库的那一半（门 ⑤，11 例） |
+| `crates/mc-http/src/routes/quick_actions/tests/support.rs` | **新建** | `AppState` + 请求装置 + 真库 fixture |
+| `crates/mc-http/src/routes/quick_actions/tests/db.rs` | **新建** | 真库那一半（门 ⑥，`#[ignore]`，13 例） |
+| `crates/mc-http/src/routes/{mod,mount}.rs` | **各 +1 处** | 🔴 **裁剪件破例**，见 D-2 |
+| `docs/32-M3-DAEMON-FACE.md` | 本节 + `### 9.22` | 号段登记 |
+
+### 52.1 形态复核（本片最容易错的一条，起手**自己**从 fixture 做的预判）
+
+`m10-declared-routes.tsv` 只声明 M10 的 **A 面 5 条**（`dual-form required: 0`），
+本片 6 条里的 4 条属 `M3+`、**不在**那张表里 ⇒ 形态必须自己复核。逐字结果：
+
+| 上游 fixture 行 | 上游注册（`router.go:1995-2027`） | 判据（`slash_alias_audit.py`） | 本地注册 |
+| --- | --- | --- | --- |
+| `GET /api/quick-actions/` | `r.Route("/api/quick-actions")` + `r.Get("/")`（`:2021-2022`） | fixture **带**尾斜杠 ⇒ **两形态都要** | `/api/quick-actions` + `/api/quick-actions/` |
+| `POST /api/quick-actions/` | `r.Post("/")`（`:2023`） | 同上 | 同上 |
+| `PATCH /api/quick-actions/{id}/` | `r.Route("/{id}")` + `r.Patch("/")`（`:2024-2025`） | 同上 | `/api/quick-actions/:id` + `/api/quick-actions/:id/` |
+| `DELETE /api/quick-actions/{id}/` | `r.Delete("/")`（`:2026`） | 同上 | 同上 |
+| `POST /api/issues/{id}/quick-actions/{quickActionId}/render` | plain `r.Post`（`:1996`） | fixture **不带** ⇒ **只**一种 | 只无尾斜杠 |
+| `POST /api/issues/{id}/quick-actions/{quickActionId}/run` | plain `r.Post`（`:1995`） | 同上 | 只无尾斜杠 |
+
+⇒ **6 条上游键 / 10 个注册点**；⑦ 的 `local` 因此 **+10** 而不是 +6（切片描述 §155 预测的
+`516` 按「键」算，实测是**注册点**口径 `520` —— 两个数都对，口径不同）。
+
+### 52.2 中间件归属（逐字复核，不是照抄 M9-1 / M9-2）
+
+6 条**全部**在 `router.go:1948` 的 `r.Group` 内，那一组的 `r.Use` **只有**
+`middleware.RequireWorkspaceMember(queries)`（`:1949`）⇒ 🔴 **本片不挂 `RequireHumanActor`**。
+判据用**反向**用例钉住（`tests.rs::machine_credentials_are_not_gated_by_this_slice`：
+两种机器凭据 × 6 条，错误消息里**不得**出现 `HUMAN_ACTOR_REQUIRED_MESSAGE`、状态码**不得**是 403），
+真库那半再验一次。
+
+### 52.3 登记的偏离
+
+- **D-1 写集扩了两个文件（`mc-repos/src/quick_action.rs` + `lib.rs` 一行）**：
+  切片描述的「逐字写集」只有 4 个 `mc-http` 新文件 + 2 个冻结件各一行，但 `quick_action`
+  表（本仓 `migrations/upstream/237` 已带）**没有**对应的 repo 模块 ⇒ 切片按本仓既有手法
+  （`property.rs` / `pin.rs` / `squad_evaluation.rs`）新建一个单文件模块，并在 `lib.rs` 加
+  `pub mod quick_action;`。**零迁移、零 manifest 改动**。
+- **D-2 裁剪件破例（cycle §145 授权，各只加不改）**：`routes/mod.rs` 加 `pub mod quick_actions;`，
+  `routes/mount.rs` 加一行 `.merge(mount_slice_quick_actions())` + 该函数。`docs/64` §3.1 的锚点
+  冻结表点名的就是这两个文件，而本片 6 条键**不在**锚点预建的 `probes/` / `config.rs` 面里。
+- **D-3 agent 身份的管理面 403 不可实现**：上游 `requireQuickActionActor` 对 `actor == "agent"`
+  回 403 `agents cannot manage quick actions`；本仓 mc-http 的请求上下文只有 `X-Multica-User-Id`
+  ⇒ 没有 agent 身份这一格。
+- **D-4 `run` 不触发任务、不广播、不回写 revision**：本仓尚无 comment → mention → task 的触发链
+  （`routes/comments/mod.rs` 模块头把「@agent 触发 / realtime 广播 / inbox 通知」列为别的切片）。
+  本片**只**落评论 + 计数，并**不**伪造 `trigger_outcomes`（那会是静默假成功）——
+  `tests/db.rs` 有一条用例专门钉「响应里**没有** `trigger_outcomes`」。
+- **D-5 目标解析逐行做**：上游 `ListQuickActions` 用**批量** catalog（3 条查询 vs 30 次点查）；
+  本仓按行解析，语义等价、查询次数不同。
+- **D-6 dispatch 错误用本仓 `Error` 表达**：上游 `writeDispatchBlocked` 给的是结构化 dispatch 错误
+  （`target_unavailable` / `invocation_not_allowed` / `issue_in_triage`）⇒ 本片分别落
+  **409 `target is unavailable…` / 403 `you are not allowed to invoke this target` /
+  403 `this issue is in triage…`**，消息措辞对齐、**信封**是本仓的嵌套 `{"error":{…}}`（与 §46 / §47 同款）。
+- **D-7 未动的既有幽灵占位**：`routes/issues/mod.rs:208` 的 `GET /api/issues/:id/quick-actions`
+  （恒 501 的 `local_only` 占位，上游**没有**这条键）**不在本片写集** ⇒ 未删。它使 ⑦ 的
+  `local_only` 保持 8；删它归该文件 owner。
+- **D-8 删面上游那条 403 不可达**：上游 `DeleteQuickAction` 里「非创建者删 private ⇒ 403」那一支
+  **永远走不到**（`loadReachableQuickAction` 已先判 404）。本仓照抄那个**可达**行为（404），
+  不可达那支留在 `lifecycle.rs` 里注明（免得后人以为漏了它）。
+
+### 52.4 权限模型（照上游，四条）
+
+1. 目录读**不做**权限工作：`private` 行在 SQL 里按 `created_by_id = viewer` 折叠；
+2. 写面：任何成员可建**私有**；**`public`** 要 owner/admin（改一个**已经** public 的动作同样要）；
+3. 可达性收在 `load_reachable` 一处：`private` 且非创建者 ⇒ **404**（存在性不是调用者的事）；
+4. **`visibility` 是心意不是判决**：run / render 上那道 `can_invoke` 有最终发言权
+   （用例：目录**看得见**但 run **403**）。
+
+**本片零注册键进 `docs/fixtures/*`**：⑥ 条没有 conformance fixture ⇒ ⑨ 仍需真跑（`routes/{mod,mount}.rs`
+有位移 ⇒ `crates/mc-conformance/report.json` 必须重新生成并一起提交，见 §52.5 的当轮读数）。
+
+### 52.5 门禁当轮实测读数（**不是**切片描述里的预测值）
+
+**起手 base** = `47cb9f6a`。门禁命令 =
+`flock -w 5400 /home/devbox/.multica-gates.lock bash scripts/gates.sh --with-db`，日志落
+`<workdir>/paperclip-rs/.logs/`（`gates_lum2114.log` = 起手 base 那一轮 349s；
+`gates_lum2114_rebase.log` = **交片前 rebase 到 `3d298bf8` 之后**的收尾那一轮 592s），
+两轮都是 **`GATES_EXIT=0` / 10-10 PASS**。
+
+⚠️ **下表是「起手 base `47cb9f6a`」那一轮**（本片增量看得最清）。**rebase 后**（= B1 已合入的
+合并树）当轮实测另给：⑦ `local 525 / implemented 436 real + 2 ph = 438 / known_gap 18 /
+unclaimed 0 / regression 0 / local_only 8 / owners {M9 13, M3+ 5}`（`438 + 18 = 456` ✓）、
+⑦b **0 defect 0 warning**、⑩ `scanned 1263 / baseline 10 / violations 0`、⑨ `report matches`
+（`report.json` **仍未位移**）。两个口径的差 = B1 的 `local +5 / implemented +5 / ph −1 /
+known_gap −5 / M3+ −5`，与 §155 对 B1 的预测**逐项吻合**。
+
+| 门 | 起手（`47cb9f6a`） | 本片后 | 判据 |
+| --- | --- | --- | --- |
+| ⑦ route-parity | `local 510` / `implemented 424 real + 3 ph = 427` / `known_gap 29` / `owners {M3+ 16, M9 13}` | **`local 520`** / **`430 real + 3 ph = 433`** / **`known_gap 23`** / **`owners {M3+ 10, M9 13}`** | `433 + 23 = 456` ✓；`unclaimed 0` / `regression 0` / `local_only 8` **逐字不变** / `baseline 473` 不动 |
+| ⑦b slash-alias | `511 literals / 0 defect / 0 warning` | **`521 literals / 0 defect / 0 warning`** | 本片 6 条零 `MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` |
+| ⑩ file-size | `limit=800 scanned=1243 baseline=10 violations=0` | `scanned 1251 / baseline 10 / violations 0` | `scanned` **+8** = 本片 8 个**新**文件进 `git ls-files`（4 route + `tests.rs` + `tests/{support,db}.rs` + `quick_action.rs`）；3 个原地文件行数变动不影响计数 |
+| ⑨ conformance | `365 / pass 32 / mismatch 23 / unmounted 4 / unevaluable 306` | **逐字相同** | ✅ `report matches crates/mc-conformance/report.json`；**`report.json` 未位移**（`git status` 干净）⇒ 本片虽位移 `routes/{mod,mount}.rs`，但 quick-actions 面 **0 条 fixture** ⇒ 挂载集变化不进报告（§152.4 结构性判据的第三种形态：位移**不必然**改报告，判据是 `--check` 真跑） |
+
+**⑩ 拆分记录**：`tests/db.rs` 首版 **844** 行 ⇒ 门 ⑩ 判红（`不在基线里且超过 800 行上限`）⇒ 把
+种子 / `create` / `action_body` 搬进 `tests/support.rs`（先例 = `cloud_runtime/tests/{support,db}.rs`
+的同一手法）⇒ `db.rs` **683** / `support.rs` **352**，两者都留足余量；`scripts/file_size_baseline.tsv`
+**一个字节未动**（新文件不得进基线）。
+
+**用例计数**：门 ⑤（离线，11 例）+ 门 ⑥（真库，`#[ignore]`，13 例）= **24 例**，
+6 条上游键逐条有用例（`tests.rs::the_six_upstream_keys_exist_and_the_four_catalogue_ones_serve_both_forms`
+钉键集、`db.rs::the_four_catalogue_routes_answer_on_both_slash_forms` + `render_returns_the_body_without_posting_anything`
++ `run_posts_one_ordinary_comment_and_touches_usage` 钉行为）。**零** `health::placeholder`。
+
+---
