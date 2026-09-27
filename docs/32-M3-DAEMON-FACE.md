@@ -1076,6 +1076,41 @@ D-6 体读错误一律按 413；D-7 错误信封是**嵌套**（上游扁平）+
 `baseline 473` 不动、`regressions 0`、`local_only 8` 不增；⑨ **逐字不变**；⑩ `scanned 1229 / violations 0`。
 🔴 **两件环境事实**（ENOSPC 第 7、8 次实证 + ⑥ 的时序 flake）逐字见 **§46.5**。
 
+### 9.17 M9-2（`LUM-1817`）：cloud-subscriptions 7 条（workspace 级代理 + 角色 + rollout flag + 幂等键）的偏离登记（**索引段**）
+
+> **本段为什么存在**：切片描述与 cycle 的号段账都把 M9-2 的登记号记为 **`### 9.17`**，而 §41 / §43 / §46 已按
+> 「`### 9.x` 系列自 M7-0 起只作**索引**」的裁定把各片的完整登记落在自己的 `## N.` + `### N.x`。为**同时**满足两者，
+> 本节只做**索引**：偏离的**唯一一份完整登记**在 **`## 47.`（47.1–47.6）**，此处只列判据与标题，不复制正文。
+> （`### 9.14` = M10-2、`### 9.15` = M10-4 的预留号；后者本轮仍未落地。）
+
+**写集（5 个文件 = 2 个原地填充 + 3 个新建，唯一写者 M9-2；全文见 §47 开头的写集执行说明）**：
+`crates/mc-cloud/src/subscriptions.rs`（原地填充）· `crates/mc-http/src/routes/cloud/subscriptions.rs`（原地填充）·
+`crates/mc-http/src/routes/cloud/subscriptions/tests.rs` + `crates/mc-http/src/routes/cloud/subscriptions/tests/{support,db}.rs`
+（**新建**三个：门 ⑩ 的 800 行上限下放不下的证据面；布局先例 = §30 的 **D10** 与 §46 的 **R-1**）。
+
+**授权矩阵（7 条逐条，全文见 §47.2）**：机器凭据（7 条）⇒ **403** 且不发出站；rollout flag
+`billing_workspace_subscriptions` 关 ⇒ **写 5 条 403** `workspace_subscriptions_disabled`（**读 2 条不 gate**，
+与上游的偏离见 D-1）；workspace 四个来源都缺 ⇒ **400**；非成员 ⇒ **404**；成员但非 `owner|admin`（写 5 条）⇒ **403**。
+
+**三条只属于本片的契约（全文见 §47.2）**：`workspace_id` 由服务端解析后**注入请求体**（客户端走私的值在反序列化
+那一步就被丢掉）；`Idempotency-Key` **两档上限**（255 / 座位购买 200；缺失与超限都是 400）+ 转发规则的**三处不对称**
+（checkout 只看请求头、座位购买转发已解析的键、reconcile / preview 一概不转发）；座位购买的三个乐观并发字段**逐字**透传。
+
+**登记的偏离（8 条，全文见 §47.3）**：D-1 读 2 条**不** gate flag（上游 gate，且上游有自己的测试断言 403 ——
+本片按本仓三处一致的口径落地）；D-2 缺字段 / 类型不符的 400 文本用本地 `invalid request body`；D-3
+`additional_seats` / `expected_current_seats` 是 `i32`（`mc-core` DTO 是 anchor 冻结件）；D-4 payer email **不接**
+`X-Multica-User-Email` 覆盖口；D-5 非成员是 **404**（上游中间件同款）；D-6 错误信封**嵌套**（上游扁平）；D-7 零
+`X-Request-ID` 不盖章；D-8 计量桶显式给出。
+
+**功能性为 0 / 未接线（全文见 §47.4）**：`billing_workspace_subscriptions` **没有生产注册点** ⇒ flag 缺省即关闭
+（上游 `IsEnabled(…, false)` 同款）；**504 仍无端到端用例**（`CloudConfig` 没有超时注入口）；`payer_email` 的
+「查不动」那一支在本仓**结构上不可达**（`member` 行的外键保证 `"user"` 行存在）。
+
+**门禁**：十道门 **10/10 PASS**（逐字读数见 §47.5）；⑦ `local 485 → 492`、`implemented 403 → 410`、
+`known_gap 53 → 46`、`owners.M9 25 → 18`、`baseline 473` 不动、`regressions 0`、`local_only 8` 不增；
+⑨ **逐字不变**（该面 20 条 fixture 仍在 `unevaluable / unmounted` 档，`report.json` 未动）；
+⑩ `scanned +4 / violations 0`（四个文件都在 800 行以内）。
+
 ## 10. M7-0 anchor（`LUM-1765`）：文件→写者表与偏离登记
 
 `docs/60-M7-PLAN.md` §5 的「每文件预扩展清单」是**锚点文件集**；本节的表是它落地后的**准确版**
@@ -7021,3 +7056,209 @@ M9-0 anchor 的 `crates/mc-cloud/src/transport/tests.rs`。**若评审认为该�
   在 W1 面接线之前，**不得**宣称这 8 条已经"挡住机器凭据"——只能说"挡住显式带该头的请求"。
 * **R-5（`MULTICA_CLOUD_URL` 的读取口）**：唯一入口是 `AppState::new` 的构造体（`state/cloud.rs`）。
   本片的用例全部走 `CloudConfig::from_env_with` **注入**，**不碰进程 env**（并发用例下是唯一安全形态）。
+
+## 47. M9-2（`LUM-1817`）：cloud-subscriptions 7 条（workspace 级代理 + 角色 + rollout flag + 幂等键）的落点与偏离登记
+
+> **号段复核（两个号空间 + 跨分支，当轮实测）**：`docs/32` 的 `## ` 末号 = **`## 46.`**（M9-1 / 已合）
+> ⇒ 本片取 **`## 47.`**。**跨分支复核**：`git fetch origin '+refs/heads/*:refs/remotes/origin/*'` 后逐个远端分支取
+> `docs/32` 的 `^## 4[7-9]\.` ⇒ **0 命中**（无争号）；GH `pulls?state=open` 当轮 = **0**（唯一在飞的兄弟片
+> M10-4 / `LUM-2106` 的写集是 `crates/mc-http/src/routes/config.rs` + `crates/mc-feature-flags/**` + `Cargo.lock`，
+> 与本片**零交集**，且它不写 `docs/32`）。`### 9.x` 末号 = **`### 9.16`**（M9-1）—— 该系列自 M7-0 起按 §41 / §43 的裁定
+> 只作**索引**用；为满足切片描述的号段（`### 9.17`）在 `## 9.` 末尾补一段索引式 `### 9.17`（只列判据 + 指向本节，
+> 不复制正文）。**正文唯一一份在这里。**
+>
+> **起手 base（当轮实测）= `9f88c118`**（= `merge(m10-2): PR #123`）；交片前 `origin/feat/multica-rs-initial`
+> 连前移三次 —— `aa509be1`（cycle 的 `docs/37` §146 + §146.7）→ `917f063d`（§147）→ **`90124763`**（§148）
+> —— 那三次前移共四条提交，**全部 docs-only**（唯一被碰的文件 = `docs/37-M3-W3C-PREFLIGHT.md`，
+> 逐条 `git show --stat` 实测）⇒ 本片 rebase 到它们**零冲突**，且**门禁读数不作废**（写集与之零交集：
+> 本片不碰任何 `docs/37` 行，⑦ / ⑨ / ⑩ 的三个门输入也不在其写集内）。
+
+**写集执行说明（一处，逐字）**：`docs/62-M9-PLAN.md` §3.3 给 M9-2 的那两格是
+`crates/mc-cloud/src/subscriptions.rs` 与 `crates/mc-http/src/routes/cloud/subscriptions.rs`（一格 = 一个本地文件 = 一个写者）。
+本片实际落成 **4 个文件**：
+
+| 文件（逐字） | 动作 | 唯一写者 | 说明 |
+| --- | --- | :-: | --- |
+| `crates/mc-cloud/src/subscriptions.rs` | 原地填充（anchor 建的桩） | M9-2 | 7 条出站契约 + 注入体/转发体 + 幂等键两条纯函数 |
+| `crates/mc-http/src/routes/cloud/subscriptions.rs` | 原地填充（anchor 建的桩） | M9-2 | 7 个 handler + 授权链 + 出站骨架 |
+| `crates/mc-http/src/routes/cloud/subscriptions/tests.rs` | **新建** | M9-2 | 不碰库的那一半（门 ⑤） |
+| `crates/mc-http/src/routes/cloud/subscriptions/tests/support.rs` | **新建** | M9-2 | 离线替身 / `AppState` 字面量 / 请求装置 |
+| `crates/mc-http/src/routes/cloud/subscriptions/tests/db.rs` | **新建** | M9-2 | 真库那一半（门 ⑥） |
+
+判据：三个 `tests*` 文件都是 `subscriptions.rs` 的**子模块**（`#[cfg(test)] mod tests;` ⇒ `tests.rs`，
+其内 `mod support; mod db;`）⇒ **唯一写者仍是 M9-2**、与任何别的切片**零交集**（同 stage 的 M9-1 / M9-3 不碰
+`routes/cloud/subscriptions/**`）。拆三份（而不是 M9-1 那样一份）是**门 ⑩ 的 800 行硬上限**的直接结果：
+单文件形态实测 **1911 行**（预算 `subscriptions.rs` 705 + 证据面 1206）⇒ 必红。先例 = `docs/32` §30 的 **D10**
+（`routes/channels/lark/tests/{support,db}.rs`：同样先 `tests.rs` 再拆两个子文件）与 §46 的 **R-1**
+（M9-1 的 `routes/cloud/billing/tests.rs`：同样为 800 行上限新建）。
+
+### 47.1 落点与写集审计
+
+* **anchor 冻结件一个字节未动**：`crates/mc-cloud/src/{transport.rs,config.rs,error.rs,lib.rs}` /
+  `crates/mc-http/src/actor_guard.rs` / `crates/mc-http/src/state.rs` / `crates/mc-http/src/state/cloud.rs` /
+  `crates/mc-http/src/routes/{mod.rs,mount.rs}` / `crates/mc-http/src/routes/cloud/mod.rs` /
+  `crates/mc-cloud/src/billing.rs`（M9-1 的写集） / 任何 `Cargo.toml` / `Cargo.lock` **全部只读**
+  （`git diff --stat` 里没有它们）。`routes/cloud/mod.rs` 在 anchor 期已 `pub mod subscriptions;` +
+  `.merge(subscriptions::router())` ⇒ 本片**零注册点改动**（`docs/62` §5 的预声明生效）。
+* **注册键 +7**：`GET /api/cloud-subscriptions/{summary,prices}`、
+  `POST /api/cloud-subscriptions/{checkout-sessions,seats/purchase-preview,seats/purchases,seats/reconcile,portal-sessions}`
+  （本地字面量逐字 = `docs/fixtures/m9-declared-routes.tsv` 的那 7 行；本片**无路径参数**）。
+  **只注册上游字面量那一形态**（`docs/62` §1.4 实测 `dual-form required: 0`）。
+* **迁移 0 条**：本面在本地与上游都**没有**表（`docs/62` §9.4）；`migrations/**` 未动。真库用例里那条
+  `information_schema` 断言（`cloud_subscription%` / `subscription_seat%` ⇒ 0 张）是它的结构性证据。
+* **行数（门 ⑩）**：`mc-cloud/src/subscriptions.rs` **653**（含 8 个用例）· `routes/cloud/subscriptions.rs` **705**
+  · `tests.rs` **241** · `tests/support.rs` **439** · `tests/db.rs` **526** —— 五个都 ≤ 800；
+  `scripts/file_size_baseline.tsv` **未动**。
+* **`docs/fixtures/**` 未动**：⑦ 基线归 M9-10（INT）；本片**没有**跑 `--write-baseline`。
+
+### 47.2 授权矩阵与三条只属于本片的契约（逐条可测）
+
+**四层授权链（`docs/62` §1.5 的 B 行，顺序与上游逐字一致）**：
+
+| 层 | 本地实现（逐字位置） | 判据（用例） |
+| --- | --- | --- |
+| ① 机器凭据闸（**7 条全部**） | `routes/cloud/subscriptions.rs` 的 `.route_layer(from_fn(require_human_actor))` + 每个 handler 的 `_actor: HumanActor` 提取器（双保险，上游同款） | `the_pre_database_layers_hold_for_all_seven_routes`（7 × 2 来源 ⇒ **403** 且 **0 出站**） |
+| ② rollout flag（**只有写 5 条**） | `manager_scope` 的第一格（上游的 flag 检查本来就在 handler backstop 里） | `the_rollout_flag_gates_the_five_writes_and_not_the_two_reads` |
+| ③ workspace 解析（**7 条**） | `crate::routes::issues::resolve_workspace`（本仓既有入口：`x-workspace-id` → `x-workspace-slug` → `?workspace_id` → `?workspace_slug`） | 同上（四源都缺 ⇒ **400** `validation_error`） |
+| ④ 成员 / 角色（**7 条**） | 读 2 条 `require_workspace_member`（非成员 ⇒ **404** `workspace`）；写 5 条 `require_workspace_admin`（非成员 ⇒ 404，成员但非 `owner\|admin` ⇒ **403**） | `the_role_matrix_holds_for_reads_and_writes`（member 读 2 条 ⇒ 200；member 写 5 条 ⇒ 403；owner/admin 写 5 条 ⇒ 200；外人 ⇒ 404） |
+
+**三条只属于本片的契约**（`docs/62` §2.7 / §4.2，逐条有判据）：
+
+1. 🔴 **`workspace_id` 由服务端解析后注入请求体**。两条判据叠在一起：
+   —— **形状上**：本地请求 DTO `CloudSubscriptionCheckoutRequest`（`interval` + `idempotency_key`）与注入体 DTO
+   `CloudSubscriptionCheckoutUpstreamRequest`（`workspace_id` + `interval` + `idempotency_key` + `customer_email`）
+   是**两个类型**（anchor 在 `mc-core` 里就分开了）⇒ 客户端 JSON 里的同名键**在反序列化那一步**被丢弃；
+   **再现场拼体**（`mc_cloud::subscriptions::checkout_body`）。
+   —— **替身断言**：`the_authoritative_workspace_is_injected_and_client_values_are_dropped` 用
+   `workspace_id = 00000000-…-0002`（走私）与 `customer_email = attacker@example.com`（走私）发请求，断言替身收到的
+   **原始体**里那两个字段是**中间件解析出来的** workspace 与**账号邮箱**。
+   ⚠️ **路径面的同一条契约是类型级的**：五条写路由的云侧路径收 `mc_core::Id`（不是 `&str`）⇒ `Display` 只产出规范化
+   UUID，`../` / `?` / `%2f` 结构上进不来（不需要 allowlist；对照：billing 的 `{sessionId}` 是客户端字符串，必须过
+   `is_valid_stripe_session_id`）。
+2. **`Idempotency-Key` 两档上限 + 转发规则**：255（checkout / portal）/ 200（座位购买）；缺失与超限都是 **400**
+   （`MSG_KEY_REQUIRED` / `MSG_KEY_TOO_LONG` / `MSG_SEAT_KEY_TOO_LONG` 三条**逐字**文本）。
+   转发规则**三处不对称**（上游两个 helper 的形态差异，全部有用例钉住）：
+   | 路由 | 键的来源 | 转发的头 |
+   | --- | --- | --- |
+   | `checkout-sessions` | 体键优先、头键兜底 | **只**取请求头（体键不进头 —— 客户端只给体键时云侧收到的头是空的） |
+   | `seats/purchases` | 体键优先、头键兜底 | **已解析的键**（体键也会走到头上） |
+   | `portal-sessions` | **只**认请求头 | 头（= 已解析的键） |
+   | `seats/reconcile` / `seats/purchase-preview` | 不要求、不解析 | **不转发**（上游传的是 `nil`） |
+3. **座位购买三个乐观并发字段逐字透传**：`expected_current_seats` / `expected_purchase_version` /
+   `accepted_proration_amount` 只被**序列化**，本地不解释、不重算（云侧才是权威）；用例对整条转发体做
+   `serde_json::Value` 逐字段相等断言，且断言客户端多传的 `workspace_id` / `target_seats` **不出现**。
+   同一条用例还钉住两处上游口径：**币种小写化发生在校验之后**（`USD` ⇒ `usd`）与预览体的逐字形态
+   `{\"additional_seats\":10001}`（客户端多传的字段被丢掉）。
+
+**响应面**：状态码与体**逐字**回写（`cloud_side_statuses`/`notjson`/`blank` 三条用例）、云侧 `X-Request-ID` 回写、
+非 JSON 体**不声明** `Content-Type`；**错误路径不回显**基址与云侧响应体（`docs/62` §2.4 判据 ③）。
+**客户端的查询串一律不透传**（上游 `proxyCloudSubscription` 没有 `withQuery` 那一支）——七个用例都带 `?debug=1`
+且 `target` 逐字相等就是判据。
+
+### 47.3 与上游的已知差异（逐条登记）
+
+| # | 上游（`f41fae6b08fb` 实测） | 本地 | 为什么可以不同 / 可观测影响 |
+| :-: | --- | --- | --- |
+| **D-1** | `requireCloudSubscriptionWorkspace` 对**7 条**一律查 rollout flag（`cloud_billing.go:78` 在 backstop 里，读 handler 也走它）⇒ flag 关时 summary / prices 也 **403**；上游测试 `TestCloudWorkspaceSubscriptionsDisabledByDefault`（`cloud_billing_test.go:256`）对读面**断言 403** | 读 2 条**不** gate flag（只要求 member） | 🔴 **本片唯一的口径级偏离**，按**本仓三处一致的本仓口径**落地：issue `DoD` 第 1 条明写「读 2 条不受 flag 影响」、`docs/62` §2.5 的 B 行同款、anchor 建的 `mc-cloud/src/subscriptions.rs` 桩文档同款。**翻回上游口径只需一处**：把 `member_scope` 照 `manager_scope` 的第一格加一行 flag 检查（`member_routes()` 与 `manager_routes()` 的划分**不是**判据）。 |
+| D-2 | 缺字段 / 类型不符 ⇒ 逐条的上游文本（如 `interval must be month or year`、`invalid seat purchase confirmation`、`additional_seats must be positive`） | 反序列化失败一律 **400 `invalid request body`**（逐条语义文本仍保留在**校验**那一侧） | 根因：本仓 DTO 在 `mc-core`（**anchor 冻结件**，无 `#[serde(default)]`）⇒ 缺字段在反序列化那一步就失败，而 Go 的零值让它走到校验。**状态码一致（都是 400）**，只有 message 不同；`currency = u$d` / `additional_seats = 0` 这类**给全了字段**的用例逐字与上游一致。 |
+| D-3 | `additional_seats` / `expected_current_seats` 是 Go `int`（本机 64 位） | `i32`（`mc-core` 的 DTO 是 anchor 冻结件） | 仅当客户端传 `> 2 31-1` 时可观测：本地 400 `invalid request body`，上游会在校验里过掉。产品上没有 21 亿个座位的场景。 |
+| D-4 | 付款人邮箱从 `user.email` 读（无覆盖口） | 同上游：`SELECT email FROM "user" WHERE id = $1`，**有意不接** `routes/invitations.rs` 那个 `X-Multica-User-Email` dev-mode 覆盖口 | 本仓 `invitations.rs` 有那个口，但 checkout 的付款人身份**必须**是服务端解析的（上游逐字：「A caller cannot smuggle … Stripe payer identity」）⇒ 接了它等于把这条契约让给客户端。**副作用**：本片的 checkout 用例全部进真库那一半（门 ⑥）。 |
+| D-5 | 非成员在两处返回**不同**：中间件 `RequireWorkspaceMember` ⇒ **404**「workspace not found」，handler backstop ⇒ **403**「workspace membership required」 | 非成员 ⇒ **404** `workspace`（本仓 member 口径，与中间件那一支同值） | 本地没有"中间件 + backstop"两层（handler 就是唯一入口）⇒ 只能在两者里挑一个；挑 **404** 的理由与全仓一致（隐藏 workspace 存在性）、且它是上游**路由组中间件**那一层的行为。 |
+| D-6 | 错误体 `{"error": msg}`（**扁平**） | `{"error":{"code":…,"message":…}}`（**嵌套**，全仓同款） | 与 M9-1 的 D-7 同款；`workspace_subscriptions_disabled` 这个上游 code 落在 `code` 字段。 |
+| D-7 | `cloudRuntimeRequestID`：第二支读 chi 的进程内 request id | 只透传调用方给的 `X-Request-ID`（本仓没有 request-id 中间件） | 同 M9-1 的 D-5；调用方不给时云侧少一个关联键，不影响任何状态码/体判据。 |
+| D-8 | 计量桶由 `inferOp(path)` 推导 | 显式 `with_op("billing")` | 与推导值逐字相同（`/api/v1/subscriptions/*` 与 `/api/v1/billing/*` 命中同一支）。 |
+
+### 47.4 功能性为 0 / 未接线项（如实登记，不是缺口）
+
+1. **`billing_workspace_subscriptions` 没有生产注册点**：`FeatureFlagCatalog` 在 `AppState::new` 里是**空目录**
+   （`state.rs` 是 anchor 冻结件，本片不得动）⇒ 本片生产形态下 flag 恒为**关闭** ⇒ 写 5 条恒 403。
+   ⚠️ 这与上游**同款**（`flags.IsEnabled(ctx, key, false)`：注释逐字「deliberately off by default so the main
+   repository can ship before the managed cloud enables its matching capability」），但**本仓的打开口**要有人接：
+   归 `/api/config` 的 flag 目录面（M10-4 的写集，本片**不得**碰 `crates/mc-feature-flags/**`）。
+2. **504 仍没有端到端用例**：`state::cloud::CloudConfig` 的两个构造口都用 `transport` 的默认 35s 超时，
+   **没有超时注入口**（M9-1 的 §46.4 第 1 条已登记）⇒ 本片只有映射层用例（`the_transport_error_table_is_total`）。
+   接线点若要补：给 `CloudConfig` 加 `with_timeout`（**会动 anchor 冻结文件** `state/cloud.rs`）⇒ 归 M9-10/INT。
+3. **`payer_email` 的「查不动」分支在本仓结构上不可达**：`member` 行的 `user_id` 外键保证 `"user"` 行存在，
+   所以 `Ok(None)` 只能由**库不可达**触发，而那时成员校验（在它之前）已经先失败 ⇒ 那一支只有诊断价值。
+   照抄它（而不是删掉）的理由：状态码与文本与上游**逐字**对应（`failed to resolve checkout payer`）。
+4. **凭据面的接线层级**（M9-0 / M9-1 已登记，本片重申）：本仓 `AuthUser` 只读 `X-Multica-User-Id`、
+   **不盖章** `X-Actor-Source` ⇒ 机器凭据反例走「显式带该头」，与上游「Auth 中间件盖章」的链路差一层（W1 面）。
+   `mat_` / `mcn_` 两种 token 本身也不在本波写集内。
+5. **离线替身的范围**（`docs/62` §4.2 的替身纪律 ①）：替身是**本地 axum 服务**（一个进程一个 base，行为按
+   `X-Request-ID` 的变体前缀分派），只替平台 wire —— 不替业务路径、不替云侧的授权判定、不替 Stripe。
+   **本片的端到端证据 = 真库（本地 PostgreSQL）+ 离线云侧替身**：workspace 段与成员/角色判定是本地真 SQL，
+   出站那一半一个真网络字节都不发。
+6. **`--with-db` 的库是当轮新建**（`multica_lum1817` / 角色 `mc_l1817`，带 `CREATEDB`），
+   避免与别的 run 抢同一个库（`docs/37` §17 的教训）。
+### 47.5 门禁读数（逐字取自当轮日志）
+
+**起手（base `9f88c118` → rebase 到 `917f063d`，本 run 在 checkout 上实测）**
+
+```
+⑦  upstream 456 (commit f41fae6b08fb) | local 485 registered | baseline 473
+    implemented 400 real + 3 placeholder = 403 / 456   known_gap 53   unclaimed 0   regression 0   local_only 8
+    gaps by owner: M9=25  M3+=16  M3=11  M10=1
+⑦b registered upstream-key literals: 487 / 0 defect / 0 warning（exit 0）
+⑩  file_size_check: limit=800 scanned=1230 baseline=10 violations=0
+⑨  三个门输入与 base 逐 blob 恒等（`report.json` = db173fe8…、`mc-conformance` 树 = 6a3984fe…、
+    `docs/fixtures` 树 = e331e706…）⇒ 按「门输入恒等」继承 365/15/23/21/0/306
+```
+
+**交片（`bash scripts/gates.sh --with-db` 的十道门，一条命令 10/10）**
+
+```
+  #  gate               exit   time  result
+  ①  fmt                   0     3s  PASS
+  ②  build                 0   122s  PASS
+  ③  clippy                0    53s  PASS
+  ④  clippy-test-util      0    45s  PASS
+  ⑤  test                  0    64s  PASS
+  ⑥  db                    0   176s  PASS  (migrate=0,e2e=0)
+  ⑧  schema-drift          0    27s  PASS
+  ⑦  route-parity          0     0s  PASS
+  ⑨  conformance           0    68s  PASS
+  ⑩  file-size             0     0s  PASS
+  overall: PASS — 10/10 gate(s) green in 558s
+```
+
+```
+⑦  upstream 456 | local 492 registered | baseline 473（**不动**）
+    implemented 407 real + 3 placeholder = 410 / 456   known_gap 46   unclaimed 0   regression 0   local_only 8
+    gaps by owner: M9=18  M3+=16  M3=11  M10=1        ← 位移与本片预测逐字相符（docs/62 §6.1 的 M9-2 行 + 起手补充 3）
+⑦b registered upstream-key literals: 494（+7）/ 0 defect / 0 warning
+⑨  report matches crates/mc-conformance/report.json（**逐字不变**）
+    365 fixtures / pass 15 / mismatch 23 / unmounted 21 / placeholder 0 / unevaluable 306
+    （M9 面那 20 条 fixture 仍是 17 unevaluable + 3 unmounted ⇒ 本片**不产生**任何位移；本片未动
+     `report.json` / `mc-conformance` / `docs/fixtures` 三个门输入）
+⑩  file_size_check: limit=800 scanned=1230（**未加计**）→ 1233（三个 `tests*` 文件 staged 后实测）
+    baseline=10 violations=0（`scripts/file_size_baseline.tsv` **未动**）
+⑤  新增例：cargo test -p mc-http --lib routes::cloud::subscriptions ⇒ 6 passed / 6 ignored（门 ⑤）；
+    同一条 + `-- --ignored` ⇒ 6 passed（真库那半，门 ⑥ 里一并跑）；
+    cargo test -p mc-cloud ⇒ 42 passed（其中 8 条是本片新增）
+```
+
+**盘面（`docs/37` §147 的止血配方，本片照用）**：两次 `--with-db` 全量之间，`target/debug/incremental`（8.9G）+
+`target/debug/deps` 每 stem 只留最新（2194 个文件 / 4.09G）合计回收 **13.0G**；最终那次全量用
+`CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0`（`target` 峰值 19G → 6.7G）⇒ **第一次「一条命令 10/10」**。
+### 47.6 交接与风险
+
+* **R-1（写集外延）**：`routes/cloud/subscriptions/tests/{tests.rs,support.rs,db.rs}` 是本节开头那张表里的
+  第 3–5 个文件（唯一写者 M9-2）。**其它切片不得写它们**；M9-4 / M9-5 / M9-6 / M9-7 / M9-8 / M9-11 各自照同一
+  布局建自己的 `tests/` 目录（先例 = §30 的 D10 与 §46 的 R-1）。
+* **R-2（`mc-cloud/src/subscriptions.rs` 的公开面）**：`OP` / 7 个 `*_request` / 6 个 `*_path` /
+  `checkout_body` / `seat_purchase_preview_body` / `seat_purchase_body` / `trim_idempotency_key` /
+  `forwarded_idempotency_key` / `resolve_idempotency_key` 是**给我方后续切片复用**的。
+  ⚠️ 但**不许**拿它去适配 `/api/cloud-runtime/*`（M9-11）：那条面的路径前缀是 `RUNTIME_UPSTREAM_PREFIX`，
+  与本文件的 `SUBSCRIPTIONS_UPSTREAM_PREFIX` 不同（本文件是它的唯一写者）。
+* **R-3（读面 flag 口径）**：D-1 是**有意**偏离上游，且**翻回来只需一处**（`member_scope` 加一行）。
+  后来者（尤其做 `/api/config` flag 目录的 M10-4、做 INT 的 M9-10）**不要**在没有读本节的判据的情况下
+  按上游把它改回去 —— 本仓三处一致的口径优先。
+* **R-4（`payer_email` 的库依赖）**：checkout 的付款人邮箱**只能**从 `"user".email` 取（D-4）⇒ 任何新的
+  checkout 用例都必须进真库那一半（门 ⑥）。**不要**为了"让离线用例能跑"而接回 `X-Multica-User-Email`
+  （那会把付款人身份让给客户端）。
+* **R-5（幂等键的转发口径）**：三处不对称（checkout 只看头 / 座位购买转发已解析键 / reconcile+preview 不转发）
+  是上游 `cloudSubscriptionIdempotencyHeaders` 与 `proxyCloudSubscription` 的**逐字**形态。
+  收口时以 §47.2 的表为准，**不要**"顺手统一"。
+* **R-6（`HumanActor` 的双层挂法）**：① 是**两层**（路由组 layer + 每个 handler 的提取器）。
+  用例判据只能是「403 + 上游逐字文本 + 0 出站」——**无法分辨是哪一层拦的**（两层都覆盖了同一批请求）。
+  删掉任一层都不会让本片的用例变红 ⇒ 改这一处必须重读本节与 `actor_guard.rs` 的模块头。
