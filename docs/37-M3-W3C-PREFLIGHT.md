@@ -12822,3 +12822,23 @@ grep -n "${crate//_/-}" <消费者>/Cargo.toml            # 依赖边是否存�
 4. 🔴 **`multica issue update --description-file <不存在的路径>` exit 0 且打印 `✓ Markdown clean`，但不写库**（本轮 `mv` 失败 ⇒ rev 停在 2）。⇒ 旧口径「写入后回读 `revision`」是**唯一**判据，本轮第 1 次实证其必要（第二条 `## 起手补充 3` 是否进库都查不出来时，只有 `revision` 会告诉你）。
 5. **并发 cycle 会吃掉切片位预算**（第 24 轮）：起手 `1/3`（cycle + 零在飞）本可派 2 片，但派第 1 片时 `LUM-2350` 已经起 run ⇒ 派完即 `3/3`。⇒ 「每次 `status todo` **之前**重读 daemon」的老口径本轮直接避免了一次 4/3 超编。
 6. **`docs/32` 是两个号空间的共享热点**：`## N.`（顶层，末号 `## 46.`）与 `### 9.x`（索引系列，末号 `### 9.16`）**各自独立递增**，两条相邻片只要插入锚点相同就必然冲突 ⇒ 判据化：**凡写 `docs/32` 的片同轮在飞 ≥2，就默认它们在 `docs/32` 上冲突**，按 §146.3 的机械解处理，不必逐个去查锚点。
+
+### §146.7 补记（同轮第二个 docs-only 直推）—— 🔴 **29 小时停摆的根因复核**：触发期 ENOSPC（不是「缺 autopilot 护栏」）+ PG 被同一次 ENOSPC 杀死 + 磁盘预算写死
+
+并发 cycle `LUM-2350`（13:0xZ 起）在同轮给出了停摆根因并做了抢修。以下每条都由本 run **独立复核**过，不引用它的结论：
+
+- 🔴 **根因 = 触发期 ENOSPC**：`~/.multica/daemon-2026-09-27T10-21-53.599.log.gz`（覆盖 **09-25 09:29 → 09-27 10:21**，
+  与上一份轮转文件首尾相接）实测 `grep -c 'task failed' = 11`、`grep -c 'no space left on device' = 23`，
+  形态逐字为 `picked task` → ~100ms 后
+  `resolve stable task env root: execenv: create task root record: mkdir /home/devbox/multica_workspaces/.task_roots/.pending-<n>: no space left on device`
+  ⇒ **任务根本没起来**：一个文件都没产出、无评论、无状态变更、issue 停在 `todo`。
+  与已知形态的区别：`docs/32` §29.3 记的「门禁期 ENOSPC」是**跑到门里**才红（有日志、有 exit code）；这次是**触发期**的静默死亡。
+  ⇒ 🔴 **判据化**：本文件里此前 20 多轮登记的「观察项：积压 `todo` cycle 单 = **autopilot 护栏未落地**」是**误判**，
+  自本轮起改标为「**触发期 ENOSPC 的签名**」。看到一批同项目 `todo` cycle 单，**先查 daemon 日志 + `df`，不要先怪护栏**。
+- 🔴 **次生故障：PostgreSQL 16:5432 被同一次 ENOSPC 杀死**（PG 日志最后写入 = 09-26 07:46，与上窗同段）。
+  同轮已抢修；本 run 复核：`pg_lsclusters` = `16 main 5432 **online**`、`select version()` = `PostgreSQL 16.15`。
+  ⇒ 门 ⑥/⑧/⑨ 的可用性依赖这条抢修；**起手 `--with-db` 若报「连接被拒」，先看 5432 再看代码**（本轮之前两轮的 ⑥/⑧/⑨ 根本不可能跑）。
+- 🔴 **磁盘预算（本轮实测口径，写死）**：一轮全量 `--with-db` 实测吃 **≈30G**，本盘 **49G**。
+  ⇒ **3/3 满载时门禁必须串行**：并发两条全量门禁会重演 ENOSPC，而 ENOSPC 会（本轮实证）**连 PG 一起杀掉**。
+  判据化动作：任何片跑全量门禁前 `df -h /` **连采两次**，且确认「可用 ≥ 32G **且** 同轮无第二条全量门禁在飞」。
+- 本节是 §146 之后的第二个 docs-only 直推 ⇒ 下一轮起手 base = **`fc67bd15` + 本节**（起手一律 `git rev-parse` 实测，禁抄）。
