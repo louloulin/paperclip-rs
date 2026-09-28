@@ -313,12 +313,21 @@ class Extraction:
 
 
 def rel_or_abs(path: str, root: str) -> str:
-    """`relpath` when `path` is inside `root`, absolute otherwise (readable output)."""
+    """`relpath` when `path` is inside `root`, absolute otherwise (readable output).
+
+    Separators are normalised to `/`: the return value is recorded verbatim in a
+    checked-in snapshot (`docs/fixtures/route-parity-baseline.json`, `write_baseline`
+    below) which is regenerated on whatever host runs `--write-baseline` — POSIX
+    and Windows alike.  An OS-dependent separator would make that artifact churn
+    from one machine to the next for a purely cosmetic field.
+    """
     try:
         rel = os.path.relpath(path, root)
     except ValueError:
         return path
-    return path if rel.startswith("..") else rel
+    if rel.startswith(".."):
+        return path
+    return rel.replace(os.sep, "/")
 
 
 def extract_local(root: str, rel_to: str) -> Extraction:
