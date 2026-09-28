@@ -17191,10 +17191,31 @@ devbox1 `041bf509` / devbox2 `e3b45a25`（offline 自 09-17）/ devbox4 `4a7f29e
 `LUM-2110` 按 §194.3 订正后**规格已就绪**，但**无处可派**（§188.4 的 (B) 结构型：宿主 devbox2 熄火 11 天 + 远端 `2110` 分支 0 命中）
 ⇒ 原地 `todo`，不改派（改派的前提 = 存在一个既空闲又满足 §183.3 同 device 约束的目标 device）。
 
-### 194.7 下一轮起点
-- base **`7aa5b110`**；GH **0 open PR**；在飞 `LUM-2136`（门禁段）。
+### 194.8 `LUM-2136` 门禁 7/10 —— **3 红全部是本片自伤，且全部落在自己的写集里**（cycle 独立取证，不采信自述）
+
+片在 13:30Z 起 `gates.sh --with-db`，13:55Z 完，817s：
+`fmt 1 FAIL / build 0 / clippy 101 FAIL / clippy-test-util 101 FAIL / test 0 / db 0(migrate+e2e) / schema-drift 0 / route-parity 0 / conformance 0 / file-size 0` ⇒ **7/10 绿**。
+按 §174.1「自述的门禁结果不算证据」，cycle 直接读 `/tmp/gates_m7fu.log` 逐条定位，**三条红全部指向片自己新建/修改的文件**：
+
+- **① `fmt` exit 1**：非文档注释缺反引号（`bot_id` 等），`cargo fmt --all` 可机械修掉。
+- **③ `clippy` 101**：`mc-http` (lib test) **8 errors**，代表性两条全在 `crates/mc-http/src/routes/channels/wecom_probe.rs`（**§193.3 裁定新建的那个文件**）：
+  - `:342` `clippy::type_complexity` —— 4 元组返回类型 `(WsProbeTransport, Arc<Mutex<Vec<Value>>>, Arc<Mutex<bool>>, Arc<Mutex<Option<String>>>)` ⇒ **抽 `type` 别名**（`-D warnings` 下无 `#[allow]` 豁免空间）。
+  - `:452` `clippy::doc_markdown` —— 文档注释里的 `bot_id` 缺反引号。
+- **④ `clippy-test-util` 101**：同文件的 `--all-targets` 变体，同源。
+
+⇒ **零条基线级缺陷、零条 ENOSPC**（本轮两次外科回收已把 `avail` 拉回 27G，见 §194.3b）。
+**这三条是「新建文件 + 中文注释密度高」的固有代价，不是设计问题**：门 ③/④ 带 `-D warnings`，中文技术词不写反引号就报 `doc_markdown`。
+⇒ **新纪律（写码时预防，不是事后修）**：本仓**新建 `.rs` 文件**时，**中文注释里的英文标识符一律加反引号**（`bot_id`、`Arc`、`WsProbeTransport`…），
+否则 ③/④ 必红；而 ③/④ 在 `-D warnings` 下**没有 `#[allow]` 之外的出路**（`type_complexity` 可用别名，其余必须改注释）。
+**开写前先把这一条抄进写码纪律，比事后逐条修 8 个 error 便宜一个量级。**
+
+片 13:59Z 仍 `running`（PID 35915 活），`wecom_probe.rs` mtime 13:47 ⇒ **判活、不抢救**。
+
+### 194.9 槽位与下一轮起点
+- base **`52cfcf23`**（本片两次 docs-only 直推，**非 docs 位移 = 0**）；GH **0 open PR**；在飞 `LUM-2136`（修 3 红中）。
 - 起手**先 fetch 再 reset**；df **连采两次**再判 ENOSPC（§189.5）。
 - 外科回收前**先加括号**（§194.2），回收后**回读桶数 + `du -sm` 两个量**。
 - `LUM-2136` 交 PR ⇒ §193.1 判据链（含「合并树 == head 树 ⇒ 免本地全量门」）；**交 PR 即回收 `target/`**（§193.1 结论 1 的时机点）。
+- 门 ③/④ 带 `-D warnings`，`doc_markdown` 只能改注释；**若 head 树的 CI 3/3 绿而本地红，判 base 已含修复**，以 CI 为准并重跑 `--only clippy,clippy-test-util` 复核。
 - 槽位空出**且**有空闲合规 device ⇒ 才派 `LUM-2110`（规格已就绪，只欠一台机器）。
 - `LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
