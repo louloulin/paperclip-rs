@@ -17157,6 +17157,23 @@ find target/debug/incremental -maxdepth 1 -mindepth 1 -type d -mmin +5 ! -name '
 **方法论（可复用）**：**「还剩几个 X」永远要同时给出字段名**。§188.1 记的是 ⑦ 的两个 placeholder 字段；
 本轮的错误不是新算错了，而是**下游文档沿用了上游的口头表述**。凡把机器读数抄进人类文档的字段名，必须回读 `--json` 原字段名。
 
+### 194.3b 🔴 同轮第二次「静默零回收」：**自加的空守卫** = 括号 bug 的同族第二例
+
+首轮回收（§194.2）在飞片段成功后，我顺手加了守卫 `PAT=$(pgrep -a -f rustc | …); [ -n "$PAT" ] && find … -print0 | xargs -0 -r rm -rf`。
+第二次回收时片已进入 **test 段**（`Doc-tests mc_repos`）⇒ **此刻没有 rustc** ⇒ `PAT` 为空 ⇒
+`[ -n "$PAT" ]` 为假 ⇒ **整条 find 根本没执行**，`rm` 一次没跑，而 `exit 0`、无任何输出。
+
+**与 §194.2 是同一个失败族：命令成功返回但什么也没做，且没有任何信号。** 两例的根因同构 ——
+**「保护性条件」在构造表达式时静默地把动作整体消掉**。
+⇒ **新纪律（闭式）**：回收类命令**不许把 find 放进条件分支**。
+正确写法是**先判、构造两条完整命令、再择一执行**：
+`if [ -n "$PAT" ]; then find … -mmin +5 ! \( $PAT \) -print0 | xargs -0 -r rm -rf; else find … -mmin +5 -print0 | xargs -0 -r rm -rf; fi`
+（空 `PAT` 恰恰是**最安全**的一支 —— 没有在编 crate ⇒ 无可排除项 ⇒ 全删 >5min 桶。）
+**回收类命令的唯一验收信号 = 回读 `avail` 与 `du -sm` 两个量都变小**；桶数会因边删边编而**上涨**，不能当验收。
+
+实测：第二次回收 `avail 6696M → 14874M`（+8.2G，`incremental 10550M → 2176M`），`gates.sh` 全程存活、零中断，
+把在飞片从 §183.3 的 ENOSPC 红线区（6.6G）拉回安全区。**ENOSPC 的杠杆仍然是回收时机 + 回收正确性，不是磁盘大小。**
+
 ### 194.4 镜像门 / CI job 缺失（独立复核 §193.6，结论不变）
 `scripts/gates.sh:81` 的 `ALL_GATES` 恰为 **10 个**（`fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size`），**无 `image`**；
 `.github/workflows/ci.yml` 恰为 **3 个 job**（`fast` / `db` / `contract`）。⇒ `LUM-2110` 的 T1-10 / T1-11 指向不存在的对象，须按缺报。
