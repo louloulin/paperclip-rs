@@ -8625,3 +8625,190 @@ D-7 `comment.type` 自己查列。
   本片 0 路由 ⇒ ⑦ 与 ⑨ 必然逐字不变 ⇒ 那两个 job 的绿灯**不覆盖**本地面。
 - **断言不了、改由单测承担**的：`json_subset` 表达不了的键缺失 / 键序 / 响应头三类断言
   （四条能力边界见 `### 9.24`）。
+
+### 9.25 M9-4（`LUM-1819`）：dashboard 6 条（usage / runtime / failures 只读聚合 + 可见性折叠）的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 55.`（55.1–55.6）**。
+> 号段起手复核：`grep -cE '^### 9\.25|^## 55\.'` = **0**
+> （`### 9.24` / `## 54.` 归已合入的 M10-5）。
+
+**写集（4 个文件 = 2 原地填充 + 2 原地填充，全文见 §55 开头的表）**：
+`crates/mc-repos/src/dashboard.rs`（**原地填充** M9-0 anchor 桩，57 → 767 行）·
+`crates/mc-http/src/routes/dashboard/{usage,runtime,failures}.rs`（**原地填充** anchor 空 router）。
+**anchor 冻结件一个字节未动** —— 🔴 `routes/dashboard/mod.rs` 已预声明三个子模块
+⇒ 本片**不改** `mod.rs`（第二类漏项 = 0），共用件因此落在子文件里（见 D-6 / D-7）。
+
+**授权矩阵（6 条逐条，全文见 §55.2）**：三条 workspace 级序列（`usage/daily`、`runtime/daily`、
+`failures/daily`）**只需成员身份**；三条 per-agent 序列（`usage/by-agent`、`agent-runtime`、
+`failures/by-agent`）**另外**做 per-agent 可见性折叠。四条来源都缺 workspace ⇒ **400**、
+非成员 ⇒ **404**、非法 `?project_id=` ⇒ **400**、非法 `?days=` / `?tz=` ⇒ **静默回落不报错**。
+
+**登记的偏离（10 条，全文见 §55.4）**：D-1 **`?days=` 非法值不 400**（计划文本写 400 是错的，
+上游 `parseDaysCutoff` 没有错误分支）；D-2 **cutoff 映射不复用 anchor 的 `CutoffConvention::for_route`**
+（🔴 **anchor 自身与上游逐字相反**，需 owner 裁决）；D-3 错误信封**嵌套**（上游扁平）；
+D-4 **`?project_id=` 走 `issue.project_id` 的 LEFT JOIN**（本仓 `agent_task_queue.issue_id`
+自迁移 033 起可空，LEFT JOIN 仍逐字保留）；D-5 **无 agent actor**（一律按 member，fail-closed）；
+D-6 三片子文件共享的 HTTP 件落在 `usage.rs`（`mod.rs` 冻结）；D-7 真库用例共用装置落在 `failures.rs`；
+D-8 真库角色 `CREATEDB` 另建；D-9 两条 `total_seconds` 断言带 ±5 秒容差；
+D-10 三条跨面用例（`?project_id=` / 访问门 / `?days=` 窗口）集中在 `runtime.rs` 的 `db_tests`（门 ⑩）。
+
+**功能性为 0 / 未接线（全文见 §55.4 末）**：**零出站**（6 条全是本地只读聚合，替身表为空）；
+**零迁移**（`docs/62` §9.4 双侧实测：6 条要读的表上游本地都有）；
+**不刷基线**（`docs/fixtures/route-parity-baseline.json` 本片未动 ⇒ `baseline 473` 不动）。
+
+**门禁**：十道门 **10/10 PASS**（逐字读数见 §55.5）；⑦ `local 530 → 536`、
+`implemented 443 → 449`（real `441 → 447`、placeholder **2 不动**）、`known_gap 13 → 7`、
+**`owners: {M9: 7}`**（**与 §167 派发时的预测逐字一致**，M9 owner 线从 13 降到 7）、
+`baseline 473` 不动、`unclaimed 0`、`regression 0`、`local_only 8` 不增；不变式 `449 + 7 = 456` ✓；
+⑦b `531 → 537` 个注册键（**+6**）/ **0 defect 0 warning**；⑨ **逐字不变**（`report matches`，三份门输入未动）；
+⑩ `scanned 1276 / baseline 10 / violations 0`（**与基线逐字相同** —— 本片零新文件，全部是原地填充）。
+
+---
+
+## 55. M9-4（`LUM-1819`）：dashboard 6 条的落点与偏离登记
+
+### 55.1 写集与文件布局
+
+| 文件 | 性质 | 门 ⑩ 前 → 后 | 装什么 |
+| --- | --- | ---: | --- |
+| `crates/mc-repos/src/dashboard.rs` | 原地填充 anchor 桩 | 57 → 767 | 6 段 SQL + 内部行结构 + 6 个聚合方法 + `restricted_agent_ids` + 8 条不接库的纪律断言 |
+| `crates/mc-http/src/routes/dashboard/usage.rs` | 原地填充 anchor 空 router | 29 → 732 | `usage/{daily,by-agent}` 2 条 + **三片子文件共享的 HTTP 件**（查询串 / `days` / tz / cutoff / project 解析 / 折叠）+ 6 条不接库的折叠与口径断言 |
+| `crates/mc-http/src/routes/dashboard/runtime.rs` | 原地填充 | 29 → 698 | `agent-runtime` + `runtime/daily` 2 条 + 单桶折叠 + 3 条真库用例 + 3 条跨面用例 |
+| `crates/mc-http/src/routes/dashboard/failures.rs` | 原地填充 | 28 → 757 | `failures/{daily,by-agent}` 2 条 + per-reason 折叠 + **真库用例共用装置** + 2 条真库用例 |
+
+上游 655 行的一个 `internal/handler/dashboard.go` 拆成 **3 个 HTTP 文件 + 1 个 repo 文件**
+（门 ⑩ 的硬要求：本地单文件 ≤ 800；上游那个文件本身就超了）。分文件的理由**不是**并发
+（三片同属一个写者），而是「一个文件一个面」+ 门 ⑩ —— 与 `docs/62` §6 的预拆分一致。
+
+**anchor 冻结件零改动**：`routes/dashboard/mod.rs`（43 行，M9-0 建）已 `pub mod` 声明三个子模块
+并把三者 `merge` 起来 ⇒ 本片**只往子文件里填**，连 `+1 行 mod` 都不需要。
+代价是两个「本该独立成文件」的共用件被迫挤进子文件（见 D-6 / D-7）。
+
+### 55.2 授权矩阵（6 条逐条）
+
+| 路由 | 需要什么 | workspace 缺 | 非成员 | 非法 `?project_id=` | 非法 `?days=` / `?tz=` | cutoff | 折叠 |
+| --- | --- | :-: | :-: | :-: | --- | --- | :-: |
+| `GET /api/dashboard/usage/daily` | 成员 | 400 | 404 | 400 | 静默回落 | **N+1 桶** | — |
+| `GET /api/dashboard/usage/by-agent` | 成员 + 可见性 | 400 | 404 | 400 | 静默回落 | **恰好 N** | ✔ `(provider, model)` |
+| `GET /api/dashboard/agent-runtime` | 成员 + 可见性 | 400 | 404 | 400 | 静默回落 | **恰好 N** | ✔ 单桶 |
+| `GET /api/dashboard/runtime/daily` | 成员 | 400 | 404 | 400 | 静默回落 | **N+1 桶** | — |
+| `GET /api/dashboard/failures/daily` | 成员 | 400 | 404 | 400 | 静默回落 | **N+1 桶** | — |
+| `GET /api/dashboard/failures/by-agent` | 成员 + 可见性 | 400 | 404 | 400 | 静默回落 | **恰好 N** | ✔ per-`failure_reason` |
+
+🔴 **可见性查询出错 ⇒ 500，绝不返回一份没折叠过的聚合**（上游注释逐字：
+「an unfiltered rollup is the one outcome this must never degrade to」）。
+本片把它做成 `DashboardRepo::restricted_agent_ids` 的 `Result` 冒泡（⇒ `Error::Database` ⇒ 500）。
+
+**折叠的判定**逐字照抄上游 `restrictedAgentIDs`：`kind='user'` 的 agent 走
+`memberAllowedToViewAgent`（admin / agent owner / `permission_mode='public_to'` 且命中
+`agent_invocation_target` 白名单）；`kind='system'` 的隐藏承运 agent **对任何人**都进集合
+（没有任何 list 端点会命名它，而聚合查询不带 `kind` 过滤，它会自己冒成一个裸 UUID）。
+白名单里 `target_type='team'` 在 V1 **恒不命中**（没有 team 成员表 ⇒ fail-closed）。
+
+### 55.3 只读既有 aggregate（`docs/62` §9.6）
+
+| 路由 | 表 | 断言 |
+| --- | --- | --- |
+| `usage/daily` | `task_usage_hourly` | `SUM` 四类 token + `cost_usd_ticks` + `SUM(task_count)`，按 `DATE(bucket_hour AT TIME ZONE $tz)` + `LOWER(provider)` + `model` 分组；`uncosted_*` 用 `COALESCE(uncosted_x, x)` |
+| `usage/by-agent` | `task_usage_hourly` | 同上，分组换 `agent_id`，**不吃 `@tz`** |
+| `agent-runtime` | `agent_task_queue ⋈ agent ⋈ issue` | `SUM(EXTRACT(EPOCH FROM (completed_at - started_at)))` + `COUNT(*) FILTER (status='failed'/'cancelled')` + 「计过费」的 `EXISTS (SELECT 1 FROM task_usage …)` |
+| `runtime/daily` | 同上 | 按 `DATE(completed_at AT TIME ZONE $tz)` 分组 |
+| `failures/daily` / `failures/by-agent` | 同上 | `CASE WHEN status='failed' THEN COALESCE(NULLIF(failure_reason,''),'unclassified') ELSE '' END` |
+
+🔴 **6 条里 0 条读 `task_usage_dashboard_*`** —— 那两张 `084` legacy rollup 表已被迁移
+`103_drop_legacy_daily_rollups` 逐字「drop legacy daily rollups」删掉。钉成断言的是
+`mc-repos` 那侧的 `no_legacy_rollup_tables_are_referenced`（**不接库**的那道门就能红），
+外加 `the_six_queries_read_only_the_two_upstream_faces`（4 条走 hourly、4 条走 queue ⋈ agent ⋈ issue，
+一条不多一条不少）与 `only_the_four_dated_queries_project_a_timezone`（无日期维度的 2 条 SQL 里
+**不许**出现 `AT TIME ZONE` —— tz 只在算 `since` 时用过一次，SQL 里再吃一次就是第二个真相源）。
+
+### 55.4 登记的偏离
+
+- **D-1 `?days=` 非法值**不 400，**静默回落到 30**。`docs/62` §6.5 的 M9-4 行写的是
+  「非法值 400」，与上游**逐字相反**：上游 `parseDaysCutoff` 是
+  `if err == nil && parsed > 0 && parsed <= 365 { days = parsed }` —— **没有错误分支**。
+  `mc_core::dashboard::resolve_days` 的模块文档已经点出这一点，本片按**上游**实现。
+  端到端证据：`the_days_window_actually_excludes_rows_older_than_the_cutoff`
+  （`?days=99999` ⇒ **200** 且回落到 30 天的窗口）。
+- **D-2 🔴 anchor 冻结件 `mc_core::dashboard::CutoffConvention::for_route` 与上游逐字相反**，
+  本片**不复用**它。anchor 的映射把 `usage/by-agent` / `failures/by-agent` 也算成 `HeadroomDay`
+  （`ExactDays` 只有 `agent-runtime` 一条），而上游 `dashboard.go` 的六个调用点是
+  **三 + 三**：`188 / 486 / 553` 走 `parseSinceParamInTZ`（N+1）、
+  `285 / 406 / 609` 走 `parseExactSinceParamInTZ`（恰好 N）。
+  上游 `dashboard.go:28-37` 的头注释也逐字写明「the three date-bucketed series … and the
+  **three** per-AGENT rollups use parseExactSinceParamInTZ」。理由（上游 `MUL-5551` 注释）：
+  三条 per-agent 的响应都**不带日期**，客户端没法用 `-(days-1)` 裁掉多余的那一天 ⇒ 挂在 N+1
+  cutoff 上，1D 窗口下**单个 agent 的一行会读得比 workspace 总额还高**。
+  **处置**：`mc-core` 是 M9-0 定形后冻结的、**不在本片写集内** ⇒ 本片在自己的
+  `cutoff_for(route)` 里按**上游**实现，并留一条 `assert_ne!` 断言把这个**已知分歧**钉在
+  测试里（owner 裁决后应当改 anchor 或改本函数，二者取一）。**这是本片唯一需要 owner 裁决的项。**
+- **D-3 错误信封嵌套**：本仓统一 `{"error":{"code","message"}}`，上游是扁平的
+  `{"error":"msg"}`。`400 invalid project_id` / `404 workspace` 都走本仓形状。
+- **D-4 `?project_id=` 在两条队列查询里走 `issue.project_id` 的 `LEFT JOIN`**
+  （上游逐字如此）。本仓 `agent_task_queue.issue_id` 自迁移 `033` 起可空 ⇒ LEFT JOIN 仍然
+  正确（无 issue 的运行落在「无 project」桶，与上游同）。
+- **D-5 无 agent actor**：本仓没有「服务端可信地重写 `X-Agent-ID` / `X-Actor-Source`」的中间件
+  （见 `routes/agents.rs` 顶部的同款说明），直接信任客户端 header 会让任意成员伪造成
+  agent 身份 ⇒ **一律按 member 处理，fail-closed**（只会更严，不会更松）。
+- **D-6 三片子文件共享的 HTTP 件落在 `usage.rs`**（查询串取值 / `days` 钳制 / `?project_id=`
+  解析 / `resolveViewingTZ` / `sinceFromDays` + DST 归一 / `cutoff_for` / 可见性折叠）。
+  理由：`routes/dashboard/mod.rs` 冻结 ⇒ 新开第四个文件就得改 `mod.rs`。
+  其中 `resolveViewingTZ` 与 `routes/runtimes/usage.rs` 的同名函数**是重复**的
+  （上游本来就是两个函数、两套实现），受写集限制无法提取到共用模块。
+- **D-7 真库用例的共用装置（`app()` / `Seed` / 6 个造行 helper / `get_json()`）落在
+  `failures.rs`**（同 D-6 的理由；三个子文件里它的行数余量最大）。
+- **D-8 真库角色另建**：本机 `mc_dev` 的口令与历史 run 日志里的记录不符 ⇒ 本片新建
+  `mc_lum1819`（带 `CREATEDB`，否则门 ⑧ 会 0s / exit 2 假红）+ 库 `multica_lum1819`。
+- **D-9 两条 `total_seconds` 的断言带 ±5 秒容差**：`EXTRACT(EPOCH …)` 走 `numeric`
+  再 `::bigint`，造行时用的 `Utc::now()` 与查询之间有毫秒级漂移；断言写成
+  `(95..=105)` 而非 `== 100`。
+- **D-10 三条跨面用例集中在 `runtime.rs` 的 `db_tests`**（`?project_id=` 过滤 / 非成员 404
+  覆盖全部 6 条 / `?days=` 窗口），而不是在 `usage.rs` 里 —— 纯门 ⑩ 的行数余量问题，
+  文件头与用例注释都写明了「它们覆盖全部 6 条」。
+
+**功能性为 0 / 未接线**：**零出站**（6 条全是本地只读聚合，`docs/62` §4.1 的替身表对本片为空）；
+**零迁移**；**不刷基线**（`docs/fixtures/route-parity-baseline.json` 与
+`crates/mc-conformance/report.json` 一个字节未动）；**无 Redis / 单副本假设**与本片无关
+（本片不写任何协调状态）；**没有 501 占位**（6 条全是真实现，`health::placeholder` 用量 **0**）。
+
+### 55.5 门禁读数（当轮实测，起手 base `d4a7a848`）
+
+十道门 **10/10 PASS**，共 946s（`bash scripts/gates.sh --with-db`，
+库 `multica_lum1819`，`--with-db` 峰值未触发 ENOSPC；首轮因 `target/debug/incremental`
+涨到 16G 触发过一次 ENOSPC，回收 8.8G 后重跑全绿）。
+
+| 门 | 读数 |
+| --- | --- |
+| ⑦ route-parity | `upstream 456 / local 536 / baseline 473`；`implemented 447 real + 2 placeholder = 449`；`known_gap 7`；`unclaimed 0`；`regression 0`；`local_only 8`；`gaps by owner: M9=7`。**与 §167 派发时的预测逐字一致**，不变式 `449 + 7 = 456` ✓ |
+| ⑦b slash-alias | `registered upstream-key literals 537`（派发时 **531** ⇒ **+6**，与 ⑦ 的 `local 530 → 536` 同增）；**0 defect 0 warning**；`shapes OK: every registered upstream key matches the form upstream serves` |
+| ⑨ conformance | `report matches crates/mc-conformance/report.json`（**逐字不变**，三份门输入未动） |
+| ⑩ file-size | `limit=800 scanned=1276 baseline=10 violations=0`（**与基线逐字相同**：本片零新文件） |
+| ⑥ db | migrate 566 applied + `mc-repos` / `mc-http` / `mc-scheduler` / `mc-server` 的 `--ignored` 全绿；**本片新增真库用例 10/10 通过** |
+
+**不变量核对**：`implemented 449 + known_gap 7 = 456 = upstream` ✓；`regressions 0` ✓；
+`unclaimed 0` ✓；`local_only 8` 未增 ✓；`baseline 473` 未动 ✓；`placeholder 2` 未增 ✓。
+
+### 55.6 证据（真库造行 + 反向变异）
+
+**真库（门 ⑥，10 例）**：造行只碰 `task_usage_hourly` / `agent_task_queue` / `agent` /
+`agent_invocation_target` / `issue` / `task_usage` —— 与 6 条聚合**真实读取**的表一一对应。
+覆盖：6 个响应**逐字段**（含 `LOWER(provider)` 归一与四类 token / cost / 四类 uncosted / `task_count`
+的求和）、`tz=UTC` vs `tz=Asia/Shanghai` 的**同一批行落在不同日历日**、服务端折叠
+（private + `kind='system'` 折进 `__restricted_agents__`、owner 看自己的 private 不折叠、
+system 对**任何人**都不点名、响应体里查不到那两枚裸 UUID）、三条 per-agent 桶的**合并键**
+（`(provider, model)` / 单桶 / per-`failure_reason`，含成功桶那个分母）、`?project_id=`
+的两个分支 + 非法 uuid **400**、`?days=` 静默回落、非成员对 6 条一律 **404**、
+`agent-runtime` 只数终态且两端时间戳齐全的行（queued / running / 排队时取消三行都被挡）、
+`metered_task_count` 判的是 `task_usage` 的**行存在**、`failures/*` **不**要求 `started_at`
+（在队列里过期掉的任务仍可数）、`failure_reason` 为 NULL 落 `'unclassified'` 而不是冒充成功。
+
+**不接库的纪律断言（13 例）**：`mc-repos` 8 条（不读 legacy 表 / 4+4 的表分配 / 时区只出现在
+4 条日期 SQL / 状态过滤逐字 / `metered` 判行存在 / 分桶表达式一致 / 折叠 fail-closed /
+`agent` 查询看得见 system）+ `mc-http` 5 组（折叠不丢总额、桶保留维度、可见行原样透传、
+空集合早退、`days` 与 cutoff 两半）。
+
+**反向变异（2 次，各红一条以上）**：
+① 把 `restricted_agent_ids` 里 `kind != 'user'` 的那一支从 `return true` 改成 `return false`
+⇒ **3 条真库用例红**（两条 per-agent 折叠 + failures by-agent）；
+② 给 `LIST_FAILURES_DAILY` 加上 `atq.started_at IS NOT NULL` ⇒ **1 条真库用例红**
+（且 `mc-repos` 的 `status_and_started_at_filters_match_upstream` 在不接库的那道门上就红）。
