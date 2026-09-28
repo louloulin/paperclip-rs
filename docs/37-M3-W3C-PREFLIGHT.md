@@ -15447,3 +15447,132 @@ M9-INT（`LUM-1825`）等 M9-7 合入后再排。**两条 INT（`LUM-1825` / `LU
 🔴 **M10 硬阻塞未变**：`LUM-2109`（M10-7）/ `LUM-2110`（M10-8）依赖 `docker`/`podman`/`buildah`，
 本机**三者皆无**，且 `deploy/` 与 `scripts/stop_condition.sh` 在 base **不存在** ⇒ 需 owner 裁决
 （按口径不重复 @）。
+
+## §177 13:30 cycle（`LUM-2417`）：收割/解阻轮 —— **`pgrep -f` 自匹配第 6 次复现，cycle 亲手解阻 + 抢救提交 + ⑥ 红的三条取证**
+
+base **`aa0ac43a`**（起手照例 `git rev-parse` 实测；checkout **第 21 次**落 `main` 线 `4fc96f30`，须 `reset --hard`）；
+GH **0 open PR**；daemon `running_task_count 2` = cycle ∥ `LUM-1822`（M9-7，run `01a0e649` 04:33:24Z 起）；
+df 起手 **8.9G/81%**；PG 5432 `online`。
+
+### ① 🔴 本轮头号产出 = 「`pgrep -f` 会匹配到**自己所在的命令行**，等待循环可以永远不退出」
+
+`LUM-1822` 在 04:50:54 起了 `gates.sh --with-db`（pid 35325）并挂等待循环：
+
+```bash
+for i in $(seq 1 200); do pgrep -f "gates.sh --with-db" >/dev/null || break; sleep 20; done
+```
+
+模式串 `gates.sh --with-db` **就在这条命令自己的 cmdline 里** ⇒ `pgrep -f` 永远命中自己
+⇒ `|| break` 永不成立 ⇒ 空转满 `200 × 20s ≈ 67 分钟`（到 ~05:57Z）。
+
+**而 `gates.sh` 早在 05:01Z 就跑完了**（`/tmp/gates1822.log` mtime = 05:01），
+日志尾部就是完整的 `GATE SUMMARY`。**片不知道门禁跑完了，cycle 也不知道门禁已经出结果** ——
+两边各自等一个对方已经完成的东西。
+
+**判活差点被带偏**：按 §173.1 的 `/proc` 扫法，`pi`/`cargo`/`rustc`/`clippy` 全都零命中
+（`gates.sh` 早就跑完、cargo 早退场），**第一眼像静默死亡**；是去看 `/tmp/gates1822.log` 的 mtime
+才确认「它其实是在等，不是死了」。
+
+🔴 **cycle 的 `/proc` 扫描漏掉了它**：筛 `*pi*|*cargo*|*rustc*|*clippy*|*ld*` 时
+**`/bin/bash scripts/gates.sh` 一个都不匹配**。⇒ **筛选词表必须补 `gates`**（或干脆不筛、全量打印 cmdline）。
+
+**处置**：cycle `kill 35604`（**只杀那一个 waiter，不碰 `pi`、不碰仓库**）⇒ 20s 内
+session jsonl 从 529085 → 545426 字节、05:36 再涨到 552889 ⇒ **片当场恢复推进**。
+
+**正确写法（三选一）**：
+
+```bash
+while kill -0 35325 2>/dev/null; do sleep 20; done   # 按 PID 等，最稳
+pgrep -f 'gates[.]sh --with-db'                       # 方括号断开自匹配
+pgrep -f … | grep -v "^$$\$"                           # 排除自身
+```
+
+**并入既有纪律**：这是「`pgrep -f`/`pkill -0 -f` 自我匹配」家族的**第 6 次**复现
+（此前 5 次是判进程存活时被自己的 `cd` 命中）；**本轮是第 1 次「它把自己当成被等待对象」** ——
+前 5 次是**判活**被污染，这一次是**等活**被污染，方向相反、后果更隐蔽。
+
+### ② 抢救：0 提交 + 4 改 2 新 ≈1131 行，已推到远端
+
+片卡住时 `git status` = 3 改 + 2 新 + 1 untracked（`.dburl`），**分支 0 提交**。
+一次 provider 侧死亡就会全丢。cycle 代做**固化**（不代开 PR，因为门禁没跑完）：
+
+- 提交 **`9142b0f3`**（父 = base `44775d47` ⇒ 后续无需 rebase），远端
+  `refs/heads/agent/devbox5/c0371115f5c2` = `9142b0f3b8ebc47857b7b5e48e15c80569ceb1e2`；
+- 写集与 §175/§176 约定**逐条一致**：`routes/agents.rs` +14、`routes/agents/mika.rs` 新建 450 行、
+  `tests/agents/main.rs` +2、`tests/agents/mika.rs` 新建 375 行、`mc-repos/src/agent/mika.rs` +292/−17；
+- **`.dburl` 含库口令，刻意排除**（仍留工作区未跟踪）——**抢救提交也要过这一关**。
+
+### ③ 门禁 9/10，⑥ 红的三条取证（结论：**不是本片回归**）
+
+`①fmt 0/3s ②build 0/125s ③clippy 0/58s ④clippy-test-util 0/44s ⑤test 0/170s ⑥db 1/165s(FAIL,migrate=0,e2e=101)
+⑧schema-drift 0/38s ⑦route-parity 0/1s ⑨conformance 0/76s ⑩file-size 0/0s` ⇒ **9/10 绿，680s**。
+
+红点：`crates/mc-http/src/routes/quick_actions/tests/db.rs:338`
+`assertion left == right failed: render 绝不落库`（99 passed / 1 failed / 693 filtered）。
+
+1. **不是 ENOSPC**：`grep -c 'os error 28' /tmp/gates1822.log` = **0**
+   ⇒ §127/§143 的「`migrate=0,e2e=101` = ENOSPC 伪装」**这条形态判据不成立于本次**，方向要换。
+   （`e2e=101` 本义就是 `cargo` 的失败退出码，不是磁盘。）
+2. **不在本片写集内**：`git status --porcelain -- crates/mc-http/src/routes/quick_actions/` = **空**；
+   该文件最后改动是 `4e27b329 feat(mc-http): M10-B3 quick-actions 6 条`。
+3. **同树 + 同库单跑即绿**（cycle 在片的工作树上实测，库 `m9_1822_test`）：
+   `running 1 test … ok. 1 passed; 0 failed; finished in 0.11s`。
+
+**根因 = 测试自身**：`COUNT(*) FROM comment` **无 `WHERE`**，统计全表；
+gate ⑥ 在**同进程同库**并发跑 100 个 `mc-http --lib` db 用例，
+任何另一个用例在两次计数之间插一行 `comment` 就假红。
+意图（render 不落库）对，**度量方式**错。
+
+🔴 **这是门 ⑥ 测试侧竞态的第三族**，此前只记过两族，别再混着记：
+
+| 族 | 形态 | 首记 |
+|---|---|---|
+| 弱等待 | 等待条件太弱，断言时未到终态 | `LUM-1980`（PR #112 已修 7 条） |
+| 时钟桶跨界 | `catch_up_window=0` 夹掉规则 1，跨分钟必红 | `lease_db.rs:273`（§128） |
+| **共享表无范围计数** | `COUNT(*)` 无 `WHERE`，与并发用例互扰 | **本节**，已立 `LUM-2419` |
+
+⇒ 新立 **`LUM-2419`**（backlog，parent `LUM-1334`，只改测试支撑、不改生产语义、
+禁为本片跑 `--write-baseline`；修法 = 把计数限定到本 issue / 本 quick_action / 本调用窗口，
+**禁止**用 `--test-threads=1`「修绿」）。
+
+### ④ 磁盘：本轮**刻意不动**在飞片的 `target/`，并订正 §174 的 deps 配方
+
+起手 8.9G/81%，全盘唯一大 `target/` 就是在飞片自己的（`target/debug/deps` **19.8G**）。
+cycle 逐项算过三条杠杆，**全部否决**：
+
+- **陈旧副本删除 = 3.44 GiB / 2536 文件**（按 `(stem, ext)` 留最新）⇒ **否决**：
+  §143.6 已独立证伪「每 stem 只留最新」——本仓产物名哈希是**单元元数据**的函数、与源码内容无关，
+  同 stem 多哈希是 `--all-targets` + feature 变体的**并存单元**，删了会被**重新编译**出来（更亏）。
+- **无扩展名派生测试二进制**（§143.6 认定的真大块）⇒ **否决**：片正要复跑 ⑥，
+  删测试二进制 = 逼出冷建，在 7.3G 余量下是自杀。
+- **已死 workdir** ⇒ 全盘合计仅 ~3G 且分散 ⇒ 不值得动手。
+
+⇒ 结论沿用 §175/§176：**真余量 = `avail − 可回收量` = `8.9 − 0`**，对着全量 `--with-db`
+冷建峰值 18–30G ⇒ **本轮刻意留空那 1 个切片位**（连续第 5 轮）。
+出脚点仍是老口径：**等在飞片交付后回收它那 20G**（`avail` 随即回到 ~28G）。
+另：`~/.cargo/registry` 1.7G / `~/.npm` 500K / `/tmp` 144M ⇒ 盘外无大鱼。
+
+### ⑤ 门读（base `aa0ac43a` 当场重跑，四个零编译门 1.6s；新 checkout 无 `target/`，不跑 ⑨）
+
+⑦ `upstream 456 / local 545 / baseline_routes 473 / implemented 455(453 real + 2 ph) /
+known_gap 1 / unclaimed 0 / regressions 0 / local_only 8`、`owners {M9: 1}`；
+`known_gap` 逐条**只 1 条** = `POST /api/agents/mika`(M9-7) ⇒ `455+1=456` ✅ **逐字命中 §176**。
+⑦b **tree 模式**（§176：唯一有效的形态门）`540 literals / 0 defect / exit 0`；
+⑩ `0 violation(s)`；`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`。
+`schema_drift` 未跑（需 DB URL，`mc_dev` ���令不可恢复）。
+
+**M9-7 合入后** = `local 546 / implemented 456(454r+2ph) / known_gap 0 / owners.M9 = 0`
+⇒ `456+0=456` ✅ ⇒ **M9 代码面收口**，`owners.M9 → 0` 即 `LUM-1825`（M9-10 INT）的全部硬前置。
+
+### ⑥ 下一轮（`§177` 交接）
+
+1. `df -h /` + `pg_lsclusters` → `git rev-parse` 对 `ls-remote`（**checkout 落 `main` 第 21 次**）
+   → GH `pulls?state=open` → **`/proc` 逐 PID 扫 `cwd`（筛词表补 `gates`）** → 查 `pr_url` 判交付；
+2. `LUM-1822` 交 PR 后走**七条判据链**（`merge-base..head` numstat == PR API 逐字 → 形态两半 →
+   `merge-tree` **按 exit code 判** → 先查 `-- scripts/` 非 0 则弃 delta 算术 →
+   **等 head CI 3/3 绿**（或同树 `--with-db` 10/10）→ 钉 40 位 sha + `merge_method=merge` → 落地树 ≡ 预演树）；
+3. 合入 ⇒ 回收它那 **20G `target/`**（四判据：PR 已合 ∧ run 终态 ∧ `branch -r --contains HEAD` 命中
+   `origin/feat/multica-rs-initial` ∧ 工作区无未提交）⇒ `avail` 回到 ~28G；
+4. ⇒ 才派 **`LUM-1825`（M9-10 INT，唯一 `--write-baseline`，基线 `473 → ~546`）**；
+   **两条 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线**；
+5. `LUM-2419` 排 M9-INT 之后（纯测试支撑、零路由、零 manifest，不争基线）。
