@@ -17768,3 +17768,109 @@ owners {M9 33, M3+ 16, M3 11, M10 5}` / ⑨ `pass 14 / unmounted 22`）⇒ 照�
   验收证据只能来自它自己的三件套刷新读数 + 门禁，**不能来自 ⑦ 的变化**。
 - 派发面仍**结构性 1 台**（devbox1/2/4 全 offline；另 3 台 online Pi runtime 零绑定本项目 agent）
   ⇒ owner 动作仍是改绑 `runtime_id`，按口径**不重复 @**。
+
+---
+
+## §201 【2026-09-29 03:21 cycle / LUM-2475】收割 PR #146（M10-9 收口）＋ 🔴🔴 承重：**门 ⑨ 的 25 条 mismatch 里有 0 条是「handler 写错了」**
+
+**base**：`9af8e1b1`（PR #146 squash 合入 `3e9a7dfd`）。**0 open PR**（本轮起手唯一在飞 = `LUM-2111`，已交付）。
+
+### §201.1 收割与机器读数
+
+- PR #146（`LUM-2111`，M10-9 INT，1 文件 +216/−0）**4/4 job 全绿**（`fast` / `contract` / `db` / `image`），
+  `mergeable_state=clean`、base 逐字等于工作 base `3e9a7dfd` ⇒ 直接 squash 合。
+- 合并后 ⑦ **八个数字逐字不变**：`456/546/546 / 455r+1ph=456 / gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+  **连续第 11 轮逐字不变**。这是 0 路由 INT 片的应有形状（§199 立的判别式：0 路由 INT 片的正确产出 = 「刷新执行了，落点是零位移」）。
+- ⑦b `0 finding / 0 defect`、⑩ `scanned=1285 baseline=10 violations=0`，均 exit 0。
+- 磁盘：起手 **11G avail（79%）** ⇒ 回收 `LUM-2111` 已合并 workdir 的 `target/` **19G** ⇒ **29G avail（39%）**。
+  该 workdir 树 `git status` 干净、PR 已合并 ⇒ `target/` 是纯构建缓存，可回收（§200.2 配方复用）。
+
+### §201.2 🔴 承重发现：`mismatch 25` **不是缺陷计数**，是**装配缺口计数**
+
+`stop_condition.sh` 的 T1-5 报 `mismatch 25 / unmounted 1`。本轮**逐条读完 26 条**，
+结论是它们**塌缩成 1 个根因 + 2 条期望值伪影**，而**没有一条**是「Rust handler 行为写错」：
+
+> **⑨ 的 stateless 层把「本质上需要已装配资源（凭据 / cloud 配置 / 数据库）的场景」，
+> 丢进一个刻意不装配任何资源的 harness 去回放，然后把基础设施的短路响应当成行为差异记了下来。**
+
+证据逐条（`contracts/golden/<domain>/*.json` + `crates/mc-conformance/report.json`）：
+
+| # | 簇 | 现象 | 缺什么 | handler 侧是否写错 |
+|---|---|---|---|---|
+| **21** | `daemon` | 期望 `200/404/400/500` 各异，**实测一律 `401`** | **凭据** | 否 |
+| 2 | `webhooks` | 期望 `401`（缺签名）得 `403`；期望 `429`（限流）得 `403` | **cloud 配置** | 否 |
+| 1 | `auth` `/auth/send-code` | 期望 `200` 得 **`500`** | **数据库** | 否 |
+| 2 | `auth` `/auth/google`、`users` `/users/me` | 期望 `200`，得 `403` / `404` | — | 不适用（**期望值伪影**） |
+
+**判别式（本轮最可复用的一条）**：
+> **`status_observed` 在一簇内「整齐得不像话」（21 条 daemon 全是 401、期望值却各异）⇒ 这是装配缺口，不是实现缺陷。**
+> 真缺陷的 observed 会跟着 expected 变；**observed 恒定而 expected 发散 = 短路发生在逻辑之前**。
+
+逐簇根因：
+
+- **`daemon` ×21 —— 抽取器把「helper 施加的认证」看不见。**
+  `extract_upstream_fixtures.py:1460-1487` 的 `split_headers()` 只按**字面 header** 判 actor：
+  有 `Authorization` ⇒ `token`；有其它身份 header ⇒ `member`；**一个都没有 ⇒ `anonymous`**。
+  但 Go 测试是**经 helper 施加身份**的，抽取器跟不进去 ⇒ 被误标 `anonymous` ⇒ 回放时**不带任何凭据**
+  ⇒ 每个都在 `DaemonAuth::from_request_parts`（`routes/daemon/scope.rs:105`，`unauthorized("missing Authorization header")`）
+  这一层就 401 返回，**根本走不到被测逻辑**。
+  铁证：fixture `daemon/009-TestGetDaemonWorkspaceRepos-WithDaemonToken-L1556.json` ——
+  测试名里就写着 **`WithDaemonToken`**，而文件里 `headers` 只有 `Content-Type`，
+  `actor.kind = "anonymous"`。同簇还有 `TestGetTaskStatus_ForeignWorkspace_Returns404`（期望的 404 是
+  **workspace 隔离**语义，只有带身份才可能发生）、`TestListDaemonWorkspaces-UserScopedAndConditiona`、
+  `TestGetIssueGCCheck-WithDaemonToken-*`。**这些期望值对匿名请求在语义上根本不成立。**
+  该 fixture 自己的 `extraction.notes` 其实已经写明了：
+  「upstream drove the handler directly; replayed here against the router, which also applies its middleware」。
+  ⇒ **修 handler 会是 21 处错误改动；正确的修法是修抽取器的 actor 分类。**
+
+- **`webhooks` ×2 —— 步 1 抢先短路。**
+  `routes/cloud/webhook.rs:131-147` 步 1 就是「cloud 未配置 ⇒ 403（先于限流与签名，上游第一个 if）」。
+  回放环境没有 `MULTICA_CLOUD_URL` ⇒ `state.cloud.client()` 为 `None` ⇒ 三条 stripe fixture **全部**在步 1 得 403。
+  缺的签名本该在**步 3** 得 401，限流本该在**步 2** 得 429——**都被步 1 吃掉了**（429 那条是级联遮蔽）。
+  handler 本身**已被自己的单测证伪为正确**：`webhook/tests.rs:343` 断言缺签名 `401`、`:303` 断言限流 `429`。
+  讽刺的是第三条 `TestStripeWebhookDisabledReturnsForbidden`（期望 403）**通过**，正是因为 403 恰是「未配置」的响应。
+
+- **`auth` `/auth/send-code` ×1 —— stateless 层回放了一个本质要库的端点。**
+  `routes/auth.rs:152-215` 的 `send_code` 走 `VerificationCodeRepo::new(state.db)` + `recent_for()` 两次查库。
+  而 stateless 层的连接池是**「不可达端口上的懒连接池：不拨号、不建库」**（`mc-conformance/src/harness.rs:18`）
+  ⇒ 查询失败 ⇒ `Error::Database` ⇒ **500**。
+  这条 fixture 的 `tier` 被标成 `stateless`，但它**本质需要 database 层**（同 `report.json` 里 293 条
+  `member` fixture 正是因此被判 `unevaluable`）。**是 tier 标错，不是实现写错。**
+
+- **`/auth/google` + `/users/me` ×2 —— 期望值伪影，不是实现问题。**
+  两条同出 `server/internal/handler/auth_google_error_code_test.go`（`:289` / `:311`），
+  却都期望匿名 actor 得 **200**。`/users/me` 是**当前用户**端点，匿名返回 200 语义上不成立；
+  它是本簇**唯一**的 `unmounted`（`404 with empty body (axum fallback)`）。
+  文件名带 `error_code` 而测试名带 `Successful`，**抽取点位存疑**。
+
+⇒ **净结论：26 条里 24 条是 harness/抽取器装配缺口，2 条是期望值伪影；26 条里 0 条是 handler 缺陷。**
+⇒ 🔴 **口径订正**：`contract_equivalence_rate 0.0904` / `mounted_equivalence_rate 0.569`
+**长期被当成「实现完成度」读，这是误读**。它是**装配完成度**：306/365 的 `unevaluable`
+已经诚实标注了「需要 database 层」，而那 26 条**没有**——它们被**误判为可离线判定**并**真的去跑了**，
+于是把短路响应当成了差异。**指标形态同源于 §199 的「声明了但从未被机器判定」，只是这次方向反过来：被判定了，但判定对象错了。**
+
+### §201.3 T1-1a / T1-1b 是**永不满足**的判据（第二个承重发现）
+
+`stop_condition.sh` T1-1a 要求 `implemented_real == 456`、T1-1b 要求 `implemented_placeholder == 0`，两条 **FAIL**。
+但剩下的那 1 条 placeholder `POST /api/issues/{id}/comments/trigger-preview` 是**已裁定「不做」的**：
+
+- `docs/10-M2-PLAN.md` §M2-A 逐字：「**不做**：`trigger-preview`、mention 触发 agent 派单
+  （`triggerTasksForComment` 一整套，依赖 M3 task queue）」；
+- `docs/12-M2-COMMENT.md:111` 同一裁定；
+- 实现侧 `routes/issues/mod.rs:188` 如实注册 `post(not_implemented)` ⇒ 返回 501。
+
+⇒ **`455 real + 1 placeholder` 就是裁定后的正确终态**，T1-1a/1b 编码的是**与已批准计划相反**的期望，
+**在不改裁定、不实现 agent 派单的前提下永远 FAIL**。
+⚠️ 连带数据缺陷：该判据与 `docs/32` §R-1 都把位置记成 `routes/mod.rs:1978`，
+**实际注册点是 `routes/issues/mod.rs:188`**（`routes/mod.rs` 里 grep 不到 `trigger-preview`）⇒ **行号引用已漂移**。
+
+### §201.4 本轮踩坑
+
+- `stop_condition.sh` 的 **T1-10 会跑全量 `gates.sh --with-db`**（冷编 + 真库），
+  在**没有 `target/` 的新 checkout** 上单段就要十几分钟，本轮 600s 超时被 `Terminated`，
+  **但脚本本身仍 `EXIT=0`**。判读时注意：**超时 ≠ 失败，也 ≠ 全绿**——T1-10 的结论本轮**没有**。
+
+### §201.5 下一轮起点
+
+- base = `9af8e1b1` + 本段；**0 open PR**；磁盘 **29G avail**。
+- 剩余可做工作量已从「路由」转为「**⑨ 装配**」与「**判据自身**」两件事，见 §201.2/§201.3。
