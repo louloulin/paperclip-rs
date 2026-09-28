@@ -16365,3 +16365,94 @@ issue 上（`LUM-1814`）**。agent 拿到的却是 M9-8 的活儿（所以它�
 5. `LUM-1823` 交付并回收其 `target/` 后，本机应回到 ~28G ⇒ 才考虑派 `LUM-1824`（M9-9，0 条路由 ⇒ ⑦ 全计数不变，
    验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**）。
 6. `LUM-2111`/`LUM-2109`/`LUM-2110` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
+
+## 185 零收割零派发监控轮（`LUM-2436` cycle，2026-09-28 17:30 Asia/Shanghai）
+
+base `88520acc`（起手 `git rev-parse` 实测；checkout 第 **27** 次落 `main` 线 `4fc96f30` ⇒ reset）。
+GH **0 open PR**。本机 df 起手 **2.4G / 95%**（项目历史第二低，仅次于 §172.2 的 6.9G 之上更低的一档）⇒ 收尾 **24G / 49%**。PG `online`。
+**结论 = 零收割 + 零派发**：唯一在飞片 `LUM-1823`（M9-8）在本机 devbox5 device 上跑门禁，未交 PR；
+本机 device 已被它占满 ⇒ 无槽位可派（§183.3 硬规则）。
+
+### 185.1 门读（base `88520acc`，四个零编译门合计 <1s，符合 §183.7 第 2 推论）
+
+- ⑦ `route_parity.py --json`：`upstream 456` / `local 546` / `baseline_routes 546` /
+  `implemented 456`（`implemented_real 454` + `implemented_placeholder 2`）/
+  `known_gap []` / `unclaimed []` / `regressions []` / `local_only 8`（其中 `local_only_placeholder 1`）/
+  `owners {}` / `duplicates` 双空 / `ok=true`
+  ⇒ 与 §182 / §183 / §184 **逐字相同**（base 自 §184 起只有 docs-only 位移）。
+- ⑦b `slash_alias_audit.py --quiet` **exit 0**（tree 模式）。
+- ⑩ `file_size_check.py --quiet` **exit 0**。
+- deps `audit_workspace_deps.py`：`FINDINGS: A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（同前）。
+- ⑨ 未跑（需 DB + 真编译，与在飞片互斥）。
+
+### 185.2 头号产出：`incremental` 为空时，「外科回收」这条已验证的杠杆**根本不存在**
+
+§169 / §170 / §177 三次实测有效的外科配方是「切 `target/debug/incremental` 里桶龄 >N 分钟的桶」，
+本轮**一个桶都没有**：
+
+```
+target/debug/incremental  = 4.0K   (find -mindepth 1 -type d | wc -l = 0)
+target/debug/deps         = 27G
+target/debug/build        = 179M
+```
+
+原因 = 在飞片按 §184 的建议以 `CARGO_INCREMENTAL=0` 起跑。
+⇒ **新纪律：外科回收前先量桶数，桶数 = 0 就别走这条路径**，直接进下一条。
+本轮按序试完三条杠杆，全部否决：
+
+| 杠杆 | 可回收 | 判定 |
+|---|---|---|
+| 外科切 `incremental` | **0**（0 桶） | 否决 |
+| `deps` 里 `(stem,ext)` 留最新 | ~3.4 GiB | **否决**（§143.6 已证伪：哈希是单元元数据的函数、与源码无关，同 stem 多哈希 = `--all-targets` + feature 并存单元，删了会被重新编译出来，更亏） |
+| 已死 workdir | ~0.36G（`lum-1814` 131M / `lum-1818` 130M / `lum-2115` 97M / 其余 34M） | 否决（量不够） |
+
+盘外亦无大鱼：`/tmp` 145M、`~/.npm` 600K、`~/.cargo/registry` 1.7G（**不可动**：在飞片正从
+`registry/src/rsproxy.cn-*/` 冷编 tokio / rustls / chrono，删了当场打断）。
+⇒ 全盘唯一大块就是**在飞片自己的 `deps`**，而它一个字都不能动。
+**这是 §175 / §176「磁盘杠杆用尽，唯一出路 = 等在飞片交付后回收它 `target/`」的第二次确认**。
+
+### 185.3 风险登记：`LUM-1823` 门 ⑤ 是**字面 ENOSPC**，不是测试红
+
+`/tmp/gates7.log`（09:32Z）逐字：
+
+```
+⑤  test   101   117s   FAIL
+overall: FAIL — 5/6 gate(s) green in 215s
+…
+= note: collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped
+error: couldn't create a temp dir: No space left on device (os error 28) at path
+       "…/target/debug/deps/rustcNIpHvp"
+error: could not compile `mc-http` (test "smoke") due to 1 previous error
+```
+
+- `101` 是 **cargo 失败退出码**（§183.7 已订正：不能拿 `migrate=0,e2e=101` 当 ENOSPC 判据本身）；
+  但本轮日志里**直接写着 `os error 28`**，判据成立 ⇒ 这次是真的磁盘事件，不是测试回归。
+- `ld … signal 7 [Bus error]` = 链接期写盘失败，是 ENOSPC 的**伪装形态**（§89 记过一次「ENOSPC 伪装成代码红」）。
+- 该片 `08:25:01Z` 的上一个 run `01a0e70c` 已经是 ENOSPC `failed`（§184）⇒ **同一片 24 小时内两次撞同一堵墙**。
+- 片的处置：清掉自己的 `target`（28G → 502M）后以 `--only test` **冷重建**重跑红门。
+  实测增速 **2598M/min**，`avail 24G` ⇒ 按 `--with-db` 峰值 18–30G 口径，
+  `3.5G + 18…30G = 21.5…33.5G` vs `24G` ⇒ **下沿勉强够、上沿不够**。
+- **cycle 不介入**：在飞片正在自救，且中途干预别人 `target/` 只会让它二次冷编（§122 教训）。
+
+### 185.4 派发面：仍是「并发 1」，本轮不派 `LUM-1824`
+
+- `agent list`（按 `workspace_id` 过滤）**只有 `编程助手devbox5`（我）= `working`**，其余全 `idle`。
+- devbox2 / devbox4 连续两轮 `queued` 31 min 黑洞（§181.3 / §182）⇒ 仍判不可用。
+- devbox1：`LUM-2432` 回收片交付后实测只回到 **12G**（§184）⇒ 12G < 18–30G ⇒ 仍只够**不带 DB** 的片。
+- 本机 devbox5：被 `LUM-1823` 占着 ⇒ §183.3「同 device 同时只允许 1 个在编译/写盘的 run」⇒ 槽位 0。
+- ⇒ **`LUM-1824`（M9-9）本轮不派**，`LUM-2433`（门 ⑥ 竞态第四族）留 backlog。
+- 判活序全走完，**未发现第二个写者**：§184 的第 0 / 0.5 步按序执行
+  （`agent list` → `issue runs` 的 `dispatched_at`/`started_at` → `revision` 推进 → 收割看有没有 PR
+  → `/proc/*/cwd` 扫陌生 workdir）。`/proc` 里只有两个 agent `pi`：
+  `18677`（本 cycle 自己）+ `39780`（`LUM-1823`），**无陌生 workdir** ⇒ §184.4 的「重试磁铁」本轮未复发。
+
+### 185.5 下一轮
+
+1. 起手照旧：`df` **连采两次 + 记增速** → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR。
+2. **新增第 0.6 步**：先 `du -sm <在飞片>/target` 与 `df` 对账，确认它是「自冷重建中」还是「又 ENOSPC 死了」。
+   若是后者，按 §184 处置序 **先关 issue 再杀 run**，且只回收四判据齐的那份。
+3. 收割 `LUM-1823` 走七条判据链；落地后 `placeholder 2 → 1`、
+   `local 546` / `baseline 546` / `known_gap 0` / `local_only 8` **必须逐字不变**。
+4. 回收其 `target/` ⇒ 本机回 ~28G ⇒ 才考虑派 `LUM-1824`（M9-9，0 条路由 ⇒ ⑦ 全计数不变，
+   验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**）。
+5. `LUM-2111`/`LUM-2109`/`LUM-2110` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
