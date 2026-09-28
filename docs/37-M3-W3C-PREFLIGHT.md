@@ -17874,3 +17874,71 @@ owners {M9 33, M3+ 16, M3 11, M10 5}` / ⑨ `pass 14 / unmounted 22`）⇒ 照�
 
 - base = `9af8e1b1` + 本段；**0 open PR**；磁盘 **29G avail**。
 - 剩余可做工作量已从「路由」转为「**⑨ 装配**」与「**判据自身**」两件事，见 §201.2/§201.3。
+
+---
+
+## §202 【2026-09-29 04:00 cycle / LUM-2480】零收割轮 + **立项：停止条件自己的 3 条判据恒 FAIL**
+
+base `1cbf2aa3`（= §201 直推）；GH **0 open PR**；`df` **11G avail**；PG 5432 `online`；
+在飞 `LUM-2477`（M11-1，run `01a0e978`，19:22:55Z 起 `running`，`/proc` 扫到 PID 42075 + rustc 15745 ⇒ **判活，不抢救**）。
+
+### §202.1 门读不变式第 11 轮（`1cbf2aa3` 当场重跑，零编译门 ~0.5s）
+
+`upstream 456 / local 546 / implemented 456 = 455r+1ph / known_gap 0 / unclaimed 0 / regressions 0 / local_only 8（1 ph）`；
+`slash_alias_audit` exit 0、`file_size_check` exit 0、`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`
+—— 与 §201 逐字相同。`known_gap 0` **连续第十一轮**。
+
+### §202.2 🔴🔴 本轮承重：**`stop_condition.sh` 里有 3 条判据在任何正确实现下都恒 FAIL**
+
+收口判据本身写错了 ⇒ **不修，整个 multica-rs 的「停止条件」永远 exit 1**。逐条取证如下（全部在 `1cbf2aa3` 实测）。
+
+**(1) T1-1a / T1-1b 要求 `implemented_real == 456 ∧ implemented_placeholder == 0`**
+（`scripts/stop_condition.sh:133-145`），而实测是 `455r + 1ph`。
+那 1 条 placeholder = **`POST /api/issues/{id}/comments/trigger-preview`**，
+被计划期**逐字裁定「不做」**：`docs/10-M2-PLAN.md:101`（「不做：`trigger-preview`…依赖 M3 task queue」）、
+`docs/12:111`（「不实现」）。实现侧 `routes/issues/mod.rs:188` 如实注册 `post(not_implemented)` ⇒ 501。
+**注册一个「明确不做」的上游键并诚实返回 501，就是裁定的正确落地形态。**
+
+🔴 **但正确修法不是把判据改成 `455 / 1`**——那会把鉴别力一起删掉。
+**判据应当约束「占位键的集合」而不是「个数」**：声明一份**人工裁定的白名单**（每条带 `docs/10` / `docs/12` 出处注释），
+判 `placeholder_keys == WHITELIST`（集合相等）⇒ 新占一个位 FAIL、裁定已落地却没划掉也 FAIL。
+**白名单不得由任何自动机制生成**——否则退化成「把现状抄进判据」，等于没判。
+
+**(2) T1-10b 把「没法开跑」记成 FAIL**（`:471-481`），**一份脚本两套退出码语义**：
+本脚本的 `verdict_of()`（`:46`）明确定义 **`PASS|FAIL|SKIP-NO-DB|SKIP-NO-GATE|SKIP-NO-ASSET` 五档**，
+⑥/⑧ 缺库时也是 `exit 2 ⇒ SKIP-NO-DB`，**唯独 T1-10b 把 2 当 FAIL**。且更硬的一层：
+**未传 `--gates-log` 时 `IMAGE_GATE_RC` 恒停在初始值 2 ⇒ T1-10b 100% FAIL**，
+与门是否绿无关（`image` 门自 M10-7 起已存在 ⇒ `grep -qx 'image'` 必然命中并进入该分支）。
+
+**(3) 行号引用漂移**：`docs/32` §R-1 与 T1-1b 的 `router_line` 记 `routes/mod.rs:1978`，
+实际注册点是 `routes/issues/mod.rs:188`；`1978` 的真实出处是 `upstream-routes.tsv:246` 的注释
+`# router.go:1978`（**上游 Go 的行号**）。两者被混为一谈。
+
+⇒ 已立 **`LUM-2482`**（parent `LUM-1334`，backlog，0 路由，单文件 `scripts/stop_condition.sh` + `docs/32`/`docs/37`）。
+
+🔴 **可复用判别式（本轮最值钱的一条）**：**「收口判据」本身也是需要被收口的代码。**
+路由面 `known_gap 0` 连续十一轮，但脚本里可以藏着**与裁定矛盾、永不满足、且没人会去核**的判据——
+它在每轮 `exit 1` 里只占一行输出，和真缺陷混在一起。
+**判据的审计频次应与实现的审计频次相同**；尤其**每条判据都要能回答「它在什么实现下会 FAIL」**——
+答不上来的判据，多半就是这一类。
+
+### §202.3 槽位：1/3，另 2 空 = 结构性无处可派（非磁盘）
+
+`agent list`（按 `workspace_id` 过滤）**只有 devbox5（我）= working**；devbox1 `041bf509` /
+devbox2 `e3b45a25`（离线自 09-17）/ devbox4 `4a7f29e1` / devbox `478b7f4b` 全 offline。
+另 3 台 online Pi runtime（`7e6471d9` / `46140255` / `8b9c725f`）**依然零绑定本项目 agent**。
+本 device 已被 `LUM-2477` 占（`target` 23.6G，`df` 11G）⇒ 受 §183.3「同 device 同时只允许 1 个在写盘的 run」限制，
+**本轮不派 `LUM-2482`**，留 backlog。owner 动作仍是改绑 `runtime_id`（不重复 @）。
+
+### §202.4 §184 纪律 B：无磁铁可清
+
+名下 `in_progress` / `todo` 只剩本 cycle 自身；`/proc` 全量扫只有 2 个 agent `pi`
+（本 cycle + `LUM-2477`）⇒ **无第二写者、无陌生 workdir**。
+
+### §202.5 下一轮起点
+
+- base = `1cbf2aa3` + 本段；**0 open PR**。
+- 起手**先 `git fetch` 再 `git reset --hard`**（§193 口径：本地 `origin/*` 缓存 ref 不可信）。
+- `LUM-2477` 交 PR ⇒ 走 §193.1 判据链（**先比 tree hash**，squash 单提交可免本地全量门）；
+  它是 0 路由片 ⇒ 合并后 §202.1 八个数字必须**逐字不变**，验收证据只能来自它自己的读数 + 门禁，**不能来自 ⑦**。
+- **交 PR 即回收 `target/`**（§190）⇒ 回 ~29G 后才派 `LUM-2482`。
