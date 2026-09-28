@@ -16532,3 +16532,38 @@ INT（PR #137）已合并、当轮实测 **8** ⇒ 以实测覆盖，`docs/62` �
 `avail 28G − 可回收 0`（回收已完成，全盘再无 `target/`）⇒ 满足「同 device 同时 1 片 `--with-db`」，**恰好派 1 片**。
 cycle 自身本轮**零编译**（只跑 ⑦/⑩ 两个 python 门）⇒ 不与在飞片争盘。
 剩余 2 个槽位**刻意留空**：M9 只剩 `LUM-1824` 一片，`LUM-1825`（M9-10 INT）已交付并合并；M10 全波被 docker 硬阻塞（§183.7 / 前轮）⇒ 无第二片可派。
+
+## 187 派发轮补记（`LUM-2438` cycle，2026-09-28 18:00）—— 🔴 订正：M10 三片里**只有两片**被 docker 卡住，`M10-8` 被误判
+
+### 187.1 错在哪
+前轮把 `LUM-2109` / `LUM-2110` / `LUM-2111` **一起**标成「`docker`/`podman`/`buildah` 三者皆无 ⇒ 硬阻塞」。
+那是**按 issue 编号批量归类**、没有逐片读 DoD。重判：
+
+| 片 | 真的需要 docker？ | 判据 |
+|---|---|---|
+| `LUM-2109` M10-7 发布面 | **是** | `deploy/Dockerfile` + 门 `image` + CI job `image` |
+| `LUM-2111` M10-9 INT | **是** | DoD 第 2 条硬依赖 `stop_condition.sh` 的**输出** |
+| **`LUM-2110` M10-8 停止条件** | **否** | 只**新建** `scripts/stop_condition.sh` + `docs/65-STOP-CONDITION.md`。脚本里唯一碰镜像的 T1-10 那一格，在镜像门不存在时按既有语义报 `SKIP`/`FAIL` 即可 —— **「门不存在」不等于「脚本写不出来」** |
+
+⇒ 本轮据此把 `LUM-2110` 从 backlog 派了出去（**0 路由、2 个新文件、写集与 `LUM-1824` 交集 ∅**）。
+
+**纪律：阻塞判定必须逐片读 DoD 原文，禁止按编号段或 wave 批量归类。** 「某工具链缺失」只阻塞**真正调用该工具链的那几片**。
+
+### 187.2 `LUM-2110` 的 T1-1 在当轮**本来就该红** —— 派发说明里必须写死，否则会被当成缺陷去「修」
+
+当轮 ⑦ 实测：`implemented 455 real + 1 placeholder` ⇒ T1-1 要求 `456 real ∧ 0 placeholder` ⇒ **FAIL**。
+那 1 个是 `GET /api/issues/:id/quick-actions`（owner **M3，未立项**），且是 `LUM-1823` 把耐久断言改指过去的落点。
+本片的验收要的就是「机器化回答还剩多少」⇒ **T1-1 的 FAIL 是正确产出**。
+同理 ⑨ 那一格（T1-5/6/7）本片**不许**去刷 `crates/mc-conformance/report.json`（归 INT），
+`docs/64` §0.4 的 `pass 14 / unmounted 22 / unevaluable 306` 是**立项当轮旧快照**，只作对照不作期望值。
+
+### 187.3 派发面：devbox1 正常，devbox2 仍 `queued`（本轮为它单独做了一次对照实验）
+
+| 目标 | 动作 | 8–20 秒后回读 | 判定 |
+|---|---|---|---|
+| `LUM-1824` → devbox1 | `--to-id` → 回读 `assignee_id` → `status todo` | run `01a0e777` **`running`**，8 秒内 | ✅ 派发面正常 |
+| `LUM-2110` → devbox2 | 同上三步 | run `01a0e77c` **`queued`**，`STARTED` 空 | ⏳ 未判死 |
+
+devbox2 本轮是**有意派过去的一次对照**（它在**另一台 device**，与 devbox1 的 `--with-db` 不争盘），
+用来在 182 之后重新测一次它的 daemon。**判据仍是 §183 那条：超过一个轮次间隔（≈30 min）且仍未 `dispatched_at` ⇒ 派发失败**，
+下一轮按此改派（devbox4 或 cycle 自跑），并在描述里已留**防重复 run 交接声明**。
