@@ -17298,3 +17298,63 @@ online 但**零绑定本项目 agent** 的 Pi runtime 仍是 `7e6471d9`（已绑
 - 在飞 `LUM-2136`：第三轮全量门已跑完 **9/10**，PID 35915 仍活（正在处理 ⑥）⇒ 判活、不抢救。
 - 磁盘：冷跑后 `target/` **18.9G**、`avail` **8.3G**（起手 21G）⇒ **已进入红线区**；本轮回收杠杆为 0（见 195.4/195.5），如实记录。
 - 零派发（唯一可派 device 被占；`LUM-2110` 维持原地 `todo`）。
+
+## §196 23:30 cycle（`LUM-2460`）—— **零收割 + 解除 `LUM-2110` 的设备阻塞并成功改派 devbox5**
+
+### 196.1 起手三连（禁抄上一轮行）
+- `df -h /` **连采两次**：两次都是 **27G avail / 43%**（起手 20G used）⇒ 无在飞片冷建，稳态。
+- `pg_lsclusters`：`16 main 5432 **online**`（PG 未被 ENOSPC 带走，⑥/⑧/⑨ 可跑）。
+- `multica repo checkout … --ref feat/multica-rs-initial` **本次直接落在 `959a4002`**（历史上第 29 次落 `main` pc-* 世代线，本轮未复现）⇒ 仍保留「起手先 `git rev-parse` 对 `git ls-remote`」的纪律。
+- 认证 GH `pulls?state=open` ⇒ **0 open PR**；`runtime list × agent list` 按 `runtime_id` 连接。
+
+### 196.2 门读不变式第 6 次复现（`959a4002` 上当场重跑三道零编译门，0.4s）
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented  455 real +   1 placeholder =  456 / 456   known_gap    0   unclaimed    0   regression   0   local_only    8
+GATE_ROUTE_PARITY_EXIT=0   GATE_SLASH_ALIAS_EXIT=0   GATE_FILE_SIZE_EXIT=0
+```
+与 §193 在 `7aa5b110` 上的读数**逐字相同** ⇒ PR #142（M7-FU，0 路由）合入后八个数不变，判据成立。
+`local_only` 全 8 条（`route_parity.py` 实测）：`GET /api/issues/:id/reactions`、`GET /api/issues/:id/quick-actions`〔**唯一的 placeholder**〕、
+`GET /api/health`、`GET /api/health/db`、`GET /api/openapi.json`、`GET /api/me/pats`、`POST /api/me/pats`、`DELETE /api/me/pats/:id`。
+
+🔴 **订正 §188 那条「两个互不相干的 placeholder 桶」**：在**当前** base 上，`implemented_placeholder = 1` 与
+`local_only` 里那条 placeholder **是同一个键** `GET /api/issues/:id/quick-actions`（`routes/issues/mod.rs:220`）。
+§188 记的 `POST /api/issues/{id}/comments/trigger-preview` 已**不在** `local_only` 里（它是被上游登记的 M2-A 键，`routes/issues/mod.rs:188`）。
+⇒ 说「还剩几个 placeholder」时给一个数即可，但**必须带键名**，否则下一轮又会按两个桶记成两条欠账。
+
+### 196.3 PR #142 的合并复核（合并者不是本 cycle，本轮只做可重复动作）
+`merged_at 14:34:49Z`、merge commit **`959a4002`**（squash，10 文件 +1083/−51）、head `928df446`。
+本轮复核：`git diff --name-only 928df446 959a4002` = **`docs/37-M3-W3C-PREFLIGHT.md` 单文件** ⇒ 合并树与 head 树的**差异只有 docs**，
+§193 那条「合并树 == head 树 ⇒ 免本地全量门」的判据本轮**不适用**（树不等），但 196.2 的当场重跑已给出等价证据（3 门 0.4s）。
+
+### 196.4 本轮实质产出：改派 `LUM-2110`（M10-8）到 devbox5 并成功触发
+`LUM-2110` 之前是**结构性无处可派**（§194.6/§195.6：其 assignee `7db7fb73` 绑 devbox2 `e3b45a25`，**offline 自 09-17**；而唯一在线可派位 devbox5 被 `LUM-2136` 占住）。
+本轮 `LUM-2136` 合入 base ⇒ devbox5 空出 ⇒ **三条改派判据逐条取证后成立**：
+① 宿主级熄火（devbox2 `last_seen 2026-09-17T03:49Z`）；② `git ls-remote --heads origin | grep -E '2110|stop.?cond'` **零命中**（无成果可抢救、也无成果会丢失）；
+③ `bd3d2b9d`（devbox5）online 且 `running_task_count = 1`（仅 cycle 自身）⇒ **0 个在写盘的 run**，满足 §183.3「同 device 限 1 个」。
+旧 run `01a0e77c-6a53` 已是**终态 failed**（`dispatched_at = null`、13:08:30Z 结束）⇒ 不是重试磁铁，改派不会造出第二个写者。
+
+**派发三步实测**：`update --description-file`（rev 6 → **7**，追加「§196 起手补充」）→ `assign --to-id 3c6087f9 … --no-start`（**回读 `assignee_id` 命中**）→ 状态。
+🔴 **同值重设不触发（第 N 次复现，但这次配方更细）**：它在 `todo`，`status todo`（不带 `--no-start`）**不产生 run**（回读 `runs` 仍只有那条 failed）。
+必须**先 `status backlog --no-start` 再 `status todo`**（不带 `--no-start`）才起 run：
+`01a0e8a9-0700-716d-be17-15a881f26c55`，`created_at = dispatched_at = 15:36:26Z`，端到端确认 = workdir **`lum-2110-15a881f26c55`** + PID **53656**（`/proc` 逐 PID 读 `cwd` 命中 `pi`），daemon `running_task_count` 1 → **2**。
+
+**没有派第二片**：§183.3 同 device 只允许 1 个在写盘的 run，且本轮起手 `avail 27G` 对全量 `--with-db` 峰值 18–30G 只够**一片**（`Σ峰值+20G ≤ 49G` 不成立 ⇒ 刻意留空）。
+
+### 196.5 规格缺陷已在本轮派发前钉死（不用等 owner）
+`LUM-2110` 的 T1-10 要求 `gates.sh --only image` 绿、T1-11 要求 CI **4 个 job** 全绿；实测 `bash scripts/gates.sh --list` 恰为 **10 门**（无 `image`），
+`.github/workflows/ci.yml` 恰为 **3 个 job**（`fast` / `db` / `contract`）⇒ **照字面实现必然 FAIL**。
+处置（**不改 `scripts/gates.sh`、不改 CI workflow** —— 那是 `LUM-2110` 写集审计第 ② 条明令禁止的、也是门集合稳定性纪律 §9.8）：
+脚本按**既有语义报缺**（`SKIP-NO-GATE`，退出码沿用 `gates.sh` 的 2 =「没法开跑」≠「绿」）。此口径已写进 `LUM-2110` rev 6/7 描述，本轮只是复核确认。
+
+### 196.6 `LUM-2109`（M10-7 发布面）仍硬阻塞 —— 需 owner 裁决，本轮不重复 @
+`which docker podman buildah` ⇒ **三者皆无**；`deploy/` 与 `scripts/stop_condition.sh` 在 base 不存在。
+连带：`LUM-2111`（M10-9 INT）硬前置 = 全波含 M10-7 ⇒ 继续被挡。**唯一自解路径 = 装 docker 或裁掉镜像面**，两者都不是 cycle 能单方决定的。
+
+### 196.7 下一轮起点
+- base **`959a4002`**（本 cycle 只做 3 件 docs/README 级动作，非 docs 位移 = 0 ⇒ 在飞片无需 rebase）；GH **0 open PR**。
+- 在飞 **`LUM-2110`**（M10-8，run `01a0e8a9-0700…`，workdir `lum-2110-15a881f26c55`，0 路由 ⇒ 合入后八个数必须逐字不变）。
+- 起手：**先 `fetch` 再读 base**；`df` 连采两次（该片会跑全量 `--with-db`，峰值 18–30G）；**读在飞 gates PID 的 `CARGO_INCREMENTAL`**（§195.4：值为 `0` 则 `incremental` 杠杆失效，改道 `deps` 的旧产物或等整目录回收）。
+- `LUM-2110` 交 PR ⇒ 走 §193.1 七条判据链（预检 `merge-base..head` numstat == PR API / 形态判定 / `merge-tree` **按 exit code 判** / head CI 3/3 绿或同树 `--with-db` / API 钉 40 位 sha + `merge_method=merge` / 落地树 ≡ 预演树）；**交 PR 即回收其 `target/`**。
+- 槽位空出且 `avail ≥ 20G` ⇒ 派 `LUM-2111`（M10-9 INT，唯一 `--write-baseline`，与任何基线写者不同轮）；`LUM-2109` 仍等 owner 裁决。
+- **积压登记（本轮新增 2 条）**：`LUM-2456`（22:30 window）与 `LUM-2458`（23:00 window）两个 cycle issue 的 run 均以 **`529 {"type":"server_error","message":"Upstream request fail…"}`** 终态失败（`LUM-2456` 13 分钟、`LUM-2458` 2 分 5 秒）⇒ 属**provider 侧上游 5xx**（与 ENOSPC 的 `mkdir … no space left` 签名不同源），窗口已过、**只登记不动状态、不 rerun**。
