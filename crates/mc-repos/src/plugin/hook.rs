@@ -319,6 +319,29 @@ impl HookScheduleRepo {
             .map(|done| done.rows_affected())
             .map_err(map_sqlx_err)
     }
+
+    /// 同 [`Self::delete_expired`] 的 TTL 语义，但**按安装限定**。
+    ///
+    /// 无范围那一支是给宿主级清扫器用的（表是全租户共享的运行期遥测）；只关心一个租户的
+    /// 调用历史时**必须**走这一支 —— 全表 `DELETE` 的作用域是「cutoff 之前的**所有**行」，
+    /// 共享库里并发放置的行同样落在里面（门 ⑥ 第四族竞态的成因，见 `docs/32` §62）。
+    ///
+    /// # Errors
+    ///
+    /// 库错折成 [`crate::RepoError::Db`]。
+    pub async fn delete_expired_for(
+        &self,
+        installation_id: Id,
+        before: DateTime<Utc>,
+    ) -> Result<u64> {
+        sqlx::query("DELETE FROM plugin_invocation WHERE installation_id = $1 AND created_at < $2")
+            .bind(installation_id.0)
+            .bind(before)
+            .execute(self.db.pool())
+            .await
+            .map(|done| done.rows_affected())
+            .map_err(map_sqlx_err)
+    }
 }
 
 impl RepoWithDb for HookScheduleRepo {
@@ -693,10 +716,48 @@ mod db_tests {
             0
         );
 
+        // 另一个安装的调用行：并发用例放在同一张表里的行，**本用例的清扫不得碰到它**。
+        let neighbour = Id::from(Uuid::new_v4());
+        sqlx::query(
+            "INSERT INTO plugin_invocation \
+               (installation_id, workspace_id, hook_key, trigger, status, attempt, latency_ms) \
+             VALUES ($1, $2, 'sync', 'manual', 'ok', 1, 1)",
+        )
+        .bind(neighbour.0)
+        .bind(Uuid::new_v4())
+        .execute(db.pool())
+        .await
+        .expect("neighbour row");
+
+        // 无范围那一支只验**谓词**：cutoff 早于全表最早一行 ⇒ 删 0 行。
+        // 本用例从此**不再用未来 cutoff 调无范围 DELETE** —— 那正是第四族竞态的成因
+        // （共享库上它会把并发用例刚建的行一并扫掉，见 `docs/32` §62）。
+        assert_eq!(
+            repo.delete_expired(DateTime::<Utc>::UNIX_EPOCH)
+                .await
+                .expect("sweep with an unreachable cutoff"),
+            0,
+            "cutoff 早于全表最早一行时必须删 0 行"
+        );
+
         let removed = repo
-            .delete_expired(Utc::now() + chrono::Duration::minutes(1))
+            .delete_expired_for(installation_id, Utc::now() + chrono::Duration::minutes(1))
             .await
             .expect("sweep");
-        assert!(removed >= 2, "TTL 清扫必须删掉刚写的行");
+        assert_eq!(removed, 2, "TTL 清扫必须删掉本安装刚写的两行");
+
+        let survivors: (i64,) =
+            sqlx::query_as("SELECT count(*) FROM plugin_invocation WHERE installation_id = $1")
+                .bind(neighbour.0)
+                .fetch_one(db.pool())
+                .await
+                .expect("count neighbour");
+        assert_eq!(survivors.0, 1, "清扫绝不能删掉别的安装的行");
+
+        sqlx::query("DELETE FROM plugin_invocation WHERE installation_id = $1")
+            .bind(neighbour.0)
+            .execute(db.pool())
+            .await
+            .expect("cleanup neighbour");
     }
 }
