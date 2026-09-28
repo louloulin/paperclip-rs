@@ -27,6 +27,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {}
+    "bindings": {},
+    "requires": [
+      "browser_session_cookie"
+    ]
   }
 }

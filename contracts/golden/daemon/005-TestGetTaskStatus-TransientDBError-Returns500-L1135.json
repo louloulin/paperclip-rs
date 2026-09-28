@@ -9,7 +9,8 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "anonymous"
+    "kind": "daemon",
+    "identity_source": "middleware.WithDaemonContext"
   },
   "body": null,
   "expect": {
@@ -29,6 +30,11 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {}
+    "bindings": {},
+    "requires": [
+      "bare_handler_no_wiring",
+      "daemon_token",
+      "db_fault_injection"
+    ]
   }
 }

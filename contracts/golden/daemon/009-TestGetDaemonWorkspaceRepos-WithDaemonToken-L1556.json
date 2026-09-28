@@ -11,7 +11,8 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "anonymous"
+    "kind": "daemon",
+    "identity_source": "middleware.WithDaemonContext"
   },
   "body": null,
   "expect": {
@@ -33,6 +34,9 @@
     ],
     "bindings": {
       "$testWorkspaceID": "workspace_id"
-    }
+    },
+    "requires": [
+      "daemon_token"
+    ]
   }
 }

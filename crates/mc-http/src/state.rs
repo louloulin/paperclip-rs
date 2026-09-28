@@ -500,6 +500,24 @@ impl AppState {
             entitlement: cloud::EntitlementConfig::from_env(),
         }
     }
+
+    /// **在构造之后**换掉云面部署事实（[`cloud::CloudConfig`]）。
+    ///
+    /// 与 [`cloud::CloudConfig::with_recorder`] 同一形状、同一理由：组合根拿不到某些
+    /// 构造期拿不到的东西，所以给它一个**事后替换口**，而不是给 [`Self::new`] 加参数
+    /// （`state/cloud.rs` 纪律 #2，21 个调用点一个不动）。
+    ///
+    /// 存在的理由是 `mc-conformance` 的第二个部署形态：上游对 `/api/webhooks/stripe` 有
+    /// 三个互不相同的部署场景，而 stateless 层只能选一个作默认，所以「已配置 cloud」那一个
+    /// 要单独造一个 `AppState`。**它不走 env** —— `std::env::set_var` 是进程全局的，
+    /// 在并发跑的回放器里会把**另一个**本该「未配置」的 router 也配成已配置，
+    /// 于是断言「未配置 ⇒ 403」的那条 fixture 会在两个形态之间随机漂移。
+    /// 那个坑真的踩过：`docs/37` §203 记的就是它。
+    #[must_use]
+    pub fn with_cloud_config(mut self, config: cloud::CloudConfig) -> Self {
+        self.cloud = config;
+        self
+    }
 }
 
 /// 读 `MULTICA_PLUGIN_SURFACE_ORIGIN`（上游 `cmd/server/router.go:434` 的逐字口径）。

@@ -9,7 +9,8 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "anonymous"
+    "kind": "daemon",
+    "identity_source": "middleware.WithDaemonContext"
   },
   "body": {
     "messages": [
@@ -50,6 +51,9 @@
       "upstream drove the handler directly (ReportTaskMessages); replayed here against the router, which also applies its middleware",
       "status read from the `w.Code` comparison that follows the call"
     ],
-    "bindings": {}
+    "bindings": {},
+    "requires": [
+      "daemon_token"
+    ]
   }
 }

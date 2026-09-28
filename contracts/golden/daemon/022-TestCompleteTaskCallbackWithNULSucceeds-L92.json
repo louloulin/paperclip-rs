@@ -9,7 +9,8 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "anonymous"
+    "kind": "daemon",
+    "identity_source": "middleware.WithDaemonContext"
   },
   "body": {
     "output": "done\u0000 summary text",
@@ -35,6 +36,9 @@
       "upstream drove the handler directly (CompleteTask); replayed here against the router, which also applies its middleware",
       "status read from the `w.Code` comparison that follows the call"
     ],
-    "bindings": {}
+    "bindings": {},
+    "requires": [
+      "daemon_token"
+    ]
   }
 }

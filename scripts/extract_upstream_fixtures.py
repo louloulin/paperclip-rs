@@ -64,29 +64,25 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import extract_i4_direct_handler as i4
+import extract_requirements as rq
 
+# Actor classification + scenario preconditions live in their own module
+# (scripts/extract_requirements.py, docs/37 §203); re-exported because rule I4
+# reaches them through this module's globals (`host["split_headers"]`).
+from extract_requirements import (  # noqa: F401  (re-export for rule I4)
+    AGENT_HEADERS,
+    DAEMON_CONTEXT_CALLS,
+    IDENTITY_HEADERS,
+    REQUIREMENT_DAEMON_TOKEN,
+    requirements_for,
+    split_headers,
+)
 SCHEMA_VERSION = 1
 
 # `internal/handler` is what the issue names; `cmd/server` is added because it is
 # the only place upstream exercises the *router* rather than handlers called
 # directly — the closest thing upstream has to a route-level oracle.
 DEFAULT_SCAN = ("server/internal/handler", "server/cmd/server")
-
-# Identity headers become `actor`, not raw `headers`: their values are upstream
-# DB fixtures (`testUserID`) with no meaning here, so the runner has to bind them
-# to a locally seeded identity.  Keeping them in `headers` would make every
-# fixture look un-replayable; lifting identity out is what makes
-# "anonymous → 401" replayable with no database at all.
-IDENTITY_HEADERS = (
-    "x-user-id",
-    "x-agent-id",
-    "x-task-id",
-    "x-workspace-id",
-    "x-workspace-slug",
-    "authorization",
-    "x-actor-source",
-)
-AGENT_HEADERS = ("x-agent-id", "x-task-id")
 
 CTORS = {"httptest.NewRequest", "testutil.JSONRequest", "http.NewRequest"}
 HEADER_MODIFIERS = {"testutil.WithHeaders"}
@@ -600,6 +596,11 @@ class ReqState:
     body: Optional[Value] = None
     body_var: Optional[str] = None
     problems: list[str] = field(default_factory=list)
+    #: Identity applied **out of band** (request context, not a header).  The
+    #: walker fills this in when the helper it followed injects one; it is the
+    #: only way `split_headers` can tell "no identity" from "identity the
+    #: extractor cannot see" — which is the whole of root cause A (docs/37 §203).
+    oob: set[str] = field(default_factory=set)
 
     def clone(self) -> "ReqState":
         return ReqState(
@@ -611,6 +612,7 @@ class ReqState:
             self.body,
             self.body_var,
             list(self.problems),
+            set(self.oob),
         )
 
 
@@ -845,7 +847,14 @@ class Interpreter:
             sub = WalkCtx()
             for pname, arg in zip(fn.params, args):
                 sub.bindings[pname] = Binding(file, arg, ctx)
-            return self.interpret(fn.file, fn.body, sub, depth + 1)
+            got = self.interpret(fn.file, fn.body, sub, depth + 1)
+            if got is not None:
+                # `newDaemonTokenRequest` ends in `req.WithContext(WithDaemonContext(...))`:
+                # the identity never appears as a header, so record it on the state the
+                # helper hands back and let `split_headers` stop calling it anonymous.
+                if any(call in self.text(fn.file, fn.body) for call in DAEMON_CONTEXT_CALLS):
+                    got.oob.add(REQUIREMENT_DAEMON_TOKEN)
+            return got
         return None
 
     def pairs(self, file: str, args: list[tuple[int, int]], ctx: WalkCtx) -> list[tuple[str, Value]]:
@@ -1094,6 +1103,7 @@ class Fixture:
     notes: list[str]
     via: str = "handler"
     bindings: dict[str, str] = field(default_factory=dict)
+    requires: list[str] = field(default_factory=list)
 
 
 def request_site_positions(masked: str) -> list[tuple[int, str]]:
@@ -1337,6 +1347,10 @@ class Extractor:
         end = asi_end(masked, pos)
         chain = masked[pos:end]
         line = line_of(src, pos)
+        # The request expression as written at the site; `requirements_for` needs
+        # the *variable name* to tell "this request carries a cookie" from
+        # "some other request in the same test does".
+        req_text = chain
 
         def skip(reason: str, detail: str) -> None:
             self.skips.append(Skip(rel, line, fn.name, kind, reason, detail))
@@ -1347,6 +1361,7 @@ class Extractor:
             if len(args) < 3:
                 return skip("helper_not_followed", "testutil.Call with fewer than 3 arguments")
             req = interp.resolve_request(rel, args[2], ctx)
+            req_text = interp.text(rel, args[2])
             want = re.search(r"\.Want(?:OneOf)?\s*\(", chain)
             if want is None:
                 return skip("no_status_assertion", "no .Want(...) in the call chain")
@@ -1406,7 +1421,8 @@ class Extractor:
         path, path_params, query = canonicalise(req)
         if MARK in path or any(MARK in v for v in query.values()):
             return skip("path_not_literal", "unsubstituted symbol marker in the URL")
-        headers, actor = split_headers(req.headers)
+        headers, actor = split_headers(req.headers, req.oob)
+        requires = requirements_for(masked, fn.body, req_text, req.oob, path, status)
         needed = symbols_in(path_params, query, actor, headers)
         unknown = sorted(needed - set(BINDABLE))
         if unknown:
@@ -1432,6 +1448,7 @@ class Extractor:
             notes=[],
             via=via,
             bindings={s: BINDABLE[s] for s in sorted(needed)},
+            requires=requires,
         )
         if via == "handler":
             fixture.notes.append(
@@ -1455,36 +1472,6 @@ def via_of(masked: str, kind: str, pos: int, end: int) -> str:
     if len(args) < 2:
         return "handler"
     return "handler" if "." in masked[args[1][0] : args[1][1]] else "router"
-
-def split_headers(headers: dict[str, Value]) -> tuple[dict[str, str], dict[str, Any]]:
-    """Separate transport headers from identity, and name the actor.
-
-    Identity headers carry upstream's own DB fixture values; the runner binds them
-    to a locally seeded identity.  Lifting them out is what lets "anonymous → 401"
-    be replayed with no database at all.
-    """
-    plain: dict[str, str] = {}
-    ident: dict[str, str] = {}
-    for key, val in sorted(headers.items()):
-        if val.value is None:
-            continue
-        if key.lower() in IDENTITY_HEADERS:
-            ident[key] = val.value if isinstance(val.value, str) else json.dumps(val.value)
-        else:
-            plain[key] = val.value if isinstance(val.value, str) else json.dumps(val.value)
-    lower = {k.lower() for k in ident}
-    if lower & set(AGENT_HEADERS):
-        kind = "agent"
-    elif "authorization" in lower:
-        kind = "token"
-    elif ident:
-        kind = "member"
-    else:
-        kind = "anonymous"
-    actor: dict[str, Any] = {"kind": kind}
-    if ident:
-        actor["upstream_identity"] = ident
-    return plain, actor
 
 
 def literal_at(masked: str, literals: dict[int, str], start: int) -> Optional[tuple[Value, int]]:
@@ -1657,6 +1644,19 @@ def number_fixtures(fixtures: list[Fixture]) -> None:
         f.slug = "%03d-%s-L%d" % (ordinal, slugify(f.source["test"])[:48], line)
 
 
+def extraction_json(f: Fixture) -> dict[str, Any]:
+    """The `extraction` block, with `requires` present only when non-empty.
+
+    Most fixtures need nothing beyond the router, so the key is omitted rather
+    than written as `[]`: that keeps a `--check` diff down to the fixtures whose
+    scenario actually gained a precondition instead of all 365 files.
+    """
+    block: dict[str, Any] = {"notes": f.notes, "bindings": f.bindings}
+    if f.requires:
+        block["requires"] = f.requires
+    return block
+
+
 def fixture_json(f: Fixture, commit: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1677,7 +1677,7 @@ def fixture_json(f: Fixture, commit: str) -> dict[str, Any]:
             "via": f.via,
             "commit": commit,
         },
-        "extraction": {"notes": f.notes, "bindings": f.bindings},
+        "extraction": extraction_json(f),
     }
 
 

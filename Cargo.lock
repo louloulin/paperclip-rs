@@ -2650,6 +2650,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "mc-cloud",
  "mc-core",
  "mc-db",
  "mc-http",

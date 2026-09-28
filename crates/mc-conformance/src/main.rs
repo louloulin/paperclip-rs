@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use mc_conformance::{
     harness, load_dir, merge, run_tier, to_row, Bindings, Fixture, Outcome, Report, Tier,
+    TierRouters,
 };
 
 /// 回放 `contracts/golden/**` 里的上游 golden fixture。
@@ -88,9 +89,11 @@ async fn run(args: Args) -> Result<ExitCode> {
     }
 
     // ---- stateless 层（CI 跑的、可 check 的那份）----------------------------
+    // 两个部署形态：默认（未配置 cloud）与已配置 cloud。选错形态不会静默出错 ——
+    // 只有声明了 `cloud_runtime_configured` 的 fixture 才会被送到第二个去。
     let bindings = Bindings::stateless();
-    let stateless_router = harness::stateless_router()?;
-    let stateless = run_tier(&stateless_router, &fixtures, &bindings, Tier::Stateless).await;
+    let stateless_routers = harness::stateless_routers()?;
+    let stateless = run_tier(&stateless_routers, &fixtures, &bindings, Tier::Stateless).await;
 
     // ---- database 层（可选）-------------------------------------------------
     let mut database = None;
@@ -102,7 +105,8 @@ async fn run(args: Args) -> Result<ExitCode> {
     if let Some(url) = db_url {
         match harness::database_router(&url).await {
             Ok((router, db_bindings)) => {
-                let observed = run_tier(&router, &fixtures, &db_bindings, Tier::Database).await;
+                let routers = TierRouters::single(router);
+                let observed = run_tier(&routers, &fixtures, &db_bindings, Tier::Database).await;
                 eprintln!(
                     "database 层：{} 条（种子身份 user={} workspace={}）",
                     observed.len(),
@@ -175,6 +179,19 @@ async fn run(args: Args) -> Result<ExitCode> {
             report.totals.fixtures,
             fixtures.len()
         );
+    }
+    // 前提表的每一行都得命中至少一个 fixture：写错 path 的后果不是「少一条判定」，
+    // 而是一条**永远不会被评估的声明**——§199 那个形态（声明了但从不被机器判定）。
+    for (method, path, ids) in mc_conformance::REPO_SIDE_PRECONDITIONS {
+        let hits = fixtures
+            .iter()
+            .filter(|fx| fx.method.eq_ignore_ascii_case(method) && fx.path == *path)
+            .count();
+        if hits == 0 {
+            anyhow::bail!(
+                "REPO_SIDE_PRECONDITIONS entry {method} {path} ({ids:?}) matches no fixture"
+            );
+        }
     }
     let unexplained = report
         .fixtures

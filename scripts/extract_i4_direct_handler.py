@@ -52,7 +52,7 @@ than upstream did.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 from upstream_handler_index import handler_index
 
@@ -485,7 +485,10 @@ def extract_site(
             )
         return skip("path_not_registered", detail)
 
-    headers, actor = host["split_headers"](req.headers)
+    headers, actor = host["split_headers"](req.headers, req.oob)
+    requires = host["requirements_for"](
+        masked, fn.body, interp.text(rel, args[1]), req.oob, path, status
+    )
     needs = host["symbols_in"](path_params, query, actor, headers)
     unknown = sorted(needs - set(host["BINDABLE"]))
     ident_needs = host["symbols_in"](actor.get("upstream_identity", {}))
@@ -536,6 +539,7 @@ def extract_site(
         notes=notes,
         via=via,
         bindings={s: host["BINDABLE"][s] for s in sorted(needs) if s in host["BINDABLE"]},
+        requires=requires,
     )
     ex.fixtures.append(fixture)
 
