@@ -15965,3 +15965,121 @@ agent "编程助手-devbox2" (7db7fb73)
 **尚不构成派发失败**（判据是**超过一个轮次间隔 ≈30 min**）。下一轮起手第一件事：查 `LUM-1823` 的 run —— `dispatched_at` 仍为 `null` 且已过 30 min ⇒ 按 §181.3 直接改派 `编程助手-devbox1`（`max_concurrent_tasks=5`，可并行接第二片，且本轮已实证其 daemon **秒级取走**：`LUM-2419` 的 run `01a0e6ee` 派发后 0 分钟即 `running`）。
 
 **若 devbox4 确实不可用**，则本项目的可用派发面收敛为 **devbox1（唯一实证在线）+ devbox5（我自己）**，此后每轮**最多只能并行 2 片**，第 3 槽必须留空 —— 这会改变后续所有 cycle 的吞吐预期，属需要 owner 知情的结构性事实。
+
+---
+
+## 182 2026-09-28 16:00 cycle（LUM-2428）—— 改派轮 + 一处对 §181 的承重订正
+
+**base** `ae96a7f5`（= §181 收尾）· **GitHub open PR = 0** · **在飞 2/3**（cycle ∥ `LUM-2419` ∥ `LUM-1823`）
+· 本机 df **19G used / 29G avail (40%)** · PG 16 `online` · checkout 落 `main` 线**第 24 次**（`4fc96f30`）⇒ reset 回主干。
+
+### 182.1 门读（base `ae96a7f5` 当场重跑，零编译）
+
+| 门 | 结果 |
+| --- | --- |
+| ⑦ `route_parity` | `upstream 456 / local 546 / baseline 546 / implemented 456 = 454 real + 2 placeholder` / `known_gap 0` / `unclaimed 0` / `regressions 0` / `local_only 8`（其中 1 ph）/ `owners {}` / `ok=true` |
+| ⑦b `slash_alias_audit`（**tree 模式**） | `541 literals / 0 defect / 0 warning / exit 0` |
+| ⑩ `file_size_check` | `exit 0` |
+| `audit_workspace_deps` | `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0` |
+
+逐字同 §181（本轮 base 相对上轮**无代码位移**）⇒ 合入侧无回归面。
+
+### 182.2 🔴 订正 §181：「两条 placeholder 是 timeline + limit_usage」**是错的**
+
+§181 记「M9 波只剩 2 片，`known_gap 0` ⇒ 剩的 2 条 placeholder 就是 `timeline`（M9-8）与
+`limit_usage`（M9-9，仍恒 204）」。本轮按 `route_parity.py --json` 的 `implemented[]` 逐条取
+`placeholder == true`，**实际只有 2 条且都不是 `limit_usage`**：
+
+```
+('POST', '/api/issues/{id}/comments/trigger-preview')   # owner M3
+('GET',  '/api/issues/{id}/timeline')                   # owner M9  = LUM-1823
+```
+
+`scripts/route-owners.tsv:57` 逐字写着 `^/api/comments/[^/]+/trigger-preview` 的 owner 是 **M3**，
+备注「mention 触发派单（docs/10 §2 **M2-B 明确不做**）」⇒ **它是一条 M3 侧的历史遗留占位，不属 M9 波**。
+
+**根因**：`limit_usage` 根本**不是一条路由的占位**——它是 `mc-http/src/routes/issue_table/mod.rs`
+里的一个**函数**，M9-9（`LUM-1824`）要做的是把 entitlement 平面接到这个函数上
+（未装平面时仍返回 **204**）。上轮把「`issue_table/mod.rs:500 limit_usage` 文件 204 行」和
+「路由占位」混成了一谈。
+
+**承重结论（影响面比看起来大）**：
+1. **M9 波的路由面缺口早在 M9-5/6/7 合入时就已归零**（`known_gap 0`），剩下的 `timeline` 是
+   M9-8 的**实现质量**任务（占位 → 真实现），**不是路由面缺口**；
+2. **M9 波实际只剩 2 片**：M9-8（`LUM-1823`，在飞）+ M9-9（`LUM-1824`，跨波接线，**0 条路由**）；
+3. `LUM-1824` 成功后 **`local 546` / `baseline 546` 同样不变** —— 它一条路由都不新增。
+   ⇒ 派 M9-9 时**不得**期待任何 ⑦ 计数位移，这与 §178 给 M9-INT 定的「直方图预测作废」是同一条纪律的延伸：
+   **没有路由位移的片，验收证据只能来自它自己的单测与门禁，不能来自 ⑦**。
+
+### 182.3 `LUM-1824`（M9-9）的硬前置**已满足**（§181 记「未核实」）
+
+§181 记 M9-9 的硬前置「M2-A 尾账 `LUM-1691` / `LUM-1793` 未核实」⇒ 不派。本轮核实**已落地**：
+
+- `LUM-1691`（M2-A 收尾：issue-views / pins / issue-view-preferences / assignee）→ **`in_review`**
+- `LUM-1793`（M2-A 尾-补：POST `/api/issues/{id}/squad-evaluated`）→ **`in_review`**
+
+并在 base 树上**逐条实证**（不靠 `in_review` 这个状态字）：五条 M2-A 路由在
+`crates/mc-http/src/routes/` 下均有注册引用（`issue-views` 23 / `pins` 25 /
+`issue-view-preferences` 13 / `squad-evaluated` 9 处），且**都不是**上面那 2 条 placeholder
+⇒ **M2-A 面已完整落地**。
+
+⇒ **`LUM-1824` 的「不得与 M2-A 同飞」约束自动解除**（M2-A 已无在飞片），
+且其写集（`mc-entitlement/{client,cache,stub}.rs`、`apps/mc-server/entitlement.rs`、
+`issue_table/mod.rs` **仅** `limit_usage` 函数体）与在飞的 `LUM-1823`
+（`routes/timeline.rs`、`mc-repos/src/timeline.rs`）**写集交集 = ∅**
+⇒ 两片技术上可同飞。**本轮仍不派**，理由是槽位（见 182.5），不是冲突。
+
+### 182.4 🔴 `LUM-1823` 改派：`资深编程运维助手devbox4` 判**派发失败**
+
+按 §181.3 判据逐条取证（run `01a0e6f0`）：
+
+| 判据 | 实测 |
+| --- | --- |
+| 排队时长 | `created_at 07:34:44Z` → 采样 `08:05:10Z` = **30.4 min**（> 一个轮次间隔 ≈30 min） |
+| `dispatched_at` | **`null`**（全程） |
+| `started_at` | **`null`**（全程） |
+| issue `revision` | 冻结在 **4**（无任何写入） |
+| `devbox4` `agent status` | 全程 **`idle`** |
+
+⇒ 判**派发失败**（§181.3），**不再等第二个轮次**。
+这是 devbox4 的**第二次**连续证据（§181.7 起手 2.5 min 仍 `queued` + 本轮 30.4 min 仍 `null`）
+⇒ **devbox4 判定为不可用**。
+
+**处置**：`assign --to-id 22e8b20d-…`（devbox1）→ `status in_progress`（不带 `--no-start`）⇒
+**run `01a0e70c` 于 `08:05:36Z` 起 `running`（派发后 1 秒）**，回读 `assignee_id` 确认已是 devbox1。
+并按 §181.6 在描述追加 §十 交接段（含**重复 run 只读复核后退出**的约束，因为
+**CLI 无 cancel run 子命令**，原 `01a0e6f0` 仍绑 devbox4，devbox4 若日后恢复会迟到重复）。
+
+**承重结论**：
+1. 🔴 **派发面已确认收敛为 `devbox1` + `devbox5`（我）两个 device。** devbox2（§181 停摆）与
+   devbox4（本轮判死）均不可用 ⇒ **每轮最多并行 2 片，第 3 槽必须留空**（cycle 自身占 1）。
+   **吞吐预期结构性下降，需 owner 知情。** devbox1 `max_concurrent_tasks=5`，是当前唯一实证在线的派发目标。
+2. 🔴 **`assigned → running` 的延迟是 agent 级的**：devbox1 = **1 秒**，devbox2/devbox4 = **>30 分钟且永不取走**。
+   ⇒ 派发后**唯一的即时反馈是 run 的 `dispatched_at`/`started_at`**（§180.1 的判活序第 3 档），
+   它在 1 秒内就能区分「拿到任务」与「进了黑洞」——比等 30 分钟再判定**便宜两个数量级**。
+   **新用法：派发后 60 秒回读 `started_at`；仍 `null` 即可在同轮内立即改派，不必等满 30 分钟。**
+   （30 分钟阈值降级为「跨轮兜底」，不再是「同轮唯一」判据。）
+
+### 182.5 槽位（连续按 device 分账，§180.1）
+
+本机 `avail 29G`，但**本机账 = 29G − 0 − 本机自己的片（0）= 29G**；
+两个在飞片（`LUM-2419`、`LUM-1823`）都在 **devbox1 的 device** 上 ⇒ 在 `df` 账上**记 0**。
+磁盘不构成约束；**真正的约束是 LUM-1334 的「一次最多三个任务运行」**：
+cycle + `LUM-2419` + `LUM-1823` = **3/3 已满** ⇒ **`LUM-1824` 本轮不派**，
+下一轮任一片交付后即可零延迟派出（写集 ∅，无冲突仲裁成本）。
+
+### 182.6 下一轮起手清单
+
+1. `df -h /` + `pg_lsclusters`；`git rev-parse` 对 `git ls-remote origin refs/heads/feat/multica-rs-initial`；
+   GitHub API 查 open PR；
+2. 判活序（新）：`agent list` 的 `status` → **`issue runs` 的 `dispatched_at`/`started_at`** →
+   issue `revision` 是否推进 → 收割信号看**有没有 PR**。**本机 `/proc` 只对本机片有效。**
+3. 收割 `LUM-1823` / `LUM-2419` 的 PR ⇒ 七条判据链（**等 head CI 3/3 绿**、钉 40 位 sha +
+   `merge_method=merge`、落地树 ≡ 预演树、分支 numstat == PR API 逐字、写集零越界）。
+   `LUM-1823` 落地后 `placeholder 2 → 1`、`local 546` / `baseline 546` **必须不变**。
+   `LUM-2419` 门 ⑥ **连续 3 轮绿**才认收口。
+4. 槽位空出即派 **`LUM-1824`（M9-9）**——硬前置已于 §182.3 核实解除，写集与两片均 ∅。
+   **预期：⑦ 全部计数逐字不变**（本片 0 条路由），验收证据只来自它自己的 18 格矩阵单测 + 门禁。
+5. `LUM-2111`（M10-9 INT）仍 `docker`/`podman`/`buildah` **三者皆无** + `deploy/`、`stop_condition.sh`
+   在 base **不存在** ⇒ 硬阻塞，需 owner 裁决（装 docker / 改 DoD 去掉镜像面 / 明确不做）。
+   按口径**不重复 @**。`LUM-2109`/`LUM-2110` 连带同因。
