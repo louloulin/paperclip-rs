@@ -872,7 +872,7 @@ D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面
 | `crates/mc-cloud/{Cargo.toml,src/lib.rs,src/error.rs,src/config.rs,src/transport.rs,src/transport/tests.rs}` | **完整实现**（24 用例） | **M9-0（冻结）** |
 | `crates/mc-cloud/src/{billing.rs,subscriptions.rs,webhook.rs,runtime.rs}` | 空桩（模块头 = 路径表与纪律） | M9-1 / M9-2 / M9-6 / M9-11 |
 | `crates/mc-entitlement/{Cargo.toml,src/lib.rs,src/types.rs}` | **完整类型形状**（12 用例） | **M9-0（冻结）** |
-| `crates/mc-entitlement/src/{cache.rs,client.rs}` | 常量 + 端点路径（无 `todo!()`，见 9.13.6） | M9-9 |
+| `crates/mc-entitlement/src/{cache.rs,client.rs}` | 常量 + 端点路径（无 `todo!()`，见 9.13.6） | M9-9（**已落地**，见 §9.31） |
 | `crates/mc-entitlement/src/stub.rs` | 可用的最小替身（3 用例） | M9-9（可扩） |
 | `crates/mc-core/src/{cloud.rs,onboarding.rs,notification.rs,dashboard.rs}` | **完整类型形状**（32 用例） | **M9-0（冻结）** |
 | `crates/mc-http/src/routes/{cloud,dashboard,onboarding}/mod.rs` | 聚合（子 router 全空） | **M9-0（冻结）** |
@@ -884,7 +884,7 @@ D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面
 | `crates/mc-http/src/routes/cloud_runtime.rs` | 空 `Router::new()`（**预声明升级**，见 9.13.4） | M9-11 |
 | `crates/mc-http/src/actor_guard.rs` | **完整实现**（7 用例，含 2 条端到端） | **M9-0（冻结）**；M9-1/M9-2 挂载 |
 | `crates/mc-repos/src/{onboarding.rs,notification_preference.rs,feedback.rs,contact_sales.rs,dashboard.rs,timeline.rs,agent/mika.rs}` | 桩（`Repo` + `new` + `RepoWithDb`） | M9-3 / M9-5 / M9-4 / M9-8 / M9-7 |
-| `apps/mc-server/src/entitlement.rs` | 诚实空跑（**不装平面**） | M9-9 |
+| `apps/mc-server/src/entitlement.rs` | 诚实空跑（**不装平面**） | M9-9（**已落地**，见 §9.31） |
 
 #### 9.13.3 口径订正（十一处，逐条可复核）
 
@@ -974,7 +974,7 @@ D-7 上游两个互不相干的计数器集合 ⇒ 本地**一条** ws 连接面
    三态用例全绿**，但它挡的是「显式带了 `X-Actor-Source: task_token` 的请求」，
    挡不住"伪造 `X-Multica-User-Id` 且不带 actor-source"的请求 —— 后者本来就被 M1 dev-mode 放行。
    补它要动 `crates/mc-http/src/middleware/authn.rs` 的整条盖章链（W1 面），**不属本片写集**。
-2. **`mc-entitlement` 的策略客户端不存在**（M9-9）：本片的 `client.rs` **故意不写** `todo!()`
+2. ~~**`mc-entitlement` 的策略客户端不存在**（M9-9）~~ ⇒ **已由 M9-9（`LUM-1824`）关闭**，逐条偏离见 §9.31。本片的 `client.rs` **故意不写** `todo!()`
    的 `pub fn`（编译期看着接好、运行期 panic 的那类"静默假接入"）⇒ 只有端点路径常量可用，
    任何路径都走不进未实现的代码。
 3. **`mc-cloud` 的请求体**不设上限：上游只限**响应**体（1 MiB），请求体的 1 MiB 上限
@@ -9538,3 +9538,80 @@ upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
   `pool timed out while waiting for an open connection`（`routes::attachments::…`，
   103 passed / 1 failed）—— 本机 `max_connections=100` 而每个 fixture 各开 4 连接池，
   负载高峰会耗尽；换新库重跑即绿，**不属第四族，也不属任何片的写集**。
+
+---
+
+### 9.31 M9-9（`LUM-1824`）：entitlement 平面接线 + 套餐/配额矩阵 18 格的偏离登记
+
+**写集**（5 个既有文件 + **2 个新建的测试子模块**，见下「D-6」）：
+`crates/mc-entitlement/src/{cache.rs,client.rs}`、`apps/mc-server/src/entitlement.rs`、
+`crates/mc-http/src/routes/issue_table/mod.rs`（**仅** `limit_usage` 与它的模块注释 6）。
+
+**两个挂载点、**一个** `Arc`**：组合根把**同一个** `Arc<EntitlementPlane>` 装进
+`mc_autopilot::quota::install_policy_provider`（autopilot 面）与
+`mc_entitlement::client::install_provider`（`issue_count` 面）。后者是 M9-9 **新增**的
+进程级槽（`client.rs`）：`mc-http` 已依赖 `mc-entitlement`，而
+`mc_autopilot::quota::QuotaPolicyProvider` 的 `policy()` 只回答 `autopilot_runs` 那个 gate
+⇒ **只装 autopilot 那一只槽的话，`issue_count` 面根本读不到策略**。
+两个槽都是 `OnceLock`、都只装一次 ⇒ 「同一格两个结论」在结构上不可能发生。
+
+#### 登记的偏离（6 条）
+
+- **D-1 🔴 刷新不在 `gate()` 里，而在组合根的后台刷新器。** 上游的 `Gate` 同步发请求
+  （因此逐字「no goroutines or background lifecycle」）；本仓的 `Provider::gate` 是
+  **同步、无 IO** 的（`types.rs` 冻结面 + `QuotaPolicyProvider` 的契约），而
+  `mc-entitlement` 的依赖边被锚点冻结（**没有 `tokio`**）⇒ 不可能「在 `gate()` 里阻塞等一个
+  tokio future」。拆成 `gate()`（读缓存 + **记一笔需求**）与 `Client::refresh`（`async`，
+  由 `apps/mc-server/src/entitlement.rs` 的刷新器兑现，每 1s 一轮）。
+  **代价**：冷启动后的第一次调用返回 **fail-open 的 `off`**（下一次即命中）。
+  这与锚点期 `shutdown` 注释里预告的「M9-9 真要挂东西（例如一个刷新节流器）」一致 ⇒
+  停机链**没有**为它改写（`shutdown` 由空操作变成「停刷新器并 await 收尾」）。
+- **D-2 单飞是「不重复发请求」而不是「阻塞等结果」。** 上游 `singleflight.Group.Do` 让后来者
+  **等**第一个人的结果；本仓的实现者**不阻塞**（`gate()` 是同步的、调用点在 async 上下文里），
+  已在飞的同一工作区直接返回（`RefreshOutcome::Error`），判决按缓存给（fail-open）。
+- **D-3 基址的三件套校验只有一份，本仓不写第二份。** 上游在 `entitlement.New` 里校验；
+  本仓的 `mc_cloud::config::validate` 是那一份，经 `mc_http::state::cloud::EntitlementConfig`
+  到达组合根（`is_configured()` / `base_url()` 已经过滤过）。`Client::new` 因此吃
+  **已校验的 `Url`**；组合根那个 crate **不依赖 `url`** ⇒ 另配了一个
+  `Client::from_validated_base_url(raw)`（**只 parse、不校验**）。
+- **D-4 响应体上限先看 `Content-Length`、读完再验一次。** 上游是 `io.LimitReader(body, max+1)`
+  的**流式**上限；`reqwest` 的异步体只能整块读 ⇒ 两段式（先按 `Content-Length` 拒，
+  读完再比 `MAX_RESPONSE_BODY_SIZE`）。**语义等价**（超限一律 `InvalidPolicy`），
+  只是「无 `Content-Length` 的巨大流式体」在读完前不占上限内存。
+- **D-5 LRU 用 `Vec<Id>` 当链表。** 上游 `container/list` + `map`；本仓 `order: Vec<Id>`
+  （`MAX_ENTRIES` 只有 1e4，`retain`/`insert(0, …)` 的成本可忽略）。判据不变：
+  `get` 命中即 `MoveToFront`、超上限逐出最旧。
+- **D-6 🔴 新建了 2 个测试子模块（**不在**原写集里）。** `crates/mc-entitlement/src/client/tests.rs`
+  （397 行）与 `apps/mc-server/src/entitlement/tests.rs`（642 行）。**原因**：门 ⑩ 的 800 行
+  硬上限 —— 把 34 + 17 条用例内联会让 `client.rs`（1118 行）与 `entitlement.rs` 直接破线。
+  **形态**取本仓既有的 `mod tests;` 子模块先例（`mc-http/src/routes/issue_table/tests.rs`、
+  `apps/mc-server/src/channels/`…）。**没有别的写者候选**（两个目录此前都不存在）⇒ 零冲突。
+
+#### 未接线 / 未测项（如实登记，不是缺口）
+
+1. **出站往返的端到端用例只在 `apps/mc-server` 那一层**（`entitlement/tests.rs` 起真 axum
+   服务：200 正常 / 503 拒 / 体超 64 KiB / 302 不跟随）。`mc-entitlement` 自己的用例里**没有**
+   —— 它没有 `tokio` dev-dependency（依赖边冻结），**不是**漏测而是位置问题。
+2. **`GET /api/issues/limit-usage` 的 200 路径没有 HTTP 级 e2e**：`crates/mc-http/tests/` 不在本片
+   写集内。该路由的判定逻辑（`enforced_issue_limit`）有单元用例（7 条判据全覆盖），
+   既有 e2e（`tests/issue_table.rs::table_facets_and_limit_usage`）继续钉住「未装平面 ⇒ 204」。
+3. **`Decisions::cloud_valid_until` 在 fail-open 时是「此刻」而不是 Go 的零值**：`off_decision` 用
+   `Timestamp::default()`，而 `mc_core::Timestamp::default() == Timestamp::now()`。
+   属 `types.rs` 冻结面（本片只读）⇒ 只登记，不改。用例因此**不**逐字比较该字段
+   （两次调用差几纳秒）。
+4. **`mc-http` 的 `issue_count` 面不走 `mc_autopilot::quota`**：那是**两个不同的** enforcement
+   point（`autopilot_runs` vs `issue_count`），与上游 `ResolveIssueCountPolicy` 判的是同一个 gate。
+5. **无 Redis 的单副本假设**：本片**不涉及**（策略缓存是进程内的 `Arc<PolicyCache>`，
+   多副本各自持有一份；上游逐字也是「It has no goroutines or background lifecycle」）。
+   ⇒ 多副本部署下**每个副本独立刷新**，但两个消费者在同一副本内永远同源。
+
+#### 验收证据
+
+- **18 格矩阵**：`apps/mc-server/src/entitlement/tests.rs::the_matrix_has_eighteen_cells_and_both_consumers_never_disagree`
+  （3 个 `Action` × 2 个 `Gate` × 3 个缓存态 = 18，逐格断言 `action` / `is_enforcing` /
+  `reason` / 审计字段 / 两个消费者的投影，并在末尾断言 `cells == 18`）。
+  缓存三态是**离线可复现**的（注入时钟 + 直接写缓存，一个请求都不发）。
+- **同一份策略**：同文件末尾对三个缓存态各断言一次
+  「适配器 == 已安装平面」与「适配器 == `quota::policy_for`」。
+- **回归保护**：同文件的 `without_a_valid_base_url_the_plane_is_never_installed`
+  （6 种部署形态 ⇒ 不装平面、quota 恒 off）+ 该用例开头的「冷平面 ⇒ `off` 形状」。
