@@ -18547,3 +18547,14 @@ base = **`7942c94f`**；GH **0 open PR**。先判活本轮派出的一片；它�
 （先比 `--numstat` 与 PR API 逐字 ⇒ 判 base 祖先 ⇒ 合并树当场重跑 `--with-db` 10/10，**七/八数字须逐字不变**）。
 **收尾第一动作 = `rm -rf target`（回收 27G）**，`avail` 回 ≥25G 才排第二片。
 `LUM-2111`（M10-9 INT）仍卡 docker 三件套皆无，**待 owner 裁决，不重复 @**。
+
+### §208.6 本轮实际派发 = **`LUM-2494`**（M11-3 / Tier-2 T1-6-A，0 路由）
+
+- 写集：`crates/mc-conformance/src/{seed.rs(新),harness.rs,lib.rs}` + `scripts/extract_upstream_fixtures.py`
+  + `docs/37` `§209`。**0 路由 / 0 迁移 / 不碰 `gates.sh` 与任何 baseline**。
+- 派发描述里写死了三样东西：① 起手实测的 82 条分布（逐域 + 逐「期望→实测」），
+  ② **机制定位**（`Bindings::lookup` 只有 2 个符号，其余按字面量原样发出 ⇒ 库里没这行 ⇒ 404）
+  与**正确种法样板**（`harness.rs:103` 用**真实路由**建 workspace，不是手写 `INSERT`），
+  ③ §208.2 的**两条磁盘配方**当作它的自带配额。
+- 派发方式：`backlog` → `todo` 的**真实跃迁**（先 `assign` 再翻状态）⇒ 90s 内 workdir 落地
+  （`lum-2494-b3e0a3b5bb0b`），再次验证 §203.8 记的那条流程事实。
