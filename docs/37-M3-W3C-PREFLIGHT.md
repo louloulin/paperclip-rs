@@ -18137,6 +18137,9 @@ return req.WithContext(ctx)
   可把那 20 条从恒不可判定变成真判定）；② §201.3 的 `T1-1a/1b` 判据自身（与 `trigger-preview` 裁定冲突）；
 ③ Tier-2 残余（`stop_condition.sh` T1-6 真库层 127 条 mismatch 的正名分）。
 
+---
+
+
 ## §204 【LUM-2482】停止条件判据订正：T1-1a/1b 改判「占位集合 == 裁定白名单」+ T1-10b 退出码三分档（**0 路由片**）
 
 - base = **`2a3e64be`**（PR #148 合并点）。写集 = `scripts/stop_condition.sh` + `docs/32`（R-1 行号订正）
@@ -18206,3 +18209,97 @@ known_gap 0 / unclaimed 0 / local_only 8 / owners {}      （route_parity.py 0.4
 > 在任何正确实现下都永不满足、也没人会核**的判据，会在每轮 `exit 1` 的输出里只占一行，
 > 与真缺陷混在一起被读成「还差 N 格」。⇒ **每条判据都要能回答「它在什么实现下会 FAIL」；
 > 答不上来的多半就属于这一类。** 判读纪律：**超时 ≠ 失败 ≠ 全绿**。
+
+## §206 【2026-09-29 04:30 cycle / LUM-2483】收割 PR #148（M11-1 门 ⑨ 装配补齐）+ **29G 单笔回收**
+
+> 🔴 **本节号段系 05:30 cycle（`LUM-2488`）抢救时改写**：原提交 `817285ad` 自编号 `§203`，
+> 但 base 侧 `§203` 已被 `LUM-2477`（M11-1）占用且被 6 个源文件 + 2 份文档交叉引用，
+> `§204` 亦已被 `LUM-2482` 锁定 ⇒ 本节连同其 6 个子节整体改号为 **`§206`**，正文内自引用同步。
+> （`§205` 由在飞的 `LUM-2487`（M11-2）预约。）
+
+base `64b6d9fc` → 合并 `2a3e64be` → 本节直推。GH 收尾 **0 open PR**。
+起手 `df` **5.0G(90%)** → **`29G(40%)`**；PG 5432 `online`。
+
+### §206.1 `LUM-2477`(M11-1) 判活 = **已交付待收**，四判据全中后单笔回收 **25.1 GiB**
+
+判活序走完：agent `pi` 全量扫只有 cycle 自身 2 个 PID、`ps -E cargo|rustc|gates.sh` **零命中**、
+issue `in_review` rev 6、`result.pr_url` 为空但**远端已有 PR #148** ⇒ 交付完成、收割链可进。
+
+回收四判据（§176 立、§184 B 补）：`git status --porcelain` **0 行** / HEAD `c225a635` **逐字等于**
+`git ls-remote` 的 `refs/heads/agent/devbox5/ac326c83b1ed` / 零编译进程 / 分支已推远端。
+⇒ `cargo clean` **Removed 14871 files, 25.1GiB**，`df` **5.0G → 29G**。
+
+🔴 **§190「回收时机 = 交 PR」在本轮再次兑现，且这次差 45 分钟就会撞墙**：
+起手 5.0G，而门 ⑤ `cargo test --workspace` 实测峰值 **21.2G**（§197.1 归因）⇒
+**5.0G < 21.2G 意味着「再跑一次门」必 ENOSPC**；ENOSPC 已 **11 次**、曾连带杀 PG。
+**ENOSPC 的杠杆是回收时机，不是磁盘大小** —— 本片 PR 20:2xZ 已开，若等到「合并后」再清，
+整个 cycle 就会在 5.0G 上空跑。
+
+### §206.2 收割 PR #148 —— 七条判据链全过，**形态③免跑分支本轮不适用**
+
+| 判据 | 实测 |
+| --- | --- |
+| 预检一 分支 numstat == PR API | `2234 + 530 − 50 files` **逐字一致** |
+| head | `c225a635`（**单提交**） |
+| `mergeable_state` | `unstable` → 变 `clean`（CI 全绿后） |
+| head CI | **4/4 绿**（`contract`/`db` 先绿，`fast` 20:33:14Z、`image` 20:33:45Z 后绿） |
+| 落地净增 | `git diff --numstat 64b6d9fc 2a3e64be` = **`2234 + 530 − 50`** **逐字等于 PR numstat**（§193.3 正判据） |
+| 写集越界审计 | `contracts` 35 / `crates` 9 / `scripts` 3 / `docs` 2 / `Cargo.lock` 1 —— **零越界**（`Cargo.lock` 仅 `mc-conformance` 增 `mc-cloud` 一条依赖边，与 §201.5 同片） |
+| 合并树门读 | 见 §206.3，**八个数逐字不变** |
+
+🔴 **形态③免跑分支本轮判为「不适用」，但理由与 §193.1 的直觉相反**：
+`origin/feat/…^{tree}` = `88c70e11…`，head 树 = `f0e5f3a1…` ⇒ **不等** ⇒ 不得拿 head CI 的绿顶替合并树。
+根因 = 合并方式是 **merge commit**（§193.1 的豁免**只对 squash/单提交成立**），merge 树 = base ∪ 分支，
+与分支树本就不同。**豁免判据的适用条件必须写成「squash ∧ 单提交」，少一个词就会误用。**
+
+### §206.3 门读不变式**第 12 轮**逐字不变
+
+合并树 `2a3e64be` 当场重跑三道零编译门（~0.4s）：
+
+```
+upstream 456 / local 546 / implemented 456 = 455 real + 1 placeholder
+known_gap 0 / unclaimed 0 / local_only 8 / owners {} / ok=True
+```
+
+`slash_alias_audit` **exit 0**、`file_size_check` **exit 0**；
+`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（与 §201–§202 逐字同）。
+基线 `docs/fixtures/route-parity-baseline.json` md5 **`294c2c2a…`** —— 与 §201.2 记录的**刷新前** md5
+**逐字相同** ⇒ 546 键零位移。**0 路由片预测成立，实测成立。**
+
+🔴 **一处读数口径的自我订正（比数字本身重要）**：本轮第一次用 `route_parity.py --json` 取 `baseline`
+读到 **`None`**，差点把「读数失败」当成「基线丢了」。实际原因是 **`--json` 的 `counts` 里根本没有 `baseline` 键** ——
+基线数在**文件**里（`docs/fixtures/route-parity-baseline.json`），而 `stop_condition.sh:130` 取的
+是 `['sources']['baseline_routes']`（另一个键）。⇒ **同一概念在脚本、JSON、文件三处有三个键名**，
+跨轮报数必须写清取自哪一处，否则「`None`」会被读成事故。
+
+### §206.4 派 `LUM-2482`（`stop_condition.sh` 判据自身）—— 在新 base 上**复核缺陷仍在位**
+
+预飞（新 base `2a3e64be` 上实读，**不是照抄 §202**）：`scripts/stop_condition.sh:133-137` 的
+`IMPL_REAL = "456"` / `IMPL_PH = "0"` 两条硬编码**仍在**；`:471-481` 的 `IMAGE_GATE_RC=2` 初始值 +
+`[ "$IMAGE_GATE_RC" -eq 0 ] && echo PASS || echo FAIL` **仍在** ⇒ §202.4 的三条判据在新 base 上**原样成立**。
+本片 **0 路由、写集单文件 `scripts/stop_condition.sh` + `docs/32`/`docs/37`** ⇒ 合并后 §206.3 八个数必须逐字不变。
+
+🔴 **槽位算式（本轮刻意只派 1 片，第 6 轮）**：`avail 29G − 可回收量 0 = 29G`，
+vs 全量 `--with-db` 峰值实测 **18–30G** ⇒ 29G **只够一片**（下限够、上限不够）⇒ 再派一片期望收益为负。
+**派发面连续第六轮 = 结构性 1 台**：`agent list` 按 `workspace_id` 过滤只有 `devbox5`（`bd3d2b9d`）online；
+devbox1 `041bf509` / devbox2 `e3b45a25`（offline 自 09-17）/ devbox4 `4a7f29e1` / devbox `478b7f4b` 全 offline；
+另 3 台 online Pi runtime（`46140255` jiangx-mac / `8b9c725f` xingubuntu / `7e6471d9`）**仍零绑定本项目 agent**
+（`7e6471d9` 上挂的是「投资研究助手lin」）⇒ owner 动作 = 改绑 `runtime_id`（不重复 @）。
+
+### §206.5 可复用判别式（本轮两条）
+
+1. 🔴 **形态③的豁免判据必须写成「squash ∧ 单提交」，不是「单提交」**。本轮单提交但 merge commit ⇒ 树不等 ⇒
+   豁免**不适用**。§193.1 当时的直觉陷阱是「squash 改了父提交所以树会变」；本轮是**反方向**——
+   merge commit 天生就改树。**两种情况都指向同一个动作：先比 tree hash，再决定能不能免跑。**
+2. 🔴 **同一个概念在三个载体里可能有三个键名**（脚本变量 / JSON 键 / 文件路径）。
+   `baseline` 在 `--json` 的 `counts` 里**不存在**，报数时若只写「`baseline` = `None`」，
+   下一个读者会以为基线丢失。**报数写全「取自哪里」，是比报数字更该守的纪律。**
+
+### §206.6 下一轮起点
+
+base **`2a3e64be`** + 本节直推；GH **0 open PR**；在飞 `LUM-2482`（0 路由）。
+它交 PR 走 §206.2 同一条判据链（**先比 tree hash**，merge commit ⇒ 大概率需重跑合并树门）；
+合并后八个数须**逐字不变**，验收只能来自它自己的**双向失败演示**（加白名单外占位键 ⇒ FAIL；
+把白名单那条真实现掉 ⇒ 也 FAIL）+ 门禁，**不能来自 ⑦**。
+交 PR 即回收 `target/`；`avail` 回 ≥20G 后再排下一片。
+`LUM-2110`（结构型 `queued`）/ `LUM-2462` 排在 `LUM-2482` 之后。
