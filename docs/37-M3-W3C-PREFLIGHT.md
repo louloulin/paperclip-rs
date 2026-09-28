@@ -15576,3 +15576,98 @@ known_gap 1 / unclaimed 0 / regressions 0 / local_only 8`、`owners {M9: 1}`；
 4. ⇒ 才派 **`LUM-1825`（M9-10 INT，唯一 `--write-baseline`，基线 `473 → ~546`）**；
    **两条 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线**；
 5. `LUM-2419` 排 M9-INT 之后（纯测试支撑、零路由、零 manifest，不争基线）。
+
+---
+
+## 178. 14:00 cycle（`LUM-2420`，06:00Z）—— M9-7 收割（免跑分支）→ **⑦ `owners == {}`，M9 路由面收口** → 派 M9-10 INT
+
+**起手**：`df` **7.7G avail / 84%**（全盘唯一大 `target/` = `LUM-1822` 自己的 **21G**）、
+PG 16 `online`、checkout 落 `main` 线**第 22 次**（须 `reset --hard origin/feat/multica-rs-initial` 才回到主干线）。
+base = **`3f46102e`**（= §177 收尾值，**无新合并**）。
+
+### ① 收割 PR #136（M9-7 mika）——**走形态③免跑分支**，两条前提同时成立
+
+**先判活**：`/proc` 逐 PID 扫 `cwd` ⇒ `LUM-1822` 的 `pi` 进程**已不在**（本 cycle 唯一在飞 = cycle 自身），
+即片**已交付并退出**，不是静默死亡。
+
+| 判据 | 实测 |
+| --- | --- |
+| 分支自身 `--numstat 3f46102e...603afc1f` | **6 文件 +1329/−17** |
+| PR API `/pulls/136/files` 逐字 | **6 文件 +1329/−17**（14/450/2/382/292-17/189）⇒ **逐字一致** |
+| 前进段非 docs | ✔ 5 个 `crates/**` 文件 ⇒ 形态门两半的前进段成立 |
+| head CI | `db` ✔ / `fast` ✔ / `contract` ✔ = **3/3 绿**（05:54–06:00Z 完成） |
+| base == 当前 base | `603afc1f` 的 base = `3f46102e` = 本 cycle 起手 base ⇒ **无需 rebase，直接合** |
+| `mergeable_state` | `clean` |
+| 凭据面 | `git diff \| grep -iE 'password\|secret\|postgres://\|Bearer '` = **0 命中** |
+
+⇒ 钉 40 位 `603afc1f22584e1d553aac90ecd172d07f57c1e3` + `merge_method=merge` ⇒ 合并提交 **`5a5c76b6`**。
+**落地树 ≡ 预演树**：`3f46102e..5a5c76b6` 的 numstat 与合并前逐字相同（6 文件 +1329/−17）⇒ 不必当场重跑 `--with-db` 复现。
+合入后 GH **0 open PR**。
+
+### ② 磁盘：**21G 单笔回收**（出脚点按 §177 第 3 条兑现）
+
+四判据全中：PR 已合 ∧ run 终态（进程不在）∧ `git branch -r --contains 603afc1f` 命中
+`origin/feat/multica-rs-initial`（**也**命中已合的 `origin/agent/devbox5/c0371115f5c2`）∧ 无未提交。
+`rm -rf …/lum-1822-…/paperclip-rs/target` ⇒ **39G used → 19G used，avail 7.7G → 29G（40%）**。
+**只删构建缓存，源与分支一律不动。**
+
+### ③ 门读（base `5a5c76b6` 当场重跑，`bash scripts/gates.sh` 无 `--with-db`）
+
+**8/8 全绿，591s**（新 checkout **冷建**：build 166s / clippy 88s / clippy-test-util 59s / test 172s / conformance 103s / fmt 3s）。
+
+🔴 **⑦ 逐字命中 §177 的预测**：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 473
+implemented 456 = 454 real + 2 placeholder      →  456 / 456
+known_gap 0 | unclaimed 0 | regressions 0 | local_only 8（其中 placeholder 1）
+owners = {}          ok = true
+```
+
+`456 + 0 = 456` ✅ 不变式成立；**`owners` 由 `{M9: 1}` 变空字典** ⇒ **`owners.M9 == 0`**。
+⇒ **M9 波（34 路由）在路由面**完全收口**，`LUM-1825`（M9-10 INT）的全部硬前置成立。
+`baseline` 仍停在 **473**（anchor 波次一律不刷，由 M9-10 独家刷新到 **546**）。
+
+⑦b **tree 模式**（§176：唯一有效形态门）**541 literals / 0 defect / exit 0**（比 §177 的 540 **+1**，正是 M9-7 的
+`agents/mika.rs` 新注册键 ⇒ 与预测一致，**非回归**）。
+⑩ `0 violation(s)`。`audit_workspace_deps` **`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`** —— 与 §177 **逐字相同**，无漂移。
+门 ⑧（schema-drift）未跑（需 DB URL）。
+
+### ④ 派发：**`LUM-1825`（M9-10 INT）** 描述 rev 3 → **rev 4 整表刷新** 后派给 `编程助手-devbox1`
+
+预飞（本 cycle 实测，非引用）：
+
+- **写集 5/5 在位**：`docs/fixtures/route-parity-baseline.json`、`docs/32-M3-DAEMON-FACE.md`（§9.13 只追加）、
+  `docs/62-M9-PLAN.md`（§11 现为占位，`## 11. M9-INT 落地记录（占位，由 M9-10 填写）`）、
+  `docs/fixtures/upstream-routes.tsv`、`scripts/route-owners.tsv`。
+- **§9.2 迁移动作：条件已满足 ⇒ 执行**。`LUM-2116`（M9-11 cloud-runtime 11 条）已 `in_review`（已合入 base）
+  ⇒ M3 的 cloud-runtime 尾账**不在飞**。当轮实测待迁移 15 行：`scripts/route-owners.tsv:48` 的
+  `^/api/cloud-runtime / M3 → M9`，加 `docs/fixtures/upstream-routes.tsv` 的 **11 行** owner 单元格 `M3 → M9`。
+- 🔴 **承重订正**：旧描述预测该迁移会让 ⑦ 直方图 `owners.M3 11→0 / owners.M9 33→44`。
+  **当轮 `owners == {}`（无缺口 ⇒ 无直方图）** ⇒ 迁移**不得改动任何一个 ⑦ 计数**；
+  刷新前后 `546 / 456 / 0 / 0 / 0 / 8` 与 `ok=true` 必须**逐字不变**，漂移即迁移写错（多半误改了 method/path 列）。
+- 作废的旧预测整表钉进 rev 4：`406→487` 作废（真实 `473→546`）、`implemented 411=409+2` 作废（真实 `454r+2ph`）、
+  `known_gap 45` 作废（真实 **0**）、`local_only == 9` 作废（真实 **8**）。
+- 连同 §177 的踩坑清单（`pgrep -f` 自匹配第 6 复现、门 ⑥ 第三族竞态判为基线级禁 `--test-threads=1` 刷绿、
+  ENOSPC 第 12 次风险与 `grep -a 'os error 28'` 取序、`cargo` 走 `~/.cargo/bin`、DB 测试不设 URL 会静默跳过）一并写进描述。
+
+### ⑤ 槽位：**1/3 在飞**，另 2 个**刻意留空**（连续第 6 轮）
+
+算式（§167 的两项写法）：`avail 29G − 可回收量 0`（21G 已在收割时回收，**盘上已无大 `target/`**）
+= **29G**，对着**两片各自** `--with-db` 冷建峰值 18–30G ⇒ 需 36–60G ⇒ `29 < 36` **不成立** ⇒ 留空。
+吃盘的是**每片自己 workdir 的 `cargo build`**，不是门禁串行 ⇒ 多派一片的期望收益为负。
+`LUM-2419`（门 ⑥ 第三族竞态，纯测试支撑、零路由、零 manifest、不争基线）排 M9-INT 之后。
+🔴 `LUM-2111`（M10-9 INT）**仍硬阻塞**：DoD 第 2 条依赖 `scripts/stop_condition.sh` 与镜像面，
+而 `docker`/`podman`/`buildah` **实测三者皆无**、`deploy/` 在 base **不存在** ⇒ 按口径**不重复 @**，等 owner 裁决。
+**两条 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线**——`LUM-2111` 阻塞期间该约束自动成立。
+
+### ⑥ 下一轮（`§178` 交接）
+
+1. `df -h /` + `pg_lsclusters` → `rev-parse` 对 `ls-remote`（**checkout 落 `main` 第 22 次，记得 `reset --hard`**）
+   → GH `pulls?state=open` → **`/proc` 逐 PID 扫 `cwd`（筛词表含 `gates`）** 判活 → 查 `pr_url`；
+2. `LUM-1825` 交 PR 后走**七条判据链**（本 cycle 已把可免跑的两半跑通：numstat 逐字 + head CI 3/3）；
+   🔴 它**独占 `--write-baseline`** ⇒ 落地后**必须**当场在 base 重跑一次 `route_parity.py` 读数，
+   核对 `baseline == 546` 且 `546/456/0/0/0/8` 逐字不变、`ok=true`；
+3. 合入 ⇒ 回收它那 `target/` ⇒ 才考虑派 **`LUM-2419`**；
+4. `LUM-2111` 阻塞状态**每次 cycle 只复核一次**（`which docker podman buildah` + `ls deploy/ scripts/stop_condition.sh`），
+   三者仍缺则**只在本 cycle 记一行，不 @ owner**。
