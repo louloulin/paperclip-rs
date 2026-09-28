@@ -16230,3 +16230,138 @@ OK: every upstream route is either implemented or owned          exit 0
 跑一次冷编就把 18–30G 吃掉、把 `LUM-1823` 的预算挤爆）⇒ **cycle 与同 device 的编译片并存时，
 cycle 只能用零编译门**（`route_parity` / `slash_alias_audit` / `file_size_check` /
 `audit_workspace_deps`，合计 ~1.6s）。这是「同 device 1 片」规则的**第二个推论**。
+
+---
+
+## 184. ENOSPC 根因的下半段：**失败的 run 会自动重试，而重试挂到了另一条 issue 上**（cycle 18:00）
+
+§183 定位了 ENOSPC 的** proximate 原因**（同 device 派了两片 `--with-db`，峰值 36–60G 求和）。
+本轮找到**上游那一层**：不是「峰值算错了」，而是**盘上曾经同时跑着两片没人认领的实现**。
+
+### 184.1 现场
+
+`df` 起手 `8.0G avail (83%)`。按 §173.1 的 `/proc/*/cwd` 判活序扫盘，发现一个**不在本轮在飞清单里**的 workdir：
+
+```
+28236  /home/.../lum-1814-cbd3faedba2e/workdir/paperclip-rs   cargo-clippy clippy -p …
+28338  /home/.../lum-1814-cbd3faedba2e/workdir/paperclip-rs   clippy-driver …
+36682  /home/.../lum-1814-cbd3faedba2e/workdir                pi            ← agent 进程在跑
+```
+
+`LUM-1814` 是 **09-24 的 M9 计划片**（`docs/62-M9-PLAN.md`），交付物早在 **09-24T22:42:29Z 就以 PR #81 合入 base**，
+但 issue 一直没人关，**停在 `in_progress` 状态整整 4 天**。
+
+比对两片 worktree 的写集，结论是：
+
+| workdir | 归属 | `git diff --stat` | 未跟踪 |
+| --- | --- | --- | --- |
+| `lum-1814-cbd3faedba2e` | ❌ `LUM-1814`（已交付） | `timeline.rs` 520+/723+ = **+1192/−51** | **2**（`http/tests/timeline.rs` 14.3K、`repos/tests/timeline_db.rs` 12.4K） |
+| `lum-1823-8f555e4db579` | ✅ `LUM-1823`（M9-8） | `timeline.rs` 572+/536+ = **+1055/−53** | **1** |
+
+⇒ **两片在各自 worktree 里并发实现同一个 M9-8 任务、同样的 4 个文件。**
+
+### 184.2 时间线对得上，机制是**平台自动重试挂错了 issue**
+
+```
+08:25:01Z  LUM-1823 run 01a0e70c  failed  (系统评论逐字 ENOSPC)
+08:25:01Z  LUM-1814 run 01a0e71e  created + started   ← 同一秒，另一个 issue
+08:34:35Z  LUM-1823 run 01a0e726  created (cycle §183.7 重派) → 正常 running
+```
+
+`01a0e70c` 失败触发的**自动重试，被挂到了另一条同样 `in_progress`、同样归属 devbox5、且同样没关掉的
+issue 上（`LUM-1814`）**。agent 拿到的却是 M9-8 的活儿（所以它在写 timeline），
+于是**重试 ≠ 复活原片，而是凭空多出一个第二个写者**。
+
+> 🔴 **新纪律 A（这是本轮头号产出）**：`run failed` 之后，**除了查本片的 run 列表，还必须查
+> 「同一 assignee 名下所有仍 `in_progress` 的 issue」的 run 列表**。
+> 自动重试**不会**回到原 issue。判活序在 §183.2 的第 0 步（查 `failed` + `ENOSPC`）后面
+> 紧接着加第 0.5 步：**按 assignee 反查在飞 issue 的 run 数，某条 issue 突然多出一个不属于它的 run = 重试挂错**。
+>
+> 🔴 **新纪律 B**：**已交付的 issue 必须关**。一条 4 天前交付完、状态还挂 `in_progress` 的 issue
+> = 一颗**重试磁铁**：它自己不再产出任何东西，却会把别处的自动重试接过来、变成第二个写者 + 一份构建缓存。
+> 「交付完」和「关掉」是两个动作，只做前者的 issue 是**负资产**。
+
+### 184.3 处置顺序：**先关 issue，再杀 run**（顺序反了会再造一个重试）
+
+关键在于：杀掉 run 会让它变 `failed`，而 `failed` 正是自动重试的触发条件 ⇒
+**先杀 run 的话，重试会落到下一条同样没关的 `in_progress` issue 上（本轮就是 `LUM-1814` 本身吃掉了它）。**
+所以顺序固定为：
+
+1. `multica issue status LUM-1814 done --no-start`（`--no-start` 防它自己再起 run）⇒ **拆掉重试靶子**；
+2. 抢救物先落地（`git diff` + 2 个未跟踪测试文件 → `/tmp/zombie-1814-salvage/`，**删 target 前**）；
+3. 逐 PID 核对 `cwd` 后 kill（`readlink /proc/<pid>/cwd` 命中 `lum-1814` 才杀）；
+4. 四判据齐了才 `rm -rf target`；
+5. 回读 `issue runs` 确认**没有新 run 被造出来**。
+
+实测每一步的读数：
+
+| 步 | 动作 | 读数 |
+| --- | --- | --- |
+| 1 | 关 `LUM-1814` | `status = done`、`rev 8` ✅ |
+| 2 | 抢救 | `timeline.patch` 54.1K + `timeline_http_test.rs` 14.4K + `timeline_repos_db_test.rs` 12.4K |
+| 3 | kill `36682` | 僵尸 `pi` 终止；**同盘的 `lum-1823` pi（39780）逐字存活** ✅ |
+| 4 | 删 `target` | **12G** → workdir 131M；`df` **8.0G → 19G avail（60%）** ✅ |
+| 5 | 回读 | `01a0e71e failed`（09:03:40Z）、**`run_count` 仍 = 2、无新 run** ⇒ 顺序正确 ✅ |
+
+⚠️ 附带一条：`kill` 前必须逐 PID 验 `cwd`。本轮 8 个候选 PID 里**只剩 2 个 agent `pi` 存活**
+（cargo/clippy 子进程已自然退出），若按早先的 PID 列表无脑 `kill` 会误伤——**同一条命令里
+必须把「要杀的」和「要保的」都列出来回显**，本轮 `KEEP` 列表里 `lum-1823` 的 7 个 PID 逐个确认存活。
+
+### 184.4 「同 device 同时 1 片 `--with-db`」要升级成「同 device 同时 1 个**写者**」
+
+§183.3 的规则是按**我显式派出的片**数的，禁得住并派，禁不住**平台自己造的第二个写者**。
+⇒ 规则的正确表述是 **「同一 device 上，同时只允许 1 个在编译/写盘的 run —— 无论它是谁派的」**。
+自查手段不是数 issue，是 §173.1 那条 `/proc/*/cwd` 扫描里**有没有你不认得的 workdir**：
+**陌生 workdir 是发现，不是噪音。**
+
+⚠️ 副本仲裁的隐患（**本轮刻意不做**）：僵尸那份实现行数更多（+1192 vs +1055）且**多了
+`repos/tests/timeline_db.rs`**，但它长在**更旧的 base（`ae51ba40` vs `6ad9e281`）**上。
+把两份发散实现合到一起 = 人工仲裁，成本高于让绑对了 issue、base 也是最新的那片自己写完。
+**处置 = 只抢救不合并**：两个测试文件留在原路径，`LUM-1823` 的 run 可直接
+`cp …/lum-1814-cbd3faedba2e/workdir/paperclip-rs/crates/mc-repos/tests/timeline_db.rs` 取用
+（`target/` 已删，**源文件与补丁都在，不影响取证**）。
+
+### 184.5 派发面：仍是 1 台，且**这一轮的账要按「每台实测余量」记，不能按「回收片已交回」记**
+
+`LUM-2432`（回收片）已 `completed`，逐字结论：**devbox1 回收 3.53 GiB，`df` 可用 0 → 12G**，
+并明确「12G < 一片 `--with-db` 冷建峰值 18–30G ⇒ **现在往 devbox1 派 `--with-db` 片仍会半路 ENOSPC**」。
+所以「回收片交了 ⇒ 派发面回到 2 device」这个预期**不成立**——它只把 devbox1 抬到**只够非 DB 片**的水平。
+
+| device | 实测余量 | 能派什么 |
+| --- | --- | --- |
+| devbox5（本机，我） | `19G avail`，`LUM-1823` 在飞 | 已被 1 片 `--with-db` 占满 ⇒ **不再派** |
+| devbox1 | `12G avail` | 只够**不带 DB** 的片；`--with-db` 仍会 ENOSPC |
+| devbox2 / devbox4 | §181.7 / §182 连续两轮 `queued` 31 min | 派发黑洞 |
+
+⇒ **本轮不派 `LUM-1824`（M9-9）**，`LUM-2433`（门⑥第四族）继续留 `backlog`。
+**并发能力 = 1**（本机 devbox5 一片）。
+
+🔴 **给 owner 的一句话（不重复 @，只记在这）**：devbox1 上有 **10 片 pi 项目的
+`workdir/pi/pi-rust/target` 合计 146.9G**，另有 2 个 IDE 崩溃转储 `~/java_error_in_idea.hprof` +
+`~/java_error_in_rustrover.hprof` = **6.14 GiB**。若 **pi 项目的 base 是 `origin/feature/pi.rs`**
+（而不是 `origin/main`），则其中 7 片立即满足四判据、可回收 **119.2G**
+（`lum-1263` 18G / `lum-1457` 21G / `lum-1464` 15G / `lum-1466` 16G / `lum-1467` 16G / `lum-1469` 25G / `lum-1490` 8.2G）。
+这一笔落地，**`--with-db` 峰值 18–30G 将不再是任何调度约束**，并发能力可从 1 恢复到 2–3。
+属**破坏性操作 + 跨项目**，需 owner 一句话授权，cycle 不自行动手。
+
+### 184.6 本轮门读（base `a49c4e47`，**零编译门**，§183.7 第 2 推论）
+
+`route_parity --json`：`known_gap []` / `unclaimed []` / `regressions []` / `local_only` **8 条**
+（其中 1 条 placeholder = `GET /api/issues/:id/quick-actions`）/ `ok = True`
+—— 与 §182/§183 **逐字相同**（base 只有 docs-only 位移，代码面无位移，符合预期）。
+
+`slash_alias_audit --quiet` exit **0**；`file_size_check --quiet` exit **0**；
+`audit_workspace_deps`：`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（与前几轮逐字相同）。
+⑨ 未跑（需 DB + 真编译，与 §183.7 的「同 device 1 片」互斥）。
+
+### 184.7 下一轮
+
+1. 起手照旧：`df` + `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR。
+2. **新增第 0 步**：`agent list` 里 devbox5 名下**所有** `in_progress` issue 的 run 数对一遍
+   （§184.2 纪律 A）—— 确认没有第二个写者。
+3. `/proc/*/cwd` 扫描里**出现陌生 workdir 就当发现处理**（§184.4）。
+4. 收割 `LUM-1823`（M9-8）走七条判据链；落地后 `placeholder 2 → 1`、
+   `local 546` / `baseline 546` / `known_gap 0` / `local_only 8` 必须逐字不变。
+5. `LUM-1823` 交付并回收其 `target/` 后，本机应回到 ~28G ⇒ 才考虑派 `LUM-1824`（M9-9，0 条路由 ⇒ ⑦ 全计数不变，
+   验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**）。
+6. `LUM-2111`/`LUM-2109`/`LUM-2110` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
