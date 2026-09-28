@@ -242,7 +242,7 @@ server/internal/handler/agent_test.go	768	TestCreateAgent_RejectsDuplicateName	d
 server/internal/handler/agent_test.go	790	TestUpdateAgent_RejectsRenameToArchivedName	direct_handler	skipped	value_unresolved	fixture needs values the runner cannot bind: $idA
 server/internal/handler/agent_test.go	798	TestUpdateAgent_RejectsRenameToArchivedName	direct_handler	skipped	body_unresolved	body_unresolved
 server/internal/handler/agent_test.go	848	TestCreateAgent_AssignsAvatarDefault	direct_handler	skipped	body_unresolved	body_unresolved
-server/internal/handler/agent_test.go	927	TestGetAgent_ResponseHasNoCustomEnv	direct_handler	skipped	path_not_registered	GET /agents/1c331d0b-94fd-412a-a7cc-6a209add00a1 is not in docs/fixtures/upstream-routes.tsv
+server/internal/handler/agent_test.go	927	TestGetAgent_ResponseHasNoCustomEnv	direct_handler	skipped	path_not_registered	GET /agents/{testAgentID} is not in docs/fixtures/upstream-routes.tsv
 server/internal/handler/agent_test.go	978	TestListAgents_ResponseHasNoCustomEnv	direct_handler	skipped	path_not_registered	GET /agents is not in docs/fixtures/upstream-routes.tsv
 server/internal/handler/agent_test.go	1027	TestGetAgentEnv_OwnerSucceedsAndAudits	direct_handler	extracted	-	1 fixture(s)
 server/internal/handler/agent_test.go	1141	TestAgentEnv_TaskTokenActorSource	direct_handler	skipped	value_unresolved	fixture needs values the runner cannot bind: $targetID
@@ -304,7 +304,7 @@ server/internal/handler/attachment_capability_test.go	353	TestGetAttachmentByID_
 server/internal/handler/attachment_capability_test.go	385	TestGetAttachmentByID_ProxyModeDownloadURLForcesAttachment	direct_handler	skipped	request_var_unresolved	request argument 'req2' is not traceable
 server/internal/handler/attachment_capability_test.go	431	TestDownloadAttachment_StillRequiresAuthentication	direct_handler	skipped	request_var_unresolved	request argument 'req' is not traceable
 server/internal/handler/attachment_url_mode_test.go	209	TestGetAttachmentByID_IgnoresStableCapability	direct_handler	skipped	request_var_unresolved	request argument 'req' is not traceable
-server/internal/handler/attribution_response_test.go	184	TestListTasksByIssueHydratesAttribution	direct_handler	skipped	path_not_registered	GET /api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/tasks is not in docs/fixtures/upstream-routes.tsv
+server/internal/handler/attribution_response_test.go	184	TestListTasksByIssueHydratesAttribution	direct_handler	skipped	path_not_registered	GET /api/issues/{testIssueID}/tasks is not in docs/fixtures/upstream-routes.tsv
 server/internal/handler/auth_google_error_code_test.go	89	TestGoogleLoginTokenFailures	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
 server/internal/handler/auth_google_error_code_test.go	151	TestGoogleLoginUserInfoFailures	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []
 server/internal/handler/auth_google_error_code_test.go	215	TestGoogleLoginActionableErrorCodes	testutil.Call	skipped	ambiguous_status	.Want() status tokens: []

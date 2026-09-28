@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "daemon/TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace@server/internal/handler/daemon_test.go:1186#8",
   "method": "GET",
-  "path": "/api/daemon/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/gc-check",
-  "path_params": {},
+  "path": "/api/daemon/issues/{testIssueID}/gc-check",
+  "path_params": {
+    "testIssueID": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -30,7 +32,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {},
+    "bindings": {
+      "$testIssueID": "issue_id"
+    },
     "requires": [
       "daemon_token"
     ]

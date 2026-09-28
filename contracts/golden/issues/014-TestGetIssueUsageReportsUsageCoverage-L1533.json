@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestGetIssueUsageReportsUsageCoverage@server/internal/handler/daemon_test.go:1533#14",
   "method": "GET",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/usage",
-  "path_params": {},
+  "path": "/api/issues/{testIssueID}/usage",
+  "path_params": {
+    "testIssueID": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,6 +36,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

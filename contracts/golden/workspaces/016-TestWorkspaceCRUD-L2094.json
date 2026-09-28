@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "workspaces/TestWorkspaceCRUD@server/internal/handler/handler_test.go:2094#16",
   "method": "GET",
-  "path": "/api/workspaces/a05b0e10-ee7a-4603-a72d-a548b2390cb2",
-  "path_params": {},
+  "path": "/api/workspaces/{testWorkspaceID}",
+  "path_params": {
+    "testWorkspaceID": "$testWorkspaceID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"

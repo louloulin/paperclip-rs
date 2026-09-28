@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "agents/TestAgentsThroughRouter@server/cmd/server/integration_test.go:650#4",
   "method": "PUT",
-  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1",
-  "path_params": {},
+  "path": "/api/agents/{testAgentID}",
+  "path_params": {
+    "testAgentID": "$testAgentID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -33,6 +35,7 @@
   "extraction": {
     "notes": [],
     "bindings": {
+      "$testAgentID": "agent_id",
       "$testWorkspaceID": "workspace_id"
     }
   }

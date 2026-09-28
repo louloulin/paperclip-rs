@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#27",
   "method": "POST",
-  "path": "/api/chat/sessions/d1473000-0000-4000-8000-000000000031/messages",
-  "path_params": {},
+  "path": "/api/chat/sessions/{testChatSessionID}/messages",
+  "path_params": {
+    "testChatSessionID": "$testChatSessionID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -36,6 +38,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testChatSessionID": "chat_session_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "workspaces/TestWorkspacesThroughRouter@server/cmd/server/integration_test.go:711#5",
   "method": "GET",
-  "path": "/api/workspaces/a05b0e10-ee7a-4603-a72d-a548b2390cb2/members",
-  "path_params": {},
+  "path": "/api/workspaces/{testWorkspaceID}/members",
+  "path_params": {
+    "testWorkspaceID": "$testWorkspaceID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"

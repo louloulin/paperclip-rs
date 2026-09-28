@@ -18547,3 +18547,259 @@ base = **`7942c94f`**；GH **0 open PR**。先判活本轮派出的一片；它�
 （先比 `--numstat` 与 PR API 逐字 ⇒ 判 base 祖先 ⇒ 合并树当场重跑 `--with-db` 10/10，**七/八数字须逐字不变**）。
 **收尾第一动作 = `rm -rf target`（回收 27G）**，`avail` 回 ≥25G 才排第二片。
 `LUM-2111`（M10-9 INT）仍卡 docker 三件套皆无，**待 owner 裁决，不重复 @**。
+
+## 209. 【LUM-2494 / M11-3 / Tier-2 T1-6-A】门 ⑨ 回放器通用种子装配 ⇒ 100 条 `→404` 正名（0 路由）
+
+base = `b41a6086`（§208 直推）。**0 路由**：⑦ `known_gap = 0` ⇒ 本片未新增/删除任何注册路由，
+`migrations/**`、`scripts/gates.sh`、任何 baseline 逐字未动。
+
+### §209.0 一句话
+
+门 ⑨ database 层 **100 条 `→404`** 里 **60 条变成真判定、40 条仍 404、0 条滑到 400**；
+`pass` 196 → **252**，`mismatch` 136 → **80**。
+
+### §209.1 🔴 根因不是「少种了一行」——是**指错了行**
+
+任务书假设那 100 条是「实体行从未种下」。**实测不是。**
+
+`scripts/extract_upstream_fixtures.py::package_literals` 是**全仓扫描 + `setdefault`**：
+
+```python
+for m in re.finditer(r"(?m)^\s*(?:var|const)?\s*([A-Za-z_]\w*)\s*=\s*", masked):
+    values.setdefault(m.group(1), literals[start])     # 全仓 1659 个名字
+```
+
+于是 `server/internal/handler/handler_test.go:2929` 里**函数内**的
+`const agentID = "1c331d0b-94fd-412a-a7cc-6a209add00a1"` 成了**全仓**名字 `agentID` 的取值。
+而上游那些测试真正的意图是访问它刚用 `dbfx.Agent(...)` / `dbfx.Issue(...)` 建出来的行
+（实测 `daemon_task_lookup_test.go:121`、`agent_access_test.go:400` 等）。
+
+⇒ `"/api/agents/" + agentID` 带的是**从另一个测试抄来的 UUID**。这不是缺一行，
+是**指向了错误的行**，而**再多种也种不对**。这就是为什么「照着 `harness.rs` 那样多种几行」
+这条路一开始就是错的：种出来的行和 URL 里的 id 仍然是两件事。
+
+**判别式（承重）**：判据不是 Go 变量名（变量名**正是**撞号的东西），而是**路由的集合段** ——
+`/api/agents/{id}` 里的 `{id}` 按定义是一个 **agent**。
+
+### §209.2 做了什么
+
+| 层 | 改动 |
+|----|------|
+| 抽取器 | 新的 `scripts/extract_borrowed_ids.py`：识别「借来的 UUID」（note `package const` + 规范 UUID 形态）并按集合段判成 `$test<Kind>ID`；`SEEDED_COLLECTIONS` 白名单只有 runner 种得出来的 6 个集合段 |
+| 抽取器 | `BINDABLE` 扩到 6 个符号（新增 `$testAgentID` / `$testIssueID` / `$testChatSessionID` / `$testTaskID`） |
+| 回放器 | 新的 `crates/mc-conformance/src/seed.rs`：`Seed { agent, issue, chat_session, task }`，**每一行都用真实路由建** |
+| 回放器 | `Bindings` 拆到新的 `bindings.rs`，新增 `with_seeded(...)`（**不改** `with_daemon_token` 的签名 —— 21 个调用点纪律） |
+| harness | `database_router` 在 daemon token 之后调 `seed::seed(&router, &db, user, workspace)` |
+
+**零 fixture 删除、零期望值改写**（§199 形态）——重跑抽取器后逐文件比对：
+`365 → 365`、删除 0、新增 0、`expect.status` 改动 **0**，只有 `path` + `path_params` 变了（110 个文件）。
+
+**种子的链**：`runtime`（⚠️ 唯一非路由种子，见 §209.6）→ `POST /api/agents` → `POST /api/issues`
+/ `POST /api/chat/sessions` → `POST /api/chat/sessions/{id}/messages` → `GET /api/agents/{id}/tasks` 读回 task id。
+
+### §209.3 门 ⑨ database 层前后读数
+
+`cargo run -p mc-conformance -- --db-url <fresh> --json`（同一台机、同一份代码，只换 fixture 与种子）：
+
+| 指标 | 前 | 后 | Δ |
+|------|----|----|----|
+| fixtures | 365 | 365 | +0 |
+| **pass** | 196 | 252 | +56 |
+| **mismatch** | 136 | 80 | -56 |
+| unmounted | 3 | 3 | +0 |
+| placeholder | 0 | 0 | +0 |
+| unevaluable | 30 | 30 | +0 |
+
+| actor | 前 pass | 后 pass | 前 mismatch | 后 mismatch |
+|-------|---------|---------|-------------|-------------|
+| member | 152 | 206 | 127 | 73 |
+| daemon | 9 | 11 | 9 | 7 |
+| anonymous | 35 | 35 | 0 | 0 |
+| agent | 0 | 0 | 0 | 0 |
+
+db tier: {'mismatch': 136, 'pass': 162, 'unmounted': 3} -> {'mismatch': 80, 'pass': 218, 'unmounted': 3}
+
+
+### §209.4 逐条正名：40 条仍 404 的归因
+
+分母是 §209.0 那个 **40**：`39` 条仍 404 + `1` 条变 500（§209.5）。
+
+### A. 非法 id 形态：上游 400，本仓 404（**真缺口，方向与「本仓更严」相反**） —— 7 条
+
+路径段是 `not-a-uuid` / `parent-uuid`。这不是行 id（抽取器刻意不重绑），而是**形态非法**的 id；上游在进 handler 前就 400，本仓先查库 ⇒ 404。与 §208 记的 `200→400`（本仓更严）方向相反，是「本仓更松」的一族。
+
+- `agents/TestUpdateAgentRejectsMalformedAgentID@server/internal/handler/handler_test.go:1683#28`
+  PUT /api/agents/not-a-uuid　期望 400 / 实测 404
+- `invitations/TestGetMyInvitationRejectsMalformedID@server/internal/handler/handler_test.go:1737#1`
+  GET /api/invitations/not-a-uuid　期望 400 / 实测 404
+- `issues/TestUnsubscribeEndpoints_SubtreeIsASeparateRoute@server/internal/handler/subscriber_subtree_endpoint_test.go:44#102`
+  POST /api/issues/parent-uuid/unsubscribe　期望 200 / 实测 404
+- `issues/TestUnsubscribeEndpoints_SubtreeRouteLeavesDescendants@server/internal/handler/subscriber_subtree_endpoint_test.go:70#103`
+  POST /api/issues/parent-uuid/unsubscribe/subtree　期望 200 / 实测 404
+- `tokens/TestRevokePersonalAccessTokenRejectsMalformedID@server/internal/handler/handler_test.go:1765#1`
+  DELETE /api/tokens/not-a-uuid　期望 400 / 实测 404
+- `workspaces/TestRevokeInvitationRejectsMalformedInvitationID@server/internal/handler/handler_test.go:1731#14`
+  DELETE /api/workspaces/{id}/invitations/not-a-uuid　期望 400 / 实测 404
+- `workspaces/TestUpdateWorkspaceRejectsMalformedID@server/internal/handler/handler_test.go:1717#12`
+  PUT /api/workspaces/not-a-uuid　期望 400 / 实测 404
+
+### B. 需要**第二个身份**（私有 / 非 owner 视角） —— 7 条
+
+fixture 的 `actor.upstream_identity` 里带的是**字面量 UUID**（上游那个测试自己建的另一个成员），不是符号。本片只种了一个身份（种子身份 = 全部这些行的 owner）⇒ 第二个成员不存在 ⇒ 404。
+
+- `agents/TestGetAgent_PrivateAgentForbidsPlainMember@server/internal/handler/agent_access_test.go:235#7`
+  GET /api/agents/{id}　期望 403 / 实测 404
+- `agents/TestListAgentTasks_PrivateAgentForbidsPlainMember@server/internal/handler/agent_access_test.go:414#12`
+  GET /api/agents/{id}/tasks　期望 403 / 实测 404
+- `agents/TestListAgents_FiltersPrivateForPlainMember@server/internal/handler/agent_access_test.go:264#9`
+  GET /api/agents　期望 200 / 实测 404
+- `agents/TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability@server/internal/handler/agent_access_test.go:295#10`
+  GET /api/agents　期望 200 / 实测 404
+- `agents/TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability@server/internal/handler/agent_access_test.go:359#11`
+  GET /api/agents　期望 200 / 实测 404
+- `issues/TestComment_SquadPrivateLeader_PlainMemberNoEnqueue@server/internal/handler/squad_private_leader_test.go:185#101`
+  POST /api/issues/{id}/comments　期望 201 / 实测 404
+- `workspaces/TestDeleteMember_NoRuntimes_DeletesMember@server/internal/handler/workspace_test.go:1263#34`
+  DELETE /api/workspaces/{testWorkspaceID}/members/cccccccc-cccc-cccc-cccc-cccccccccccc　期望 204 / 实测 404
+
+### C. 共享行被同符号的 `DELETE` 摧毁（**本片新引入的已知缺口**） —— 23 条
+
+每类只种一行、全回放共享。上游的 CRUD 链需要这一点，但独立的测试之间会互相摧毁：某条 `DELETE /api/…/{testXID}` 跑过之后，其后所有引用同一符号的 fixture 一起 404。
+  - `$testChatSessionID`：replay 序 57 的 `chat/TestClearQueuedChatTasks_PreservesUnclaimedHeadAndDeletesFollowUps` 删掉了它
+
+- `chat/TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue@server/internal/handler/chat_pending_tasks_test.go:234#18`
+  GET /api/chat/sessions/{sessionId}/pending-task　期望 200 / 实测 404
+- `chat/TestPrioritizeQueuedChatTask_BroadcastsQueueInvalidation@server/internal/handler/chat_pending_tasks_test.go:586#19`
+  POST /api/chat/sessions/{sessionId}/queued-tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/prioritize　期望 200 / 实测 404
+- `chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#27`
+  POST /api/chat/sessions/{testChatSessionID}/messages　期望 409 / 实测 404
+- `chat/TestUpdateChatSession_RejectsBlank@server/internal/handler/chat_test.go:518#22`
+  PATCH /api/chat/sessions/{sessionId}　期望 400 / 实测 404
+- `chat/TestUpdateChatSession_RenamesTitle@server/internal/handler/chat_test.go:356#21`
+  PATCH /api/chat/sessions/{sessionId}　期望 200 / 实测 404
+- `daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3821#12`
+  GET /api/daemon/chat-sessions/{testChatSessionID}/gc-check　期望 200 / 实测 404
+- `issues/TestListTasksByIssueHydratesUsage@server/internal/handler/task_usage_response_test.go:69#104`
+  GET /api/issues/{id}/task-runs　期望 200 / 实测 404
+- `issues/TestNewIssueDefaultsToEmptyMetadata@server/internal/handler/issue_metadata_test.go:234#62`
+  GET /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestNoOpIssueUpdateDoesNotAdvanceRevisionOrUpdatedAt@server/internal/handler/issue_revision_test.go:519#69`
+  PUT /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestRevisionConflictsPreserveLatestIssueAndComment@server/internal/handler/issue_revision_test.go:148#63`
+  PUT /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:259#64`
+  PUT /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:267#65`
+  PUT /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:277#66`
+  PUT /api/issues/{id}　期望 409 / 实测 404
+- `issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:288#67`
+  PUT /api/issues/{id}　期望 200 / 实测 404
+- `issues/TestTriageIsAnOrdinaryCustomStatusKey@server/internal/handler/issue_triage_guard_test.go:68#82`
+  PUT /api/issues/{testIssueID}　期望 200 / 实测 404
+- `issues/TestUpdateIssueInvalidPriorityReturns400@server/internal/handler/issue_validation_test.go:60#88`
+  PUT /api/issues/{id}　期望 400 / 实测 404
+- `issues/TestUpdateIssueInvalidStatusReturns400@server/internal/handler/issue_validation_test.go:47#87`
+  PUT /api/issues/{id}　期望 400 / 实测 404
+- `issues/TestUpdateIssueWithoutStatusChangeKeepsPosition@server/internal/handler/issue_status_position_test.go:103#72`
+  PUT /api/issues/{testIssueID}　期望 200 / 实测 404
+- `workspaces/TestDeleteWorkspace_OwnerSucceeds@server/internal/handler/workspace_test.go:321#30`
+  DELETE /api/workspaces/{testWorkspaceID}　期望 204 / 实测 404
+- `workspaces/TestDeleteWorkspace_PrunesDraftRestoresOfCascadedSessions@server/internal/handler/chat_draft_restore_test.go:353#9`
+  DELETE /api/workspaces/{id}　期望 204 / 实测 404
+- `workspaces/TestDeleteWorkspace_RequiresOwner@server/internal/handler/workspace_test.go:141#29`
+  DELETE /api/workspaces/{testWorkspaceID}　期望 403 / 实测 404
+- `workspaces/TestDeleteWorkspace_SucceedsWhenRollupLockIsFree@server/internal/handler/workspace_delete_lock_test.go:166#28`
+  DELETE /api/workspaces/{id}　期望 204 / 实测 404
+- `workspaces/TestMembershipCache_InvalidatedOnDeleteWorkspace@server/internal/handler/daemon_test.go:4169#10`
+  DELETE /api/workspaces/{testWorkspaceID}　期望 204 / 实测 404
+
+### E. 其余逐条 —— 2 条
+
+见下表。
+
+- `attachments/TestCommentSourceContextLifecycle@server/internal/handler/source_context_integration_test.go:644#2`
+  GET /api/attachments/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/download　期望 200 / 实测 404
+- `issues/TestCancelTask_SameIssue_Succeeds@server/internal/handler/daemon_test.go:1452#13`
+  POST /api/issues/{testIssueID}/tasks/{testTaskID}/cancel　期望 200 / 实测 404
+
+
+**合计 39**（A 7 + B 7 + C 23 + E 2）。
+
+**A 与 B 不是本片该修的**：A 是**本仓更松**（非法 id 形态没在进 handler 前 400），
+B 需要**第二个身份**。C 才是本片亲手引入的已知缺口，机理写在下面。
+
+### §209.5 C 的机理 + 那 1 条 500
+
+**C = 每类只种一行、全回放共享。** 这是**故意的**：上游的 CRUD 链
+（`TestIssuesCRUDThroughRouter`：create → get → put → put → list → delete → get 404）
+正是靠「同一个 id 贯穿全链」才成立的，各自种一行会把 delete-then-get 变成 get-200。
+
+代价是**独立的测试之间会互相摧毁**：replay 序 57 的
+`chat/TestClearQueuedChatTasks…` 删掉了唯一的 chat session，序 206 的
+`issues/TestIssueMetadataSetGetDelete` 删掉了唯一的 issue ——
+其后的 fixture 全部 404。`$testWorkspaceID` 同理（5 条 `DELETE /api/workspaces/{testWorkspaceID}`）。
+
+⇒ **下一片的活**：把符号从「每类一行」变成「每类每测试一行」。fixture 格式里已有
+`source.test`（上游测试函数名）这个天然分组键，所以做法是让 seeder 按
+`(kind, source.test)` 建行 —— 但那要求 `Bindings` 从「一张表」变成「按测试查表」，
+是一次形状改动，不是本片能顺手带上的。
+
+**那 1 条 500**：`daemon/TestReportTaskMessagesCallbackWithNULSucceeds`，`200 → 500`。
+`$testTaskID` 绑到种子的 chatNUL 字节的处理路径。这条在 §208 口径里属于 daemon 面，已由 M11-2 覆盖；
+本片把它从「恒不可判定」推到「真跑出 500」，**方向是对的**（真缺陷第一次被看见），
+但它**不是**本片该修的 —— 归 M11 后续片。
+
+### §209.6 两个被记录在案的缺口
+
+1. **`seed_runtime` 是本文件唯一的非路由种子**。`POST /api/agents` 要求 `runtime_id`
+   指向本 workspace 内可用的 runtime，而 runtime 在上游是**daemon 注册**的实体：
+   `routes/runtimes.rs` 只注册了 list / patch / delete / usage×3 / unbind / archive，
+   **没有 `POST /api/runtimes`**。缺的不是仓储能力（`AgentRuntimeRepo::create` 在
+   `mc-repos/src/runtime/ledger.rs:252`），缺的是把 daemon 注册面暴露成一条 HTTP 路由 ——
+   而 ⑦ `known_gap = 0` 意味着本片**不许**新增注册路由。所以这里走仓储调用，
+   并把理由写在 `seed.rs` 的函数头上（让下一个人知道**为什么只有这一处不是路由**）。
+2. **本仓的派单面不入队**。`TaskRepo::create_task`（`mc-repos/src/task/store.rs:212`）
+   在 `mc-http` 里**零调用点**（`grep -rn "create_task(" crates/mc-http/src` 无命中）：
+   把 issue 派给 agent 只写 `issue.assignee_*`，**不产生** `agent_task_queue` 行。
+   本函数一开始就是照「派单产生任务」写的，结果种出一只空列表 —— 记在这里，
+   因为这是一个**看起来显然成立、实测不成立**的假设。
+
+### §209.7 `report.json`：变了，逐字说明为什么
+
+验收要求「若改了就说明为什么」。**改了，但只改了 110 个 `path` 字符串**：
+
+```
+differing leaf fields: Counter({'path': 110})      # 只有 path
+totals equal: True                                 # 逐字相同
+```
+
+无 out-of-band 差异：`outcome` / `status_observed` / `totals` / `by_actor` 全部逐字未动。
+原因是 §199 形态本身 —— 路径从 `/api/agents/1c331d0b-…` 变成 `/api/agents/{testAgentID}`，
+而 `report.json` 逐行记 `path`。**stateless 层的判定一个字都没变**（`pass 34` 不变），
+符合 §205.5 纪律。
+
+### §209.8 门禁与新增判据
+
+- `bash scripts/gates.sh --with-db` **10/10 绿**。
+- ⑦ 八数字**逐字不变**（本片 0 路由，未刷任何 baseline）。
+- ⑩ 门禁逼出**两次拆分**（基线里的文件只允许变短）：
+  `Bindings` 整块搬进新的 `bindings.rs`（`lib.rs` 1018 → **930**）；
+  借来的 id 判据 + `package_literals` 搬进新的 `scripts/extract_borrowed_ids.py`
+  （抽取器 1863 → **1863**，恰好回到基线）。拆分后重跑抽取器，**fixture 逐字节相同**。
+- **新增判据**（`crates/mc-conformance/tests/golden.rs`）：
+  - `every_seeded_symbol_is_provided_by_the_seeder`（离线）：抽取器发出的每个符号，
+    seeder 都得供得起 —— 漏一个的症状是整批静默变 `unevaluable`，而 unevaluable 在总数里不显眼。
+  - `seeded_symbols_convert_404_into_real_judgements`（`#[ignore]`，真库）：
+    钉住那个**减法**，三桶 `56 真判定 / 24 仍 404 / 15 本仓更严`，加起来恒等于
+    带种子符号的 95 条。**任何一桶被平移走**（404→400、404→401、pass→mismatch）都会红 ——
+    这就是「防止缺口只是从 404 平移成 400 被当成进展」那条要求的落点。
+
+### §209.9 顺手记下的一个既有红灯
+
+`database_tier_replays_every_decidable_fixture`（`#[ignore]`）**在 base 上就是红的**：
+`agents/TestGetAgent_RejectsForgedAgentIDHeader` —— `Tier::Database.supports(fx)` 说能判，
+而回放器给的是 `unevaluable`（"actor kind Agent needs a real credential"）。
+已用 `git stash` 在 `b41a6086` 上复现确认，**不是本片引入**。
+真正的成因是 `supports()` 的前提表没有覆盖「actor 凭据」这一维 —— 与本片同族，
+但属 §203 的前提表口径，登记在此，不在本片修。

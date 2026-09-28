@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "daemon/TestGetTaskGCCheck@server/internal/handler/daemon_test.go:3931#14",
   "method": "GET",
-  "path": "/api/daemon/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/gc-check",
-  "path_params": {},
+  "path": "/api/daemon/tasks/{testTaskID}/gc-check",
+  "path_params": {
+    "testTaskID": "$testTaskID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -30,7 +32,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {},
+    "bindings": {
+      "$testTaskID": "task_id"
+    },
     "requires": [
       "daemon_token"
     ]
