@@ -31,6 +31,7 @@
 #   bash scripts/gates.sh --with-db                # ①–⑨（库 URL 见下）
 #   bash scripts/gates.sh --with-db --db-url 'postgres://user:pw@127.0.0.1:5432/multica_test'
 #   MULTICA_TEST_DATABASE_URL='postgres://…' bash scripts/gates.sh --with-db
+#   MULTICA_TEST_THREADS=4 bash scripts/gates.sh --with-db   # 覆盖 ⑥ 的 --test-threads（默认不传 = cargo 的 nproc）
 #   bash scripts/gates.sh --only fmt,build         # 只跑选中的门（CI 用这个）
 #   bash scripts/gates.sh --list                   # 列出闸门名
 #
@@ -42,6 +43,18 @@
 #     （target 指向根 `tests/smoke.rs`）拿到库就会对**同一个库重跑迁移** →
 #     `relation "user" already exists`。本脚本在 ⑤ 上用 `env -u` 显式剥掉该变量，
 #     所以即使调用者已经 export 过它，⑤ 也是安全的。
+#   * ⑥ 的连接预算可以用 `MULTICA_TEST_THREADS` 显式压低（见 run_db_gate 与文件顶部说明）。
+#     🔴 **但实测证明它压不动**（`docs/37` §198.3，nproc=32 / PG max_connections=100）：
+#     ⑥ 单独跑时 `pg_stat_activity` 峰值 **8** 条连接，而 `--test-threads=4` 跑出来**还是 8** ——
+#     ⑥ 的连接峰值**不由 `--test-threads` 决定**，所以这个旋钮默认别设（设了只白付约 5% 墙钟：
+#     62s → 65s，换来 0 条连接的余量）。
+#     🔴 **判别式**：db 门出现 `pool timed out while waiting for an open connection` 时，
+#     **先查这台 PG 上已有多少别人的连接，再谈代码**。这个失败有两个极易误判的特征：
+#     其一，日志里 `FATAL: sorry, too many clients` 一条都没有 —— sqlx 的 acquire 超时
+#     **先于** PG 的拒绝触发，所以「PG 从没抱怨过」并不代表连接够用；
+#     其二，panic 落在**基础设施**上而不是业务断言上，于是看起来像「某个用例的缺陷」。
+#     实测把连接占到 ~97/100 时 ⑥ 的 migrate 就会以 `pool timed out` 失败而 PG 一条 FATAL 都不打印。
+#     只有 panic 指向业务断言才是真缺陷。
 #   * ③ 与 ④ 不可合并：只有 ④ 会检查 `crates/mc-http/tests/*` 的 DB e2e 代码。
 #   * ⑥ 必须先建表：`mc-repos` / `mc-http` 的 DB 测试直接 INSERT，**自己不做迁移**。
 #   * ⑧ 与 ⑥ 的语义分工：⑥ 回答「迁移能跑 + e2e 能过」，⑧ 回答「跑出来的 schema 还是不是上游那份」。
@@ -121,6 +134,31 @@ usage() {
 WITH_DB=0
 ONLY=""
 DB_URL="${MULTICA_TEST_DATABASE_URL:-}"
+
+# ⑥ 的 `--test-threads`：让它**可显式配置**，但**默认不传** —— 空 = 沿用 cargo 的 nproc 行为。
+# 为什么默认不压低（`docs/37` §198.2/§198.3 实测，nproc=32 / PG max_connections=100 的机器）：
+#   * `cargo test -p a -p b -p c -p d` 是**逐个 test binary 串行**跑的，不是 4 个 package 各跑 32 线程；
+#   * 每个 db 用例 `Db::connect(&url, 4, 1)` 的池上限 4 只是**上界**，sqlx 懒建、连接用完即还；
+#   * 实测 ⑥ 单独跑时 `pg_stat_activity` 峰值只有 **8** 条 —— 远低于 `nproc × 4 = 128` 那个理论上界；
+#   * 🔴 承重结论：`--test-threads=4` 跑出来的峰值**仍然是 8**。也就是说 ⑥ 的连接峰值
+#     **不由 `--test-threads` 决定**，这个旋钮在当前实现下**压不动连接预算**，
+#     却要付约 5% 的墙钟（62s → 65s）⇒ 默认不设是唯一划算的选择。
+# 真正的变量是**同一台 PG 上已经被别人占掉多少**（并发跑的其它切片 / 共享实例）：
+# 实测占到 ~97/100 时 ⑥ 的 migrate 就会以 `pool timed out` 失败，且 PG 一条 FATAL 都不打印。
+# 那种环境下要退让，就换**串行化 db 门**或**加大 max_connections**，而不是拧这个旋钮。
+DB_THREAD_FLAG=()
+if [ -n "${MULTICA_TEST_THREADS:-}" ]; then
+    case "$MULTICA_TEST_THREADS" in
+        ''|*[!0-9]*)
+            echo "error: MULTICA_TEST_THREADS must be a positive integer (got: '$MULTICA_TEST_THREADS')" >&2
+            exit 2 ;;
+    esac
+    [ "$MULTICA_TEST_THREADS" -ge 1 ] || {
+        echo "error: MULTICA_TEST_THREADS must be >= 1 (got: $MULTICA_TEST_THREADS)" >&2
+        exit 2
+    }
+    DB_THREAD_FLAG=(--test-threads="$MULTICA_TEST_THREADS")
+fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -223,7 +261,13 @@ run_db_gate() {
     local start end rc_m rc_e combined note t0 t1 t2
     printf '\n=== [%s] gate db ===\n' "$(gate_label db)"
     printf '$ MULTICA_DATABASE_URL=<db-url> mc-migrate run --dir migrations\n'
-    printf '$ MULTICA_TEST_DATABASE_URL=<db-url> cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util -- --ignored\n'
+    printf '$ MULTICA_TEST_DATABASE_URL=<db-url> cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util -- --ignored'
+    if [ "${#DB_THREAD_FLAG[@]}" -gt 0 ]; then
+        printf ' %s\n' "${DB_THREAD_FLAG[*]}"
+    else
+        # 显式印出「没设」这个事实：预算由 cargo 按 nproc 隐式决定，日志里必须看得见这一点。
+        printf '   # --test-threads 未设（实测该旋钮压不动 ⑥ 的连接峰值，见文件顶部「已知坑」）\n'
+    fi
 
     t0="$(date +%s)"
     MULTICA_DATABASE_URL="$DB_URL" cargo run -p mc-migrate -- run --dir migrations
@@ -233,7 +277,7 @@ run_db_gate() {
 
     if [ "$rc_m" -eq 0 ]; then
         MULTICA_TEST_DATABASE_URL="$DB_URL" cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server \
-            --features mc-http/test-util -- --ignored
+            --features mc-http/test-util -- --ignored "${DB_THREAD_FLAG[@]+"${DB_THREAD_FLAG[@]}"}"
         rc_e=$?
         t2="$(date +%s)"
         printf 'GATE_DB_E2E_EXIT=%s\n' "$rc_e"
@@ -287,6 +331,7 @@ for gate in $SELECTED; do
         # ⑤ 显式剥掉 DB 变量：见文件顶部「已知坑」。
         test)           run_gate test env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL \
                             cargo test --workspace ;;
+        # ⑥ 的 --test-threads 来自 $MULTICA_TEST_THREADS（默认不传），见文件顶部「已知坑」。
         db)             run_db_gate ;;
         schema-drift)   run_schema_drift_gate ;;
         route-parity)   run_gate route-parity bash -c \
