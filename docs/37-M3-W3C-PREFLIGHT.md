@@ -17108,3 +17108,76 @@ crates/mc-channel/src/wecom/mod.rs:38,41,42  pub mod stream_store / ws_frame / w
 - `LUM-2136` 交 PR ⇒ 走 §193.1 那条判据链（**含「合并树 == head 树 ⇒ 免本地全量门」**）；合并后 8 数字仍须逐字不变。
 - 起手**先 fetch 再 reset**（§193.1 的踩坑）。
 - 派发面若仍只 1 台：改派 `LUM-2110` 前**先按 §193.6 订正它的 T1-10/T1-11**。
+
+## 194. 21:30 cycle（`LUM-2452`）—— 零收割监控轮；**§192.2 外科回收公式的括号 bug**；订正 `LUM-2110` 的 placeholder 桶指认
+
+**起手**：base `7aa5b110`（fetch + reset 后与 `ls-remote` 逐字一致）；GH **0 open PR**；df 起手 17G(65%)；PG `online`；
+`multica repo checkout` **第 31 次**落 `main`（pc-* 世代）线 ⇒ reset。
+
+### 194.1 门读不变式第 6 次复现（base `7aa5b110`，四道零编译门 <1s）
+`upstream 456 / local 546 / baseline 546 / implemented 455r+1ph=456 / known_gap 0 / unclaimed 0 / regressions 0 / local_only 8(1ph) / owners {} / ok=true`；
+`slash_alias_audit --quiet` exit 0；`file_size_check --quiet` exit 0；`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`。
+**`known_gap 0 / owners {}` 连续第四轮** ⇒ M3–M10 已无待实现路由，剩下是运力与收尾工具问题。
+
+### 194.2 🔴 头号产出：§192.2 外科回收公式**缺括号 ⇒ 静默零回收**（本次自踩，改正后同一轮回收 2.5G）
+
+§192.2 记的闭式判据：
+```
+find target/debug/incremental -maxdepth 1 -mindepth 1 -type d -mmin +5 ! -name '<crate>*' -print0 | xargs -0 rm -rf
+```
+把它推广成「排除**当前所有在编 crate**」时，正确形态是 `! \( -name A-* -o -name B-* \)`。我先写成
+`! -name A-* -o -name B-*`（多个 `-o` **不括起来**）⇒ **find 的隐含 `-a` 优先级高于 `-o`**，
+整个表达式退化成 `(… ! -name A-*) -o (-name B-*)` ⇒ **一条都没删**。
+
+**症状极具欺骗性**：命令 `exit 0`、无报错、桶数只涨（`128 → 140`，因为边删边编）、`du` 一字不变（`7612M`）、
+`find … | wc -l` 甚至给出「可删 81 桶」这种**看起来很能干**的数字。
+⇒ **新纪律：`find` 里凡出现第二个 `-o`/`-a`，一律先手工加 `\( \)`；并且回收后必须回读两个独立量 —— 桶数 + `du -sm` —— 少一个都判「没删成」。**
+（`-print0` 之前的 `!` 只作用于紧邻的那一个 `-name`，这是 `-a`/`-o` 优先级问题的第二层伪装。）
+
+改正后同一轮实测：在飞片 `LUM-2136` 正跑 `gates.sh --with-db`（PID 63852）时，
+`incremental` `7612M → 5065M`、`avail 14081M → 16650M`，**`gates.sh` 与 cargo/rustc 全程存活、零中断**。
+
+### 194.3 🔴 承重订正：`LUM-2110` 描述 §4 把两个互不相干的 placeholder 桶当成了一个
+
+上文（`LUM-2110` 描述 §4）写「那唯一的 placeholder 是 `GET /api/issues/:id/quick-actions`（`routes/issues/mod.rs:220`），owner = M3」——
+**指认错了桶**。§188.1 已把 placeholder 分成两个字段，本轮 `--json` 逐条复核：
+
+| 字段 | 值 | 键 | 语义 |
+|---|---|---|---|
+| `implemented_placeholder` | **1** | `POST /api/issues/{id}/comments/trigger-preview`（`router_line 1978`，owner **M2-A**） | 上游 456 条里已注册、handler 仍占位 |
+| `local_only_placeholder` | 1 | `GET /api/issues/:id/quick-actions`（`routes/issues/mod.rs:220`，owner M3+） | 上游没有、本仓自加且仍占位 |
+
+上文点名的 quick-actions 属 `local_only_placeholder`，**不是** T1-1 里 `implemented_placeholder == 0` 那一格的失败项。
+**若不改，这片会把错误的键打进 `docs/65-STOP-CONDITION.md` 的判据表里 —— 而 `docs/65` 的用途正是「机器化回答还剩多少」，
+错键 = 该文档的唯一卖点失效。** 本轮已订正（描述 rev 5 → **6**），并把 T1-1 拆成 `T1-1a…1f` 六行分别打印，**禁合并成一句**。
+
+**两条 placeholder 本片都不得动**：前者 `docs/10 §2` 记「M2-B 明确不做」属计划期裁定；后者是
+`crates/mc-http/tests/issues/auth.rs:130-145` 耐久 501 断言的落点（占位升级类切片第 3 次换落点后选定，注释逐字要求「换耐久键」而非改 handler）。
+
+**方法论（可复用）**：**「还剩几个 X」永远要同时给出字段名**。§188.1 记的是 ⑦ 的两个 placeholder 字段；
+本轮的错误不是新算错了，而是**下游文档沿用了上游的口头表述**。凡把机器读数抄进人类文档的字段名，必须回读 `--json` 原字段名。
+
+### 194.4 镜像门 / CI job 缺失（独立复核 §193.6，结论不变）
+`scripts/gates.sh:81` 的 `ALL_GATES` 恰为 **10 个**（`fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size`），**无 `image`**；
+`.github/workflows/ci.yml` 恰为 **3 个 job**（`fast` / `db` / `contract`）。⇒ `LUM-2110` 的 T1-10 / T1-11 指向不存在的对象，须按缺报。
+
+### 194.5 在飞判活（§184 第 0 / 0.5 / 0.6 步全过）
+`/proc/*/cwd` 只有两个 agent `pi`：PID 35915 = `lum-2136-04f6ab425571`、PID 62879 = 本 cycle ⇒ **无陌生 workdir、无第二写者**。
+`LUM-2136` 判活为**在跑门禁**：8 改 1 新（`wecom_probe.rs` 已建 ⇒ §193.3 裁定的 (a) 路径已执行），
+`gates.sh --with-db` 于 13:30Z 起跑 `/tmp/gates_m7fu.log`。零收割、零派发。
+
+### 194.6 派发面连续第五轮 = 结构性 1 台
+`runtime list × agent list` 按 `runtime_id` 连接：在线可派 = **`3c6087f9`（devbox5，本 cycle，且被 `LUM-2136` 占用）**；
+devbox1 `041bf509` / devbox2 `e3b45a25`（offline 自 09-17）/ devbox4 `4a7f29e1` / devbox `478b7f4b` 全 offline；
+`46140255`（jiangx-mac）/`8b9c725f`（xingubuntu）online 但**零绑定本项目 agent**（`7e6471d9` 已绑 `投资研究助手lin`）
+⇒ **owner 动作 = 改绑 `runtime_id`，当轮恢复 2–3 槽**。不重复 @。
+`LUM-2110` 按 §194.3 订正后**规格已就绪**，但**无处可派**（§188.4 的 (B) 结构型：宿主 devbox2 熄火 11 天 + 远端 `2110` 分支 0 命中）
+⇒ 原地 `todo`，不改派（改派的前提 = 存在一个既空闲又满足 §183.3 同 device 约束的目标 device）。
+
+### 194.7 下一轮起点
+- base **`7aa5b110`**；GH **0 open PR**；在飞 `LUM-2136`（门禁段）。
+- 起手**先 fetch 再 reset**；df **连采两次**再判 ENOSPC（§189.5）。
+- 外科回收前**先加括号**（§194.2），回收后**回读桶数 + `du -sm` 两个量**。
+- `LUM-2136` 交 PR ⇒ §193.1 判据链（含「合并树 == head 树 ⇒ 免本地全量门」）；**交 PR 即回收 `target/`**（§193.1 结论 1 的时机点）。
+- 槽位空出**且**有空闲合规 device ⇒ 才派 `LUM-2110`（规格已就绪，只欠一台机器）。
+- `LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
