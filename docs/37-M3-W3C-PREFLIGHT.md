@@ -17566,3 +17566,127 @@ ENOSPC 已 10 次、且曾连带杀掉 PG 5432）**本轮刻意不跑**，交由
   ⇒ 下一轮要么先改它的描述与预测，要么就把它按「实测重写」重新立项。
 - **下一轮起点 base = `aac8e86b`**。`LUM-2462` 交 PR ⇒ 七条判据链；因 0 路由，合并树**八个数须逐字不变**，
   验收只能来自它自己的 CLI 用例 + 门禁 ⑥ 双模式，**不能来自 ⑦**。
+
+## §199 02:30 cycle（`LUM-2469`）—— **全量 `--with-db` 首次跑全 10/10**；交付 M10-7（`LUM-2109`）发布面：`deploy/Dockerfile` + 门 ⑪ + CI `image` job
+
+### §199.1 收割：base `40728a75`、0 open PR、在飞 0/3
+
+上一轮（`LUM-2467`）已合掉 PR #143（M10-8）与 PR #144（`LUM-2462`），本轮起手 **0 open PR、无在飞实现片**。
+磁盘是本轮第一个障碍，也是唯一一个：**13G avail**。按 §197 的定式先数杠杆再动手：
+
+| 杠杆 | 计数 | 结论 |
+|---|---|---|
+| `deps` 重复 `(stem,ext)` 组数 | 709 组 | **不可用**（见下） |
+| 死 workdir 外壳 | 17 个目录里 `lum-2467` 占 **16G** | ✅ 唯一可用杠杆 |
+
+⇒ 回收 `lum-2467`（01:00 轮，**已交付完、repo `git status` 干净、停在合并后的 `40728a75`、无 cargo/rustc 进程**）的 `target/`：**13G → 29G**。
+这条复现了 §197 的承重结论并给出它的**另一半**：`lum-2467` 不是「死 workdir」而是**上一轮自己的 workdir**——它比「死 workdir」更好回收（成果已 push、树已合并），却因为**没人回收它**而整整吃掉 73% 的盘。
+
+### §199.2 🔴 承重一：全量门跑得起来，但**「跑两遍」会把盘吃穿**
+
+本轮第一次真正把 `--with-db` 的 **10/10 门全部跑完**（此前多轮因余量不足只跑 ⑥⑦⑨⑩）：
+
+```
+① fmt 3s  ② build 144s  ③ clippy 64s  ④ clippy-test-util 51s  ⑤ test 169s
+⑥ db 277s  ⑧ schema-drift 27s  ⑦ route-parity 1s  ⑨ conformance 80s  ⑩ file-size 0s
+```
+
+起手时我给这条命令加了 `CARGO_INCREMENTAL=0`，于是 10/10 全绿、`target/` 停在 23G。
+紧接着**第二次**跑默认集合时我忘了带这个变量 → 继承本仓 `.cargo/config.toml` 的 `incremental = true` → 门 ② ③ ④ ⑤ ⑨ **全部 exit 101**、报
+`could not create incremental compilation session directory: No space left on device`：
+
+```
+df: 47G used / 0 avail / 100%
+target/debug/incremental  6.8G
+target/debug/deps        23G
+```
+
+**「绿 → 再跑一遍 → 全红」的转换点就是 `CARGO_INCREMENTAL`**，而且它和 §192.2 / §195.4 是同一条纪律的第三个面：
+
+1. §195.4：`CARGO_INCREMENTAL=0` ⇒ `incremental/` 桶数 0 ⇒ 「按桶大小挑最大的删」这个杠杆**恒为 0**。
+2. §192.2：`incremental/` 是回收的**首选目标**。
+3. **本轮**：两者**互斥**，且**选错的那一侧代价不对称** —— 设了它，代价是 6.8G 磁盘；不设它，代价是 ENOSPC（第 11 次）。
+
+⇒ **本仓在这台机器上的唯一安全姿势是 `CARGO_INCREMENTAL=0` 常设**，并且 `rm -rf target/debug/incremental` 是**事后**补救、不是**事前**规划。
+删掉那 6.8G 之后（`0 avail → 6.2G avail`），带 `CARGO_INCREMENTAL=0` 重跑默认集合 = **8/8 绿 / 183s**，且 `df` 纹丝不动 —— 这是「不新建第二套产物」的直接证据。
+
+### §199.3 🔴 承重二：`deps` 的 709 个重复组**不能**按 §177 的 keep-latest 回收
+
+§197 订正过 §177：keep-latest 的回收量由**重复组数**决定，单趟构建下重复组数可以为 0。
+本轮实测 `deps` 有 **709 个重复 `(stem,ext)` 组**——看着像 §177 配方的用武之地，**但本轮不能回收**：
+
+`target/debug/deps` 23G **就是当前这份 6.2G 余量能支撑的唯一已编译产物**。删掉它就要从零重编，而门 ⑤ 的冷建峰值实测 **21.2G**（§197）—— 在 6.2G 余量下回收等于自杀。
+⇒ **「重复组数 > 0」是 keep-latest 的必要条件，不是充分条件**；还必须加上第三条：**「回收后余量 ≥ 重跑被删产物所需的峰值」**。本轮这条不成立 ⇒ 一个字节都不删。
+这条同时解释了 §197 里「单趟构建下组数 0、回收 0」为什么会与本轮的「709 组」同时为真：**本轮的 709 组是两次构建（incremental 开 / 关）留下的，不是两套 profile**。
+
+### §199.4 交付 M10-7（`LUM-2109`）：发布面，0 路由
+
+`LUM-2109` 在 backlog 里躺了很久，前几轮给的口径是「需 owner 裁决（装 docker）」。**本轮推翻这个前提**：
+该片自己的描述就写明「本机无 docker，**只有 CI 能判**」，而门 ⑪ 被刻意设计成**不进默认集合**——也就是说
+**「本机没有 docker」从来不是它的阻塞，而是它的设计前提**。前几轮把设计前提误读成了阻塞，这是本轮的第二条产出。
+
+写集 4 个文件（比该片声明的 3 个多一个 `.dockerignore`，理由见 §199.6）：
+
+| 文件 | 动作 | 内容 |
+|---|---|---|
+| `deploy/Dockerfile` | **新建** | 多阶段 builder（`rust:1-bookworm` + BuildKit cache mount）→ `debian:bookworm-slim` runtime；`USER 10001:10001`；`ENTRYPOINT ["/usr/local/bin/multica-server"]` |
+| `scripts/gates.sh` | **+1 门 ⑪** | 进 `ALL_GATES` / `--list` / `--only image`；**不进默认集合、不进 `--with-db` 集合** |
+| `.github/workflows/ci.yml` | **+1 job `image`** | 唯一 `run:` 是 `bash scripts/gates.sh --only image` |
+| `.dockerignore` | **新建** | 只排 `target/`（23G）与 `.git/` |
+
+🔴 **二进制名订正**：`LUM-2109` 的 DoD 原文写 `ENTRYPOINT` = `mc-server`，**这是错的**。
+`apps/mc-server/Cargo.toml` 里 crate 名是 `mc-server`，但 `[[bin]] name = "multica-server"`。
+镜像里的路径必须跟 `[[bin]]` 对齐，否则 ENTRYPOINT 指向一个不存在的文件、而 `docker build` **仍然成功**——
+这正是门 ⑪ 的第 ③ 条判据（`test -x /usr/local/bin/multica-server`）要拦的那一类错误。
+
+🔴 **门 ⑪ 判三件事，不是「能不能 build」一件**：
+① build 成功；② 容器内 `id -u` **≠ 0**（`USER` 真的生效了——写成 root 也能 build 成功，只能靠起容器问）；③ 二进制存在且可执行。
+② ③ 各花一次 `docker run --rm --entrypoint`，几百毫秒，相对分钟级 build 可忽略，换来两个可读的失败点。
+
+🔴 **缺 docker ⇒ exit 2，不是「跳过」，更不是「绿」**。`run_image_gate` 的 `return 2` 一开始会掉进
+「没跑过这道门 ⇒ 汇总表里没有它 ⇒ `OVERALL` 仍是 0 ⇒ 脚本 exit 0」，也就是**静默判绿**——本仓明令禁止的那件事。
+已修：`image) run_image_gate; _img_rc=$?; [ "$_img_rc" -eq 2 ] && exit 2 ;;`，与 ⑥/⑧ 缺库 URL 的处置同款。
+实测（无 docker 的本机）：`--only image` → **exit 2** + 五行指路，默认集合里 `image` 出现在 `(not selected: ...)` ⇒ **8/8 口径逐字不变**。
+
+### §199.5 验收证据与其边界
+
+- 本机：`--list` 含 `image`（11 项）；默认集合 **8/8 绿**（`not selected: db schema-drift image`）；`--only image` 无 docker ⇒ **exit 2**。
+- `ci.yml` YAML 解析通过，4 个 job，`image` job 的 step 逐字为 `[checkout, bash scripts/gates.sh --only image]`。
+- 门 ⑩ 绿（`ci.yml` 在它的扫描范围内）；门 ⑦ 绿，**八个数逐字不变**：
+  `upstream 456 / local 546 / baseline 546 / implemented 455r+1ph=456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` ⇒ `known_gap 0 / owners {}` **连续第七轮**。
+- 门 ⑨ 绿（`report matches crates/mc-conformance/report.json`），**未改**任何快照文件（0 路由片的纪律）。
+
+**边界（必须说清）**：**门 ⑪ 在本机一次也没真跑过**——本机无容器 CLI，`docker build` 从未执行。
+所以它的验收证据是「CI 的 `image` job」，**不是**本地全量门。这也意味着本片的门 ⑪ 判定能力在合入前**未被证实**，
+与 §193.1 的「形态③免跑分支」不同：**本片不能走免跑分支**（前进段的非 docs 位移不为 0，base 会真合），
+必须让 head CI 的第 4 个 job（`image`）先绿，再合。
+
+### §199.6 越出声明写集的 `.dockerignore`（理由）
+
+`LUM-2109` 的逐字写集没有 `.dockerignore`，但没有它 `COPY . .` 会把 **23G 的 `target/`** 打进构建上下文
+——CI 的 `image` job 会慢到超时并在构建机上白占一份盘。**这不是「顺手加的清理」，是让该片可用的必要件**，
+故按纪律在此显式登记为越出项。排除清单刻意极短：只排 `target/` 与 `.git/`，**不排** `migrations/`
+（编译期资源，排掉会让构建失败）、**不排** `.cargo/config.toml`（本仓构建配置）、**不排** `docs/`
+（门 ⑩ 基线与 `docs/fixtures/*.json` 是权威快照）。
+
+### §199.7 本片 Dockerfile 的两个自查 bug（记下来，因为它们是「写完必须自己查」的那类）
+
+1. 🔴 **「先 `COPY` 清单再 `cargo fetch` 预热依赖层」这套路在本仓不能用**。我第一版照惯例写了
+   「造假 manifest（`for d in crates/*/ …`）先铺一层再 fetch」，两个问题：那个生成 manifest 的循环
+   本身写错了（`cp` 之后又 `rm -f` 再重写，纯属多余），且**本仓 37 个 crate**，逐个复刻依赖边一旦漏一个
+   就在 `cargo metadata` 阶段炸出一句极难读的错。**改用 BuildKit cache mount**（`--mount=type=cache,target=/usr/local/cargo/registry`）后，
+   不需要伪造任何文件，依赖缓存照样生效。
+2. 🔴 **cache-mount 版仍踩了同一个坑**：`cargo fetch --locked` 写在了 `COPY . .` **之前**，
+   此时工作目录里**一个 manifest 都没有** ⇒ 构建必然失败于 `could not find Cargo.toml`。
+   已修（fetch 与 build 合并到 `COPY . .` 之后的同一个 `RUN`）。
+   两条合起来是同一条纪律：**本仓没有「小仓常见、免 `COPY . .`」的余地**——37 个 crate + 编译期 embed 的
+   `migrations/`，让「只 COPY 清单」这条路在本仓的成本高于它省下的构建时间。
+
+### §199.8 下一轮起点
+
+- base = `40728a75` + 本片合并。**槽位 1/3，另 2 空**仍是结构性无处可派（devbox1/2/4 全 offline，
+  另 3 台 online Pi runtime 零绑定本项目 agent ⇒ owner 动作仍是改绑 `runtime_id`，按口径不重复 @）。
+- **M10-7 合入后 `LUM-2111`（M10-9 INT）的硬前置「全波 M10-0…M10-8」才第一次真正成立**
+  （它现在只差 M10-7 一个）。但它的描述预测**已严重过期**（写的还是 `known_gap 65 / local 474`，
+  实测 `known_gap 0 / local 546`）⇒ 下一轮要么先改描述与预测，要么按实测重写立项。
+- 起手固定动作：`df` 连采 → **确认 `CARGO_INCREMENTAL=0`**（§199.2）→ 回收**上一轮自己的** workdir（§199.1）→ 再判活。

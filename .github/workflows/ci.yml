@@ -151,3 +151,23 @@ jobs:
 
       - name: "⑨ conformance — mc-conformance --no-db --check report.json"
         run: bash scripts/gates.sh --only conformance
+
+  # ⑪ image（M10-7 / LUM-2109）：本仓**唯一**的发布制品 `deploy/Dockerfile`。
+  #
+  # 这个 job 存在的**全部理由**是：门 ⑪ 需要 docker，而开发机（实测 docker/podman/buildah
+  # 三者皆无）跑不了它；门 ⑪ 因此刻意不在默认集合里（见 scripts/gates.sh 顶部「已知坑」⑪）。
+  # 所以「镜像到底能不能建、非 root 有没有生效」在本仓**只有这里能判**。
+  #
+  # 🔴 唯一的 `run:` 就是 `bash scripts/gates.sh --only image` —— 本仓纪律：门禁命令的
+  # 唯一实现是 gates.sh，CI 不重写命令（否则又是一次「CI 绿、本地红」式的两处漂移）。
+  # ⚠️ 它**不装 rust toolchain**：⑪ 的编译发生在 `deploy/Dockerfile` 的 builder 阶段
+  # （FROM rust:1-bookworm），runner 宿主不需要 Rust —— 装了也用不上，只会多花几分钟。
+  image:
+    name: image — deploy/Dockerfile（多阶段 / 非 root / ENTRYPOINT）
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "⑪ image — docker build + 非 root + 二进制存在"
+        run: bash scripts/gates.sh --only image
