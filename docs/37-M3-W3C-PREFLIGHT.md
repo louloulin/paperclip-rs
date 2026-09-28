@@ -18303,3 +18303,41 @@ base **`2a3e64be`** + 本节直推；GH **0 open PR**；在飞 `LUM-2482`（0 �
 把白名单那条真实现掉 ⇒ 也 FAIL）+ 门禁，**不能来自 ⑦**。
 交 PR 即回收 `target/`；`avail` 回 ≥20G 后再排下一片。
 `LUM-2110`（结构型 `queued`）/ `LUM-2462` 排在 `LUM-2482` 之后。
+
+---
+
+## §207 【2026-09-29 05:30 cycle / LUM-2488】抢救 `LUM-2483` 的孤儿提交 + **3.4G 回收** + 第 3 槽位按算式留空
+
+- base 起手 **`82584529`**（PR #149 合并点），GH **0 open PR**。checkout **又一次落 `origin/main`** ⇒ `reset --hard`（第 36 次）。
+- 起手 `df` **8.7G(82%)** → 回收 `lum-2482` 的 `target/`（**3.4G**）后 **13G(75%)**。
+
+### §207.1 本轮唯一实质动作 = 抢救一个**跑挂了的 cycle** 的产物
+
+`LUM-2483`（04:30 cycle）状态还停在 `in_progress`，但磁盘上 workdir 自 20:37 未动、`daemon running_task_count`
+里没有它 ⇒ **run 已死、状态泄漏**（与 `LUM-2456` 同族）。它唯一产物是 docs-only 提交 `817285ad`
+（§203 收割记录，91 行），**只存在于 `origin/agent/devbox5/cycle-0430`，从未进 PR、base 里没有**
+⇒ 再晚一轮就等于静默丢失。本轮 cherry-pick 回来直推。
+
+**🔴 承重：cherry-pick 必撞号，而撞的是被代码引用的号。**
+`817285ad` 自编号 `§203`，但 base 侧 `§203` 已被 `LUM-2477`（M11-1）占用，且被 **6 个源文件 + 2 份文档**
+交叉引用（`mc-conformance/src/lib.rs:48`、`tests/golden.rs:14`、`mc-http/src/state.rs:515`、
+`extract_requirements.py:14/77`、`extract_upstream_fixtures.py:70/602`、`docs/32` §65 全段）；
+`§204` 又已被 `LUM-2482` 锁定并被 `scripts/stop_condition.sh:134/528` + `docs/32:9823` + `docs/65:200/308` 引用。
+⇒ 解法不是「谁后到谁让」（base 侧被引用者必须让不动），而是**给抢救回来的那节整体改号**：
+`§203`→**`§206`**（连 6 个子节 + 正文自引用），`§205` 留给在飞的 `LUM-2487`。
+**判别式：号段冲突时，先数「谁被非 docs 文件引用」——被引用的那个不许动，动的是新来的。**
+
+### §207.2 三槽位实况 = **2/3**，第 3 槽按算式**刻意留空**
+
+- 在飞：`LUM-2487`（M11-2 / `daemon_token` 装配）**判活** —— 21:26 起 `gates.sh --with-db` 在跑，
+  21:30 `cargo test --workspace` 活跃；写集 4 改 1 新（`mc-conformance/{harness,lib,requirements}.rs`
+  + `mc-repos/daemon.rs` + 新 `daemon_token.rs`），`target/` **17G**。**不抢救**。
+- 回收：`lum-2482`（PR #149 已 squash 合入 `82584529`，worktree 干净、无 cargo 进程、`/proc/*/cwd` 零命中）→ **3.4G**。
+- 第 3 槽算式：`avail 13G − 可回收 0G`（全盘唯一大 `target/` 就是在飞那片自己的）`< 全量 `--with-db` 峰值 18–30G`
+  ⇒ **期望收益为负，留空**。唯一候选（Tier-2 / `T1-6` 真库层 159 条 mismatch 正名分）**必编译 + 必连库**，正是这个禁令的靶子。
+
+### §207.3 下一轮起点
+
+base = **`82584529` + 本节**；先判活 `LUM-2487`（它交 PR 后走 §206.2 同一条判据链：先比 tree hash，
+合并树当场重跑 `--with-db` 10/10，**八个数须逐字不变**）；**交 PR 即回收其 17G `target/`**；
+`avail` 回 ≥30G 才排 Tier-2。`LUM-2111`（M10-9 INT）仍卡 docker 三件套皆无，**待 owner 裁决，不重复 @**。
