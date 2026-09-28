@@ -23,6 +23,28 @@ fn app_with_disk(fx: &super::fx::Fx, dir: &TempDir) -> axum::Router {
     test_app(fx.db.clone(), dir.path())
 }
 
+/// 本用例这枚 uploader 的 `attachment` 行数 —— 限域计数，**替代无范围 `count(*)`**。
+///
+/// 门 ⑥ 在**同一个进程、同一个库**上并发跑全部 `#[ignore]` db 用例：
+/// 任何别的用例在两次计数之间落一条 `attachment` 行，无范围的全表快照就会假红
+/// （**第三族**：共享表无范围计数，`LUM-2419`）。
+/// `fixture()` 每条用例现建一枚新 user uuid ⇒ 以 `uploader_id` 限域后，
+/// 本计数**只**观测本用例自己这一次调用可能写下的那一行。
+///
+/// 作用域取 `uploader_type = 'member' AND uploader_id = $1`，
+/// 与 `crates/mc-http/src/routes/uploads.rs:317` 那条**唯一**的 `INSERT` 列形状逐字一致：
+/// 无 workspace 那一支若真落了行，只可能是同一形状（`member` + 本 actor）。
+async fn attachments_of(db: &mc_db::Db, uploader: uuid::Uuid) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM attachment \
+         WHERE uploader_type = 'member' AND uploader_id = $1",
+    )
+    .bind(uploader)
+    .fetch_one(db.pool())
+    .await
+    .expect("count attachment rows of one uploader")
+}
+
 #[tokio::test]
 #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
 async fn upload_with_workspace_creates_the_attachment_row() {
@@ -147,10 +169,7 @@ async fn upload_without_workspace_writes_no_row() {
     let Some(fx) = fixture().await else { return };
     let dir = TempDir::new("db-nous");
     let app = app_with_disk(&fx, &dir);
-    let before: (i64,) = sqlx::query_as("SELECT count(*) FROM attachment")
-        .fetch_one(fx.db.pool())
-        .await
-        .expect("count");
+    let before = attachments_of(&fx.db, fx.user).await;
     let (status, _, body) = call(
         &app,
         Call::upload(&[Part::file("avatar.png", &PNG_1X1)]).with_user(fx.user),
@@ -168,11 +187,8 @@ async fn upload_without_workspace_writes_no_row() {
     );
     // 三键响应：**没有** `workspace_id`（上游那一支逐字）。
     assert!(v.get("workspace_id").is_none(), "{body}");
-    let after: (i64,) = sqlx::query_as("SELECT count(*) FROM attachment")
-        .fetch_one(fx.db.pool())
-        .await
-        .expect("count");
-    assert_eq!(after.0, before.0, "无 workspace 分支不许写 attachment 行");
+    let after = attachments_of(&fx.db, fx.user).await;
+    assert_eq!(after, before, "无 workspace 分支不许写 attachment 行");
 }
 
 #[tokio::test]

@@ -14,6 +14,28 @@ use super::support::*;
 use super::SIX;
 
 // ---------------------------------------------------------------------------
+// 0. 「落没落库」的**限域**度量（`LUM-2419` 第三族竞态）
+// ---------------------------------------------------------------------------
+
+/// 本 issue 的 `comment` 行数 —— 限域计数，**替代无范围 `COUNT(*)`**。
+///
+/// 门 ⑥ 在**同一个进程、同一个库**上并发跑全部 `#[ignore]` db 用例：
+/// 任何别的用例在两次计数之间插一条 `comment`，无范围的全表快照就会假红
+/// （弱等待 / 时钟桶跨界之后的**第三族**：共享表无范围计数，`LUM-2419`）。
+/// `seed_workspace` 每条用例现建一枚新 issue uuid ⇒ 以 `issue_id` 限域后，
+/// 本计数**只**观测本用例这一次调用写下的行，与并发用例零互扰。
+///
+/// 刻意**不**加 `AND deleted_at IS NULL`：这两条断言要证的是「有没有 INSERT 过」，
+/// 软删（`deleted_at` 非空）同样是落库；带上它会把「插入后立刻软删」误判成没写。
+async fn comments_on_issue(db: &mc_db::Db, issue: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*)::bigint FROM comment WHERE issue_id = $1")
+        .bind(issue)
+        .fetch_one(db.pool())
+        .await
+        .expect("count comment rows of one issue")
+}
+
+// ---------------------------------------------------------------------------
 // 1. 目录面：4 条逐条打通（两种写法都是真端点，不是 405）
 // ---------------------------------------------------------------------------
 
@@ -309,10 +331,7 @@ async fn render_returns_the_body_without_posting_anything() {
     .await;
     let id = created["id"].as_str().unwrap().to_string();
 
-    let before: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM comment")
-        .fetch_one(db.pool())
-        .await
-        .unwrap();
+    let before = comments_on_issue(&db, seed.issue).await;
     let (status, _, value) = send(
         &app,
         &Call::new(
@@ -331,10 +350,7 @@ async fn render_returns_the_body_without_posting_anything() {
         "{content}"
     );
     assert!(content.starts_with("[@itest-qa-public-"), "{content}");
-    let after: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM comment")
-        .fetch_one(db.pool())
-        .await
-        .unwrap();
+    let after = comments_on_issue(&db, seed.issue).await;
     assert_eq!(before, after, "render 绝不落库");
 }
 
@@ -420,10 +436,7 @@ async fn archived_actions_and_triaged_issues_refuse_to_run() {
     .await;
     assert_eq!(status, StatusCode::OK, "归档走 PATCH");
 
-    let before: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM comment")
-        .fetch_one(db.pool())
-        .await
-        .unwrap();
+    let before = comments_on_issue(&db, seed.issue).await;
     let (status, _, body) = send(
         &app,
         &Call::new(
@@ -468,10 +481,7 @@ async fn archived_actions_and_triaged_issues_refuse_to_run() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "triage 中的 issue 不得 run");
-    let after: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM comment")
-        .fetch_one(db.pool())
-        .await
-        .unwrap();
+    let after = comments_on_issue(&db, seed.issue).await;
     assert_eq!(before, after, "被拒的 run 一条评论都不许落");
 }
 
