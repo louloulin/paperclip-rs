@@ -146,6 +146,62 @@ apply-exception=9, differs=14, extra=22 （missing=0, ok=True, exit 0）
 
 ⇒ `missing == 0` ⇒ **T1-8 PASS**。「差异全部已登记」与「没有缺表」是两件事，判据取后者。
 
+### 4.4 ⑥ 门禁（本片**自己**跑的 `gates.sh --with-db`）
+
+```text
+gates.sh --with-db  ⇒  11 条 GATE_*_EXIT 全 0  ⇒  T1-10 PASS
+```
+
+（是 11 条而不是 10 条：门 `db` 会打 `GATE_DB_MIGRATE_EXIT` / `GATE_DB_E2E_EXIT` / `GATE_DB_EXIT` 三行，
+合并判据取 `GATE_DB_EXIT`。脚本判的是**没有一条非 0**，不是数行数。）
+
+⚠️ **本 device 的磁盘纪律（本片实测，两次撞 `avail = 0`）**：`cargo build --workspace --all-targets` 的
+`target/debug/deps` 峰值 **≈27G**，而本盘 49G 里 OS + 其他 workdir 已占 ≈20G ⇒ 跑 `--with-db` 全量门禁
+**必须**：`export CARGO_INCREMENTAL=0`（省 ≈12G 的 `incremental/`）、中途 `rm -rf target/debug/incremental`、
+以及**只保留一套 feature 变体的产物**（被 kill 的那一轮会留下 ≈6.1G 孤儿二进制，按 mtime 删）。
+`docs/37` §184 的「整跑一次 + 按 `--only` 逐门补」在这里是**必需**而不是可选。
+
+
+### 4.5 🔴 本片验收：**脚本现在的输出就是「还剩多少」的机器化答案**
+
+base `959a4002`，一条命令（门禁段用本片自己跑出来的 `gates.sh --with-db` 日志对账，不重复编译）：
+
+```bash
+bash scripts/stop_condition.sh \
+  --db-url "$DB_URL" --gates-log /tmp/gates_evidence.log --sha 959a4002830e6fa07c35a4df1512ded87d3b1d8d
+```
+
+```text
+  T1-1a  FAIL     implemented_real == 456          got=455   差 1 条（= T1-1b 那条）
+  T1-1b  FAIL     implemented_placeholder == 0     got=1     POST /api/issues/{id}/comments/trigger-preview (owner=M2-A, router_line 1978)
+  T1-1c  PASS     known_gap == 0                   got=0
+  T1-1d  PASS     unclaimed == 0                   got=0
+  T1-1e  PASS     regressions == 0                 got=0
+  T1-1f  PASS     local == baseline_routes         546 == 546
+  T1-2   PASS     ⑦ owners 直方图                  {}
+  T1-3   PASS     ⑦ local_only 逐条登记             8/8 registered（占位 1 条单列）
+  T1-4   PASS     ⑦b slash_alias_audit            0 finding(s), 0 defect(s), registered=541, stale_allowlist=0
+  T1-5   FAIL     ⑨ --no-db                        fixtures 365 pass 33 mismatch 25 unmounted 1 unevaluable 306
+  T1-7   FAIL     ⑨ 两个 rate                      contract 0.090411 ∧ mounted 0.568966
+  T1-6   FAIL     ⑨ --db-url                       fixtures 365 pass 187 mismatch 159 unmounted 4 unevaluable 15
+  T1-8   PASS     ⑧ schema_drift                   missing=0, ok=True（differs=14 extra=22 apply-exception=9）
+  T1-9   PASS     ⑩ file_size_check                scanned=1285 baseline=10 violations=0
+  T1-10  PASS     门禁 gates.sh 10/10              11 条 GATE_*_EXIT 全 0
+  T1-10b SKIP-NO-GATE 门禁 gates.sh --only image    gate 'image' does not exist
+  T1-11  FAIL     CI 4 job 全绿                     base 的 3 个 job（fast/db/contract）全 success，image job 不存在
+  T1-12  PASS     golden-local 对账                default 10/10 ∧ token 3/3，mismatch=unmounted=0
+  ---
+  pass=11 fail=6 skip-no-db=0 skip-no-asset=0 skip-no-gate=1 total=18
+  exit=1
+  failing_ids: T1-1a T1-1b T1-5 T1-7 T1-6 T1-11
+```
+
+⇒ **停止条件距离全绿还差 6 格**，逐格归属见 §6。**T1-1a / T1-1b 的 FAIL 是本片的正确产出**，
+不是缺陷：本片交付的是「还剩多少」的机器化答案，不是把差额清零（§6 列了每格归谁、为什么不能在
+M10-8 内清）。且在 `image` 门 / `image` job 建出来之前，**T1 根本不可能 exit 0** —— 这是判据与资产
+之间的差额，需要 M10-7 的 owner 裁决（§5）。
+
+
 ---
 
 ## 5. 🔴 口径缺陷：T1-10 / T1-11 有两格指向**不存在的对象**
