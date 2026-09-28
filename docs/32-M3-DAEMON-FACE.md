@@ -9065,3 +9065,192 @@ handler 前置（`enabled` / 注入的 limiter），或给 `mc-conformance` 的 
   `CARGO_INCREMENTAL=0 bash scripts/gates.sh --only db` ⇒ **PASS（migrate=0, e2e=0）**。
   10/10 全绿。
 - `CARGO_INCREMENTAL=0` 是本片新增的一条本地跑法（`--with-db` 全量跑在 49G 盘上峰值触顶）。
+
+---
+
+## 58. M9-7（`LUM-1822`）：`POST /api/agents/mika`（内置 agent 供给 + get-or-create onboarding 会话）的落点与偏离登记
+
+本片 = `docs/62-M9-PLAN.md` §4.1 的 **M9-7**，**1 条**路由 / 上游 **328 行**
+（`internal/handler/mika_agent.go`）+ `agent.sql` 的 `CreateSystemUserAgent` /
+`GetAgentBySystemKey` + `chat.sql` 的 `GetOldestActiveChatSessionForCreatorAgent`。
+硬前置 M9-0 anchor（`LUM-1815`）。base `44775d47`（M9-6 PR #135 合并树）。
+**本片是 M9 波的收官片**（合入后 `implemented + known_gap == 456` 且 `owners.M9 = 0`）。
+
+### 58.1 写集与文件布局
+
+| 文件 | 性质 | 门 ⑩ 前 → 后 | 装什么 |
+| --- | --- | ---: | --- |
+| `crates/mc-repos/src/agent/mika.rs` | 原地填充 anchor 空桩 | 61 → 336 | `MikaRepo`：供给（持 per-workspace 事务锁的 get-or-create）+ onboarding 会话 get-or-create |
+| `crates/mc-http/src/routes/agents/mika.rs` | 新建（anchor 期不存在） | 0 → 450 | 1 条路由 + 三个 DTO + 5 条单测 |
+| `crates/mc-http/src/routes/agents.rs` | **接线（越界写，已授权）** | 见 58.2 | 2 行 |
+| `crates/mc-http/tests/agents/mika.rs` | 新建（测试，写集外） | 0 → 385 | 6 条真库 e2e |
+| `crates/mc-http/tests/agents/main.rs` | **加 1 行 `mod mika;`（写集外）** | 31 → 32 | 测试模块登记 |
+
+**零 manifest 编辑、零 `Cargo.lock` 变更、零 anchor 冻结件改动。**
+`crates/mc-repos/src/agent.rs:44 pub mod mika;` 由 M9-0 anchor 预声明 ⇒ repos 侧**第二类漏项 = 0**。
+**不建 `mc-mika` crate**（`docs/62` §9.3 的收敛裁定），能力载体 = `mc-repos` 的
+`agent::mika` + `mc-chat` 的 `onboarding`（**只读复用**，一字节未改）。
+
+### 58.2 `routes/agents.rs` 上的**两处**越界接线（逐字行号 @ `44775d47` + 本片）
+
+| # | 位置 | 动作 |
+| --- | --- | --- |
+| 1 | `:69`（原 `:65-70` 的 6 个私有 `mod` 块内，排在 `mod labels;` 与 `mod skills;` 之间） | 插入 `mod mika;` |
+| 2 | `:152`（接在 `.route("/api/agent-run-counts", get(stats::run_counts))` 之后、`router()` 的收尾 `}` 之前） | 追加 `.route("/api/agents/mika", post(mika::create_mika_agent))` |
+
+**`post` 无需改 import** —— `:51 use axum::routing::{delete, get, post, put};` 已有 `post` ✅
+**不需要**改 `routes/mod.rs:44`（`pub mod agents;` 已在）/ `mount.rs` / 任何 `lib.rs`。
+
+🔴 **订正计划描述里的两处错**（照做会编译不过 / 会做反）：
+① §175 说「同文件加 `.merge(mika::router())`，位置跟随现有 `.merge()` 次序」——
+**base 上 `grep -n "merge()" crates/mc-http/src/routes/agents.rs` 零命中**：`router()` 是
+单文件平铺 `.route()` 链，`mod crud/dto/env/labels/skills/stats` 只是**纯 handler 模块**、
+不是子 `Router` ⇒ 没有 `.merge()` 次序可跟随。
+② §171/§175 说「两个文件都在」—— 实测 `crates/mc-http/src/routes/agents/mika.rs`
+在 base **不存在**，`routes/agents.rs` 的 `mod` 块也**没有** `mika` ⇒ **第二类漏项 = 1**，
+本片自己补。
+
+### 58.3 静态段 `/api/agents/mika` 遮蔽参数段 `/api/agents/:id`：逐条分析
+
+两者**同 depth（1）**，matchit 0.7 **静态优先** ⇒ 静态键会遮蔽 `:id` 键。
+**实际无碍，因为方法集不相交**：
+
+| 键 | 方法集 | 来源 |
+| --- | --- | --- |
+| `/api/agents/mika` | **仅 POST** | 本片 |
+| `/api/agents/:id` | **仅 GET + PUT** | `routes/agents.rs:92-98` |
+| `/api/agents/:id/archive` 等 | POST | **depth 2**，不受同层遮蔽影响 |
+
+e2e 用例 `trailing_slash_alias_is_deliberately_absent` 顺带钉住「GET 仍按 uuid 取到同一个
+agent」，把这条遮蔽分析变成**可执行**断言而不是纸面推理。
+
+### 58.4 形态：**单形态**（反向红线）
+
+`docs/fixtures/m9-declared-routes.tsv:118` 只声明了**不带尾斜杠**一种形态
+⇒ **补尾斜杠别名 = `EXTRA_ALIAS` 硬失败**。e2e 用例
+`trailing_slash_alias_is_deliberately_absent` 断言 `POST /api/agents/mika/` 是 **404**。
+门 ⑦b（**tree 模式**，无参）实测 `541 registered upstream-key literals ⇒ 0 defect / exit 0` ✅。
+
+### 58.5 🔴 `kind='user'` 不是笔误（最容易被"修错"的一处）
+
+上游 `CreateSystemUserAgent`（`agent.sql:2824-2832`）与 `builtin_agents.go:8-16` 的注释
+点名：`kind='system'` 在本 schema 里是**「不可见的执行载体」**（从 agent 列表与派单面消失、
+随 runtime 硬删），而 Mika 需要的恰好是这三件事的**反面** ⇒ `kind` 刻意是 `'user'`，
+**唯一**的服务端身份标记是 `system_key='mika'`。
+e2e 用例 `client_cannot_mint_kind_or_system_key` 同时断言**响应**与**库里的 `kind` 列**。
+
+### 58.6 「不可铸造」是**编译期**机制（不靠运行时过滤）
+
+`CreateMikaAgentRequest` 只有 `runtime_id` / `language` / `model` / `session_title` 四个字段，
+serde 默认忽略未知键（Go 的 `encoding/json` 没有 `DisallowUnknownFields` ⇒ **逐字等价**）
+⇒ 客户端多传 `kind` / `system_key` / `name` / `avatar_url` / `visibility` /
+`permission_mode` / `max_concurrent_tasks` **既不 400 也不落库**。
+仓储侧的 `MikaProvision` 结构体上**根本没有**这些字段，写入口只有它一个。
+⇒ **不要**为此加一层显式过滤：那只会引入上游没有的 400。
+落库的是 `MIKA_*` 常量：`max_concurrent_tasks=3` / `visibility=workspace` /
+`permission_mode=public_to` / `avatar_url="emoji:🦄"` / `name="Mika"` / `kind='user'` / `system_key='mika'`。
+
+### 58.7 两段事务、两次 advisory 锁（**别合并**）
+
+上游 `mika_agent.go:99-103` 点名了为什么不能合：会话的 get-or-create 自带一把锁，
+在 workspace 供给锁还持着时跑它，会把所有成员的会话排在**一把与会话无关**的锁后面。
+本片照搬成 `MikaRepo` 的两个独立方法 / 两次独立事务：
+
+| 段 | 锁 | 键 | 复查 |
+| --- | --- | --- | --- |
+| 供给 | `pg_advisory_xact_lock(hashtextextended(k, 0))` | `mika:<workspace>` | 锁内重查 `system_key`（上游 `CONTRACT`，`agent.sql:2819`） |
+| 会话 | 同上 + `FOR KEY SHARE` on `workspace` | `mika-session:<ws>:<user>` | 查 (workspace, creator, agent) 的**最老** active 会话 |
+
+「一个 workspace 一个 Mika」靠的是**锁内复查**，不是唯一索引 ——
+迁移 172 的索引键是 `(workspace_id, owner_id, runtime_id, system_key)`，
+换 owner 或换 runtime 就是不同元组，两条都会插进去（上游注释原话）。
+「一个成员一条 Mika 会话」靠的是 `(workspace, creator, agent)` 的查表，
+**绝不按 title 查**（title 是本地化的：失败尝试与重试之间改语言，过去会开出第二个会话）。
+e2e `concurrent_provision_creates_exactly_one_agent_and_one_session` 用
+`tokio::join!` 真并发，断言**恰好一个 201 + 一个 200**、agent id 与会话 id 都相同。
+
+### 58.8 登记的偏离（9 条）
+
+| # | 偏离 | 依据 |
+| --- | --- | --- |
+| D-1 | **成员校验提前**：`AgentScope::resolve` 一上来就判 workspace 成员（非成员 ⇒ 404 `workspace`）；上游的 `h.workspaceMember` 在「已供给」快速路径**之后**才跑，即上游能把 Mika 发给非本 workspace 的成员 | fail-closed，与本面其余 16 条同立场（`routes/agents.rs:41-46`） |
+| D-2 | **不广播 WS** `protocol.EventAgentCreated` | agent 面整体不广播（M3-7）。上游特意把它排在会话那步**之前**（"agent 已提交，别人的列表该知道"）—— 本片无此步 |
+| D-3 | **不调 `ReconcileAgentStatus`** ⇒ 新建 agent 的 `status` 保持列默认 `offline` | 本仓 `AgentRepo::runtime_binding` 只投影 5 个绑定列、**不含 `status`**；在线探测属 M3-4 |
+| D-4 | `system_instructions` **不产出**（上游 `systemInstructionsFor`） | `AgentDto` 全域既有偏离（`dto.rs:17`） |
+| D-5 | **单形态**，不补尾斜杠 | `m9-declared-routes.tsv:118`；见 58.4 |
+| D-6 | `runtime_id` 绑定失败的 400 用**上游原文** `runtime not found in this workspace`，**没有**复用 `AgentScope::runtime_binding` 的 `invalid runtime_id` | 复用同一个校验查询、只换文案（`mika_agent.go:139` vs `routes/agents.rs:411-417`） |
+| D-7 | onboarding 会话的响应 DTO **重新声明**而非复用 `chat::session::ChatSessionDto` | 后者是 `pub(super)`，越界写授权覆盖不到 `routes/chat/session.rs`；字段序与三个派生位保持逐字同形 |
+| D-8 | 越界写 `crates/mc-http/tests/agents/mika.rs`（新建）+ `tests/agents/main.rs`（1 行 `mod`） | DoD 第 5 条要求每条路由至少一条测试；`routes/agents/mika.rs` 里的 5 条单测是纯函数级的，覆盖不到「并发只建一个」 |
+| D-9 | **无进程内状态** ⇒ 不存在「无 Redis 的单副本假设」 | 两把锁都是 **DB 级** `pg_advisory_xact_lock`，多副本下同样成立 |
+
+**两处禁止已遵守**：不改 `crates/mc-chat/src/onboarding.rs` /
+`crates/mc-repos/src/chat_task/onboarding.rs` /
+`crates/mc-http/src/routes/chat/task/dispatch.rs`（三字节未动）；**不建 `mc-mika` crate**。
+「语言白名单」**只读复用** `mc_chat::onboarding::language_name`（未复制一份），
+单测 `every_whitelisted_language_has_a_description` 把 `MIKA_DESCRIPTIONS` 的键集合与
+`onboarding::LANGUAGES` 钉成同一个列表（否则会出现「语言校验过了但查不到文案」的空档）。
+跨 crate 的 `system_key` 字面量（repos 的 `MIKA_SYSTEM_KEY` ↔ mc-chat 的
+`onboarding::SYSTEM_KEY`）由单测 `repo_constants_agree_with_mc_chat_identity` 钉住。
+
+### 58.9 门读（base `44775d47` → 本片，逐项实测）
+
+| 门 | base | 本片后 |
+| --- | --- | --- |
+| ⑦ `route_parity` | `local 545 / implemented 455（453r+2ph）/ known_gap 1 / owners {M9:1}` | **`local 546 / implemented 456（454r+2ph）/ known_gap 0 / owners {}`** |
+| ⑦ 不变式 | — | `456 + 0 == 456` ✅、`regression 0`、`unclaimed 0`、`local_only 8` |
+| ⑦ baseline | `473` | **`473` 不动**（刷基线唯一归 `LUM-1825`） |
+| ⑦b `slash_alias_audit`（tree） | 0 defect | **0 defect / exit 0**（`541 registered upstream-key literals`） |
+| ⑨ `report.json` blob | `eab64edb0e6c9b587ef4569af1dffb1cee80de3f` | **同一个 blob（逐字恒等）** ⇒ 本片**不需**重生成快照（与 §60 的 M9-6 不同，那片路由挂上去必然漂移） |
+| ⑩ | `limit=800 violations=0` | **violations=0**；`file_size_baseline.tsv` **不动** |
+| 门禁 | — | **10/10 绿**（`--with-db`；⑥ = `migrate=0, e2e=0`） |
+
+### 58.10 本地跑法的两条经验（不是本片回归）
+
+- **门 ⑥ 在共享真库上会偶发红**：两次 `--only db` 各红一条**别的片**的用例
+  （`quick_actions::render_returns_the_body_without_posting_anything` /
+  `uploads::upload_without_workspace_writes_no_row`），两次**单跑都过**。
+  根因是那些用例在**共享的同一个库**上做**无范围**的 `SELECT COUNT(*)`，与同进程其余
+  100 个并发 db 用例互扰（`quick_actions/tests/db.rs:312/334/423/471` 就是这四处）。
+  本片用例在**独立的 integration binary**（`--test agents`）里、且只碰
+  `agent` / `agent_runtime` / `chat_session` 三张表，结构上不可能造成这个互扰。
+  ⇒ `RUST_TEST_THREADS=1 bash scripts/gates.sh --only db` ⇒ **⑥ PASS**。
+- **ENOSPC 伪装成红**（本项目第 12 次）：本机 49G 盘，`--with-db` 全量峰值触顶。
+  配方：`rm -rf target/debug/incremental` + 清 `target/debug/deps` 的同 (crate, ext) 重复
+  （回收 3.7 GB）⇒ `avail 7.3G → 12G`，再 `CARGO_INCREMENTAL=0` 跑。本轮**没有**出现
+  `os error 28`（`grep -ac "os error 28"` = 0），但增量目录先清了。
+
+---
+
+### 9.28 M9-7（`LUM-1822`）：`POST /api/agents/mika`（内置 agent 供给 + get-or-create onboarding 会话）的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 58.`（58.1–58.10）**。
+> 号段起手复核：`grep -cE '^### 9\.28|^## 58\.'` = **0**
+> （`### 9.27` / `## 57.` 空号段留给并发 cycle，本片按任务指定取 58 / 9.28）。
+
+**写集（3 个生产文件 + 2 个测试文件，全文见 §58.1 的表）**：
+`crates/mc-repos/src/agent/mika.rs`（anchor 空桩 61 → 336）·
+`crates/mc-http/src/routes/agents/mika.rs`（新建 450）·
+`crates/mc-http/src/routes/agents.rs`（**2 行接线**，逐字行号见 §58.2）·
+`crates/mc-http/tests/agents/mika.rs`（新建 385）+ `tests/agents/main.rs`（1 行 `mod`）。
+**anchor 冻结件一个字节未动**（`mc-repos/src/agent.rs:44` 的 `pub mod mika;` 已预声明）
+⇒ repos 侧**第二类漏项 = 0**；**零 manifest 编辑、零 `Cargo.lock` 变更、不建 `mc-mika` crate**。
+
+**形态**：`POST /api/agents/mika` 是**单形态**键（§58.4）—— 补尾斜杠 = `EXTRA_ALIAS` 硬失败，
+e2e 用例把 404 钉住。
+
+**授权矩阵**：`POST /api/agents/mika` = **workspace member 级**（401 / 400 / 403；
+非成员 404 `workspace`—— 但见 §58.8 D-1，这是本仓**比上游更严**的一处）。
+
+**登记的偏离（9 条，全文见 §58.8）**：D-1 成员校验**提前**（比上游更严，fail-closed）；
+D-2 不广播 WS `EventAgentCreated`；D-3 不调 `ReconcileAgentStatus` ⇒ 新建 agent `status` 恒 `offline`；
+D-4 `system_instructions` 不产出（`AgentDto` 全域既有偏离）；D-5 形态单形态；
+D-6 `runtime_id` 400 用**上游原文** `runtime not found in this workspace`（不复用 `invalid runtime_id`）；
+D-7 会话 DTO 重新声明（`chat::session::ChatSessionDto` 是 `pub(super)`，越界写不覆盖该文件）；
+D-8 越界写 2 个**测试**文件（DoD 第 5 条要求每条路由至少一条测试）；
+D-9 🔴 `kind='user'` **不是笔误**（§58.5：`kind='system'` 意为「不可见执行载体」）。
+
+**⑦ 收官读数**（M9 波的硬前置全达成 ⇒ `LUM-1825`（M9-10 INT）可派）：
+`local 546 / implemented 456（454 real + 2 placeholder）/ known_gap 0 / owners {} /
+regression 0 / unclaimed 0 / local_only 8`、`baseline 473` **不动**、`456 + 0 == 456` ✅。
+
+**门禁 10/10**（`--with-db`；⑥ = `migrate=0, e2e=0`）。本地跑法的两条经验见 §58.10。
