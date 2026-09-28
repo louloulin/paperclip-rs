@@ -46,8 +46,8 @@ T1-1b 还必须**打印键名**，否则「还剩多少」这个问题就没有�
 
 | 格 | 判据 | 期望 | 来源 | 复算命令 | 未达标归谁 |
 |---|---|---|---|---|---|
-| **T1-1a** (`scripts/stop_condition.sh:133`) | `implemented_real == 456` | `456` | `route_parity.py:counts.implemented_real` | `python3 scripts/route_parity.py --json \| python3 -c "import json,sys;print(json.load(sys.stdin)['counts']['implemented_real'])"` | 上游 456 里仍占位的键；本轮 1 条 = T1-1b 那条。**实现它的片尚未立项**（`docs/10` §2 记「M2-B 明确不做」）⇒ 归 Tier-2 登记 |
-| **T1-1b** (`:144`) | `implemented_placeholder == 0` | `0`（并打印键） | `counts.implemented_placeholder` + `implemented[].placeholder` | 同上（键名取 `report['implemented']` 里 `placeholder==true` 的行） | 同 T1-1a。🔴 **本片不许动它**：动了会让 `crates/mc-http/tests/issues/*` 的耐久 501 断言换落点（`auth.rs:125-141` 记了六次换落点的历史） |
+| **T1-1a** (`scripts/stop_condition.sh:141`) 🔴**`LUM-2482` 已订正** | `implemented == upstream`（= `real + placeholder`） | `456` | `route_parity.py:counts.implemented`（或 `implemented_real + implemented_placeholder`） | `python3 scripts/route_parity.py --json \| python3 -c "import json,sys;print(json.load(sys.stdin)['counts']['implemented'])"` | 原判据是 `implemented_real == 456`，而本仓**正确**终态就是 `455 real + 1 placeholder`（那 1 条被计划期裁定「不做」）⇒ 旧判据在任何**正确**实现下都恒 FAIL。改判后的含义：「每一条上游键都已被认领」；**认领得对不对由 T1-1b 管** |
+| **T1-1b** (`:196`) 🔴**`LUM-2482` 已订正** | **占位键集合 == 人工裁定白名单**（集合相等，**非个数**） | 与白名单表逐键相等（并打印差异） | `implemented[].placeholder==true` 的 `(method, path)` 集合 vs 脚本内 `placeholder_adjudication.tsv` | 同上（键名取 `report['implemented']` 里 `placeholder==true` 的行） | 两个方向都判：实测 \ 白名单 ⇒ `UNADJUDICATED` FAIL（真欠账）；白名单 \ 实测 ⇒ `STALE-WHITELIST` FAIL（白名单过期，该划掉）。🔴 **白名单严禁自动生成**（从实测值反推 = 每次判「实测 == 实测」= 恒 PASS，判据归零）。改白名单必须先改 `docs/10` / `docs/12` 的裁定 |
 | **T1-1c** (`:147`) | `known_gap == 0` | `0` | `counts.known_gap` | 同 T1-1a | 缺口按 `owners` 直方图分派；本轮 `0` ⇒ 连续收口 |
 | **T1-1d** (`:149`) | `unclaimed == 0` | `0` | `counts.unclaimed` | 同上 | 无人认领的缺口 ⇒ 立项。**不变量，任何一轮红都是回归** |
 | **T1-1e** (`:151`) | `regressions == 0` | `0` | `counts.regressions` | 同上 | 已实现键退回缺口 ⇒ 红。**不变量** |
@@ -61,7 +61,7 @@ T1-1b 还必须**打印键名**，否则「还剩多少」这个问题就没有�
 | **T1-8** (`:380`) | ⑧ `schema_drift`：`missing == 0`（且 exit 0） | `counts.missing == 0 ∧ ok == true` | `scripts/schema_drift.py --json` 的 `counts` / `ok` | `MULTICA_TEST_DATABASE_URL='postgres://…' python3 scripts/schema_drift.py --json` | 未登记的漂移 ⇒ 登记进 `contracts/upstream-schema-deviations.tsv`（该文件**既有**，归 schema 面各波次）。**需库；缺库 `SKIP-NO-DB` + exit 2** |
 | **T1-9** (`:419`) | ⑩ `file_size_check`：`violations == 0` | `0` | `scripts/file_size_check.py` 首行 | `python3 scripts/file_size_check.py \| head -1` | 新文件超 800 行 ⇒ 拆；清单内条目只允许变短。**`scripts/file_size_baseline.tsv` 的刷新权归 M10-9**（本片不动它） |
 | **T1-10** (`:457`) | 门禁 `gates.sh --with-db` **10/10** | 10 道门全 `GATE_*_EXIT=0` | `scripts/gates.sh` 的 10 行 `GATE_<NAME>_EXIT=` | `bash scripts/gates.sh --with-db --db-url 'postgres://…'`（或 `--gates-log <已有的日志>`） | 逐门 `bash scripts/gates.sh --only <name>` 复现；红的门归对应面 |
-| **T1-10b** (`:480`) | 门禁 `gates.sh --only image` 绿 | `exit 0` | — | — | 🔴 **该门在本仓不存在**（见 §5）⇒ 报缺，**不改** `gates.sh` |
+| **T1-10b** (`:541`) 🔴**`LUM-2482` 已订正** | 门禁 `gates.sh --only image` 绿 | `exit 0` | `gates.sh --only image` 的退出码 | `bash scripts/gates.sh --only image` | 🔴 **三分档**（与 T1-10 同源的 0/1/2 语义）：`0 ⇒ PASS`、`1 ⇒ FAIL`、`2 ⇒ SKIP-NO-ASSET`（「没法开跑」，缺 docker/podman/buildah，与 ⑥/⑧ 缺库同档）。未给 `--gates-log` ⇒ 没跑过 ⇒ `SKIP-NO-ASSET`。原判据把初值 2 一律打成 FAIL，等于**把「没法开跑」记成「红」** |
 | **T1-11** (`:501`) | CI 4 个 job 全绿 | `fast` / `db` / `contract` / `image` 全 `success` | GitHub check-runs API（`--sha` 指定 commit，默认 `HEAD`） | `bash scripts/stop_condition.sh --sha <commit>` | job 红 ⇒ 看该 commit 的 Actions 日志；🔴 `image` job **不存在**（见 §5） |
 | **T1-12** (`:540`) | 对账：`--golden contracts/golden-local` ⇒ `mismatch 0 ∧ unmounted 0` | 两个 golden-local 根都 `0 ∧ 0` | `scripts/mc_golden_local_check.sh` 的逐根读数行 | `bash scripts/mc_golden_local_check.sh` | 字段级契约不符 ⇒ 归该字段的实现面（`docs/64` §9.7） |
 
@@ -197,6 +197,12 @@ bash scripts/stop_condition.sh \
 ```
 
 ⇒ **停止条件距离全绿还差 6 格**，逐格归属见 §6。**T1-1a / T1-1b 的 FAIL 是本片的正确产出**，
+> 🔴 **历史快照，已被 `LUM-2482` 推翻**（`docs/37` §204）：上面这段 `T1-1a FAIL 差 1 条` / `T1-1b FAIL got=1`
+> / `T1-10b SKIP-NO-GATE` 是 **M10-8 当时的实测**，保留作历史。当年的结论「这三格的 FAIL 是正确产出」
+> **不再成立**——那三条判据写错了：`implemented_real == 456` 在任何**正确**实现下都恒 FAIL（那 1 条占位
+> 是 `docs/10:101` + `docs/12:111` 逐字裁定的不做项），`T1-10b` 则把「没法开跑」（exit 2）记成红。
+> 现状：T1-1a/1b/10b 已改为「`implemented == upstream`」+「占位集合 == 裁定白名单」+「0/1/2 三分档」，
+> 本仓实跑 `T1-1a PASS / T1-1b PASS / T1-10b SKIP-NO-ASSET`。
 不是缺陷：本片交付的是「还剩多少」的机器化答案，不是把差额清零（§6 列了每格归谁、为什么不能在
 M10-8 内清）。且在 `image` 门 / `image` job 建出来之前，**T1 根本不可能 exit 0** —— 这是判据与资产
 之间的差额，需要 M10-7 的 owner 裁决（§5）。
@@ -299,3 +305,15 @@ issue 描述里记的「当前末号 §9.11」已过期）。⇒ 偏离登记落
 2. **T1-10b / T1-11 按缺报而不是假装判据成立** —— 依据写集审计第 ② 条（不许改 `gates.sh` / CI）。
 3. **`local_only` 登记表放在脚本内而不是 `docs/32`** —— 同一条写集约束；判据是**双向**的（实测 ⊆ 表 且 表 ⊆ 实测），
    所以表行失效会自己暴露成 `STALE`，不依赖人去同步两份文档。
+4. 🔴 **`LUM-2482` 的两条偏离登记**（依据 `docs/37` §204 / issue 描述 §201.4 + §201.6）：
+   ① **T1-1a/1b 的判据本身被改写**（不只是加登记）——旧判据在任何正确实现下恒 FAIL，等于没有鉴别力；
+      新判据 = 「`implemented == upstream`」+「占位键集合 == **人工**裁定白名单」。白名单写在脚本内
+      （与 `local_only` 登记表同款做法），**严禁自动生成**。改白名单 = 改一条人工裁定，权归改 `docs/10`/`docs/12` 的人。
+   ② **T1-10b 由二档改三分档**（`0 PASS / 1 FAIL / 2 SKIP-NO-ASSET`），理由同①：一个数字两套语义。
+      未改 `gates.sh`、未改 CI、未改 `route_parity.py`、未刷任何 baseline、未用 `--test-threads=1`「修绿」。
+
+> 🔴 **本节登记的通用教训（`LUM-2482` 的真正承重）**：
+> **收口判据本身也是需要被收口的代码。** `known_gap == 0` 已经连续十余轮为 0，但一份没人核对的
+> 判据可以在每轮 `exit 1` 的输出里只占一行、与真缺陷混在一起。
+> **每条判据都要能回答「它在什么实现下会 FAIL」**——答不上来的（通常是「要求一个已被人工裁定不做的
+> 东西为零」「把没法开跑记成红」）多半就属于这一类。判读纪律：**超时 ≠ 失败 ≠ 全绿**。

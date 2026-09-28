@@ -9820,7 +9820,7 @@ failing_ids: `T1-1a T1-1b T1-5 T1-7 T1-6 T1-10b`
 
 | # | 残余项 | 当轮实测值 | 处置口径 / 归属 |
 |:-:|---|---|---|
-| R-1 | ⑦ `implemented_placeholder` | **1**：`POST /api/issues/{id}/comments/trigger-preview`（owner `M2-A`，`routes/mod.rs:1978`） | **计划期裁定为「不做」**（`docs/10` §2），不是欠账；要清必须改 `docs/10` 的裁定并重挑耐久断言落点 |
+| R-1 | ⑦ `implemented_placeholder` | **1**：`POST /api/issues/{id}/comments/trigger-preview`（owner `M2-A`） | **计划期裁定为「不做」**（`docs/10` §2），不是欠账；要清必须改 `docs/10` 的裁定并重挑耐久断言落点。🔴 **行号订正（`LUM-2482` / `docs/37` §204）**：本行原记 `routes/mod.rs:1978`，**两处都错**——① ⑦ 报告里的 `router_line=1978` 是**上游 Go** 行号，取自 `docs/fixtures/upstream-routes.tsv:246` 的 `# router.go:1978` 注释（`route_parity.py:432` 从那里解析），不是本仓 Rust 行号；② 本仓真实注册面是 `crates/mc-http/src/routes/issues/mod.rs:188`（`post(not_implemented)` ⇒ 501），既不在 `routes/mod.rs` 也不在 1978 |
 | R-2 | ⑦ `local_only` | **8**（含 1 placeholder） | 已逐条登记（§64.5.1）；「有主即合规」，压它收益为 0 |
 | R-3 | ⑨ 离线层 `mismatch` | **25**（15 条不同路径） | 全部 `actor=anonymous`；是 M2-A/M3/M9 各波**已实现但与上游 `json_subset` 有字段级差异**的键，逐条见 §64.5.2 |
 | R-4 | ⑨ 离线层 `unmounted` | **1**：`GET /users/me`（exp 200 / got `404 with empty body (axum fallback)`） | M1 面遗留（`/users/me` 与本仓 `/api/me` 是两条键）；**未立项** |

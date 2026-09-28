@@ -130,19 +130,75 @@ else
     LOCAL="$(rp_get "['counts']['local']")"
     BASELINE="$(rp_get "['sources']['baseline_routes']")"
 
-    [ "$IMPL_REAL" = "456" ] && add T1-1a "implemented_real == 456" "456" "$IMPL_REAL" PASS \
-        "upstream=$UPSTREAM；差额 = 456 - $IMPL_REAL = $((456 - IMPL_REAL)) 条仍占位" \
-        || add T1-1a "implemented_real == 456" "456" "$IMPL_REAL" FAIL \
-            "差 $((456 - IMPL_REAL)) 条：见 T1-1b 的逐条键名（那 $IMPL_PH 条 implemented_placeholder）"
+    # ---- T1-1a：计数不变式（real + placeholder == upstream） ------------------------
+    # 🔴 订正记录（docs/37 §204）：这里原先判的是 `implemented_real == 456`，而本仓**正确**的
+    # 终态就是 `455 real + 1 placeholder`（那 1 条被计划期逐字裁定「不做」，见下方白名单）。
+    # 判「real 必须等于 456」等于判「必须违抗计划期裁定」⇒ 任何**正确**实现下都恒 FAIL。
+    # 计数层面真正该守的不变式是「**每一条上游键都已被认领**」= real + placeholder == upstream；
+    # 「认领得对不对」由 T1-1b 的**集合**判据管，两者职责不重叠。
+    IMPL_TOTAL="$((IMPL_REAL + IMPL_PH))"
+    if [ "$IMPL_TOTAL" = "$UPSTREAM" ]; then
+        add T1-1a "implemented == upstream" "$UPSTREAM" "$IMPL_TOTAL" PASS \
+            "real=$IMPL_REAL + placeholder=$IMPL_PH（占位的键对不对由 T1-1b 判）"
+    else
+        add T1-1a "implemented == upstream" "$UPSTREAM" "$IMPL_TOTAL" FAIL \
+            "差 $((UPSTREAM - IMPL_TOTAL)) 条上游键没被认领；缺口是**未实现**（该进 T1-1c/1d），不是「占位」"
+    fi
 
-    PH_KEYS="$(python3 -c "
-import json
-d = json.load(open('$RP_JSON'))
-rows = [r for r in d['implemented'] if r.get('placeholder')]
-print('; '.join('%s %s (owner=%s, router_line=%s)' % (r['method'], r['path'], r.get('owner','?'), r.get('router_line','?')) for r in rows) or '(none)')
-")"
-    [ "$IMPL_PH" = "0" ] && add T1-1b "implemented_placeholder == 0" "0" "$IMPL_PH" PASS \
-        || add T1-1b "implemented_placeholder == 0" "0" "$IMPL_PH" FAIL "$PH_KEYS"
+    # ---- T1-1b：占位键**集合** == 人工裁定白名单 --------------------------------------
+    # 🔴 为什么不判 `implemented_placeholder == 0`：
+    #   ① 本仓 1 条占位是 `docs/10-M2-PLAN.md:101` + `docs/12-M2-COMMENT.md:111` 逐字裁定的
+    #      「不做」（属 agent 派单全套，依赖 M3 task queue）。**注册该键并诚实回 501 就是
+    #      正确终态**，不是欠账。判「占位必须为 0」⇒ 逼着去实现一个被裁定不做的端点，或逼着
+    #      把判据改成 455/1（后者更糟：等于把「现在恰好欠 1 条」抄进判据，失去鉴别力）。
+    #   ② 所以判据是**集合相等**（不是个数相等），两个方向都判：
+    #        实测 \ 白名单  ⇒ FAIL（新占位键：不在人工裁定内 = 真欠账）
+    #        白名单 \ 实测  ⇒ FAIL（白名单条目被真实现了：判据本身过期，该从白名单划掉）
+    #      只判一个方向，第 ② 种漂移就永远抓不到。
+    # 🔴 白名单**严禁自动生成**（不得从 `route_parity.py --json` 的实测值反推）——
+    #   自动生成 = 每次都判「实测 == 实测」= 恒 PASS，判据归零。
+    #   下面这张表是**人工裁定**的记录，改它必须先改 `docs/10` / `docs/12` 的裁定。
+    cat >"$WORK/placeholder_adjudication.tsv" <<'ADJ'
+POST	/api/issues/{id}/comments/trigger-preview	M2-A	docs/10-M2-PLAN.md:101「不做：trigger-preview」+ docs/12-M2-COMMENT.md:111「不实现：属 agent 派单，依赖 M3 task queue」；注册面 crates/mc-http/src/routes/issues/mod.rs:188（post(not_implemented) ⇒ 501）。注：⑦ 报告里的 router_line=1978 是**上游 Go** 行号（取自 docs/fixtures/upstream-routes.tsv:246 的 `# router.go:1978` 注释），不是本仓 Rust 行号
+ADJ
+    PH_DIFF="$(python3 - "$RP_JSON" "$WORK/placeholder_adjudication.tsv" <<'PY'
+import json, sys
+
+rp = json.load(open(sys.argv[1]))
+measured = {}
+for r in rp['implemented']:
+    if r.get('placeholder'):
+        measured[(r['method'], r['path'])] = r
+whitelist = {}
+with open(sys.argv[2], encoding='utf-8') as fh:
+    for line in fh:
+        line = line.rstrip('\n')
+        if line.strip():
+            method, path, owner, reason = line.split('\t')
+            whitelist[(method, path)] = (owner, reason)
+
+extra = sorted(set(measured) - set(whitelist))       # 实测有、白名单没有 = 真欠账
+stale = sorted(set(whitelist) - set(measured))       # 白名单有、实测没有 = 白名单该划掉
+
+parts = []
+for k in extra:
+    r = measured[k]
+    parts.append('UNADJUDICATED  %s %s (owner=%s, router_line=%s)' % (
+        k[0], k[1], r.get('owner', '?'), r.get('router_line', '?')))
+for k in stale:
+    parts.append('STALE-WHITELIST  %s %s —— 这条被真实现了，implemented_placeholder 已不含它，'
+                 '请从 stop_condition.sh 的 placeholder_adjudication 表里划掉' % k)
+print(' | '.join(parts) if parts else
+      'sets equal (n=%d): %s' % (len(measured), '; '.join('%s %s' % k for k in sorted(measured)) or '(empty)'))
+PY
+)"
+    if [ "$PH_DIFF" = "${PH_DIFF#UNADJUDICATED*}" ] && [ "$PH_DIFF" = "${PH_DIFF#STALE-WHITELIST*}" ]; then
+        add T1-1b "placeholder 键集合 == 裁定白名单" "n=$(grep -c . "$WORK/placeholder_adjudication.tsv")" \
+            "n=$IMPL_PH" PASS "$PH_DIFF"
+    else
+        add T1-1b "placeholder 键集合 == 裁定白名单" "n=$(grep -c . "$WORK/placeholder_adjudication.tsv")" \
+            "n=$IMPL_PH" FAIL "$PH_DIFF"
+    fi
 
     [ "$KGAP" = "0" ] && add T1-1c "known_gap == 0" "0" "$KGAP" PASS \
         || add T1-1c "known_gap == 0" "0" "$KGAP" FAIL "$(rp_get "['owners']")"
@@ -469,13 +525,30 @@ else
     add T1-10 "门禁 gates.sh 10/10" "10/10 exit 0" "no log" SKIP-NO-ASSET
 fi
 if printf '%s\n' "$GATE_LIST" | grep -qx 'image'; then
-    IMAGE_GATE_RC=2
+    # 🔴 订正记录（docs/37 §204）：本判据原先把 `IMAGE_GATE_RC` 的初值 2 一律打成 FAIL。
+    # 那等于**把「没法开跑」记成「红」**，而本脚本自己在文件头（`verdict_of` 的 5 档、
+    # ⑥/⑧ 缺库报 2 ⇒ SKIP-NO-DB）都规定 2 = 没法判定。同一个数字在一份脚本里有两套语义，
+    # 是一条判据自己把收口面封死。三分档（与 T1-10 同源的 0/1/2 语义）：
+    #     0 = PASS     1 = FAIL     2 = SKIP-NO-ASSET（没法开跑，不是红）
+    #     没给 --gates-log ⇒ 压根没跑 ⇒ SKIP-NO-ASSET（不是 FAIL）
     if [ -n "$GATES_LOG" ] && [ -f "$GATES_LOG" ]; then
         bash scripts/gates.sh --only image >"$WORK/gate_image.log" 2>&1
         IMAGE_GATE_RC=$?
+    else
+        IMAGE_GATE_RC=""
     fi
-    add T1-10b "门禁 gates.sh --only image" "exit 0" "exit $IMAGE_GATE_RC" \
-        "$([ "$IMAGE_GATE_RC" -eq 0 ] && echo PASS || echo FAIL)"
+    if [ -z "$IMAGE_GATE_RC" ]; then
+        add T1-10b "门禁 gates.sh --only image" "exit 0" "not run (no --gates-log)" SKIP-NO-ASSET \
+            "本轮没提供 --gates-log ⇒ image 门没被跑过，2xx/5xx 无从判定；给 --gates-log 或去掉 --skip-gates"
+    elif [ "$IMAGE_GATE_RC" -eq 0 ]; then
+        add T1-10b "门禁 gates.sh --only image" "exit 0" "exit 0" PASS
+    elif [ "$IMAGE_GATE_RC" -eq 1 ]; then
+        add T1-10b "门禁 gates.sh --only image" "exit 0" "exit 1" FAIL \
+            "逐门复算：bash scripts/gates.sh --only image（日志 $WORK/gate_image.log）"
+    else
+        add T1-10b "门禁 gates.sh --only image" "exit 0" "exit $IMAGE_GATE_RC" SKIP-NO-ASSET \
+            "退出码 $IMAGE_GATE_RC = **没法开跑**（缺 docker/podman/buildah 之类的前置），不是红；与 ⑥/⑧ 缺库同档"
+    fi
 else
     add T1-10b "门禁 gates.sh --only image" "exit 0" "gate 'image' does not exist" SKIP-NO-GATE \
         "scripts/gates.sh 的 ALL_GATES 恰为 $GATE_COUNT 个（$(printf '%s' "$GATE_LIST" | tr '\n' ' ')）⇒ T1-10 的后半分句指向**不存在的门**；建门归 M10-7（LUM-2109，docker 面），本片按缺报，不改 gates.sh（写集审计第 ② 条）"

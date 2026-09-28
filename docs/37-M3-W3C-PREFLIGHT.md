@@ -18136,3 +18136,73 @@ return req.WithContext(ctx)
 - 剩余可做工作量：**不是路由**，而是 ① `daemon_token` 装配能力（回放器签发 + 登记 `mdt_` 令牌，
   可把那 20 条从恒不可判定变成真判定）；② §201.3 的 `T1-1a/1b` 判据自身（与 `trigger-preview` 裁定冲突）；
 ③ Tier-2 残余（`stop_condition.sh` T1-6 真库层 127 条 mismatch 的正名分）。
+
+## §204 【LUM-2482】停止条件判据订正：T1-1a/1b 改判「占位集合 == 裁定白名单」+ T1-10b 退出码三分档（**0 路由片**）
+
+- base = **`2a3e64be`**（PR #148 合并点）。写集 = `scripts/stop_condition.sh` + `docs/32`（R-1 行号订正）
+  + `docs/65`（判据表订正）+ 本节。**未改** `gates.sh` / CI / `route_parity.py`，**未刷任何 baseline**，
+  **未用** `--test-threads=1`「修绿」。
+- 起手按 issue 描述 §203.4 在新 base 上**实读复核**，三条缺陷原样在位
+  （`stop_condition.sh:133-137` 两条硬编码 `:471-481` 的 `IMAGE_GATE_RC=2`；`docs/32` R-1 行号漂移）。
+
+### 204.1 三条判据为什么是「恒 FAIL」——逐条给出「它在什么实现下会 FAIL」
+
+| 判据 | 原写法 | 在**哪种**实现下会 FAIL | 判定 |
+|---|---|---|---|
+| T1-1a | `implemented_real == 456` | **所有**正确实现 | 那 1 条占位被 `docs/10-M2-PLAN.md:101` + `docs/12-M2-COMMENT.md:111` 逐字裁定「不做」；注册该键并诚实回 501 就是正确终态 ⇒ 判 `real == 456` 等于判「必须违抗计划期裁定」。答不出「哪种**不**正确的实现会 FAIL」 ⇒ 该判据没有鉴别力 |
+| T1-1b | `implemented_placeholder == 0` | 同上 | 同上。且**不能**改成 `== 1`：那等于把「现在恰好欠 1 条」抄进判据，欠账一变多就又红 |
+| T1-10b | `IMAGE_GATE_RC` 初值 2，`-eq 0 ? PASS : FAIL` | **不带 `--gates-log` 的每一次** | 同一脚本 `verdict_of()` 定义 5 档、⑥/⑧ 缺库 `exit 2 ⇒ SKIP-NO-DB`，唯独它把 2 当 FAIL ⇒ **一份脚本两套退出码语义**。而 `image` 门自 M10-7 起已存在（`gates.sh:110` 的 `ALL_GATES` 含 `image`），`grep -qx 'image'` 必命中分支 |
+
+🔴 **行号漂移的真相**：`docs/32` R-1 记的 `routes/mod.rs:1978` **两处都错**——① `router_line=1978` 是
+**上游 Go** 行号（`route_parity.py:432` 从 `docs/fixtures/upstream-routes.tsv:246` 的 `# router.go:1978`
+注释解析），不是本仓 Rust 行号；② 本仓真实注册面是 `crates/mc-http/src/routes/issues/mod.rs:188`。
+本仓行号与上游行号混为一谈，是「拿脚本输出当本仓指针用」的典型。
+
+### 204.2 改法（判据**集合**相等，不是个数）
+
+- **T1-1a** ⇒ `implemented == upstream`（= `real + placeholder`）。含义收窄成「每条上游键都已被认领」，
+  **认领得对不对交给 T1-1b**，两者职责不重叠。
+- **T1-1b** ⇒ **占位键集合 == 人工裁定白名单**，**两个方向都判**：
+  - `实测 \ 白名单` ⇒ `UNADJUDICATED` FAIL（新增占位 = 真欠账）
+  - `白名单 \ 实测` ⇒ `STALE-WHITELIST` FAIL（白名单过期，该划掉）
+  - 只判一个方向，第 ② 种漂移永远抓不到。
+  - 🔴 白名单写在脚本内 `placeholder_adjudication.tsv`（与 `local_only` 登记表同款做法），
+    **严禁自动生成**——从实测值反推 = 每次判「实测 == 实测」= 恒 PASS，判据归零。
+- **T1-10b** ⇒ `0 ⇒ PASS` / `1 ⇒ FAIL` / `2 ⇒ SKIP-NO-ASSET`；未给 `--gates-log` ⇒ 没跑过 ⇒ `SKIP-NO-ASSET`。
+
+### 204.3 🔴 双向失败演示（issue 描述 §四，**缺一不算完成**）
+
+| # | 演示 | 实跑结果 | 结论 |
+|:-:|---|---|---|
+| 1 | 白名单**外**再加一个占位键（把 `GET /api/issues/:id` 的 handler 临时退回 `not_implemented`） | `T1-1a PASS`（real=454 + ph=2 = 456）+ `T1-1b FAIL  └─ UNADJUDICATED GET /api/issues/{id}/ (owner=M2-A, router_line=1974)` | 鉴别力**没被删掉**：新占位键照样被抓 |
+| 2 | 白名单里那一条**真的实现掉**（`trigger-preview` 临时挂真 handler） | `T1-1a PASS`（real=456 + ph=0）+ `T1-1b FAIL  └─ STALE-WHITELIST POST /api/issues/{id}/comments/trigger-preview —— 请从白名单划掉` | 白名单过期**自己会暴露**，不依赖人去同步文档 |
+| 3a | T1-10b **不带** `--gates-log` | `got=not run (no --gates-log)  SKIP-NO-ASSET` | 「没跑」≠「红」 |
+| 3b | 带 `--gates-log` + 本机实跑 `gates.sh --only image`（无 docker，`gates.sh:350-363` 逐字 `return 2`） | `got=exit 2  SKIP-NO-ASSET` | 2 = 没法开跑，与 ⑥/⑧ 缺库同档 |
+| 3c | 桩 `gates.sh --only image` 返回 0 | `got=exit 0  PASS` | — |
+| 3d | 桩 `gates.sh --only image` 返回 1 | `got=exit 1  FAIL` | — |
+
+🔴 演示残留**已全部复原**：3c/3d 用的临时桩 `scripts/gates.sh` 已从备份还原（`git diff --stat` 只剩
+本片 4 个文件）；1/2 用的 `crates/mc-http/src/routes/issues/mod.rs` 已 `git diff --quiet` 判 CLEAN。
+3c/3d 用桩是因为**不许改 `gates.sh`**，而 0/1 两档在本机不可达（本机无 docker，真实 image 门只会返回 2）。
+
+### 204.4 ⑦ 读数：0 路由片 ⇒ 合并后必须**逐字不变**
+
+```
+upstream 456 / local 546 / implemented 456 = 455 real + 1 placeholder
+known_gap 0 / unclaimed 0 / local_only 8 / owners {}      （route_parity.py 0.4s，rc=0）
+```
+
+本片 0 路由 ⇒ 上述八个数**只可能因误碰注册面而变**；漂移即回归。**验收证据取自 204.3 的双向失败演示
+与门禁，不取自 ⑦**（⑦ 逐字不变是「没坏事发生」的证据，不是「做对了」的证据）。
+
+🔴 **一处口径订正（别把它误读成「基线丢失」）**：baseline 这个概念在**三处三个键名**——
+`route_parity.py --json` 的 `counts` 里**没有** `baseline` 键（读到 `None` 正常）；
+基线数在**文件** `docs/fixtures/route-parity-baseline.json`；而 `stop_condition.sh:131` 取的是
+`['sources']['baseline_routes']`（= 546）。报数时必须写清取自哪一处。
+
+### 204.5 本片真正的承重（可复用判别式）
+
+> 🔴 **收口判据本身也是需要被收口的代码。** `known_gap == 0` 已连续十余轮为 0，但一条**与人工裁定矛盾、
+> 在任何正确实现下都永不满足、也没人会核**的判据，会在每轮 `exit 1` 的输出里只占一行，
+> 与真缺陷混在一起被读成「还差 N 格」。⇒ **每条判据都要能回答「它在什么实现下会 FAIL」；
+> 答不上来的多半就属于这一类。** 判读纪律：**超时 ≠ 失败 ≠ 全绿**。
