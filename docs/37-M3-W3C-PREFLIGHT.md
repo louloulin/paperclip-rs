@@ -17277,3 +17277,24 @@ online 但**零绑定本项目 agent** 的 Pi runtime 仍是 `7e6471d9`（已绑
 - 见到 `os error 28` 的日志 ⇒ 该轮全部读数作废，等下一轮冷跑（195.3）。
 - `LUM-2136` 交 PR ⇒ §193.1 判据链（含「合并树 == head 树 ⇒ 免本地全量门」）；**交 PR 即回收它的 `target/`（7.7G）**。
 - 槽位空出 **且** 有空闲合规 device ⇒ 才派 `LUM-2110`；`LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，需 owner 裁决。
+
+### 195.6 收尾补记：第三轮全量门**跑完 = 9/10 绿（720s）**，唯一红是 ⑥ `db:e2e` 的 4 条 —— 属**连接预算**族，与本片写集零交集
+`fmt 0 / build 0 / clippy 0 / clippy-test-util 0 / test 0 / schema-drift 0 / route-parity 0 / conformance 0 / file-size 0`，`db:migrate 0`、`db:e2e 101` ⇒ **9/10**。
+4 条红全是 `routes::attachments::tests::db::*`，panic 逐字为
+`MULTICA_TEST_DATABASE_URL is set but connect failed: database connection error: pool timed out while waiting for an open connection`
+（`crates/mc-http/src/routes/attachments/tests/support.rs:45`，**attachments 不在本片写集**；同一 binary 另有 101 条 db 用例通过）。
+
+🔴 **本机实测到的结构成因（不是 flake，是算术）**：
+- `nproc` = **32** ⇒ `cargo test` 默认 `--test-threads = 32`，而 ⑥ 一次并行跑 **4 个 package**（`scripts/gates.sh:235`：`cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server … -- --ignored`，**未带 `--test-threads`**）；
+- 每个 db 用例各自 `Db::connect(&url, 4, 1)`（**池 4**）⇒ 并发连接上限 ≈ `32 × 4 × package 数` ≫ **本机 PG 的 `max_connections = 100`**；
+- 因为 sqlx 的 acquire 超时先于 PG 的 `too many clients` 触发，**日志里看不到任何 FATAL**，只有 `pool timed out` ⇒ 极易被误判成「用例缺陷」。
+
+⇒ **两条处置（都不是改片代码）**：① `scripts/gates.sh` 的 ⑥ 加 `-- --ignored --test-threads=4`（把连接数压到 ~16）；
+② 本机 PG `max_connections` 提到 500（`ALTER SYSTEM` 后**需重启** ⇒ 会打断其他在飞片，属 owner/cycle 级动作，**本轮未执行**）。
+⚠️ 判别式：`pool timed out while waiting for an open connection` ⇒ **先查 `max_connections` 与 `--test-threads`，再谈代码**；只有 panic 指向业务断言才是真缺陷。
+
+### 195.7 本轮结束时状态
+- base **`d523746a`**（本片 docs-only 直推，+58/−0，**非 docs 位移 = 0** ⇒ 在飞片无需 rebase）；GH **0 open PR**。
+- 在飞 `LUM-2136`：第三轮全量门已跑完 **9/10**，PID 35915 仍活（正在处理 ⑥）⇒ 判活、不抢救。
+- 磁盘：冷跑后 `target/` **18.9G**、`avail` **8.3G**（起手 21G）⇒ **已进入红线区**；本轮回收杠杆为 0（见 195.4/195.5），如实记录。
+- 零派发（唯一可派 device 被占；`LUM-2110` 维持原地 `todo`）。
