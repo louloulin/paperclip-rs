@@ -1,0 +1,21 @@
+# .dockerignore — 门 ⑪（`scripts/gates.sh --only image`）的构建上下文。
+#
+# 为什么必须有这个文件：`deploy/Dockerfile` 用的是 `COPY . .`，而**没有** `.dockerignore`
+# 时 docker 会把整个工作目录打进构建上下文 —— 本仓的 `target/` 实测 **23G**（门 ⑤ 一次就
+# 能长到 21G，见 docs/37 关于门 ⑤ 峰值的记录）。23G 的上下文会让 CI 的 `image` job
+# 慢到超时，并且在构建机上白占一份磁盘。
+#
+# 排除清单刻意**极短**，只放两样「确定编译用不到、且可能极大」的东西。凡是拿不准的
+# （`migrations/`、`docs/fixtures/`、`.cargo/`）一律**不排除**：
+#   * `migrations/` 必须留下 —— 它是编译期资源（`sqlx` 带 `migrate` feature，
+#     `crates/mc-db` / `mc-migrate` 依赖它），排掉它会让构建在「找不到迁移」处失败。
+#   * `.cargo/config.toml` 必须留下 —— 本仓的构建配置在那里（`incremental = true`）。
+
+target/
+.git/
+
+# 下面两样是纯本地产物，不影响构建，但排除掉能让上下文更干净。
+# ⚠️ 刻意**不**排 `docs/`：门 ⑩ 的基线清单 `scripts/file_size_baseline.tsv` 与
+# `docs/fixtures/*.json` 是本仓的权威快照，排掉它们会让「镜像里编出来的代码」
+# 与「本仓快照描述的代码」悄悄脱钩。
+*.log

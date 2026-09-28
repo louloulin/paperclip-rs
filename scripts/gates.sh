@@ -72,6 +72,20 @@
 #     名单里的键只报不红（都是已知欠账，理由写在行尾），名单外的缺陷（MISSING_ALIAS /
 #     MISSING_EXACT）直接判红；**条目对应的键修好后必须删行**，残留的行会被当缺陷（exit 1），
 #     否则它会掩盖同一键的下一次回归。查清单外的缺口用 `--no-allowlist`。
+#   * ⑪（`image`，M10-7 / LUM-2109）**刻意不进默认集合，也不进 `--with-db` 集合**：
+#     它需要本机有 docker（实测本机 `which docker` / `podman` / `buildah` 三者皆无），
+#     而把它塞进默认集合会让 `bash scripts/gates.sh` 从 8/8 变 9/9、让几十份文档与
+#     本波 13 个子 issue 的 DoD 全部失效。因此它**只能显式点名跑**
+#     （`--only image`），判它的 job 是 CI 的 `image` job（CI 的 runner 有 docker）。
+#     ⚠️ **缺 docker 时本门 exit 2（用法/前置条件错），绝不静默跳过、也绝不判绿** ——
+#     与 ⑥/⑧ 的库 URL 同款处置（见文件顶部退出码说明）。想让本门在没有 docker 的机器上
+#     「不算失败」，正确做法是**不选它**（`--only` 点名），不是让它自己假装通过。
+#   * ⑪ 判的是**三件事**，不是「镜像能不能 build」这一件：① `docker build` 成功；
+#     ② 容器内 `id -u` **不是 0**（非 root，`deploy/Dockerfile` 的 `USER 10001:10001`
+#     必须真的生效）；③ `/usr/local/bin/multica-server` 存在且可执行（防 ENTRYPOINT 指向
+#     不存在的文件 —— 那个二进制名叫 `multica-server`，**不叫 `mc-server`**，见
+#     `apps/mc-server/Cargo.toml` 的 `[[bin]] name`）。②③ 各花一次容器启动，
+#     比重新 build 便宜得多，所以放在 build 之后单独判。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -91,7 +105,9 @@ cd "$SCRIPT_DIR/.." || exit 2
 
 # 门的规范顺序与显示编号（编号 == plan1 §6.4 的清单序号；⑦ 之后的编号由追加切片顺延，不重编）。
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size"
+# `image` 排在最后但**不在**任何默认集合里（默认集合在下方的 SELECTED 分支里逐字写出，
+# 不由 ALL_GATES 推导）—— 这样 `--list` / `--only image` 能点到它，而默认跑法碰不到它。
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image"
 
 gate_label() {
     case "$1" in
@@ -105,6 +121,7 @@ gate_label() {
         route-parity) echo "⑦" ;;
         conformance) echo "⑨" ;;
         file-size) echo "⑩" ;;
+        image)      echo "⑪" ;;
         *) echo "?" ;;
     esac
 }
@@ -121,6 +138,7 @@ gate_env_name() {
         route-parity) echo "ROUTE_PARITY" ;;
         conformance) echo "CONFORMANCE" ;;
         file-size) echo "FILE_SIZE" ;;
+        image)      echo "IMAGE" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -321,6 +339,70 @@ run_schema_drift_gate() {
     return 0
 }
 
+# ⑪ image（M10-7 / LUM-2109）—— 判 deploy/Dockerfile 这**唯一**的发布制品。
+#
+# 为什么单独写一个函数而不是 run_gate 一行：这条门要判三件事、且中间要复用同一个
+# 镜像 tag（build 一次、起两次容器），run_gate 的「name + 一条命令」形状装不下。
+#
+# 三条判据（见文件顶部「已知坑」⑪）：build 成功 / 容器内非 root / 二进制存在且可执行。
+# ② ③ 刻意不合并成一次容器启动：合并就少了一个可读的失败点，而分开时两次 `docker run
+# --rm --entrypoint` 各自只花几百毫秒，相对 build 的分钟级开销可以忽略。
+run_image_gate() {
+    local start end rc tag
+    tag="multica-server:image"
+    printf '\n=== [⑪] gate image ===\n'
+    printf '$ docker build -f deploy/Dockerfile -t %s .\n' "$tag"
+
+    # 缺 docker ⇒ 用法/前置条件错（exit 2），**不是**门失败、也**不是**跳过。
+    # 与 ⑥/⑧ 缺库 URL 同款：让「没法跑」和「跑了但红」在退出码上可区分。
+    if ! command -v "${IMAGE_DOCKER:-docker}" >/dev/null 2>&1; then
+        printf 'error: the image gate needs a container CLI; none found (%s)\n' "${IMAGE_DOCKER:-docker}" >&2
+        printf '  the image gate is deliberately NOT in the default set: it needs docker,\n' >&2
+        printf '  which this host does not have (measured: docker/podman/buildah all absent).\n' >&2
+        printf '  run it where a container CLI exists (the CI "image" job), or do not select it.\n' >&2
+        printf '  set IMAGE_DOCKER=<cli> to point at a non-default one.\n' >&2
+        return 2
+    fi
+
+    start="$(date +%s)"
+    if ! "${IMAGE_DOCKER:-docker}" build -f deploy/Dockerfile -t "$tag" . ; then
+        end="$(date +%s)"
+        printf 'GATE_IMAGE_EXIT=1\n'
+        record image 1 "$((end - start))" "build failed"
+        return 0
+    fi
+
+    # ② 非 root：镜像里 `USER 10001:10001` 必须真的生效（写成 root 也能 build 成功，
+    #    所以这一条只能靠**起容器问它**来判）。
+    local uid
+    uid="$("${IMAGE_DOCKER:-docker}" run --rm --entrypoint id "$tag" -u 2>/dev/null || true)"
+    if [ -z "$uid" ] || [ "$uid" = "0" ]; then
+        end="$(date +%s)"
+        printf 'error: image runs as uid %s (expected non-zero) — deploy/Dockerfile USER is not effective\n' "${uid:-<none>}" >&2
+        printf 'GATE_IMAGE_EXIT=1\n'
+        record image 1 "$((end - start))" "runs as root"
+        return 0
+    fi
+
+    # ③ 二进制存在且可执行：二进制名是 `multica-server`（apps/mc-server/Cargo.toml 的
+    #    `[[bin]] name`），**不是** crate 名 `mc-server`。这一条防的正是「ENTRYPOINT 指到
+    #    一个不存在的路径、而 build 仍然成功」这种最难在运行时才暴露的错误。
+    if ! "${IMAGE_DOCKER:-docker}" run --rm --entrypoint test "$tag" -x /usr/local/bin/multica-server ; then
+        end="$(date +%s)"
+        printf 'error: /usr/local/bin/multica-server missing or not executable in the image\n' >&2
+        printf 'GATE_IMAGE_EXIT=1\n'
+        record image 1 "$((end - start))" "binary missing"
+        return 0
+    fi
+
+    end="$(date +%s)"
+    printf 'image OK: uid=%s, /usr/local/bin/multica-server is executable\n' "$uid"
+    rc=0
+    printf 'GATE_IMAGE_EXIT=0\n'
+    record image "$rc" "$((end - start))" "uid=$uid"
+    return 0
+}
+
 for gate in $SELECTED; do
     case "$gate" in
         fmt)            run_gate fmt            cargo fmt --all --check ;;
@@ -343,6 +425,10 @@ for gate in $SELECTED; do
                             --check crates/mc-conformance/report.json ;;
         # ⑩ 纯离线、秒级；判据是 scripts/file_size_check.py 的退出码（越限 → 1）。
         file-size)      run_gate file-size python3 scripts/file_size_check.py --quiet ;;
+        # ⑪ 不在默认/`--with-db` 集合里（见文件顶部「已知坑」⑪）；只能用 `--only image` 点名。
+        # 前置条件缺失（无容器 CLI）必须以 **exit 2** 终止整个脚本，而不是记成「没跑过这道门」
+        # 后照样 exit 0 —— 那正是「静默判绿」，是本仓明令禁止的（与 ⑥/⑧ 缺库 URL 同款）。
+        image)          run_image_gate; _img_rc=$?; [ "$_img_rc" -eq 2 ] && exit 2 ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done
