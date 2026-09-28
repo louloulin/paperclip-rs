@@ -9742,3 +9742,219 @@ upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
 **⑦ 结论**：0 路由 ⇒ 合并后 `456/546/546`、`455r+1ph`、`gap 0`、`owners {}` 必须**逐字不变**；
 本片验收证据**全部**来自它自己的单测（`channels.rs` 4 条 + `wecom_probe.rs` 7 条 +
 真库 8 条）与门禁，**不来自 ⑦**。
+## 64. M10-9（`LUM-2111`）：M10 波 INT 收口 —— 三件套刷新 + 终态向量当轮报告 + Tier-2 残余登记（0 路由）
+
+> **号段复核**：`docs/64` §3.1/§6.5 与本片描述里写的「`docs/32` §9.14 / `## 37.` / §9.x 末号 `9.11`」
+> **三条全部是计划期占位号，已过期**：`§9.14` 被 M10-2 占（`docs/32:1016`）、`## 37.` 被占、
+> §9.x 的末号是 **`9.32`**（M7-FU `LUM-2136`，`docs/32:9723`），顶层末号是 **`## 63.`**。
+> ⇒ 本片登记在 **`## 64.` + `### 9.33`**。
+
+### 64.1 起手事实（当轮实测）
+
+| 项 | 值 |
+|---|---|
+| 起手 base（`git fetch` 后读 `origin/feat/multica-rs-initial`） | **`ed5848893a9764ee343251b5bac88cd02e3ef097`**（= PR #145 合并树） |
+| 工作 base（起手后 origin 又前进 1 个 **docs-only** 提交，`git merge --ff-only` 前移） | **`3e9a7dfd5e8f438765eae787b34d69f539c6a69e`**（`docs/37` §200，1 文件 +78/−0，**非 docs 位移 = 0** ⇒ 不构成 rebase 理由） |
+| 磁盘 | `df -h /` 连采两次都是 **49G / 19G used / 29G avail / 39%**（本片起手） |
+| 容器 CLI | `which docker podman buildah` ⇒ **三者皆无**（设计前提，不是阻塞；见 §64.6-1） |
+| 测试库 | `mc_lum2111` / `multica_lum2111`（角色带 `CREATEDB` ⇒ ⑧ 建 scratch 库不假红） |
+
+三道**零编译门**（当轮实测，`python3`，秒级）：
+
+```text
+⑦  upstream 456 / local 546 / baseline 546
+    implemented 456 = 455 real + 1 placeholder / known_gap 0 / unclaimed 0 / regressions 0
+    local_only 8（含 1 placeholder）/ owners {} / ok=true
+⑦b scripts/slash_alias_audit.py --quiet            exit 0
+⑩  scripts/file_size_check.py --quiet              exit 0（limit=800 scanned=1285 baseline=10 violations=0）
+   scripts/audit_workspace_deps.py                  A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0（存量，勿动）
+```
+
+⇒ 与本片描述「当轮实测基线」一节**逐字一致**，且 `456/546/546 / 455r+1ph / gap 0 / owners {}` 是
+**自 M9 收口起连续第 10 轮**逐字不变。本片是 0 路由片 ⇒ 这八个数字**必须**不变；
+它们没变，即证明本片没有误碰注册面或快照。
+
+### 64.2 三件套刷新：**三份快照逐字节恒等**（本片的核心实测结论）
+
+| 快照 | 刷新命令 | 刷新前 md5 | 刷新后 md5 | 位移 |
+|---|---|---|---|:-:|
+| `docs/fixtures/route-parity-baseline.json` | `python3 scripts/route_parity.py --write-baseline` | `294c2c2a7f76517b4f4013b1be779220` | `294c2c2a7f76517b4f4013b1be779220` | **0（546 键、零删除）** |
+| `crates/mc-conformance/report.json` | `mc-conformance --golden contracts/golden --no-db --write …` | `c06a888e9a3b7533b3432b28aef52b33` | `c06a888e9a3b7533b3432b28aef52b33` | **0（逐字节）** |
+| `scripts/file_size_baseline.tsv` | ⑩ 复算（**不刷新**：DoD 第 4 条逐字「不动」） | `eeff7a814065c2c86a916aa4f6674764` | `eeff7a814065c2c86a916aa4f6674764` | **0** |
+
+`--write` 后立刻 `--check` 复算 ⇒ **exit 0**（快照与当轮回放逐字一致）。
+
+🔴 **口径结论（与本片描述的预测相反，要记下来）**：本片描述第 1 条验收写「⑨ `report.json` **预测作废，起手实测**」，
+实测结果是**不需要实测纠偏 —— 快照本来就是最新的**：刷新前后 md5 相同、`--check` 在**刷新前**就已经 exit 0。
+⇒ **`report.json` 在 M10-6 / M10-5 合入时已被最后一波实现片刷到终态**，M10 波内**没有任何一片**在它合入后
+再动过 stateless 层的回放结果。这正是 0 路由 INT 片应有的产出：**刷新动作执行了，落点是零位移**。
+
+### 64.3 终态向量 T1-1…T1-12（`bash scripts/stop_condition.sh` 当轮完整输出）
+
+见本片交付说明的逐字粘贴。汇总口径：
+
+```text
+pass=12 fail=6 skip-no-db=0 skip-no-asset=0 skip-no-gate=0 total=18
+exit=1
+failing_ids: `T1-1a T1-1b T1-5 T1-7 T1-6 T1-10b`
+```
+
+### 64.4 与 `docs/64` §6.1 / §6.2 预测的**逐字比对**（哪一片的哪一步偏离）
+
+| 预测（`docs/64` §6.1 末行「M10-9（INT）后」） | 预测值 | 当轮实测 | 偏离解释 |
+|---|---:|---:|---|
+| `local` | 494 | **546** | **不是偏离**，是 §6.1 那张表本身**整体作废**：它的起手行是 base `c23fcfad` 的 `local 474 / known_gap 65 / owners {M9 33, M3+ 16, M3 11, M10 5}`，而 M9-10 INT（PR #137）**已把 `local` 刷到 546 并把 `owners` 清空**。§6.1 自己写了「⚠️ 上表是**预测**，每片起手**必须重取当轮实测读数**，不许直接抄本表」—— 本片遵守了这一条。 |
+| `implemented` | 412（410 + 2） | **456（455 + 1）** | 同上；差额 44 = §6.1 预测里 `known_gap 44`（`M9 33 + M3 11`）在 M9-11 + M9-10 里被**逐条实现并清账**。 |
+| `known_gap` | 44 | **0** | 同上（M9-11 关掉 `M9 33`、M9-10 关掉 `M3 11`）。 |
+| `owners` | `M9 33 / M3 11` | **`{}`** | 同上。 |
+| `baseline` | 457 → **494** | **546，零删除** | **本片只执行了 `--write-baseline`，没有产生位移**；M9-10 INT 已把基线刷到 546。 |
+| ⑨（§6.2 末行「M10-B1…B4 后」）`pass 32 / mismatch 23 / unmounted 4 / unevaluable 306`、rate `0.087671 / 0.581818` | — | **pass 33 / mismatch 25 / unmounted 1 / unevaluable 306**、rate `0.090411 / 0.568966` | §6.2 的分母是 **365 条**，实测**仍是 365**（M10 波 `contracts/golden/**` 零改动，符合 §6.2「B 面不动 ⑨」）；但 `pass` 多 1 条（`/api/config` 17 条全绿后 M10-5 的 `golden-local` 之外还有别处转绿）、`mismatch` 多 2、`unmounted` **少 3**（22 → 1，§6.2 预测的终值 4 是在 base 口径下算的）。⇒ §6.2 的数字同样只能当**历史预测**读。 |
+
+⇒ **一句话**：`docs/64` §6.1/§6.2 两张预测表在 M10 波结束时**已整体作废**，本片以当轮实测为准；
+**没有任何一条偏离可归因到「某一片的某一步」**—— 差异全部来自「M9 波在 M10 计划期之后继续推进」。
+
+### 64.5 Tier-2 残余项**逐条**登记（`docs/64` §9.9 要求的 T2 层）
+
+> 纪律：`docs/64` §9.9 原文要求登记 `owners = {M9 33, M3+ 16, M3 11, M10 5}` 的缺口直方图 ——
+> **`known_gap == 0` 时根本不存在缺口直方图**（`docs/37` §178 已订正）。本片登记的是**实测清单**。
+
+| # | 残余项 | 当轮实测值 | 处置口径 / 归属 |
+|:-:|---|---|---|
+| R-1 | ⑦ `implemented_placeholder` | **1**：`POST /api/issues/{id}/comments/trigger-preview`（owner `M2-A`，`routes/mod.rs:1978`） | **计划期裁定为「不做」**（`docs/10` §2），不是欠账；要清必须改 `docs/10` 的裁定并重挑耐久断言落点 |
+| R-2 | ⑦ `local_only` | **8**（含 1 placeholder） | 已逐条登记（§64.5.1）；「有主即合规」，压它收益为 0 |
+| R-3 | ⑨ 离线层 `mismatch` | **25**（15 条不同路径） | 全部 `actor=anonymous`；是 M2-A/M3/M9 各波**已实现但与上游 `json_subset` 有字段级差异**的键，逐条见 §64.5.2 |
+| R-4 | ⑨ 离线层 `unmounted` | **1**：`GET /users/me`（exp 200 / got `404 with empty body (axum fallback)`） | M1 面遗留（`/users/me` 与本仓 `/api/me` 是两条键）；**未立项** |
+| R-5 | ⑨ 离线层 `unevaluable` | **306**（134 个不同 `(method,path,actor,via)` 键 / 121 条路径）；`by_actor = member 293 / agent 13` | `actor=member` 需要真身份 + 真库才有意义，`--no-db` 层**结构性不可判**；这不是缺口，是**判据分层**的必然结果 |
+| R-6 | ⑨ 真库层 `mismatch` | **159**（`tiers.database.mismatch = 135` + `tiers.stateless.mismatch = 24`） | 真库层需要真 actor / 真种子数据；M5/M9 波逐片收敛，**本片不归因** |
+| R-7 | ⑨ 真库层 `unmounted` | **4**（3 条不同路径）：`GET /users/me`（同 R-4）、`POST /api/chat-sessions/{id}/messages` **×2**（exp 409 / 400，got 404）、`PUT /api/autopilots/not-a-uuid`（exp 400，got **405 method not mounted**） | 前者与 R-4 同源；`PUT /api/autopilots/:id` 是 **405** ⇒ 路径存在但该方法未注册，属真缺口（登记为未立项） |
+| R-8 | ⑨ 真库层 `unevaluable` | **15**（6 条路径）：`GET /api/agents/{id}`、`GET /api/chat/history`、`GET /api/chat/thread`、`POST /api/issues`、`PUT /api/agents/…`、`DELETE /api/comments/…/reactions` | `by_actor = agent 13 / member 2`；agent 面需要真 agent actor 注入 |
+| R-9 | ⑨ 两个 rate | `contract_equivalence_rate = 0.090411`、`mounted_equivalence_rate = 0.568966`（离线层） | `mounted = pass/(pass+mismatch)`（**不含 `unmounted`**，`mc-conformance/src/lib.rs:781-786`）⇒ 33/58。**T1-7 要 1.0** ⇒ 差 0.909589 / 0.431034 |
+| R-10 | 门 `image` 本机不可判 | `bash scripts/gates.sh --only image` ⇒ **exit 2**（`error: the image gate needs a container CLI; none found (docker)`） | **设计前提**，不是失败；判定能力由 CI 的 `image` job 承担（§64.6-1） |
+| R-11 | CI `image` job 的历史状态 | base `ed584889` 上 4 个 job **齐了**（`fast/db/contract/image`），但 `fast/db/image` 三条 **cancelled**、只有 `contract` success | cancelled 而非 red：run `36463943851` 于 18:18 被后续 push（`3e9a7dfd`，run `36464206811`）取代。本片以 `3e9a7dfd` 的 check-runs 判 T1-11（§64.3） |
+| R-12 | bench **相对**阈值 | `relative_p95_slack = 1.25` 已声明，但 `docs/fixtures/bench-baseline.json` 里 **7/7 案例 `baseline_p95_ms = null`、`p95_ratio = null`** | `baseline_p95()` 只在 `MC_BENCH_BASELINE` 指向一个**别的**文件时才有值（`crates/mc-bench/src/report.rs:175-199`）⇒ **当前快照是「无基线」形态，相对判据从未被机器判定过**。要判必须 `MC_BENCH_BASELINE=<另一份报告>` 重跑 |
+| R-13 | bench **绝对**预算 | `issue_list ≤ 17ms` / `facets ≤ 27ms` / `inbox_cursor ≤ 21ms`；当轮快照 7/7 **全过**（最大 `inbox_cursor archived_page_cursor = 12.319ms`） | 这三个数字**已被 M10-6 改写**：`docs/64` §2.5 原文是 `5 / 20 / 2 ms`，实测基线远超 ⇒ 按 §2.5 自己的纪律「M10-6 **必须**先改这份预算并写理由，不许默默放宽」改了预算并留了字（`budget_p95_ms` 字段） |
+| R-14 | `m10-declared-routes.tsv` 的覆盖面 | 只有 **5 条**（`GET /health`、`/healthz`、`/readyz`、`/health/realtime`、`/api/config`） | 它是**输入**（喂 `slash_alias_audit.py --declared` 的预测模式），**不是**本地路由快照；M10 **B 面 17 行（owner `M3+`）不在其中**，也不在 M10-4/M10-5/M10-6/M10-7/M10-8 的任何声明表里 ⇒ **B 面 6 片（`LUM-2112`…`2115`）没有对应的 `--declared` 表**，形态预判只能靠无参调用 |
+| R-15 | 字段级已知差异 ① | `issue_create_properties_supported = false`（`/api/config` 第 15 字段，恒 false） | `CreateIssueRequest`（`routes/issues/dto.rs:242-262`）**没有 `properties` 字段** ⇒ serde 静默忽略该 bag（正是上游注释警告的失败模式）。客户端 fail-closed ⇒ `false` 是**安全一侧**；补实现属 M2-A 面，本波不做（`crates/mc-http/src/routes/config.rs:130-134`） |
+| R-16 | 字段级已知差异 ② | `cdn_signed` **恒 false** | 不引 CloudFront、不引 S3 presign ⇒ `resolveAttachmentDownloadMode` 三个分支只剩 `proxy` 一支（`routes/attachments/download.rs:43-49`）；与 `/api/config` 的该字段**互为断言** |
+| R-17 | 「明确不做」清单 | helm chart · compose 编排 · K8s 清单 · 前端镜像 · npm/homebrew/install.sh 分发 · 自更新 · 真实前端 E2E · 真实云侧双跑 · 与 Go 版同量级对比 | 逐条理由见 §64.5.3；来源 `docs/64` §9.8 + §9.6 |
+| R-18 | 本仓 37 crate 的 Dockerfile 硬事实 | crate 名 `mc-server`，但 `[[bin]] name = "multica-server"` ⇒ 制品是 `target/release/multica-server`；`/src/target` **绝不能**挂 BuildKit cache mount | M10-7 的自审与 `docs/37` §200 已各抓到一次（`COPY --from` 报 `not found` 而 `cargo build` 是绿的）；门 ⑪ 的第 ③ 项就是为它设的 |
+
+#### 64.5.1 `local_only` 8 条**逐条**（`scripts/stop_condition.sh` 内嵌登记表，当轮 `8/8 registered`、占位 1 条单列）
+
+| # | METHOD | PATH | 占位 | 登记号 | 理由（逐字） |
+|:-:|---|---|:-:|---|---|
+| 1 | `GET` | `/api/issues/:id/reactions` | | `M3-LOCAL-01` | `docs/15-M3-PLAN.md:213` 逐字「本地自造（local_only，M3 不动）」；上游 reactions 面在 `/api/reactions/{targetType}/{targetId}` |
+| 2 | `GET` | `/api/issues/:id/quick-actions` | **✔** | `M3PLUS-LOCAL-02` | `docs/15-M3-PLAN.md:587` 逐字「与上游 `GET /api/quick-actions/` 不是同一条」；本条是 `crates/mc-http/tests/issues/auth.rs:141` 的**耐久 501 断言**落点 ⇒ **禁删禁实现** |
+| 3 | `GET` | `/api/health` | | `OPS-LOCAL-03` | `docs/64` §9.3 裁定「保留（不收敛）」：服务+DB 综合语义，被 `apps/mc-cli/src/main.rs` 当探针 + mc-openapi 文档测试断言 |
+| 4 | `GET` | `/api/health/db` | | `OPS-LOCAL-04` | 同上：DB 专用探针，CLI 与 conformance 自造 fixture 均引用 |
+| 5 | `GET` | `/api/openapi.json` | | `OPS-LOCAL-05` | `docs/22-ROUTE-PARITY.md` §3.4「本仓自有的运维面」；mc-openapi 生成的文档端点 |
+| 6 | `GET` | `/api/me/pats` | | `PATS-LOCAL-06` | `docs/17-M1-CONTRACT-GAPS.md` §D4：主路径已迁 `/api/tokens`，本键保留一个发布周期作为 deprecated alias（响应带 `Deprecation` 头） |
+| 7 | `POST` | `/api/me/pats` | | `PATS-LOCAL-07` | 同上 §D4（alias 的 POST 面） |
+| 8 | `DELETE` | `/api/me/pats/:id` | | `PATS-LOCAL-08` | 同上 §D4（alias 的 DELETE 面） |
+
+🔴 **两个 placeholder 桶互不相干（本仓第 N 次复现，`docs/37` §194 的承重订正）**：
+`implemented_placeholder = 1`（R-1，`POST /api/issues/{id}/comments/trigger-preview`，`owner=M2-A`）与
+`local_only_placeholder = 1`（上表第 2 行）**是两条不同的键**。把两者合成一个「还差 1 个占位」的说法就是错的。
+
+#### 64.5.2 ⑨ 离线层 `mismatch` 25 条的**逐条路径**（15 条不同路径，`actor=anonymous` 全量）
+
+```text
+GET  /api/daemon/chat-sessions/{id}/gc-check              GET  /api/daemon/issues/{id}/gc-check
+GET  /api/daemon/tasks/{id}/status                        GET  /api/daemon/tasks/{id}/gc-check
+GET  /api/daemon/tasks/{id}/status（另一条 fixture）        GET  /api/daemon/workspaces
+GET  /api/daemon/workspaces/{workspaceId}/repos           GET  /api/daemon/ws
+POST /api/daemon/tasks/{id}/cancel-ack                    POST /api/daemon/tasks/{id}/complete
+POST /api/daemon/tasks/{id}/messages                      POST /api/daemon/tasks/claim
+POST /api/webhooks/stripe        POST /auth/google         POST /auth/send-code
+```
+
+⇒ 形态上分成三族：**daemon 面 11 条**（M3 波的实现，daemon 协议与上游 `daemonws` 快照形状不同）、
+**`POST /api/webhooks/stripe` 1 条**（M9-6，`docs/64` §6.2 把它算在 `unmounted 4` 里，当轮它已落到 `mismatch`）、
+**auth 面 2 条**（M1 面）。本片**不归因、不改**（写集只有三个文件）。
+
+#### 64.5.3 「明确不做」清单（逐条 + 理由，来源 `docs/64` §9.8 / §9.6）
+
+| 项 | 上游对应 | 裁定 | 理由 |
+|---|---|---|---|
+| 镜像 | 上游根 `Dockerfile` | **做** | `deploy/Dockerfile`（多阶段 / 非 root / ENTRYPOINT），门 ⑪ + CI `image` job 判 |
+| helm chart | `deploy/helm/multica/**`（8 文件 713 行；`backend.yaml` 描述的是 **Go 镜像**、`frontend.yaml` 描述 **web Pod**、`postgres.yaml` 起 PG） | **不做** | ① 逐字搬运会产出**一份无人能验证**的制品；② T1 的 12 条向量**不包含**它；③ 只作**只读参考** |
+| compose 编排 | 上游 `docker-compose*` | **不做** | 同 helm：它编排的是 **Go 镜像 + web 镜像 + PG**，本仓无这两类镜像；改写成 Rust 版就是「一份无人能验证的编排」 |
+| K8s 清单 | 同 `deploy/helm` 族（`frontend.yaml` / `postgres.yaml` 即其 K8s 投影） | **不做** | 同上 |
+| 前端镜像 | 上游 `Dockerfile.web` | **不做** | 本仓**没有前端**（`plan1.md` 的 W10 含「前端兼容验证」，但兼容验证由 M10-4 的 `/api/config` + `golden-local` 在**契约层**完成，不需要 web 镜像） |
+| CLI 打包分发 | 上游 `cmd/multica`（安装器 / 自更新） | **部分做** | 本仓已有 `apps/mc-cli`（`cargo build --release --locked -p mc-cli` + 冒烟）；**不做** homebrew / npm / install.sh / 自更新——本仓无分发基础设施，这些渠道**不可在本仓验证** |
+| 真实前端 E2E | — | **不做**（Tier-3 人工验收） | 无前端资产，不可判定 |
+| 真实云侧双跑 | — | **不做** | 本机无 Go 工具链（`which go` 为空）、无上游服务可起 ⇒ 由「与冻结 golden 逐字段对账」替代 |
+| 与 Go 版同量级 | — | **不做** | 同上；由 `docs/64` §2.5 的**相对阈值 + 绝对上界**两条可判定判据替代（见 R-12/R-13） |
+
+### 64.6 本片登记的偏离 / 未接线 / 口径缺陷
+
+1. 🔴 **`stop_condition.sh` 的 `T1-10b` 没有「exit 2 = 不可判」这一档**（口径缺陷，**本片只报告不修**）。
+   `gates.sh` 的退出码语义是 **0 = 绿 / 1 = 红 / 2 = 没法开跑**（缺容器 CLI 正是这一档，M10-7 刻意如此设计），
+   而 `scripts/stop_condition.sh` 的 `T1-10b` 只判 `exit == 0 ⇒ PASS`、其余一律 `FAIL`
+   ⇒ **「没法判定」被记成「不达标」**，与它自己在 `T1-6`/`T1-8` 上对 `SKIP-NO-DB → exit 2` 的处置**不一致**。
+   当轮实测：`bash scripts/gates.sh --only image` ⇒ **exit 2**（`error: the image gate needs a container CLI; none found (docker)`），
+   于是 `T1-10b` 判 `FAIL`。
+   **建议修法**（归后续片，`stop_condition.sh` 的写者）：把 `T1-10b` 改成三分档——`0 ⇒ PASS`、
+   **`2 ⇒ SKIP-NO-ASSET`（细节写明「本机无容器 CLI，判定能力由 CI `image` job 承担」）**、其余 ⇒ `FAIL`。
+   **本片不改**：写集审计第 ② 条把 `scripts/stop_condition.sh` 逐字排除在本片写集外（M10-8 交付物）。
+2. **`docs/64` §6.1 / §6.2 两张预测表在 M10 波末**整体作废**（见 §64.4）——不是某一片的偏离，是
+   M9 波在计划期之后继续推进造成的。**不订正 `docs/64`**（不在本片写集），在此登记。
+3. **本片描述里的三处过期号段/过期读数**：`docs/32` §9.14 / `## 37.` / 末号 `9.11`（见本节开头的号段复核）、
+   「当轮实测基线」那组数字里 `known_gap 65 / owners {M9 33, …}` 的**旧直方图要求**（`known_gap == 0` 时不存在缺口直方图）。
+   描述已在 §200 起手订正里作废了自己的「门禁预测」段；本片以 base 上的**当轮实测**为准。
+4. **未接线**：`docs/64` §2.5 第 3 条纪律要求 M10-6 交付「一条**可判**用例：同一语句在同一连接上第二次执行**不再** `Parse`」
+   （R10，用 `pg_stat_statements` 或 sqlx `prepare` 计数断言）。当轮快照里有对应的机器化证据
+   （`bench-baseline.json` 的 `r10 = {cached_rows: 1, uncached_rows: 2, capacity: 128}`，
+   对应 `.statement_cache_capacity(128)` 的显式设置），但它**只存在于 bench 产物里、没有独立的门** ⇒
+   T1 的 12 条向量**不覆盖 R10**。登记为 Tier-2 残余（不是本片可清）。
+5. **本片零新功能代码**（DoD 第 4 条）：写集 3 项中 **2 项零位移**（§64.2），第 3 项是本文件的新段。
+
+### 64.7 门禁（本片**自己**跑的）
+
+见 §64.3 与交付说明。要点：
+
+- `bash scripts/gates.sh --with-db --db-url …` ⇒ **10/10 全绿**（`image` 落 `(not selected: … image)`，
+  这是**预期**，见 §64.6-1 与 R-10）；门 ⑪ 要判只能显式 `--only image`，本机 exit 2。
+
+| 门 | ① fmt | ② build | ③ clippy | ④ clippy-test-util | ⑤ test | ⑥ db | ⑧ schema-drift | ⑦ route-parity | ⑨ conformance | ⑩ file-size |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| exit | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 墙钟 | 4s | 119s | 71s | 49s | 170s | 244s | 25s | 1s | 5s | 0s |
+
+⇒ `overall: PASS — 10/10 gate(s) green in 688s`（**冷跑**，`target/` 从 1.4G 涨到 ~30G）。
+门 ⑥ 打三行 `GATE_DB_MIGRATE_EXIT / GATE_DB_E2E_EXIT / GATE_DB_EXIT`，全 0（合并判据取 `GATE_DB_EXIT`）。
+`stop_condition.sh` 的 `T1-10` 因此看到 **11 条 `GATE_*_EXIT` 行**（10 道门 + 门 ⑥ 的 3 行）⇒ 判 `11/11 all 0` PASS。
+- 门 ⑥ 需要真库（本片用一次性角色 `mc_lum2111`），门 ⑧ 同。
+- 本机磁盘纪律：`export CARGO_INCREMENTAL=0` **常设**（`.cargo/config.toml` 的 `incremental=true` 会重建
+  6.8G 缓存并把门 ②③④⑤⑨ 打成 ENOSPC exit 101）。本片 `df` 从 **29G avail** 起、
+  跑完剩 **11G avail**（`target/` 涨到 ~30G）—— 单跑一趟 `--with-db` 的实测占用 ≈30G。
+
+---
+### 9.33 M10-9（`LUM-2111`）：M10 波 INT 收口 —— 三件套刷新 + 终态向量当轮报告 + Tier-2 残余登记（**索引段**）
+
+**写集**（3 项，**全部是既有文件**；① 新文件：无）：
+
+| 文件 | 性质 | 本片当轮实测位移 |
+| --- | :-: | --- |
+| `crates/mc-conformance/report.json` | 改（本波唯一刷新者） | **0（逐字节，md5 `c06a888e…` 前后相同）** |
+| `docs/fixtures/route-parity-baseline.json` | 改（本波唯一刷新者） | **0（546 键、零删除，md5 `294c2c2a…` 前后相同）** |
+| `docs/32-M3-DAEMON-FACE.md` | 改（**只追加**本片 `## 64.` + `### 9.33` 两段，既有段落一字未动） | +1 段（`docs/` **不在**门 ⑩ 的 `SCOPE` 内） |
+| `scripts/file_size_baseline.tsv` | **不动**（DoD 第 4 条逐字） | — |
+
+**⑦ 结论**：0 路由片 ⇒ `456 / 546 / 546`、`455 real + 1 ph`、`gap 0 / unclaimed 0 / regression 0`、
+`local_only 8`、`owners {}` **逐字不变**（自 M9 收口起连续第 10 轮）⇒ 本片验收证据**全部**来自
+「三件套刷新动作本身 + 门禁 + `stop_condition.sh`」，**不来自 ⑦ 的位移**。
+
+**终态向量当轮报告**：`bash scripts/stop_condition.sh --db-url … --gates-log … --sha 3e9a7dfd…`
+⇒ **pass 12 / fail 6 / skip 0 / total 18，exit 1**，`failing_ids = T1-1a T1-1b T1-5 T1-7 T1-6 T1-10b`。
+逐格实测值与 `docs/64` §6.1/§6.2 预测的逐字比对见 **§64.4**；18 条 Tier-2 残余项的逐条登记见 **§64.5**。
+
+**本片抓到的口径缺陷（只报告不修，写集不含 `scripts/stop_condition.sh`）**：
+`T1-10b` 把 `gates.sh --only image` 的 **exit 2（「没法开跑」）记成 `FAIL`**，与该脚本自己在
+`T1-6`/`T1-8` 上对 `SKIP-NO-DB ⇒ exit 2` 的三分档处置**不一致** ⇒ 见 **§64.6-1** 的建议修法。
+
+**与描述的冲突（3 处，均已按「当轮实测优先」处置）**：① 描述的「当轮实测基线」与本片实测**逐字一致**，
+无冲突；② 描述要求登记的 `owners = {M9 33, M3 11}` 缺口直方图**不存在**（`known_gap == 0`），
+已改为实测清单；③ 描述里的 `docs/32` 号段（`§9.14` / `## 37.` / 末号 `9.11`）**三条全过期**，
+本片起手复核后落在 **`## 64.` + `### 9.33`**。
+
