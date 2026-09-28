@@ -18464,3 +18464,86 @@ known_gap 0 / unclaimed 0 / local_only 8 / owners {}      （regressions 0）
 ③ 它是 `--ignored` 的真库测试，不在 `gates.sh` 任何一道门里 ⇒ 门禁不会因此变红。
 ⇒ 留给下一片（与 §201 遗留的 Tier-2 一起），记为：**`Tier::supports` 的身份关必须与 `plan` 的
 可绑定分支共用同一个真相源**，而不是各写一份。
+
+## §208 【2026-09-29 06:00 cycle / LUM-2490】收割 PR #150（M11-2）＋ **ENOSPC 第 12 次** ＋ **⑦ 路由面已 456/456 全实现**
+
+- base 起手 **`6f9b024f`**，checkout **又一次落 `origin/main`** ⇒ `reset --hard`（第 37 次）。起手 `df` **28G(41%)**。
+- GH 唯一 open PR = **#150**（`LUM-2487` / M11-2）。判据链：分支自身 `--numstat` 7 文件 **+495/−17** 与 PR API **逐字一致**；
+  `base.sha == 6f9b024f`（= 起手 base，未被抢跑）⇒ 需真合。CI 阻塞等 **15 轮 / ~5min** ⇒ **4/4 绿**
+  （`contract` / `db — postgres:16` / `image` / `fast`）。squash 合入 = **`7942c94f`**。
+- 合并树**当场重跑全量 `--with-db`**：**10/10 全绿**。**⑦ 八数字逐字不变**：
+  `upstream 456 / local 546 / baseline 546 / implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+  ⑨ 另跑 `--db-url` 取 database 层读数，与 §205.4 **逐字相同**：`365 / pass 196 / mismatch 136 / unmounted 3 / placeholder 0 / unevaluable 30`。
+
+### §208.1 🔴 里程碑：**路由面已经打满，`known_gap = 0`**
+
+这是本轮第一次在 base 上实测到 `known_gap 0 / unclaimed 0 / regression 0`。
+⇒ **M1–M10 的「补路由」这条线到此为止**：`local_only 8` 是本仓多注册的上游没有的路由（不是缺口），
+`1 placeholder` 是占位实现。**此后所有剩余工作量都在 Tier-2 = 门 ⑨ 的真库层**，不在路由层。
+下一片不再许以「补路由」为名立项。
+
+### §208.2 🔴 ENOSPC 第 12 次 —— 本轮**第一次把 ENOSPC 的成因拆成可操作的两项**
+
+本轮 ⑥ 门以 `GATE_DB_E2E_EXIT=101` 失败，日志里**没有一条业务断言失败**，只有：
+
+```
+error: could not create incremental compilation crate directory
+  `…/target/debug/incremental/agents-23d981glih19b`: No space left on device (os error 28)
+```
+
+🔴 **承重：`exit 101` 在这里是「磁盘」而不是「测试」**，而门禁汇总把它和真失败**长得一模一样**。
+**判别式：`101` + 全日志零 `panicked at` + 零 `failures:` 段 ⇒ 先 `df -h`，不要先去读用例。**
+
+`target/` 27G 的构成（本轮实测，**补齐并细化 §197 的「deps 的 80% 是测试二进制」**）：
+
+| 项 | 大小 | 能不能重跑时再要 |
+|---|---:|---|
+| `target/debug/incremental` | **12G** | **不能**（纯缓存，删了只是慢） |
+| `target/debug/deps` 里的**可执行文件** | **21G** | 不能（⑥ 正在跑它们） |
+| `target/debug/deps` 里的 `.rlib`/`.rmeta` | 4.6G | 能（重编即可） |
+| `target/debug/build` | 179M | 不能 |
+
+⇒ **两条可复用配方**（本轮都实测过，合计回收 **33G**）：
+① **`export CARGO_INCREMENTAL=0`** 再跑全量 ⇒ 单此一项省 **12G**，⑥ 的墙钟只从 253s 变到可接受的范围；
+② 门与门**之间**（⑥ 跑完之后、⑨ 之前）执行
+`find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete` ⇒ 回收 **21G**，
+`deps` 26G → 4.6G，**`.rlib` 全留** ⇒ 下一道门只需重链、不需重编。
+⚠️ ② **不能**在 ⑥ 跑到一半时执行（它正在 exec 那些二进制）。
+⚠️ 记忆里 `mc_dev` 的口令（`m2c_local_pw`）**已失效** ⇒ ⑥ 报 `password authentication failed`，
+**它长得像「迁移炸了」但其实是凭据**。本轮新建专用角色 `mc_c2490`（**必须 `CREATEDB`**，否则 ⑧ exit 2），
+一次性口令不入库、不进文档。
+
+### §208.3 Tier-2 的形状（= 下一片的全部输入）
+
+`member` 层 **127 条 mismatch** 是当前最大的一块，逐域与逐「期望/实测」对：
+
+| 域 | 条数 | | 期望→实测 | 条数 |
+|---|---:|---|---|---:|
+| `issues` | 44 | | `200 → 404` | **59** |
+| `agents` | 33 | | `400 → 404` | 13 |
+| `workspaces` | 18 | | `200 → 400` | 10 |
+| `chat` | 13 | | `204 → 404` | 9 |
+| `tokens` | 9 | | `201 → 400` | 5 |
+| 其余 8 域 | 7 | | `409/403/201 → 404` | 11 |
+
+🔴 **读法（承 §205.1 的判别式）**：`→ 404` 的 82 条**不是缺陷**，是**回放器没种下被引用的行**
+（与 M11-2 那 9 条 daemon `→ 404` **同一个机制**）⇒ 一次**通用种子装配**可以一次性正名 82 条。
+`200 → 400` 那 10 条方向相反（本仓**更严**），是**另一个问题**（过度校验 or 真差异），必须单独走。
+⇒ 纪律：**「同一机制的一整族」才配当一片**；把 127 条当成一个数去派发，等于派了一个不可验收的任务。
+
+### §208.4 三槽位实况 = **1/3**，另两槽按算式**刻意留空**
+
+- 本片（cycle 自身）：收割 + 全量门禁，已完成。**收尾即回收自身 27G `target/`** ⇒ `df` 回 **25G(47%)**。
+- 第 2/3 槽算式：`avail 25G − 可回收 0G`（全盘除本片外已无任何 `target/`）
+  ` < ⑥ 门实测峰值 26–27G（CARGO_INCREMENTAL=0 下）` ⇒ **同时飞两片的期望收益为负**（ENOSPC 已 12 次，
+  且历史上至少一次连带杀掉 PG 5432）。⇒ 只派 **1 片**，并把 §208.2 的两条配方**写进它的描述**当作自带配额。
+- 另记：`/home/devbox/project/paperclip`（上游 Go oracle 镜像）占 **4.5G**，其中 `node_modules` 2.6G +
+  `packages` 1.9G 对 `gen_upstream_routes.py` / `extract_*.py`（只用 `git show`）**无用**。
+  **但那是仓外目录，删除属破坏性操作，未获确认 ⇒ 本轮不动**，仅登记为候选回收点（可回收 4.5G）。
+
+### §208.5 下一轮起点
+
+base = **`7942c94f`**；GH **0 open PR**。先判活本轮派出的一片；它交 PR 后走同一条判据链
+（先比 `--numstat` 与 PR API 逐字 ⇒ 判 base 祖先 ⇒ 合并树当场重跑 `--with-db` 10/10，**七/八数字须逐字不变**）。
+**收尾第一动作 = `rm -rf target`（回收 27G）**，`avail` 回 ≥25G 才排第二片。
+`LUM-2111`（M10-9 INT）仍卡 docker 三件套皆无，**待 owner 裁决，不重复 @**。
