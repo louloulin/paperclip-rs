@@ -42,6 +42,21 @@ mod registry;
 mod skills;
 mod tasks;
 
+/// `mdt_` 令牌的哈希（upstream `auth.HashToken` = `hex(sha256(token))`）—— **签发面**。
+///
+/// 🔴 必须与解析面 `mc_http::routes::daemon::scope::hash_token` **逐字同算法**：那边是
+/// 请求进来时算一次去查表，这边是签发时算一次写进 `daemon_token.token_hash`。
+/// 两边一旦分叉（换了编码、少了 `hex`、截断），症状是「刚签发的令牌立刻 401
+/// `invalid daemon token`」—— 而查表那条路自己不会告诉你算错了什么。
+/// [`PatRepo::hash_token`](crate::pat::PatRepo::hash_token) 是同一算法的另一个落点
+/// （upstream 复用同一个 `HashToken`），三者同源，改一处要同时看另两处。
+#[must_use]
+pub fn hash_daemon_token(raw: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 /// `i64` 秒 → `f64`（`make_interval(secs => …)` 吃 double precision）。
 ///
 /// 秒数是**小整数**（租约 120 / 心跳 90 / token TTL 86400 这一量级），
@@ -463,6 +478,24 @@ mod tests {
         ]));
         assert_eq!(a, b);
         assert_eq!(a.len(), 64);
+    }
+
+    #[test]
+    fn hash_daemon_token_is_hex_sha256_and_pinned() {
+        // 逐字钉住：`daemon_token.token_hash` 与 `mc-http` 的解析面必须算出同一个值，
+        // 而这条断言是那份「同源」约定唯一的机器见证（另两处是本仓代码，没有第三方 oracle）。
+        assert_eq!(
+            hash_daemon_token("mdt_test"),
+            "22c37107ad62e05d0f0a0eb3eabd1ad9fe9e0b6ef42a98e6601139e6ce2f7fc3"
+        );
+        // 与 `PatRepo::hash_token` 同一算法（upstream 同一个 `auth.HashToken`）。
+        assert_eq!(
+            hash_daemon_token("mdt_test"),
+            crate::pat::PatRepo::hash_token("mdt_test")
+        );
+        // 逐字节敏感：错一个字符就换一个哈希（判据「真的在查库」依赖这个性质）。
+        assert_ne!(hash_daemon_token("mdt_test"), hash_daemon_token("mdt_tesT"));
+        assert_eq!(hash_daemon_token("mdt_test").len(), 64);
     }
 
     #[test]

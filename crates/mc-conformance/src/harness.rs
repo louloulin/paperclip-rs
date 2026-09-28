@@ -17,7 +17,6 @@ use crate::{Bindings, TierRouters};
 
 /// 不可达端口上的懒连接池：不拨号、不建库，专门用来判定匿名断言（401 一类）。
 const STATELESS_URL: &str = "postgres://conformance:conformance@127.0.0.1:1/conformance";
-
 /// 第二个部署形态的 cloud 基址：**不可达，且只给那些会在请求出门前就返回的 fixture 用**。
 ///
 /// `TestStripeWebhookMissingSignatureRejectedLocally` 期望 401，而步 1（cloud 未配置 ⇒ 403）
@@ -92,10 +91,15 @@ pub fn stateless_routers() -> Result<TierRouters> {
     Ok(TierRouters::with_cloud_configured(base, cloud))
 }
 
-/// database 层：真库 + 迁移 + 一个种子身份。
+/// database 层：真库 + 迁移 + 一个种子身份 + 一枚现场签发的 `mdt_` 身份。
 ///
 /// 返回 `(router, bindings)`；`bindings.workspace_id` 是**用 router 自己**新建的
 /// workspace（仓库层没有 workspace create API），所以种子身份一定是 owner 成员。
+///
+/// 🔴 daemon 令牌在 workspace 建好**之后**才签发（[`crate::daemon_token::register`]）：
+/// `daemon_token.workspace_id` 有指向 `workspace(id)` 的外键，而「daemon 身份被限定在
+/// 某个 workspace 内」正是上游 `TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace`
+/// 断言的那件事 —— 挂在一个现编的 UUID 上，那个断言就恒为真（而恒为真的断言不是断言）。
 pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
     let db = mc_db::pool::Db::connect(url, 4, 0)
         .await
@@ -150,7 +154,17 @@ pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
         .context("workspace id missing from create response")?;
     let workspace_id = Uuid::parse_str(workspace_id).context("workspace id is not a uuid")?;
     let user_id = Uuid::parse_str(&user.id.to_string()).context("user id is not a uuid")?;
-    Ok((router, Bindings::new(user_id, workspace_id)))
+
+    // daemon 身份：现造一枚 `mdt_` 并登记进 `daemon_token`。明文只活在
+    // `bindings` 里（`Debug` 脱敏、不进报告），库里只落它的 `hex(sha256(·))`。
+    let daemon_repo = mc_repos::daemon::DaemonRepo::new(&db);
+    let daemon = crate::daemon_token::register(&daemon_repo, mc_core::Id::from(workspace_id))
+        .await
+        .context("mint + register daemon token")?;
+    Ok((
+        router,
+        Bindings::with_daemon_token(user_id, workspace_id, daemon.raw),
+    ))
 }
 
 /// 库里是否有可用的测试 URL（CI 默认没有 ⇒ 跳过 database 层）。

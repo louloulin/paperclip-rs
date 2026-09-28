@@ -40,19 +40,24 @@ pub const REPO_SIDE_PRECONDITIONS: &[(&str, &str, &[&str])] = &[
 /// 前提 id → (哪些层供得起它, 缺它时报告里写什么)。
 ///
 /// `satisfied_by` 为空 ⇒ **没有任何一层**能供得起 ⇒ 该 fixture 恒 `unevaluable`。
-/// 恒不可判定不是缺陷，是**诚实的记账**：这些场景要么需要本仓还没有的装配能力
-/// （`daemon_token`：harness 不会凭空造一个 `mdt_` 令牌并在库里登记它），
-/// 要么需要**测试替身**（`cloud_runtime_stub` / `db_fault_injection` / 拒绝一切的限流器）——
+/// 恒不可判定不是缺陷，是**诚实的记账**：这些场景需要**测试替身**
+/// （`cloud_runtime_stub` / `db_fault_injection` / 拒绝一切的限流器）——
 /// 而替身是上游单测的内部结构，不是本仓 router 的输入。硬造一个替身来把它们「判成通过」
 /// 就是在测自己造的假货，正是 §201.2 警告的形态。
+///
+/// 🔴 但「恒不可判定」与「**缺装配**」是两回事（本表唯一一条 `daemon_token` 曾是后者）：
+/// 凡是本仓**已经有**签发面 / 解析面、只是回放器没去调它的前提，都不属这一类 ——
+/// `daemon_token` 已由 [`crate::daemon_token`] 补上（§205）。判别式：**问「这条判据在
+/// 什么实现下会 FAIL」**；答不上来的多半就是一张本不该留着的空条。
 pub const REQUIREMENTS: &[Requirement] = &[
     Requirement {
         id: "daemon_token",
-        satisfied_by: &[],
+        satisfied_by: &[Tier::Database],
         detail: "upstream put a daemon identity in the request context (middleware.WithDaemonContext), \
-                 not in a header: this repo resolves every daemon credential against the database \
-                 (daemon_token / pat / member), and the harness does not mint or register an mdt_ token, \
-                 so neither tier can supply it",
+                 not in a header: this repo resolves it from the daemon_token table instead, and the \
+                 database tier mints and registers an mdt_ token per replay (crate::daemon_token) so \
+                 the request carries a credential this repo can actually look up; the stateless tier \
+                 has no pool to register into and cannot decide it",
     },
     Requirement {
         id: "browser_session_cookie",
@@ -174,4 +179,86 @@ pub fn requirements_detail(fx: &Fixture, tier: Tier) -> String {
         );
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 真实的 golden 目录（而不是现编一个 fixture）：本片要判的是「那 20 条」，
+    /// 现编一条只会证明现编的那条。
+    fn golden() -> Vec<Fixture> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/golden");
+        crate::load_dir(&dir).expect("contracts/golden loads")
+    }
+
+    fn daemon_token_fixtures() -> Vec<Fixture> {
+        let all: Vec<Fixture> = golden()
+            .into_iter()
+            .filter(|fx| fx.requirement_ids().contains(&"daemon_token"))
+            .collect();
+        assert!(
+            !all.is_empty(),
+            "no fixture declares daemon_token — §205 的前提表与 golden 面脱节了"
+        );
+        all
+    }
+
+    #[test]
+    fn daemon_token_is_supplied_by_the_database_tier_only() {
+        let r = requirement("daemon_token").expect("daemon_token is registered");
+        // 🔴 判据 2：必须是 `&[Tier::Database]` 单层。写进 Stateless 会把一条
+        // 「stateless 供不起」的前提说成供得起 —— 那一层的池指向不可达端口，
+        // 登记与查表都做不了，写进去等于删掉这条前提的鉴别力。
+        assert_eq!(r.satisfied_by, &[Tier::Database]);
+        assert!(
+            !r.satisfied_by.contains(&Tier::Stateless),
+            "stateless tier cannot register or look up a daemon token"
+        );
+    }
+
+    #[test]
+    fn daemon_token_fixtures_are_all_daemon_actor_and_no_longer_blocked_by_it() {
+        let mut only_daemon_token = 0usize;
+        for fx in daemon_token_fixtures() {
+            assert_eq!(
+                fx.actor.kind,
+                crate::ActorKind::Daemon,
+                "{}: 声明了 daemon_token 前提却不是 daemon actor",
+                fx.id
+            );
+            // 判据 1 的口径：`daemon_token` 本身不再出现在 database 层的缺口清单里。
+            // 别的前提（`db_fault_injection` —— 那是上游 mockDB 的产物，本仓真池
+            // 供不起）仍会让个别 fixture 整体不可判定，那是**另一条**判据的事。
+            let missing_db =
+                missing_requirements(&fx, Tier::Database).expect("known requirement id");
+            assert!(
+                !missing_db.contains(&"daemon_token"),
+                "{}: database 层仍缺 daemon_token",
+                fx.id
+            );
+            if missing_db.is_empty() {
+                only_daemon_token += 1;
+            }
+            // stateless 层两道关都答否 ⇒ 仍不可判定（`satisfied_by` 刻意不含 Stateless）。
+            let missing_st =
+                missing_requirements(&fx, Tier::Stateless).expect("known requirement id");
+            assert!(!missing_st.is_empty(), "{}: stateless 层不应判定它", fx.id);
+        }
+        // 防止「缺口只是从 daemon_token 换成了别的 id」这种平移被当成进展。
+        assert_eq!(
+            only_daemon_token,
+            daemon_token_fixtures().len() - 2,
+            "预期只有那 2 条与 db_fault_injection 并存的仍不可判定"
+        );
+    }
+
+    #[test]
+    fn every_requirement_detail_explains_itself() {
+        // 前提表是「恒不可判定」的登记处；空 detail 会让不可判定的理由变成空白
+        // （`main.rs` 有一条 `unevaluable with no reason recorded` 的兜底断言）。
+        for r in REQUIREMENTS {
+            assert!(r.detail.len() > 40, "{}: detail 太短", r.id);
+        }
+    }
 }
