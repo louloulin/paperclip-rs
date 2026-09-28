@@ -14846,3 +14846,137 @@ find <在飞片>/target/debug/incremental -maxdepth 1 -mmin +3 -type d ! -name i
 
 起手 673M/99% 不是「慢」，是**一片跑完的 28G 没人收**——
 回收判据「四条全过」里最该先跑的是 `multica issue runs`（一秒），它把 28G 从「不可动的在飞物」翻成「可整删的死物」。
+
+## §171 —— 09:00 cycle（`LUM-2398`）零收割预飞轮：外科回收 2.6G 保住 PG；**实测 gap 清单推翻 §170 的前推**，三片描述整表刷新
+
+### §171.1 起手快照
+
+| 项 | 值 |
+|---|---|
+| base | **`2b4337b8`**（= `18b81897` 合 PR #133 / M9-4 + `2b4337b8` §170 docs-only） |
+| GH open PR | **0**（`LUM-1819` 已 `in_review` 且合入） |
+| daemon `running_task_count` | **2 / 3** = cycle ∥ `LUM-1820`（M9-5，run `01a0e570-2de1…`，00:35:29Z 起，`cargo test -p mc-http -p mc-repos --lib`） |
+| `df` 起手 | **18G / 62%**（连采两次，20s 间隔无突变） |
+| PG 5432 | `online`（`pg_lsclusters` 实测） |
+| checkout 落点 | 落 `main` 线第 **18** 次 ⇒ 显式 `--ref feat/multica-rs-initial` |
+
+### §171.2 🔴 本轮唯一实质动作 = 外科回收（在飞片的 `incremental` 陈旧桶）
+
+`LUM-1820` 的 `target/` = 9.9G，其中 `debug/incremental` **6.3G / 196 桶**。按 §169 已验证零中断的配方切陈旧桶：
+
+```
+find <target>/debug/incremental -maxdepth 1 -mindepth 1 -mmin +5 -type d -print0 | xargs -0 -r rm -rf
+```
+
+- 删前 `/proc/*/fd` 命中 `incremental` 的 fd 数 = **0**（必须为 0 才动手）；
+- 命中 **82** 桶（`-mmin +5`；另有 33 桶 `<2min` 属活跃构建，**未动**）；
+- `df --output=avail /` **18.70G → 21.27G**（放掉 **2.57 GiB**），`incremental` 6.3G → 3.8G；
+- 回收后复查 `LUM-1820` 的 `pi` 进程与 `cargo` 子进程**均健在** ⇒ 零中断。
+
+**纪律复用点**：§169 用的是 `-mmin +3`，本轮放宽到 **`-mmin +5`** —— 在飞片处于门禁段而非编译段时更保守，代价只是少回收一点。这条「**桶龄阈值随在飞阶段调整**」是新的。
+
+### §171.3 门读（base `2b4337b8` 上**当场重跑**，三零编译门 1.4s）
+
+| 门 | 读数 |
+|---|---|
+| ⑦ `route_parity.py` | `upstream 456 \| local 536 registered \| baseline 473`；`implemented 447 real + 2 placeholder = 449 / 456`；`known_gap 7`；`unclaimed 0`；`regression 0`；`local_only 8`；`gaps by owner: M9=7` |
+| ⑦b `slash_alias_audit.py`（门形态，无参） | **exit 0** |
+| ⑦b `--declared docs/fixtures/m9-declared-routes.tsv` | **3 defect**（= M9-5 的 3 个双形态键，本波**唯一**形态欠账） |
+| ⑩ `file_size_check.py` | `limit=800 scanned=1276 baseline=10 violations=0` |
+| ⑨ | **未跑**（~14G 冷建）⇒ **不作继承声明**；M9 波 0 条 `contracts/golden/**` 改动，收敛时用 `report.json` 叶子级静态 diff |
+
+**§169 的预测逐字命中**：`local 536 / implemented 449 / known_gap 7 / owners M9=7`。
+
+### §171.4 🔴 本轮第二个产出 = **实测 gap 清单推翻 §170 的前推**
+
+`python3 scripts/route_parity.py --json` 的 `known_gap` **逐条**清单（base `2b4337b8`，7 条，owner 全 M9）：
+
+```
+POST   /api/agents/mika                 → M9-7
+POST   /api/contact-sales               → M9-5
+POST   /api/feedback                    → M9-5
+GET    /api/notification-preferences/   → M9-5
+PATCH  /api/notification-preferences/   → M9-5
+PUT    /api/notification-preferences/   → M9-5
+POST   /api/webhooks/stripe             → M9-6
+```
+
+⇒ **`gap 7 = M9-5 的 5 + M9-6 的 1 + M9-7 的 1`**，逐条对上。
+⇒ **§170 给 `LUM-1820` 写的前推（`local 535 / implemented 448 / known_gap 8 / owners M9=6`）是错的** —— 它把 M9-5 只算成 1 条 gap。
+
+**教训（对「delta 平移」定式的一次反证）**：§130 起的定式是「派片时按片数 delta 平移下一轮读数」。本轮证明**当一波的片与 gap 不是一一对应**时，平移必错 —— M9-5 一片就占 5 条 gap。**可用的修法**：派片后不写绝对前推，改写「**先跑 `--json` 数 `known_gap` 的逐条 owner 归属**」；`--json` 输出里有 `owner` 字段，`route-owners.tsv` 又有 `^/api/…` 前缀规则 ⇒ 机器可数，不该靠人脑 delta。
+
+**改正后的 M9 波向量**（`local` 按**未折叠注册点**计 —— §121 已钉「双形态片按注册点算」）：
+
+| 里程碑 | `local` | `implemented` | `known_gap` | `owners.M9` |
+|---|---|---|---|---|
+| base `2b4337b8`（当轮实测） | 536 | 449（447r+2ph） | 7 | 7 |
+| M9-5（`LUM-1820`）合后 | 541 | 454（452r+2ph） | 2 | 2 |
+| M9-6（`LUM-1821`）合后 | 542 | 455（453r+2ph） | 1 | 1 |
+| M9-7（`LUM-1822`）合后 | 543 | **456（454r+2ph）** | **0** | **0** |
+| M9-10 INT（`LUM-1825`）`--write-baseline` | — | — | — | ⇒ **`baseline 473 → 543`** |
+
+不变式：`implemented + known_gap == 456`（`456 + 0` ✅）、`regressions == 0`、`unclaimed == 0`、`local_only == 8`。
+
+### §171.5 预飞两片（**槽位一空即可零延迟直派，描述已备至 rev 3**）
+
+**`LUM-1821`（M9-6，stripe webhook，1 路由）—— 预飞全过：**
+
+1. 写集 **2/2 在位**：`crates/mc-cloud/src/webhook.rs`（39 行）、`crates/mc-http/src/routes/cloud/webhook.rs`（29 行），均 M9-0 anchor 空桩。
+2. **第二类漏项 = 0**（不必改 `mod.rs` / `mount.rs` / `routes/mod.rs`）：`crates/mc-http/src/routes/cloud/mod.rs:39` = `pub mod webhook;`、`:51` = `.merge(webhook::router())` —— **M9-0 已预声明**。
+3. **限流器供体实测两档**（`crates/mc-autopilot/src/webhook/ratelimit.rs` 头表）：
+   - `default_webhook_absolute_ip_rate_limit` = **600 / 60s / IP / 每次请求**，入站 step 1 **抢在 DB 之前** ⇒ **本片该用的就是它**（与上游 `h.WebhookIPRateLimiter` 同形）；
+   - `default_webhook_ip_rate_limit` = 30 / 60s / IP，**只记「坏凭据」** ⇒ 不是本片要的。
+4. 与在飞 `LUM-1820` 的 6 个文件**零交集**；零 manifest / 零 `Cargo.lock`。
+
+**`LUM-1822`（M9-7，mika，1 路由）—— 逮到 1 条「第二类漏项」，正文写集是错的：**
+
+正文写「`crates/mc-http/src/routes/agents.rs` 既有文件**只读**」——**不成立**。本仓**没有** `crates/mc-http/src/routes/agents/mod.rs`；`routes/agents.rs` 就是 `agents` 的唯一 `mod` + 注册面（`router()` 内 `:82`–`:138` 全是内联 `.route()`，20 余条），实测 `grep -n '^mod '` = `crud / dto / env / labels / skills / stats` **6 条，无 `mika`**。
+⇒ **写集更正为 3 个文件**：`routes/agents/mika.rs`（新建）+ `mc-repos/src/agent/mika.rs`（**已存在**，61 行 anchor 空桩）+ **`routes/agents.rs`（加 `mod mika;` + 一条 `.route("/api/agents/mika", post(…))`）**。不补第三项，路由不注册、⑦ 的 `local` 不会 +1。
+⇒ repos 侧已被 anchor 预声明：`crates/mc-repos/src/agent.rs:44` = `pub mod mika;`（`agent` 是「文件 + 子目录」模块，声明在 `agent.rs` 而非 `lib.rs`；`lib.rs:67` 的 `pub mod agent;` 是另一回事，**别去改 `lib.rs`**）。
+⇒ 与 `LUM-1820`（6 文件）、`LUM-1821`（2 文件）**三方零交集** ⇒ **三片可同飞**（实际受 §171.6 磁盘算式约束）。
+
+**三片描述本轮全部刷新**（`rev 1 → 3` / `rev 1 → 3` / `rev 1 → 2`）：当轮实测门读、gap 逐条归属、改正后的绝对起点、写集更正、限流器选型、号段（`LUM-1821` = `## 57.`/`### 9.27`、`LUM-1822` = `## 58.`/`### 9.28`、`LUM-1825` = `## 59.`/`### 9.29`）、以及「**起手先 `--json` 数 gap，不沿用本节任何绝对值**」。
+
+### §171.6 槽位决策 = **刻意留空**（磁盘算式，非「没活干」）
+
+daemon 报 2/3 ⇒ 名义空 1。但按 §162/§167 的两项算式：
+
+```
+真余量 = avail − 可回收量
+       = 21.3G(外科后) − 0(全盘唯一 target 就是在飞片 LUM-1820 的，活物不可动)
+       = 21.3G
+新片冷建峰值（实测区间）= 18–30G
+21.3G < 30G  ⇒  撞 ENOSPC 的期望收益为正、避免的期望收益为负  ⇒  留空
+```
+
+`LUM-1820` 目前门禁段，其 `target/` 仍可从 7.4G 长到 ~28G（§169 实测同片 `9.1G→19G→28G`）⇒ 再吃 **~20G**。ENOSPC 已 **9 次**、至少一次连带杀 PG 5432 ⇒ **第 3 槽按算式留空**。这是**连续第 3 轮**按算式留空（§167 / §168 / 本轮）。
+
+### §171.7 下一轮第一动作
+
+1. `df -h /` **连采两次**（起手值 + 增速，在飞 `--with-db` 实测 ~1.2G/min）+ `pg_lsclusters`（5432 须 `online`）。
+2. `git rev-parse` 对 `git ls-remote origin feat/multica-rs-initial`（**checkout 落 `main` 线第 18 次**）。
+3. 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）拆槽位（**别 `cd` 进目标目录**）。
+4. `multica issue runs LUM-1820` 查 status/error（**PR 开出 ≠ run 终态**）→ 终态才进判据链（七条：numstat 用 `merge-base..head`、形态两半、`merge-tree` 按 **exit code** 判、先查 `-- scripts/` 非 0 则弃 delta 算术、**等 head CI 3/3 转绿再合**、API 钉 40 位 sha + `merge_method=merge`、落地树 ≡ 预演树）。
+5. **槽位一空即派**（描述已备至 rev 3，零延迟）：
+
+   ```
+   LUM-1820 终 ⇒ 判据链合入
+     ⇒ ⑦b --declared 必须 3 → 0（它唯一的形态验收）
+     ⇒ 核对 ⑦：local 541 / implemented 454（452r+2ph）/ known_gap 2 / owners M9=2（542? 不符则以下一条为准）
+   ⇒ 派 LUM-1821（M9-6）⇒ 派 LUM-1822（M9-7）
+     ⇒ owners.M9 → 0  ⇒ 才轮到 LUM-1825（M9-10 INT，唯一 --write-baseline：473 → 543）
+   ```
+
+6. **两条 INT 不得同轮刷基线**（`LUM-1825` M9-10 / `LUM-2111` M10-9）；普通片禁 `--write-baseline`；加路由片与 `--write-baseline` 片**不同轮**。
+7. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），仍需 owner 裁决（按口径**不重复 @**）。
+
+### §171.8 本轮三条新产出
+
+1. **外科回收的桶龄阈值随在飞阶段调整**：§169 的 `-mmin +3` 是在飞片处于**编译**段；本轮 `LUM-1820` 处于**门禁**段 ⇒ 放宽到 `-mmin +5`，删前 `/proc/*/fd` 命中必须为 **0**。零中断、放掉 2.57 GiB。
+2. **「delta 平移」定式有反例**：一波的片数 ≠ gap 数（M9-5 一片占 5 条）⇒ 派片后**不写绝对前推**，改用 `route_parity.py --json` 的 `known_gap[].owner` 机器可数。§170 的 `owners M9=6` 即此反例的产物，本轮已订正并回填三片描述。
+3. **「既有文件只读」是计划期措辞，不是事实**：M9-7 正文用它把 `routes/agents.rs` 排除出写集，而那正是该路由唯一的 `mod` + 注册面。⇒ 预飞的**第八类检查** = 「正典写集里被标为**只读**的文件，逐个 `grep` 它是不是该新文件的唯一 `mod`/注册面」。
+
+### §171.9 本轮一句话
+
+实测读数最便宜、也最能纠错：`--json` 里那 7 行 `owner` 字段，三分钟就作废了上一轮的一整张前推表。
