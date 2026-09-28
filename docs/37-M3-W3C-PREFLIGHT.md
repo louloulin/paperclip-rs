@@ -15874,3 +15874,70 @@ attribution.evidence = {kind: issue_assignment, ...}
 因为它既不是 `working`（agent 侧）也不是「有 workdir」（本机侧），
 在 §179④ 新序下会**同时被两条判据判成「没在飞」** ⇒ 又是一次误判风险的种子。
 **修法就是把它写进序里，而不是每轮重新推理。**
+
+## 181. 15:30 cycle（LUM-2426）—— **收割 PR #137（M9-10 INT）** + `queued` 档第二次失效（31 min 零派发）⇒ 改派 devbox1 + 派 `LUM-1823`（M9-8 timeline）
+
+**收尾 base = `dea27be3`；本轮合并后 base = `8cffb7e9`**（`Merge pull request #137`）。
+GH 收割前 **1 个 open PR**（#137），收割后 **0**。起手在飞：`LUM-1825`（devbox1）、`LUM-2419`（devbox2，未真正起飞，见下）。
+
+### 181.1 `LUM-1825`（M9-10 INT）收割：七条判据链全过 ⇒ 合 #137
+
+PR **#137**，base `feat/multica-rs-initial`，head `agent/devbox1/e7ff69ee979b` = `410c47ba`，**6 文件 / +444 −16 / 1 commit**。切片自己在 `in_review` 前已做过 base 前进复核（base 从 `5a5c76b6` 前进到 `dea27be3`，前进区间只动 `docs/37` 一个文件，不被任何门读取）。本轮**独立复跑**一遍：
+
+| # | 判据 | 实测 |
+| --- | --- | --- |
+| 1 | 分支 `--numstat` == PR API 逐字 | 6 文件 / `+444 −16` / `changed_files=6` / `commits=1` ✅ |
+| 2 | 写集 == 声明（无越界） | `docs/32`(+134) `docs/62`(+214/−2) `docs/fixtures/route-parity-baseline.json`(+73) `docs/fixtures/upstream-routes.tsv`(±11) `scripts/route-owners.tsv`(±1) `scripts/route_parity.py`(+11/−2) —— **6/6，0 越界** |
+| 3 | base 前进判定 | `merge --no-commit --no-ff` **clean，0 冲突**；`mergeable_state=clean` |
+| 4 | 合并树 ⑦/⑦b/⑩ | 见 181.2，**三项 exit 0** |
+| 5 | ⑦ 基线语义 | `473 → 546`，**+73 键 / 0 删除**（逐键 `set` 差实测） |
+| 6 | 功能面 | **0 路由、0 `.rs`**；唯一代码改动是 `route_parity.py` 的 3 行路径分隔符修正（宿主 OS 分隔符写进 *do not edit by hand* 的 baseline） |
+| 7 | 依赖 / schema | diff 内 **0 个 `Cargo.toml` / 0 个 `migrations/`** ⇒ ⑧ schema-drift 无输入变化 |
+
+⇒ 合并（`merge_method=merge`，`merged=true`，`8cffb7e9`）。
+
+### 181.2 合并树门读（逐字，本轮首次拿到 `546` 基线）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+  implemented  454 real +   2 placeholder =  456 / 456   known_gap 0  unclaimed 0  regression 0  local_only 8
+OK: every upstream route is either implemented or owned        exit 0
+```
+⑦b `541 literals / 0 defect`；⑩ `0 violation`。**六项与 `LUM-1825` 交付注释、`§180` 锁定值逐字相同** ⇒ 收割链闭合。
+
+**M9 波状态**：路由面已 **100% 覆盖**（`known_gap 0 / unclaimed 0`），剩 **`2` 条 placeholder**。按 `LUM-1825` 的尾账 D-5，那 2 条就是 M9 波最后两片：**`timeline`（M9-8 / `LUM-1823`，仍 501）** 与 **`limit_usage`（M9-9 / `LUM-1824`，仍恒 204）** ⇒ **M9 波只差这 2 片收口**。
+
+### 181.3 🔴 `queued` 档第二次失效：`LUM-2419` 排队 **31 分钟** `dispatched_at=null`
+
+`§180.1` 记的是「派发后 4.5 分钟未被取走，先别急着判死」。本轮把同一条判据**用满 31 分钟**再判一次：
+
+| 观测 | 值 |
+| --- | --- |
+| run `01a0e6d4` | `status=queued`、**`dispatched_at=null`**、`started_at=null`、`delivered_comment_ids=[]` |
+| issue 侧 | `LUM-2419` rev **4**（= 派发那一刻）、`updated_at` **冻结在 07:04:40Z** |
+| 目标 agent | `编程助手-devbox2` 全程 `idle` |
+| 本机 | `devbox5`，`active_task_count=1`（只有我自己） |
+
+⇒ **零进展的三项独立证据全部成立**（run 零派发 / issue 零推进 / agent 零活动），这不再是「慢」，是 devbox2 那台 device 的 daemon 没有在取任务。**`§180.1` 的判活序需要再补一档**：
+
+> **`queued` 不是瞬态。** `queued` 超过 **一个轮次间隔（本项目 ≈30 min）** 且 `dispatched_at` 仍为 `null` ⇒ 判为**派发失败**，按「静默死亡」处理（改派 + 重新派发），不要再等第二个轮次。
+
+处置（**改派 ≠ 重启，两个动作**）：`issue assign --to 编程助手-devbox1`（devbox1 刚因 `LUM-1825` 交 PR 而空出）→ `issue status in_progress`（**不带** `--no-start`）重新派发。
+🔴 **已知副作用（不掩盖）**：原 run `01a0e6d4` 仍绑在 devbox2 的 runtime 上且 CLI **没有 cancel 子命令**，若 devbox2 之后恢复派发会出现**迟到的重复 run**。缓解：改派时在描述追加**交接声明 + 「重复 run 只做只读复核后退出」**的指令，两边读到同一条即不会双写。
+
+### 181.4 派 `LUM-1823`（M9-8 issue timeline，1 路由 / 2 文件写集）
+
+`backlog → todo` 晋升并派发。**逐条预飞实测（全部实测，非引述）**：
+
+- **写集 2/2 在位**：`crates/mc-http/src/routes/timeline.rs`（51 行）、`crates/mc-repos/src/timeline.rs`（59 行）；
+- **anchor 预声明成立**：`routes/mod.rs:207` 已 `pub mod timeline;`，注册键 `GET /api/issues/:id/timeline` 已由 M9-0 **原地搬运**过来、handler 仍是 `not_implemented` ⇒ **第二类漏项 = 0、不需要改 `mod.rs` / `mount.rs`**；
+- 与 `LUM-2419`（1 文件 `issue_table` 侧）**写集 ∅** ⇒ 两片可同飞；
+- **形态门预判**：`timeline` 是**单形态**（无尾斜杠兄弟），不触发 `EXTRA_ALIAS`；⑦ 的 `local 546` 在本片**不动**（占位升级为真实现只把 `placeholder 2 → 1`，`546 = 454 real + 1 + 1`），**baseline 不刷**。
+
+**`LUM-1824`（M9-9）本轮不派**：硬前置「M2-A 尾账 `LUM-1691` / `LUM-1793` 先落地」未验证成立，而它要改的 `crates/mc-http/src/routes/issue_table/mod.rs:500 limit_usage` 与 M2-A 面同文件，**不得同飞** ⇒ 留给下一轮做前置核查后再派。
+
+### 181.5 本机资源账（按 §180 的 device 分账口径）
+
+`19G used / 29G avail (40%)`；本机 workdir 全为 `34M–130M`，**无 `target/`**（上轮已按四判据回收）⇒ **本机可回收量 0**。按分账口径，在飞片 `LUM-1825`（已交）、`LUM-2419`、`LUM-1823` **全在别的 device**，`df` 账上记 **0** ⇒ 本轮 **槽位 3/3 满**（cycle + `LUM-2419` + `LUM-1823`），不因本机 `df` 留空。
+
+`LUM-2111`（M10-9 INT）仍 docker/podman/buildah **三者皆无**硬阻塞，按口径只记不 @。
