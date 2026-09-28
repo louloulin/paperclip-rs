@@ -9488,3 +9488,53 @@ upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
 - `mc-repos` 侧真库 3 条：两条 newest-N 窗口（砍**最老**、留**最新**、外层排回升序）、
   评论半边的**租户谓词是真的**（活动半边**不带**该谓词的不对称被钉住）、member 身份读全局
   `user` 行。
+
+## 62. 门 ⑥ 第四族（`LUM-2433`）：`plugin_invocation` **无范围 DELETE + 未来 cutoff**（0 路由 / 1 文件 / +63 −2）
+
+`LUM-2419`（第三族：无范围 `COUNT(*)`，PR #138）交付时定位到的**同族不同机制**的第二处。
+
+### 62.1 机制与取证
+
+- 生产侧 `crates/mc-repos/src/plugin/hook.rs` 的 `HookScheduleRepo::delete_expired` 是
+  **全表、无范围** `DELETE FROM plugin_invocation WHERE created_at < $1`。
+- 触发方是同文件 `db_tests` 里的 `record_writes_every_retry_with_the_same_delivery_id`：
+  它调**生产删除函数**并传 `Utc::now() + 1min`（**未来 cutoff**）⇒ 在共享测试库上
+  把并发用例刚建的行一并**永久**扫掉。
+- 受害侧是 `plugin/invocation_read.rs` 的三条真库用例（它们的行 `created_at` 显式给
+  2024-01-xx，**必然**落在任何 cutoff 之后）。
+
+**当轮实测（base `5da9245c`，改动前）**：同库灌载荷对照 —— 每次先插一行
+`created_at=2024-01-01` 的探针行再跑该用例，**30/30 探针行被删**（改后 **0/30**）；
+并发对跑（`plugin::invocation_read` × `plugin::hook::…record` 各 50 轮）修前出现
+`FAILED`、修后 5 轮 × 50 次全绿。
+
+### 62.2 处置：**加作用域，不改既有签名**
+
+1. **新增** `HookScheduleRepo::delete_expired_for(installation_id, before)`（同 TTL 语义、
+   `WHERE installation_id = $1 AND created_at < $2`）—— 多租户下唯一安全的清扫形态；
+2. **既有的无范围 `delete_expired` 一字未改**（宿主级清扫器继续用它），因此
+   **零签名变更、零调用点迁移**（全仓调用点只有测试那一处，`hook.rs:697`）；
+3. 用例改为：先用**早于全表最早一行**的 cutoff 调无范围那一支并断言删 0 行（只验谓词、
+   不删任何人的行），再用 `delete_expired_for` 断言「恰好删掉本安装刚写的 2 行」，
+   并新增**邻座安装的行在清扫后仍在**（本片的回归守卫）。
+
+**为什么不能只改测试侧**：无范围 `DELETE` 的作用域是「cutoff 之前的**所有**行」，
+共享库里任何 cutoff ≥ 并发用例 `created_at` 的清扫都必然误删 ⇒ 纯测试侧只剩两条路：
+把行挪到「比所有别人都老」的时间夹层（对 `created_at` 的全局假设，脆），或给该用例独立库
+（每个用例一份 schema，代价大）。加作用域是唯一把「误删」变成「不成立」的改法，
+且不触碰上游语义。
+
+### 62.3 门禁（当轮实测，base `5da9245c` + 本片）
+
+- 门 ⑥ `--only db` **连续 5 轮绿**（每轮 `DROP`+`CREATE DATABASE` 换当轮新库，角色带 `CREATEDB`）。
+- 全量十门 **10/10 绿**（① fmt ② build ③ clippy ④ clippy-test-util ⑤ test ⑥ db
+  ⑦ route-parity ⑧ schema-drift ⑨ conformance ⑩ file-size）。⚠️ 首轮 `--with-db` 撞
+  **ENOSPC**（`target/debug/deps` 18G + `incremental` 9.3G），按既有配方 `cargo clean`
+  （回收 28.8GiB）后**按 `--only` 逐门补跑**，逐门结论同上。
+- ⑦ 读数与派发说明逐字相同：`upstream 456 / local 546 / baseline 546`；本片 0 路由 ⇒
+  合并后不得漂移。**未跑 `--write-baseline`**，`scripts/file_size_baseline.tsv` 未动
+  （`hook.rs` 702 → 765 行，仍在 800 硬上限内）。
+- 另记一条**与本片无关**的瞬时红：首轮 ⑥ 在 `mc-http --lib` 报
+  `pool timed out while waiting for an open connection`（`routes::attachments::…`，
+  103 passed / 1 failed）—— 本机 `max_connections=100` 而每个 fixture 各开 4 连接池，
+  负载高峰会耗尽；换新库重跑即绿，**不属第四族，也不属任何片的写集**。
