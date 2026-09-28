@@ -14738,3 +14738,111 @@ find <在飞片>/target/debug/incremental -maxdepth 1 -mmin +3 -type d ! -name i
 
 零收割、零派发，**却差点在轮内被 ENOSPC 带走 PG**——
 新纪律不是「派发前算一次余量」，而是**「在飞片跑全量期间，余量是会衰减的量」**：要么按增长速率提前外科，要么就别开第三片。
+
+## §170 —— 08:30 cycle（`LUM-2396`）收割轮：🔴 起手 **673M/99%**，四判据整删 28G 复活；判据链合 PR #133（M9-4）；M9-5 零延迟派出
+
+### §170.1 起手：`df` 第一次不是「读数」而是「事故」
+
+`df -h /` = **673M avail / 99%**（§169 收尾写的是 6.6G/86% ⇒ 轮内被吃光 6G）。
+按 §169.1 的新纪律先**连采两次**：`673M → 673M`，20 秒零跌幅 ⇒ 判定**不是活跃增长，是死物占位**。
+`pg_lsclusters`：`16 main 5432 online`（PG 活着，本轮未被牵连）。
+
+定位：全盘唯一大块 = `lum-1819-901bfa65f923/workdir` **28G**，
+`du` 拆分 = `debug/incremental 9.1G` + `debug/deps 19G`；
+**其余 30 个 workdir 全部 < 150M** ⇒ 可回收量就是这 28G。
+
+### §170.2 判死：四判据逐条取证（全过 ⇒ 整删 `target/`，不是外科）
+
+`LUM-1819` 的 run `01a0e51d` `completed 00:27`；`/proc` 逐 PID 扫**只有 cycle 自己**（`running_task_count = 1`）：
+
+| 判据 | 取证 |
+|---|---|
+| run 终态 | `multica issue runs LUM-1819` → `completed 2026-09-28T00:27` |
+| 交付在远端 | `origin/agent/devbox5/901bfa65f923` = `eb9d4c28` = 本地 HEAD（逐字相等） |
+| `/proc` 零命中 | 从 `/` 起手逐 PID 读 `cwd` + `cmdline`，唯一 `pi` 是 cycle 自己 |
+| `porcelain` 空 | `git status --porcelain` 无输出 |
+
+⇒ **整删 `target/`（28G）**，非外科。`673M → 28G / 40%`。
+
+> **口径补一条（本轮实测）**：§168/§169 的外科口径（切 `incremental`、留热 `deps`）是为**在飞活物**设计的。
+> 一旦四判据全过，**活物就变成死物**，`deps` 那 19G 与 `incremental` 那 9.1G **同样可删**——
+> 「`deps` 永不删」的红线**只对在飞片成立**，判据全过时它是本轮最大的一块（19G / 28G = 68%）。
+> 顺序仍是先外科后整删，但**四判据全过时直接整删，不必先花一次外科的代价**。
+
+### §170.3 判据链：PR #133（M9-4，6 路由）**六条全过，零门禁重跑**
+
+形态 = **祖先**（`merge-base == base == 80a48ad7`）⇒ 合并树 ≡ head 树。
+
+| # | 判据 | 实测 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API **逐文件逐字** | 5/5 逐字相等；合计 `+3064 −61` == API `additions/deletions` |
+| ② | base 前进段非 docs 路径 = 0 | base 即 merge-base ⇒ **平凡成立** |
+| ③ | **三哈希等式** | `head^{tree}` == `merge-tree --write-tree`（**exit 0**）== `refs/pull/133/merge^{tree}` = **`b743a2ee076f6a408e8a48839f9fe7874ee2c66b`** |
+| ④ | head CI 3/3 绿 | `contract`/`db` 先绿，`fast` **in_progress** ⇒ 轮内 `for … sleep 20` **有界轮询 5 次（约 80s）拿到 3/3 全绿**（§161「只能阻塞等、不能继承」第 N 次派场） |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | `PUT … sha=eb9d4c28…` → `merged: True`，merge commit **`18b81897`** |
+| ⑥ | 落地树 ≡ 预演树，`git diff` 空 | `18b81897^{tree}` == `b743a2ee…` ✅；`git diff eb9d4c28 origin/feat/multica-rs-131` **空** |
+
+⇒ **零门禁重跑**（形态祖先 + CI 3/3 绿 ⇒ 免 `--with-db`）。
+
+### §170.4 门读（base **`18b81897`**，三条零编译门当场重跑，全 exit 0）
+
+- 门 ⑦：`upstream 456 | local 536 | baseline 473`，
+  `implemented 447 real + 2 placeholder = 449` / `known_gap 7` / `unclaimed 0` / `regression 0` / `local_only 8`，
+  **`gaps by owner: M9=7`**（`449+7=456` ✅）
+  ⇒ **§167/§168/§169 三轮为 M9-4 锁的 delta 逐字命中**（`local 530→536`、`gap 13→7`、`M9 13→7`）。
+- 门 ⑦b：`MISSING_ALIAS (3)`，逐条点名 **恰好就是 M9-5 的 3 个键**
+  （`GET`/`PATCH`/`PUT /api/notification-preferences`，`registered=['/api/notification-preferences/']` 而上游带尾斜杠）
+  ⇒ 本波唯一形态欠账，**M9-5 交付后须 3 → 0**。
+- 门 ⑩：`OK: 0 violation(s)`（`scanned 1276 / baseline 10`）—— 与 §169 **逐字不变**（docs-only 之外的代码位移未推高任何文件）。
+- 门 ⑨：**三个门输入逐 blob 恒等** ⇒ 继承 `365 / 32 pass / 23 mismatch / 4 unmounted / 0 placeholder / 306 unevaluable`
+  （`report.json` = `c828c8d1` / `docs/fixtures` = `e331e706` / `mc-conformance` = `59e1669e`）。
+  **本轮第 13 次生效**——M9-4 只加 6 条 dashboard 路由、`contracts/golden/` 零 fixture 落点 ⇒ 快照必然不动，
+  这也正是 §167 定的判据化收紧（先静态查「新挂载键 ∩ `contracts/golden/`」是否 ∅，∅ 则不必重生成）。
+
+### §170.5 派发 M9-5（`LUM-1820`）：预飞在**新 base** 上重跑，仍全过 ⇒ 零延迟
+
+| 预飞项 | 实测（base `18b81897`） |
+|---|---|
+| 写集 6/6 | **PRESENT**（http 三空壳 31/31/35 行、repos 三桩 48/44/45 行） |
+| **第二类漏项** | **0** —— anchor 已预声明 `mc-repos/src/lib.rs:81/86/99`、`routes/mod.rs:202/204/205`、`mount.rs:598-600` ⇒ **不需改这三个文件** |
+| 限流器供体 | `crates/mc-autopilot/src/webhook/ratelimit.rs` 在位；`mc-http/Cargo.toml:67` **已有 `mc-autopilot` 边** ⇒ **零 manifest、零 `Cargo.lock`** |
+| 形态 | 本波**唯一**双形态片；反向红线：6/7/8 一律单形态，补尾斜杠 = `EXTRA_ALIAS` 硬失败 |
+
+描述 rev 2 → **3**（追加「§170 起手补充」：新 base sha `18b81897` + 当轮门读 + 号段 + 磁盘算式）。
+`assign --to-id` + `status todo` 两步 ⇒ run **`01a0e570`** 00:35 起，`running_task_count = 2`。
+
+**号段更正**：§169 交接行写「`docs/32` 下一空号 `## 57.` / `### 9.27`」——
+在 `18b81897` 上实测 `## 56.` / `### 9.26` **双空**，且 `LUM-1820` 自己的 rev 2 写的是「M9-4 取 55/9.25 ⇒ 本片取其后」。
+⇒ **M9-5 = `## 56.` + `### 9.26`**，已写进其描述 rev 3。**§169 那行作废。**
+
+### §170.6 第 3 槽位**刻意留空**（算式，两项都要写）
+
+在飞 = 1 片（`LUM-1820`，会跑全量 `--with-db`）。
+派发准入 `Σ在飞峰值 + 20G ≤ 49G` ⇒ `18–30G + 20G = 38–50G` **对 49G 盘是边际到不成立**；
+且真余量 `avail 28G − 可回收量 ≈ 0`（全盘无其它 `target/`）
+⇒ 期望收益为负，**不派**。
+
+> 沿用 §169.1 的衰减口径并再收紧一格：**准入式里的「Σ在飞峰值」要按「各片门禁峰值之和」算，不是按「片数 × 单片峰值」**——
+> `--with-db` 的 18–30G 是**每片各自**的峰值，两片同时进那段就是 36–60G，不是 18–30G。
+> 本轮只有 1 片进那段才成立；再加 1 片即越线。
+
+备选 `LUM-1821`（M9-6 stripe，rev 1）/ `LUM-1822`（M9-7 mika，rev 1）**两条都还是 rev 1、读数过期**，
+且 `LUM-1821` 会位移 ⑨ 17 条 fixture（§163.4 已登记）⇒ 即便有空位也要先补描述。
+
+### §170.7 下一轮第一动作
+
+1. `df -h /` **连采两次** + `pg_lsclusters`（起手 673M/99% 的教训：死物占位时两次读数相同，别误判成活跃增长）。
+2. `git rev-parse` 对 `git ls-remote origin feat/multica-rs-initial`（checkout 落 `main` 线第 17 次）。
+3. 认证 GH `pulls?state=open` → **从 `/` 起手**逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）。
+4. `multica issue runs LUM-1820` 查 status/error（**PR 开出 ≠ run 终态**）→ 终态才进判据链。
+5. **槽位一空即派**：`LUM-1820` 终 ⇒ 判据链合入（**先验 ⑦b `MISSING_ALIAS 3 → 0`**，这是它唯一的形态验收）
+   ⇒ 核对 `local 535 / implemented 448（446r+2ph）/ known_gap 8 / owners M9=6`（`448+8=456` ✅）
+   ⇒ 其后 `LUM-1821`（M9-6，**先补描述**：新 base + 当轮门读 + 号段 `## 57.`/`### 9.27`）⇒ `LUM-1822`（M9-7）
+   ⇒ **`owners.M9 → 0`** ⇒ 才轮到 `LUM-1825`（M9-10 INT，唯一 `--write-baseline`）。
+6. **两条 INT 不得同轮刷基线**（`LUM-1825` M9-10 / `LUM-2111` M10-9）；普通片禁 `--write-baseline`。
+7. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），仍需 owner 裁决。
+
+### §170.8 本轮一句话
+
+起手 673M/99% 不是「慢」，是**一片跑完的 28G 没人收**——
+回收判据「四条全过」里最该先跑的是 `multica issue runs`（一秒），它把 28G 从「不可动的在飞物」翻成「可整删的死物」。
