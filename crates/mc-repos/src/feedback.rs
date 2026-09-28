@@ -156,7 +156,8 @@ mod tests {
     fn the_two_statements_match_the_upstream_shapes() {
         // 可空列：值列表里那一格是 `$2`，且没有 `NOT NULL` 断言以外的额外约束。
         assert!(SQL_CREATE.contains("VALUES ($1, $2, $3, $4)"));
-        assert!(SQL_CREATE.contains("RETURNING id, user_id, workspace_id, message, metadata, created_at"));
+        assert!(SQL_CREATE
+            .contains("RETURNING id, user_id, workspace_id, message, metadata, created_at"));
         // 限流读口是**按用户 + 近 1 小时**（不是按 IP、不是全表）。
         assert!(SQL_COUNT_RECENT.contains("WHERE user_id = $1"));
         assert!(SQL_COUNT_RECENT.contains("now() - interval '1 hour'"));
@@ -176,14 +177,13 @@ mod tests {
 
     async fn new_user(db: &Db) -> Id {
         let tag = Uuid::new_v4().simple().to_string();
-        let id: Uuid = sqlx::query_scalar(
-            r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#,
-        )
-        .bind(format!("itest-m95-{tag}"))
-        .bind(format!("itest-m95-{tag}@example.com"))
-        .fetch_one(db.pool())
-        .await
-        .expect("insert user");
+        let id: Uuid =
+            sqlx::query_scalar(r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#)
+                .bind(format!("itest-m95-{tag}"))
+                .bind(format!("itest-m95-{tag}@example.com"))
+                .fetch_one(db.pool())
+                .await
+                .expect("insert user");
         Id::from(id)
     }
 
@@ -213,17 +213,19 @@ mod tests {
             .expect("create");
 
         // 🔴 直读那一列（不走 `RETURNING` 的同源副本）。
-        let stored: (String, serde_json::Value) = sqlx::query_as(
-            "SELECT message, metadata FROM feedback WHERE id = $1",
-        )
-        .bind(row.id)
-        .fetch_one(db.pool())
-        .await
-        .expect("read feedback row");
+        let stored: (String, serde_json::Value) =
+            sqlx::query_as("SELECT message, metadata FROM feedback WHERE id = $1")
+                .bind(row.id)
+                .fetch_one(db.pool())
+                .await
+                .expect("read feedback row");
 
         assert_eq!(stored.0, "the message");
         assert_eq!(stored.1["has_images"], serde_json::json!(true));
-        assert_eq!(stored.1["url"], serde_json::json!("https://app.example.com/issues/1"));
+        assert_eq!(
+            stored.1["url"],
+            serde_json::json!("https://app.example.com/issues/1")
+        );
     }
 
     /// `workspace_id` **可空**：缺省写 `NULL`（landing-page 反馈那一档）。
@@ -269,11 +271,13 @@ mod tests {
         assert_eq!(repo.count_recent_by_user(user).await.expect("count"), 3);
 
         // 往前推 2 小时 ⇒ **不**计入。
-        sqlx::query("UPDATE feedback SET created_at = now() - interval '2 hours' WHERE user_id = $1")
-            .bind(user.as_uuid())
-            .execute(db.pool())
-            .await
-            .expect("age the rows");
+        sqlx::query(
+            "UPDATE feedback SET created_at = now() - interval '2 hours' WHERE user_id = $1",
+        )
+        .bind(user.as_uuid())
+        .execute(db.pool())
+        .await
+        .expect("age the rows");
         assert_eq!(
             repo.count_recent_by_user(user).await.expect("count"),
             0,

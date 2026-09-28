@@ -173,9 +173,7 @@ pub fn has_images(message: &str) -> bool {
             continue;
         }
         // `[^)]*` 停在该 `(` 之后的**第一个** `)`。
-        let Some(close_paren_rel) = bytes[close_bracket + 2..]
-            .iter()
-            .position(|b| *b == b')')
+        let Some(close_paren_rel) = bytes[close_bracket + 2..].iter().position(|b| *b == b')')
         else {
             continue;
         };
@@ -233,10 +231,9 @@ pub async fn create_feedback(
 
     // ⑤ `workspace_id` 只做 UUID 形状校验（畸形 ⇒ 400），**不**当鉴权依据。
     let workspace_id = match request.workspace_id.as_deref().filter(|v| !v.is_empty()) {
-        Some(raw) => Some(
-            Id::parse(raw.trim())
-                .map_err(|_| ApiError(bad_request("invalid workspace_id")))?,
-        ),
+        Some(raw) => {
+            Some(Id::parse(raw.trim()).map_err(|_| ApiError(bad_request("invalid workspace_id")))?)
+        }
         None => None,
     };
 
@@ -288,12 +285,11 @@ fn metadata_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Router;
     use crate::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
+    use axum::Router;
 
     fn state() -> Arc<AppState> {
-        let db =
-            mc_db::Db::connect_lazy("postgres://np:np@127.0.0.1:1/none", 1, 0).expect("lazy");
+        let db = mc_db::Db::connect_lazy("postgres://np:np@127.0.0.1:1/none", 1, 0).expect("lazy");
         let realtime = mc_realtime::RealtimeHandle::start(8);
         let ws = Arc::new(mc_realtime::WsState::new(realtime.clone(), "lum-1820"));
         Arc::new(AppState::new(
@@ -338,14 +334,23 @@ mod tests {
     /// 形态：本片**只**注册无尾斜杠那一形态（补尾斜杠 = `EXTRA_ALIAS` 硬失败）。
     #[tokio::test]
     async fn registered_as_a_single_form_without_trailing_slash() {
-        assert_eq!(call("POST", "/api/feedback", Some("{}")).await, StatusCode::UNAUTHORIZED);
-        assert_eq!(call("POST", "/api/feedback/", Some("{}")).await, StatusCode::NOT_FOUND);
+        assert_eq!(
+            call("POST", "/api/feedback", Some("{}")).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call("POST", "/api/feedback/", Some("{}")).await,
+            StatusCode::NOT_FOUND
+        );
     }
 
     /// 无会话 ⇒ 401（`AuthUser` 提取器先于一切）。
     #[tokio::test]
     async fn without_a_session_it_is_401() {
-        assert_eq!(call("POST", "/api/feedback", Some("{}")).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            call("POST", "/api/feedback", Some("{}")).await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     /// `has_images` 的正/反例（`DoD` 第 1 条的判据）。
@@ -368,13 +373,16 @@ mod tests {
             "no images here",
             "![missing paren",
             "![missing bracket(",
-            "[alt](x)",      // 缺 `!`
-            "![](",          // 缺右括号
-            "![alt](",        // 缺右括号
-            "![]",            // 只有感叹号 + 方括号
-            "![alt] (x)",     // `]` 与 `(` 之间有空格
+            "[alt](x)",   // 缺 `!`
+            "![](",       // 缺右括号
+            "![alt](",    // 缺右括号
+            "![]",        // 只有感叹号 + 方括号
+            "![alt] (x)", // `]` 与 `(` 之间有空格
         ] {
-            assert!(!has_images(negative), "{negative:?} must not count as an image");
+            assert!(
+                !has_images(negative),
+                "{negative:?} must not count as an image"
+            );
         }
     }
 

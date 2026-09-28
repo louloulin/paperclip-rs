@@ -58,7 +58,9 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use mc_core::notification::{NotificationPreferencesResponse, UpdateNotificationPreferencesRequest};
+use mc_core::notification::{
+    NotificationPreferencesResponse, UpdateNotificationPreferencesRequest,
+};
 use mc_core::Id;
 use mc_errors::Error;
 use mc_repos::notification_preference::NotificationPreferenceRepo;
@@ -94,11 +96,7 @@ pub fn router() -> Router<Arc<AppState>> {
 ///
 /// 顺序逐字：提取器先跑（401）⇒ 再解 workspace（400）⇒ 最后查成员（403）。
 /// 成员闸**先于**任何表访问（不存在的 workspace 与非成员都落 403，不泄露 workspace 是否存在）。
-async fn scope(
-    state: &AppState,
-    user: AuthUser,
-    headers: &HeaderMap,
-) -> Result<(Id, Id), Error> {
+async fn scope(state: &AppState, user: AuthUser, headers: &HeaderMap) -> Result<(Id, Id), Error> {
     let query = std::collections::HashMap::new();
     let workspace_id = resolve_workspace_id(headers, &query)?;
     let user_id = user.id();
@@ -130,7 +128,10 @@ fn forbidden() -> Error {
 }
 
 /// 响应装配：上游 `writeNotificationPreferenceResponse` 逐字。
-fn response_of(workspace_id: Id, preferences: BTreeMap<String, String>) -> Json<NotificationPreferencesResponse> {
+fn response_of(
+    workspace_id: Id,
+    preferences: BTreeMap<String, String>,
+) -> Json<NotificationPreferencesResponse> {
     Json(NotificationPreferencesResponse {
         workspace_id: workspace_id.as_string(),
         preferences,
@@ -216,15 +217,13 @@ fn decode_request(body: &Bytes) -> Result<UpdateNotificationPreferencesRequest, 
         serde_json::from_slice(body).map_err(|_| ApiError(bad_request("invalid request body")))?;
     // ② `preferences` 缺失 / `null` ⇒ 上游 `req.Preferences == nil`。
     //    `{}`（空对象）是**合法**的清空请求，**不**在这里被拒。
-    let has_preferences = raw
-        .get("preferences")
-        .is_some_and(|value| !value.is_null());
+    let has_preferences = raw.get("preferences").is_some_and(|value| !value.is_null());
     if !has_preferences {
         return Err(ApiError(bad_request("preferences field is required")));
     }
     // ③ 逐对词表（`BTreeMap` ⇒ 顺序确定，报错可复现）。
-    let request: UpdateNotificationPreferencesRequest = serde_json::from_value(raw)
-        .map_err(|_| ApiError(bad_request("invalid request body")))?;
+    let request: UpdateNotificationPreferencesRequest =
+        serde_json::from_value(raw).map_err(|_| ApiError(bad_request("invalid request body")))?;
     request
         .validate()
         .map_err(|message| ApiError(bad_request(message)))?;
@@ -237,9 +236,9 @@ pub const GET_MISSING_ROW_STATUS: StatusCode = StatusCode::OK;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
     use axum::Router;
     use mc_core::notification::{NOTIFICATION_GROUPS, NOTIFICATION_VALUES};
-    use crate::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
 
     fn body_of(raw: &str) -> Bytes {
         Bytes::from(raw.to_owned())
@@ -434,6 +433,9 @@ mod tests {
         .expect("accepted");
         assert_eq!(request.preferences.len(), 1);
         // 落库用的 `(workspace_id, user_id)` 由 [`scope`] 从头解析，**不**来自这个体。
-        assert_eq!(request.preferences.get("comments").map(String::as_str), Some("all"));
+        assert_eq!(
+            request.preferences.get("comments").map(String::as_str),
+            Some("all")
+        );
     }
 }

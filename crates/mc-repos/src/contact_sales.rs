@@ -33,6 +33,12 @@
 //! ⚠️ `inet` 列在 sqlx 侧按 `IpNetwork` / `IpAddr` 解码；本文件绑 **`Option<String>`**
 //! 并交给 Postgres 自己解析（`$11::inet`），这样「解析不了就写 `NULL`」这一档由**列类型**
 //! 决定，而不是由本仓的 IP 解析器决定 —— 免得两处 IP 语义漂移。
+//!
+//! 🔴 **读回也必须是文本**：sqlx 会拿声明类型去解码，**`inet` → `Option<String>` 直接报
+//! `mismatched types`**（`INET is not compatible with TEXT`）。所以 `RETURNING` / 测试直读
+//! 那一列都写成 **`submitter_ip::text AS submitter_ip`** —— 与本仓既有约定一致
+//! （`wakeup/issue.rs:192` 的 `…::text AS filter_actor_name`）。**只**在读面转文本：
+//! 写面仍旧 `$11::inet`，列类型不变。
 
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
@@ -52,7 +58,8 @@ const SQL_CREATE: &str = "INSERT INTO contact_sales_inquiry ( \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::inet, $12) \
                          RETURNING id, first_name, last_name, business_email, company_name, \
                                    company_size, country_region, use_case, goals, \
-                                   consent_outreach, consent_updates, submitter_ip, user_agent, \
+                                   consent_outreach, consent_updates, \
+                                   submitter_ip::text AS submitter_ip, user_agent, \
                                    created_at";
 
 /// 上游 `CountRecentContactSalesByEmail`：`created_at > now() - interval '1 hour'`。
@@ -227,7 +234,9 @@ mod tests {
         // 纪律 1 在**SQL 层**就成立：写口既不接 `workspace_id` 也不写它。
         assert!(!SQL_CREATE.to_ascii_lowercase().contains("workspace"));
         // 12 个值对应 12 个绑定（`$11::inet` 是唯一的显式转型）。
-        assert!(SQL_CREATE.contains("VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::inet, $12)"));
+        assert!(
+            SQL_CREATE.contains("VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::inet, $12)")
+        );
         // 审计 IP 可空 ⇒ `sqlc.narg`。
         assert!(SQL_CREATE.contains("$11::inet"));
         // 限流读口按**邮箱**（规范化后的小写串）+ 近 1 小时。
@@ -292,7 +301,8 @@ mod tests {
         // 🔴 直读那一行（不走 `RETURNING` 的同源副本）。
         let stored: Stored = sqlx::query_as(
             "SELECT first_name, business_email, company_size, country_region, use_case, \
-                    consent_outreach, consent_updates, submitter_ip, user_agent \
+                    consent_outreach, consent_updates, submitter_ip::text AS submitter_ip, \
+                    user_agent \
              FROM contact_sales_inquiry WHERE id = $1",
         )
         .bind(row.id)
@@ -308,8 +318,10 @@ mod tests {
         // `DoD` 第 4 条：`consent_*` **逐字透传**。
         assert!(stored.consent_outreach);
         assert!(!stored.consent_updates);
-        // `inet` 列：绑进去的字符串被 Postgres 自己解析成 `inet`。
-        assert_eq!(stored.submitter_ip.as_deref(), Some("198.51.100.9"));
+        // `inet` 列：绑进去的字符串被 Postgres 自己解析成 `inet`；读回来是**规范文本**，
+        // 掩码由列类型补齐（`198.51.100.9` → `198.51.100.9/32`）—— 上游 Go 侧
+        // `sql.NullString` 拿到的也是同一串文本，所以这里逐字钉住带掩码的形式。
+        assert_eq!(stored.submitter_ip.as_deref(), Some("198.51.100.9/32"));
         assert_eq!(stored.user_agent, "itest");
     }
 
@@ -328,12 +340,13 @@ mod tests {
             .await
             .expect("create");
 
-        let stored: (Option<String>,) =
-            sqlx::query_as("SELECT submitter_ip FROM contact_sales_inquiry WHERE id = $1")
-                .bind(row.id)
-                .fetch_one(db.pool())
-                .await
-                .expect("read");
+        let stored: (Option<String>,) = sqlx::query_as(
+            "SELECT submitter_ip::text AS submitter_ip FROM contact_sales_inquiry WHERE id = $1",
+        )
+        .bind(row.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("read");
         assert_eq!(stored.0, None);
     }
 

@@ -101,7 +101,8 @@ const SQL_GET: &str = "SELECT id, workspace_id, user_id, preferences, updated_at
                        FROM notification_preference WHERE workspace_id = $1 AND user_id = $2";
 
 /// 上游 `UpsertNotificationPreference`：`preferences = $3`（**整体替换**，`PUT` 用）。
-const SQL_UPSERT: &str = "INSERT INTO notification_preference (workspace_id, user_id, preferences) \
+const SQL_UPSERT: &str =
+    "INSERT INTO notification_preference (workspace_id, user_id, preferences) \
                           VALUES ($1, $2, $3) \
                           ON CONFLICT (workspace_id, user_id) \
                           DO UPDATE SET preferences = $3, updated_at = now() \
@@ -205,7 +206,10 @@ mod tests {
     fn dirty_jsonb_degrades_to_an_empty_map_not_an_error() {
         // 上游的 `map[string]string` 解码失败 ⇒ `prefs = map[string]string{}`，仍然 200。
         assert_eq!(preferences_of(serde_json::json!({"a": 1})), BTreeMap::new());
-        assert_eq!(preferences_of(serde_json::json!(["not", "an", "object"])), BTreeMap::new());
+        assert_eq!(
+            preferences_of(serde_json::json!(["not", "an", "object"])),
+            BTreeMap::new()
+        );
         assert_eq!(preferences_of(serde_json::json!("nope")), BTreeMap::new());
         // 正常形状逐字解析。
         assert_eq!(
@@ -223,8 +227,20 @@ mod tests {
     #[test]
     fn the_three_statements_keep_put_replace_and_patch_merge_apart() {
         // 读面**不**含任何写语句。
-        assert!(!SQL_GET.to_ascii_uppercase().contains("INSERT"));
-        assert!(!SQL_GET.to_ascii_uppercase().contains("UPDATE"));
+        //
+        // 🔴 **按整词判，不能用 `contains`**：`SQL_GET` 选了 `updated_at` 这一列，
+        // 子串判会把它读成「含 `UPDATE`」而假红（真库 ⑥ 门实测踩到）。这里先把
+        // 非字母数字/下划线的字符当分隔符切词，再查整词。
+        let upper = SQL_GET.to_ascii_uppercase();
+        let words: Vec<&str> = upper
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .collect();
+        for write_kw in ["INSERT", "UPDATE", "DELETE"] {
+            assert!(
+                !words.contains(&write_kw),
+                "SQL_GET must not {write_kw}: {upper}"
+            );
+        }
         // 两条 upsert 都吃 `(workspace_id, user_id)` 唯一约束。
         for sql in [SQL_UPSERT, SQL_PATCH] {
             assert!(sql.contains("ON CONFLICT (workspace_id, user_id)"), "{sql}");
@@ -237,7 +253,10 @@ mod tests {
         assert!(SQL_PATCH.contains("notification_preference.preferences || EXCLUDED.preferences"));
         // 三条都 `RETURNING` 整行（handler 拿它当响应体，不回读）。
         for sql in [SQL_GET, SQL_UPSERT, SQL_PATCH] {
-            assert!(sql.contains("id, workspace_id, user_id, preferences, updated_at"), "{sql}");
+            assert!(
+                sql.contains("id, workspace_id, user_id, preferences, updated_at"),
+                "{sql}"
+            );
         }
     }
 
@@ -259,14 +278,13 @@ mod tests {
                 .fetch_one(db.pool())
                 .await
                 .expect("insert workspace");
-        let user: Uuid = sqlx::query_scalar(
-            r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#,
-        )
-        .bind(format!("itest-m95-{tag}"))
-        .bind(format!("itest-m95-{tag}@example.com"))
-        .fetch_one(db.pool())
-        .await
-        .expect("insert user");
+        let user: Uuid =
+            sqlx::query_scalar(r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#)
+                .bind(format!("itest-m95-{tag}"))
+                .bind(format!("itest-m95-{tag}@example.com"))
+                .fetch_one(db.pool())
+                .await
+                .expect("insert user");
         sqlx::query("INSERT INTO member(workspace_id, user_id, role) VALUES ($1, $2, 'owner')")
             .bind(workspace)
             .bind(user)
@@ -306,7 +324,10 @@ mod tests {
         let repo = NotificationPreferenceRepo::new(db.clone());
 
         assert!(
-            repo.get(workspace_id, user_id).await.expect("get") .is_none(),
+            repo.get(workspace_id, user_id)
+                .await
+                .expect("get")
+                .is_none(),
             "never-set preferences must read as None, not an empty map"
         );
         // `GET` **不写行**：直读那一列仍然是「没有行」。
@@ -328,10 +349,14 @@ mod tests {
         let repo = NotificationPreferenceRepo::new(db.clone());
 
         let first = map_of(&[("assignments", "all"), ("mentions", "muted")]);
-        repo.upsert(workspace_id, user_id, &first).await.expect("upsert");
+        repo.upsert(workspace_id, user_id, &first)
+            .await
+            .expect("upsert");
         // 只写一个键 ⇒ 另一个键**被抹掉**（这就是 replace-all 契约）。
         let second = map_of(&[("comments", "all")]);
-        repo.upsert(workspace_id, user_id, &second).await.expect("upsert again");
+        repo.upsert(workspace_id, user_id, &second)
+            .await
+            .expect("upsert again");
 
         // 🔴 直读那一列：只剩 `comments`。
         assert_eq!(
@@ -340,7 +365,11 @@ mod tests {
             "PUT must replace the whole map, not merge"
         );
         assert_eq!(
-            repo.get(workspace_id, user_id).await.expect("get").expect("row").preferences,
+            repo.get(workspace_id, user_id)
+                .await
+                .expect("get")
+                .expect("row")
+                .preferences,
             second
         );
     }
@@ -356,9 +385,13 @@ mod tests {
         let (workspace_id, user_id) = seed(&db).await;
         let repo = NotificationPreferenceRepo::new(db.clone());
 
-        repo.upsert(workspace_id, user_id, &map_of(&[("assignments", "all"), ("mentions", "muted")]))
-            .await
-            .expect("upsert");
+        repo.upsert(
+            workspace_id,
+            user_id,
+            &map_of(&[("assignments", "all"), ("mentions", "muted")]),
+        )
+        .await
+        .expect("upsert");
         // 只改 `mentions` ⇒ `assignments` **必须**还在。
         repo.patch(workspace_id, user_id, &map_of(&[("mentions", "all")]))
             .await
@@ -381,14 +414,16 @@ mod tests {
             return;
         };
         let (workspace_id, user_a) = seed(&db).await;
-        let user_b: Uuid = sqlx::query_scalar(
-            r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#,
-        )
-        .bind("itest-m95-other")
-        .bind(format!("itest-m95-other-{}@example.com", Uuid::new_v4().simple()))
-        .fetch_one(db.pool())
-        .await
-        .expect("insert second user");
+        let user_b: Uuid =
+            sqlx::query_scalar(r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#)
+                .bind("itest-m95-other")
+                .bind(format!(
+                    "itest-m95-other-{}@example.com",
+                    Uuid::new_v4().simple()
+                ))
+                .fetch_one(db.pool())
+                .await
+                .expect("insert second user");
         sqlx::query("INSERT INTO member(workspace_id, user_id, role) VALUES ($1, $2, 'member')")
             .bind(workspace_id.as_uuid())
             .bind(user_b)

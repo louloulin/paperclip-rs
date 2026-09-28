@@ -8920,7 +8920,7 @@ D-14 `truncate` 按**字符**而非字节切（永不切坏 UTF-8）。
 **三道 spam 闸的分工（不合并，D-6 相关）**：per-IP 挡**换邮箱**的洪水，per-email 挡**换 IP**
 的重放，企业邮箱挡**垃圾来源**。折叠成一道会丢掉另外两道各自的语义。
 
-### 56.4 登记的偏离（14 条）
+### 56.4 登记的偏离（17 条）
 
 | # | 偏离 | 理由 / 上游依据 |
 | --- | --- | --- |
@@ -8945,3 +8945,18 @@ D-14 `truncate` 按**字符**而非字节切（永不切坏 UTF-8）。
 **直读列**（`notification_preference.preferences` / `feedback.{message,metadata,workspace_id}` /
 `contact_sales_inquiry.*`），**不**拿 handler 响应体当「写进去了」的证据 ——
 响应体是 repo 自己 `RETURNING` 出来的同源副本，用它判就是假绿。
+
+### 56.5 收割轮（`LUM-2403` 2026-09-28 10:00）门禁抓到的三条
+
+> 上一轮 run 自述「build + clippy + 22 单测全绿」，**实测不成立**：`cargo fmt --all --check`
+> 从未跑过（① 红），⑤/⑥ 各有真断言红。**自述的门禁结果不算证据，只有退出码算。**
+
+| # | 症状（门） | 根因 | 修法 |
+| --- | --- | --- | --- |
+| **D-15** | ① `fmt` 红（3 个 route 文件 + 3 个 repo 文件共 6 个） | 写码时没跑 `cargo fmt --all` | 一次性 `cargo fmt --all`（纯空白，**零语义**） |
+| **D-16** | ⑥ 两条 `contact_sales` 真库用例红：`mismatched types … SQL type INET is not compatible with TEXT` | `RETURNING` 里的 `submitter_ip` 是 `inet` 列，sqlx 按**声明类型**解码 ⇒ `Option<String>` 必然拒 | 读面一律 `submitter_ip::text AS submitter_ip`（与 `wakeup/issue.rs:192` 的 `::text AS filter_actor_name` 同款约定）；**写面**仍旧 `$11::inet`，列类型不变。附带把断言改成规范文本 `198.51.100.9/32`（掩码由列类型补齐，上游 Go `sql.NullString` 拿到的是同一串） |
+| **D-17** | ⑤ `notification_preference` 单测红：`assertion failed: !SQL_GET.contains("UPDATE")` | 子串判把选出的 `updated_at` 列读成「含 `UPDATE`」—— **断言自身**写错，SQL 是对的 | 改成**切词后查整词**（`split` 非字母数字/下划线，再 `contains(&"UPDATE")`）。子串判静态 SQL 的通病：`updated_at` / `deleted_at` 这类列名都会误伤 |
+
+**读回文本这条是本片最容易复发的坑**：`inet` / `cidr` / `jsonb` 这类列一旦绑
+`String` 就**必须**在读面转文本，写面转不转是另一回事（D-11 只覆盖了写面）。
+

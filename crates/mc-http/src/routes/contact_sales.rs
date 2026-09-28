@@ -110,7 +110,8 @@ fn contact_sales_rate_limit() -> u32 {
 }
 
 /// 上游 `contactSalesAllowedCompanySize` 逐字（**闭合枚举**，前端下拉框那一组）。
-pub const ALLOWED_COMPANY_SIZES: [&str; 6] = ["1-10", "11-50", "51-200", "201-500", "501-1000", "1000+"];
+pub const ALLOWED_COMPANY_SIZES: [&str; 6] =
+    ["1-10", "11-50", "51-200", "201-500", "501-1000", "1000+"];
 
 /// 上游 `contactSalesAllowedUseCase` 逐字（**闭合枚举**）。
 pub const ALLOWED_USE_CASES: [&str; 6] = [
@@ -294,7 +295,8 @@ pub async fn create_contact_sales(
     // ② 三个必填短字段（各带 required / too long 两档）。
     let first_name = require_trimmed_field(&request.first_name, "first_name", MAX_FIRST_NAME)?;
     let last_name = require_trimmed_field(&request.last_name, "last_name", MAX_LAST_NAME)?;
-    let company_name = require_trimmed_field(&request.company_name, "company_name", MAX_COMPANY_NAME)?;
+    let company_name =
+        require_trimmed_field(&request.company_name, "company_name", MAX_COMPANY_NAME)?;
 
     // ③ 企业邮箱：规范化 → 长度 → **域名表**（`DoD` 第 2 条）。
     let email = canonical_business_email(&request.business_email)
@@ -303,9 +305,7 @@ pub async fn create_contact_sales(
         return Err(ApiError(bad_request("business_email is too long")));
     }
     if !is_business_email(&email) {
-        return Err(ApiError(bad_request(
-            "please use a business email address",
-        )));
+        return Err(ApiError(bad_request("please use a business email address")));
     }
 
     // ④ `company_size` 闭合枚举（`DoD` 第 3 条）。
@@ -410,12 +410,11 @@ fn rate_limited(limiter: &SlidingWindowLimiter, key: &str) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Router;
     use crate::state::{AdapterRegistry, AppState, ConfigSnapshot, RuntimeHandles};
+    use axum::Router;
 
     fn state() -> Arc<AppState> {
-        let db = mc_db::Db::connect_lazy("postgres://np:np@127.0.0.1:1/none", 1, 0)
-            .expect("lazy");
+        let db = mc_db::Db::connect_lazy("postgres://np:np@127.0.0.1:1/none", 1, 0).expect("lazy");
         let realtime = mc_realtime::RealtimeHandle::start(8);
         let ws = Arc::new(mc_realtime::WsState::new(realtime.clone(), "lum-1820"));
         Arc::new(AppState::new(
@@ -470,7 +469,11 @@ mod tests {
     async fn it_is_reachable_without_any_session() {
         let (status, body) = post("/api/contact-sales", "{}").await;
         assert_ne!(status, StatusCode::UNAUTHORIZED, "must be public: {body:?}");
-        assert_ne!(status, StatusCode::NOT_FOUND, "must be registered: {body:?}");
+        assert_ne!(
+            status,
+            StatusCode::NOT_FOUND,
+            "must be registered: {body:?}"
+        );
         // 空体在**第一条**字段校验就被拒（`first_name is required`）—— 说明它进了 handler。
         let body: serde_json::Value = serde_json::from_slice(&body).expect("error body");
         assert_eq!(body["error"]["code"], "validation_error");
