@@ -18622,3 +18622,48 @@ base = **`7942c94f`**；GH **0 open PR**。先判活本轮派出的一片；它�
 base = **`b36dac36`**；GH **0 open PR**；在飞 **`LUM-2494` 唯一**。
 下轮第一动作：判活 `LUM-2494` ⇒ 若交 PR，按 §210.1 预登记的**新判据链**（⑦ 八数字 + ⑨ 六数字，**不用 blob 恒等**）
 当场复核；**收尾第一动作仍是 `rm -rf target`**（本轮 workdir 无 `target/`，可回收量 0）。
+
+## §211 【2026-09-29 07:30 cycle / LUM-2498】零收割监控轮 —— ⑦ 八数字**第 16 轮逐字不变** ＋ 判活 `LUM-2494`（**正在跑全量 `--with-db`**）＋ `avail` 24G→18G 的**新归因**
+
+起手：base = **`c1e37fd4`**（= `b36dac36` + `docs/37` §210 docs-only 直推）；GH **0 open PR**；
+`multica repo checkout --ref feat/multica-rs-initial` **第 39 次仍然直接落目标分支**（§210 结论继续有效，无需 `reset --hard`）。
+本 workdir **无 `target/`** ⇒ 本片自身可回收量 **0**。
+
+### §211.1 ⑦ 不变式**第 16 轮逐字不变**
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0  unclaimed 0  regression 0  local_only 8
+```
+
+`ROUTE_PARITY_EXIT=0` / `SLASH_ALIAS_EXIT=0` / `FILE_SIZE_EXIT=0`；
+deps 审计 `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0` —— 与上一轮**逐项相同**。
+⇒ **路由面已连续 16 轮处于 456/456 全实现**；剩余的全是 §210.3 那三条**需要编译才能判定**的 Tier-1 判据。
+
+### §211.2 判活 `LUM-2494`（M11-3 / Tier-2 T1-6-A）= **活，且已进入全量门**
+
+判活三证同时成立（**不是靠单点**，§165 判活序第四次派场）：
+① `ps` 见 `bash scripts/gates.sh --with-db`（pid 15395/15397，采样时 278s）与子 `cargo test --workspace`；
+② 门日志已落 `GATE_FMT_EXIT=0 GATE_BUILD_EXIT=0 GATE_CLIPPY_EXIT=0 GATE_CLIPPY_TEST_UTIL_EXIT=0`，当前在 ⑥；
+③ `target/` **11G**。
+⇒ **不抢救、不干预**。它在跑全量 `--with-db` 本身就是「准备交 PR」的信号。
+
+### §211.3 🔴 新归因：`avail` 24G → 18G，**全部来自在飞片自己的 `target/` 5.0G → 11G**
+
+上轮 `avail 24G`，本轮 `18G`（49G 总量 / 30G used / 63%）。逐目录核过：35 个 workdir 里除
+`lum-2494` 之外全部 <150M（最大的 `lum-2477` 108M），**没有第二个 `target/`**。
+⇒ 这 6G 的**唯一来源就是在飞那片自己的构建盘**。
+
+🔴 **承重（这条改的是余量算式的输入项）**：`avail` 不是外部常量，它是**在飞片构建盘的一次函数**。
+上轮记的「`avail 24G`」是 `LUM-2494` 冷编中途的**瞬时值**，把它当基线会高估余量。
+⇒ **定式**：`avail − 可回收量` 的算式（§208.5 起）**还须加第三项** ——
+写作 `avail − 可回收量`，并在同一行记 `在飞 target` 的**当前值**；
+判第二槽时用 `avail_now − 在飞target_仍需增长量 − 可回收量` 对比峰值。
+本轮：`18G − (11G 冷编到⑥ 仍在涨) − 0 < 18–30G` ⇒ **期望收益为负，0 派发**（§167 算式第三次派场，结论不变）。
+
+### §211.4 下一轮起点
+
+base = **`c1e37fd4`**；GH **0 open PR**；在飞 **`LUM-2494` 唯一**（正跑全量 `--with-db`，预计下轮出 PR）。
+下轮第一动作：若 `LUM-2494` 交 PR ⇒ 按 **§210.1 预登记的新判据链**（⑦ 八数字 + ⑨ `--db-url` 六数字，
+**弃用 `contracts/golden` 逐 blob 恒等**）当场复核；收尾第一动作 `rm -rf target`。
+`LUM-2111`（M10-9 INT）仍卡 docker/podman/buildah 三件套皆无，**待 owner 裁决，不重复 @**。
