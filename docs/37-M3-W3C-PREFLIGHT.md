@@ -17690,3 +17690,81 @@ target/debug/deps        23G
   （它现在只差 M10-7 一个）。但它的描述预测**已严重过期**（写的还是 `known_gap 65 / local 474`，
   实测 `known_gap 0 / local 546`）⇒ 下一轮要么先改描述与预测，要么按实测重写立项。
 - 起手固定动作：`df` 连采 → **确认 `CARGO_INCREMENTAL=0`**（§199.2）→ 回收**上一轮自己的** workdir（§199.1）→ 再判活。
+
+## 200. 【2026-09-29 03:00 cycle / LUM-2471】门 ⑪ 第一次真跑就抓出一个「build 绿但制品不在」的 bug
+
+base `40728a75` → 合并 PR #145（`ed584889`）→ 本段 docs-only 直推。GH 收尾 **0 open PR**；
+起手 `df` **6.2G/87%** → 回收后 **29G/39%**；PG 5432 `online`。
+
+### §200.1 收割 PR #145：门 ⑪ 在 CI 上第 1 次真跑，**红了**，而红法极具误导性
+
+上一轮交付时门 ⑪ 本机**一次也没真跑过**（无容器 CLI），判定能力只能由 CI 的 `image` job 承担。
+本轮轮询到结果：`fast` / `contract` / `db` 绿，**`image` FAIL**。日志逐字：
+
+```
+#16 DONE 337.1s                                   ← cargo build --release --bin multica-server 成功
+#17 ERROR: failed to calculate checksum ... "/src/target/release/multica-server": not found
+Dockerfile:65  >>> COPY --from=builder /src/target/release/multica-server …
+```
+
+**根因 = BuildKit cache mount 的作用域**：builder 阶段给 `/src/target` 挂了
+`--mount=type=cache,target=/src/target` ⇒ 编译产物写进 **cache** 而不是 **builder 层的文件系统**
+⇒ 跨 stage 的 `COPY --from=builder` 看不到它。registry / git 两个 mount 不受影响（没人从它们 COPY）。
+
+🔴🔴 **承重（可复用）**：`COPY --from=<stage>` 只能看见该 stage 的**真实镜像层**，
+**看不见 cache mount**。判据一句话：**凡是要 COPY 出去的路径，就不能挂 cache mount。**
+`cargo build` 成功与「产物可 COPY」是**两件事**，前者绿不代表后者成立 —— 这与 §199 里
+「build 成功不代表 ENTRYPOINT 指向的文件存在」是同一族，但**根因完全不同**（那次是名字，
+这次是挂载点），两者可同时发生。
+
+处置：`deploy/Dockerfile` 删掉 `/src/target` 那一行 mount（+7/−1），文件头补第 5 条记此事，
+推 `394ea142`；head **4/4 绿**（`image` 用时 ~7 min）后才合。`merge` 端点
+`Content-Type: application/json` + `Authorization: token <PAT>` 一次成功（§183.3 口径复现）。
+
+### §200.2 「交 PR 即回收 target」在本轮第二次兑现
+
+起手 `df` **6.2G(87%)**，盘上唯一大块是**上一轮自己的** `lum-2469` workdir 的 `target/`（23G）。
+四判据全中：`status` 空、`HEAD=e629c052` = PR head（已推远端）、`git branch -r --contains HEAD`
+命中 `origin/agent/devbox5/22caf24ece9e`、无 `cargo/rustc` 进程、`/proc/*/fd` 命中 0
+⇒ 删 ⇒ **6.2G → 29G**。**ENOSPC 的杠杆仍然是回收时机，不是磁盘大小**（§190 复现）。
+
+### §200.3 合并树门读：`known_gap 0 / owners {}` **连续第 9 轮**逐字不变
+
+在合并树 `ed584889` 上当场重跑三道零编译门（0.4s）：
+
+- ⑦ `upstream 456 / local 546 / baseline 546 / implemented 456 = 455 real + 1 placeholder /
+  known_gap 0 / unclaimed 0 / regressions 0 / local_only 8（1 placeholder）/ owners {}`
+- ⑦b `slash_alias_audit --quiet` → exit 0；⑧ `file_size_check --quiet` → exit 0
+- `audit_workspace_deps` → `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`
+
+**M10-7 是 0 路由片 ⇒ 八个数字必须逐字不变，实测成立。**
+
+### §200.4 派 `LUM-2111`（M10-9 INT）：硬前置**第一次**成立，描述整表重写
+
+`M10-0…M10-8` 全合 ⇒ `LUM-2111` 的硬前置「全波」第一次真正成立（此前只差 M10-7 一个）。
+它的描述预测**严重过期**（`local 474 / baseline 458 / implemented 391 / known_gap 65 /
+owners {M9 33, M3+ 16, M3 11, M10 5}` / ⑨ `pass 14 / unmounted 22`）⇒ 照抄必然得到
+「FAIL 且无法解释」的对照结论。已整表重写为 rev 2：实测基线、不变式、门 ⑪ 的
+「本机 `exit 2` = 缺 CLI 而非绿」、`CARGO_INCREMENTAL=0` 常设、以及 §200.1 的 Dockerfile 硬事实。
+
+🔴 **再次确认「直方图预测」只在 `known_gap > 0` 时存在**（§178）：收口后 `owners == {}`，
+登记项必须改成**实测清单**（`local_only 8` 的逐条键名 + 那 1 个 placeholder =
+`GET /api/issues/:id/quick-actions`），不是旧直方图。
+
+派发：`backlog → todo` 触发，run `01a0e93b` **同一秒** `created/dispatched/started`。
+`/proc` 逐 PID 复核只有两个 agent `pi`（本 cycle + `LUM-2111`）⇒ **无第二写者**（§184 未复发）。
+
+### §200.5 本轮踩坑
+
+- `multica issue assign --to-id` 报 `expected a canonical UUID` 时，**先回读
+  `multica agent list` 的 `id` 字段逐字复制**——本轮把 `3c6087f9-…-fabf` 抄丢了末位 `5`。
+  该字段**没有截断显示**，终端里被上一行输出带着看漏一位。**assign 后必须回读 `assignee_id`**（§181.7）。
+
+### §200.6 下一轮起点
+
+- base = `ed584889` + 本段；在飞 `LUM-2111`（M10-9 INT，devbox5）。
+- 起手固定动作：`df` 连采 → 确认 `CARGO_INCREMENTAL=0` → **回收上一轮自己的 workdir**（§200.2）→ 判活。
+- `LUM-2111` 交 PR ⇒ 七条判据链；它是 **0 路由片** ⇒ 合并后 §200.3 的八个数字**必须逐字不变**，
+  验收证据只能来自它自己的三件套刷新读数 + 门禁，**不能来自 ⑦ 的变化**。
+- 派发面仍**结构性 1 台**（devbox1/2/4 全 offline；另 3 台 online Pi runtime 零绑定本项目 agent）
+  ⇒ owner 动作仍是改绑 `runtime_id`，按口径**不重复 @**。
