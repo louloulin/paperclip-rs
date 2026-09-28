@@ -16209,3 +16209,24 @@ OK: every upstream route is either implemented or owned          exit 0
 6. `LUM-2111`（M10-9 INT）仍 `docker`/`podman`/`buildah` **三者皆无** + `deploy/`、
    `stop_condition.sh` 在 base 不存在 ⇒ 硬阻塞，需 owner 裁决，按口径**不重复 @**；
    `LUM-2109`/`LUM-2110` 连带同因。
+
+### 183.7 派发回读（派后 75 秒）—— 两台都秒取走，且**订正 §183.4 对 devbox1 的归因**
+
+| issue | run | dispatched → started | 落点 |
+| --- | --- | --- | --- |
+| `LUM-1823` | `01a0e726` | `08:34:35Z → 08:34:36Z`（**1 秒**） | devbox5 |
+| `LUM-2432`（回收片） | `01a0e727` | `08:34:48Z → 08:34:49Z`（**1 秒**） | devbox1 |
+
+🔴 **订正 §183.4 的表格措辞**：devbox1 的 daemon **完全正常**（`started_at` 1 秒内落下，
+与 §182.2 的秒级取走一致）⇒ 它**不是**派发面问题，**唯一**的问题是磁盘。
+所以「devbox1 不可派」的正确表述是 **「devbox1 派得动、但 `--with-db` 片会 ENOSPC」**——
+这两件事必须分开记，否则下一轮会误以为要换 daemon / 重新注册。
+⇒ **判「device 不可派」时必须先分清是「派发黑洞」还是「磁盘打满」，两者的处置完全不同**：
+前者改派 runtime，后者只能派回收片。
+
+⚠️ **本 device 现在的账**：cycle（轻量，不编译）∥ `LUM-1823`（`--with-db` 冷建，18–30G）
+⇒ 正好卡在 §183.3 的上限（同 device 同时 1 片 `--with-db`）✅，
+`avail 28G` 满足。**本轮 cycle 自身刻意不跑任何需编译的门**（新 checkout 无 `target/`，
+跑一次冷编就把 18–30G 吃掉、把 `LUM-1823` 的预算挤爆）⇒ **cycle 与同 device 的编译片并存时，
+cycle 只能用零编译门**（`route_parity` / `slash_alias_audit` / `file_size_check` /
+`audit_workspace_deps`，合计 ~1.6s）。这是「同 device 1 片」规则的**第二个推论**。
