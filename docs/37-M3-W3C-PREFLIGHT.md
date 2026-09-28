@@ -18558,3 +18558,67 @@ base = **`7942c94f`**；GH **0 open PR**。先判活本轮派出的一片；它�
   ③ §208.2 的**两条磁盘配方**当作它的自带配额。
 - 派发方式：`backlog` → `todo` 的**真实跃迁**（先 `assign` 再翻状态）⇒ 90s 内 workdir 落地
   （`lum-2494-b3e0a3b5bb0b`），再次验证 §203.8 记的那条流程事实。
+
+## §210 【2026-09-29 07:00 cycle / LUM-2496】零收割验证轮 —— ⑦ 八数字**第 15 轮逐字不变** ＋ 判活在飞片 ＋ 第 2/3 槽位按算式留空
+
+- base 起手 **`b36dac36`**（= `7942c94f` 合并树 + `§208` + `§208.6`）。GH **0 open PR**。起手 `df` **24G(51%)**。
+- ✅ **checkout 落点纪律第 38 次得解**：本轮 checkout 传了
+  `multica repo checkout <url> --ref feat/multica-rs-initial` ⇒ **直接落在目标分支**，
+  **不再需要 `git reset --hard origin/feat/...` 那个已经连续 37 轮的手动补救**。
+  ⇒ **配方**：`--ref` 就是那 37 次 `reset` 的成因（不传 `--ref` 时默认落 `origin/main`），
+  **本轮起写进默认动作**，不必再依赖事后 reset。
+- **⑦ 不变式第 15 轮逐字不变**（合并树上离线跑，未跑任何需编译的门）：
+
+  ```
+  upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+    implemented  455 real +   1 placeholder =  456 / 456   known_gap    0   unclaimed    0   regression   0   local_only    8
+  OK: every upstream route is either implemented or owned
+  ```
+
+  `⑦b slash_alias_audit` / `⑩ file_size_check` / `deps audit_workspace_deps`（`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`）**全 exit 0**。
+
+### §210.1 判活 `LUM-2494`（M11-3 / T1-6-A）—— **活，且正在预定的写集里推进**
+
+起手 21 分钟龄，`target/` 5.0G，采样瞬间 `ps` 偶有 `rustc` ⇒ **判活不抢救**（§165 的判活序第三次派场，
+再次确认「单点零编译进程」不可当死亡证据）。未提交写集**与派发描述的写集逐项吻合**：
+
+| 项 | 规模 |
+|---|---:|
+| `crates/mc-conformance/src/seed.rs`（新） | 未跟踪 |
+| `crates/mc-conformance/src/harness.rs` | +13/−2 |
+| `crates/mc-conformance/src/lib.rs` | +33/−6 |
+| `crates/mc-conformance/tests/golden.rs` | +100/−0 |
+| `scripts/extract_upstream_fixtures.py` | +80/−4 |
+| `contracts/golden/**` | **111 文件 +687/−296** |
+
+🔴 **收尾判据链的第 0 步要换（预先登记）**：这 111 个 golden 文件的改动**不是**期望值改写 ——
+抽查 3 份 diff 逐字确认改动只有两类：① `path` 由字面量 UUID 变成 `{testAgentID}` 形态 +
+新增 `path_params` 与 `extraction.bindings` 映射；② `extraction.notes` 末尾补一个逗号 + 新 note。
+**`expected.status` 零改动**（`git diff | grep '"expected\|"status":'` 零命中）。
+这**正是** §208.3 定位的机制本体（`Bindings::lookup` 只有 2 个符号 ⇒ 其余实体被当字面量原样发出 ⇒ 库里没这行 ⇒ 404）。
+⚠️ 但**后果是**：本仓 `contracts/golden` 这份**逐 blob 恒等的证据法在本片之后失效**
+（B4 以来它只在「只动 `docs/` 或路由登记面」时成立）。⇒ **收尾判据改为**：只信 **⑦ 八数字** +
+**⑨ `--db-url` 六个数字**逐字不变，**不得再用「blob 恒等」当无回归证据**。
+
+### §210.2 第 2/3 槽位**按算式留空**（§167 算式的第二次派场，结论不变）
+
+`avail 24G` − **可回收量 0**（全盘唯一的 `target/` 就是在飞那片 `LUM-2494` 自己的 5.0G，
+其余 35 个 workdir 均 <150M）`< 全量 `--with-db` 峰值实测 18–30G` ⇒ **期望收益为负，留空**。
+⚠️ 顺带修正 §208.5 留的一句歧义：那里写「`avail` 回 ≥25G 才排第二片」，
+**只写 `avail` 会让人以为在飞那片 5G 还能再排一片** ⇒ **一律写成 `avail − 可回收量` 两项**（本节即定式）。
+
+### §210.3 剩余 T1 失败项现状（**本轮全部确认「需编译 ⇒ 本机不可派」**）
+
+| 项 | 读数 | 能否离线判定 |
+|---|---|---|
+| `T1-6` ⑨ `--db-url` | `365 / pass 196 / mismatch 136 / unmounted 3 / ph 0 / unevaluable 30` | 否，**`LUM-2494` 在做** |
+| `T1-7` ⑨ 两个 rate | `contract 0.093151 ∧ mounted 1.0` | 否（要 `--no-db` 跑出 report） |
+| `T1-12` golden-local 对账 | 需 `mc-conformance --golden` | 否 |
+
+⇒ **本轮 0 派发**。`LUM-2111`（M10-9 INT）仍卡 docker/podman/buildah 三件套皆无，**待 owner 裁决，不重复 @**。
+
+### §210.4 下一轮起点
+
+base = **`b36dac36`**；GH **0 open PR**；在飞 **`LUM-2494` 唯一**。
+下轮第一动作：判活 `LUM-2494` ⇒ 若交 PR，按 §210.1 预登记的**新判据链**（⑦ 八数字 + ⑨ 六数字，**不用 blob 恒等**）
+当场复核；**收尾第一动作仍是 `rm -rf target`**（本轮 workdir 无 `target/`，可回收量 0）。
