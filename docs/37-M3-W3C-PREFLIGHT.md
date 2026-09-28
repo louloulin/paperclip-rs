@@ -15171,3 +15171,168 @@ base 从 `ab422405` 走到 `33535345` 只加了 `docs/37`（docs-only），按 �
 
 **在飞判据三件套**：`/proc/*/cwd`（实时在飞）→ `ps -o etime`（在哪个阶段）→ `result.pr_url`（已交付）。
 `issue runs` 的条目数**四个都不是**。本轮就差点因为只看它而误判「没人做」并重复重派。
+
+## §174. 2026-09-28 11:00 cycle（LUM-2407）：**M9-5 已合并收割；起手 5.7G/88% 外科回收 22G；🔴 `--declared` 门读是结构性误用（不是回归）**
+
+### §174.1 起手读数（全部当场实测）
+
+| 项 | 读数 |
+|---|---|
+| base 收尾 | `9a909fa4` → **`b7701dfe`**（= `PR #134` M9-5 合并树，合并时刻 03:01:18Z） |
+| GitHub open PR | **0**（API 200，列表长度 0） |
+| PG 5432 | `online` |
+| `df /` | **起手 5.7G avail / 88%** ⇒ 🔴 本项目第 11 次 ENOSPC 的**前兆态** |
+| daemon | `active_task_count: 2` = cycle 自身 ∥ `LUM-1820` |
+| `LUM-1820` | run `01a0e570` `completed`（01:14:48Z）且 `pr_url` 仍空 ⇒ 按 §172.2 不算已交付 |
+
+### §174.2 「已交付」的三源互证（`pr_url` 空的那一片也能判交付）
+
+`LUM-1820` 的 `result.pr_url` 是空的（run 01:14:48 结束时门禁还在跑），
+但本轮用**另外三个互不依赖的源**判定它已交付并已合并：
+
+1. **workdir HEAD ≡ origin**：`b7701dfe == b7701dfe`，`rev-list --left-right --count` = `0  0`；
+2. **tree 干净**：`git status --porcelain` 0 行；
+3. **合并提交落在 base 上**：`b7701dfe` 的 subject 是
+   `Merge pull request #134 from louloulin/agent/devbox5/m9-5-delivery`，
+   且它前面那条是 `f568b612 fix(m9-5): gate-caught defects — fmt, inet read-back, substring SQL assertion`
+   ⇒ **门禁抓到过缺陷并已修**（正是判据链要求的），不是裸合。
+
+⇒ 结论：**`pr_url` 空的 run 仍可能已交付**。§172.2 要补第三条：
+判「交付」用 **`origin` 上的合并提交 + workdir tree 干净**，
+`pr_url` 只是三条里最容易取到的一条，**不是充分必要条件**。
+
+### §174.3 🔴 头号产出：`slash_alias_audit --declared` 的缺陷数**永远降不到 0**（§173.6 第 3 条作废）
+
+§173.6 第 3 条要求「合入后 ⑦b `--declared m9` 缺陷必须 3 → 0」。本轮实测**它恒为 3**，
+一度被误判成「M9-5 把 3 个 `MISSING_ALIAS` 缺陷合进了 base」。追到源码才看清是**结构性误用**：
+
+```python
+# scripts/slash_alias_audit.py  main() 的 --declared 分支（第 329–330 行）
+rows, unknown = predict(declared, upstream)
+findings    = audit(declared, upstream)      # ← 传的是 declared，不是 routes
+# 只有 else 分支（第 339 行）才扫代码：
+routes  = ext.routes_at(args.tree, None)
+findings = audit(routes, upstream)
+```
+
+`--declared` 是**「代码还不存在时」的形态预测器**（模块 docstring 第 48 行原话：
+`predict from an issue's declared route table, before any code exists`）：
+它把「声明表」本身当注册集去过 `audit()`。而 `audit()` 的 `MISSING_ALIAS` 判据是
+`up_slash and not (has_slash and has_plain)` —— **声明表按构造每个键只有一行**，
+`has_slash and has_plain` **永远为假** ⇒ **任何双形态声明必然报 1 条 `MISSING_ALIAS`**。
+⇒ **`--declared` 模式下的缺陷数与代码对错无关，是常数。**
+
+**本仓 M9-5 的真实形态是正确的**（`notification_preferences.rs:81-92` 两个 `.route()` 都在，
+`/api/notification-preferences` 与 `/api/notification-preferences/` 各注册 GET/PATCH/PUT）：
+
+```
+# 单文件 extract_routes 直查（6/6 全在）
+[('GET','/api/notification-preferences'), ('GET','/api/notification-preferences/'),
+ ('PATCH','/api/notification-preferences'), ('PATCH','/api/notification-preferences/'),
+ ('PUT','/api/notification-preferences'), ('PUT','/api/notification-preferences/')]
+```
+
+**合入后的正确门读 = 树扫描（不带 `--declared`）**：
+
+```
+$ python3 scripts/slash_alias_audit.py
+  registered upstream-key literals: 539
+  shapes OK: every registered upstream key matches the form upstream serves
+  => 0 defect(s) from findings, 0 warning(s)          exit=0
+```
+
+🔴 **新纪律（取代 §173.6 第 3 条）**：
+**`--declared` 只能用于「代码写之前」的形态预判，且其缺陷数不可跨轮比较、不可当验收门；
+合入后的 ⑦b 门必须用无参树扫描（`slash_alias_audit.py --quiet`，`exit 0` 为绿）。**
+判「某个片是否写对了形态」的**唯一**方式是树扫描，`--declared` 只能回答
+「这片**应该**写成什么形态」。
+
+### §174.4 门读（base `b7701dfe` 当场重跑，三道零编译门，全部 `exit 0`）
+
+新 checkout **无 `target/`** ⇒ 只跑 ⑦/⑦b/⑩，**不跑** ⑨（冷编 `mc-conformance` 不值当）：
+
+- ⑦ `local 544 / upstream 456 / baseline 473 / implemented 454 (452 real + 2 placeholder) /
+  known_gap 2 / unclaimed 0 / regression 0 / local_only 8` ⇒ `454 + 2 = 456` ✅，**exit 0**。
+- ⑦b 无参树扫描 **0 defect / exit 0**（见 §174.3）。
+- ⑩ `audit_workspace_deps` **exit 0**。
+
+`known_gap` 只剩 2 条（`--json` 逐条 `owner`）：
+
+```
+M9  POST /api/webhooks/stripe   router.go:1505   ← M9-6 / LUM-1821
+M9  POST /api/agents/mika      router.go:2184   ← M9-7 / LUM-1822
+```
+
+⚠️ §173.3 预测 M9-5 后应为 `local 535 / implemented 448 / known_gap 8`，
+**实测 `544 / 454 / 2`**：M9-5 实际交付 **6** 条（不是预测的 5），
+且 §173.1 写的 §172 起点 `33535345` 已被本轮 base 覆盖。
+⇒ 与 §171–§173 一致：**不写「delta 平移」式前推**，一律等 `owner` 计数实测。
+
+### §174.5 外科回收：起手 5.7G/88% → 28G/41%（回收的是**已交付**的片，零风险）
+
+起手 5.7G 是 §174 之前从未有过的低点。按 §167 的口径先算「谁在飞」：
+
+- `/proc/*/cwd` 全扫：**无 `lum-1821-*`** ⇒ M9-6 当时**还没起**（见 §174.6）；
+  唯一大 workdir = `lum-1820-d9ff17dbbfc8`（**23G**），`target/` 占 **22G**
+  （`deps` 15G + `incremental` 6.1G + 二进制/rlib ~1.9G）。
+- 按 §174.2 判它**已交付并已合并** ⇒ 该 `target/` 是**纯死重**。
+
+回收**只删 `target/`，保留整个 git workdir**（可逆：任何时候 `git worktree` 直接复用）：
+
+```bash
+# 回收前三查（必须全过才删）
+git rev-parse HEAD                              # b7701dfe == origin
+git rev-parse --abbrev-ref HEAD                 # feat/multica-rs-initial
+git status --porcelain | wc -l                  # 0
+rm -rf target
+```
+
+⇒ `19G used / 28G avail / 41%`（+22.3G）。
+⚠️ **回收配方二（`deps` 同 stem 留最新、实测回收 15.2G）本轮没用上** ——
+既然整片已交付，**整块 `target/` 可删比同 stem 精挑更干净**。
+**判据升级：先问「这片交付了吗」，再问「怎么精挑回收」** —— 顺序反了会做无用功。
+
+### §174.6 槽位：回收**顺带**把 M9-6 从「已派发未起飞」拉起来了
+
+- 回收前：`LUM-1821` 状态已是 `in_progress`（10:00 cycle `LUM-2403` 派发，描述已写全、base 就是 `b7701dfe`），
+  但 **`ls -d lum-1821-*` 不存在**、`/proc` 无对应 cwd ⇒ 判据链上的「**已派发 ≠ 已起飞**」，
+  属 §173.2 之外的**第三种**状态：run 未创建、slot 未真正投产。
+- 本轮把 `LUM-1820` 置 `in_review`（交付信号）后空出 slot，daemon **03:03:56Z 派了
+  `LUM-1821` 的 run `01a0e5f8`**，workdir `lum-1821-ad5c354d35bf` 落地，
+  `/proc` 见 `pi` PID 7867（etime 5m36s）⇒ **活的**。
+- 🔴 **因此「发完片就当它在飞」是错的**：判在飞仍必须 `/proc/*/cwd` 扫 cwd。
+  **置 `in_review` 不只是状态，它会释放 daemon slot 并触发下一片的起飞** —— 这是可用的调度手段。
+
+- **槽位算式（第 5 轮留空，但原因变了）**：`avail 28G − 可回收 0 = 28G`，
+  而 M9-6 自己冷建峰值就是 **18–30G** ⇒ 它一旦开编就会把 28G 吃掉大半。
+  ⇒ **第 2、3 槽刻意不派**（不是「没余量」，是「余量正好够一片」）。
+
+### §174.7 M9-7 预飞在新 base 复核通过（零成本）
+
+| 检查 | 结果 |
+|---|---|
+| M9-6 写集 `crates/mc-http/src/routes/cloud/webhook.rs` | 在位（29 行空脚手架） |
+| M9-6 第二类漏项：`cloud/mod.rs:39 pub mod webhook;` + `:51 .merge(webhook::router())` | 仍在位（M9-0 预声明）⇒ **不必改任何 `mod.rs`** |
+| M9-7 repos 侧 `crates/mc-repos/src/agent.rs:44 pub mod mika;` + `agent/mika.rs`（61 行） | 仍在位 ⇒ **别去改 `mc-http/src/lib.rs`** |
+| M9-7 http 侧 `routes/agents.rs`（唯一 `mod`+注册面，`grep '^mod '` = 6、**无 `mika`**，470 行） | 在位 ⇒ M9-7 **需自己加 `mod mika;` + 注册**（唯一「要改注册面」的一片） |
+| `slash_alias_audit --declared`（`stripe` + `mika` 两条小表） | `declared 2 / dual-form required: 0 / single-form: 2`、**0 defect** ⇒ 两片都是**单形态**，补尾斜杠反而 `EXTRA_ALIAS` 硬失败 |
+
+⚠️ 检索口径提醒：`agent.rs` 在仓里有 **4 个**
+（`mc-core/src`、`mc-repos/src`、`mc-http/src/routes/mcp/`、`mc-http/tests/mcp/`），
+只在 `mc-http/src` 下 grep 会得出「M9-7 脚手架不存在」的错误结论（**本轮先踩后纠正**）。
+**跨 crate 预飞必须 `find . -name '<file>'` 全仓定位，不能只扫一片 crate。**
+
+### §174.8 下一轮第一动作
+
+1. `df` 连采 + `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → GitHub API 查 open PR。
+2. `/proc/*/cwd` 判 `LUM-1821` 活/静默（**别信 `issue runs` 条数，也别信 `in_progress`**）；交付看三源互证（§174.2）。
+3. 它交 PR 走判据链：等 head CI 3/3 转绿 → 钉 40 位 sha + `merge_method=merge` → 落地树 ≡ 预演树。
+4. 合入后 ⑦b **必须用无参树扫描**（§174.3）判 0 defect；⑦ 预期 `owners.M9` 2 → 1。
+5. `df` 回 ≥30G 才派 `LUM-1822`(M9-7) ⇒ `owners.M9 → 0` 后才派 `LUM-1825`（唯一 `--write-baseline` 的 INT）。
+   🔴 两条 INT（`LUM-1825` / `LUM-2111`）**不得同轮刷基线**。
+6. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），仍需 owner 裁决（**不重复 @**）。
+
+### §174.9 本轮一句话 + 新纪律
+
+**回收的第一问是「这片交付了吗」，不是「怎么精挑」**；**`--declared` 的缺陷数是常数，不是门读**；
+**`in_review` 会释放 slot 并触发下一片起飞，是可用的调度手段**。
