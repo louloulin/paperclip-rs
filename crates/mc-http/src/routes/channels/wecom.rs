@@ -61,9 +61,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use mc_channel::wecom::binding::{BindingError, BindingTokenService, RedeemOutcome};
-use mc_channel::wecom::credentials::{
-    CredentialProbe, HandshakeProbe, PlaintextSecret, ProbeTransport, TransportError,
-};
+use mc_channel::wecom::credentials::{CredentialProbe, HandshakeProbe};
 use mc_channel::wecom::installation::{InstallError, InstallationParams, InstallationService};
 use mc_channel::wecom::store::InstallationStore;
 use mc_core::channel::ChannelKind;
@@ -155,34 +153,21 @@ fn install_service(state: &AppState) -> Option<InstallationService> {
     let boxed = state.channel_keys.get(ChannelKind::WeCom)?.clone();
     Some(InstallationService::new(
         Arc::new(PgInstallStore::new(state.db.clone())) as Arc<dyn InstallationStore>,
-        Arc::new(HandshakeProbe::new(Arc::new(PendingWsTransport))) as Arc<dyn CredentialProbe>,
+        Arc::new(HandshakeProbe::new(probe::resolve_transport())) as Arc<dyn CredentialProbe>,
         boxed,
     ))
 }
 
-/// 探针的 **wire 一半**在 M7-16（`crates/mc-channel/src/wecom/{ws_frame.rs,ws_sender.rs,
-/// stream_store.rs}`）—— 本片写集不含那三个文件。
+/// 探针的传输（M7-16 的 wire 一半 + M7-FU 的真传输）。
 ///
-/// 在那之前，生产接线拿到的是这一个**fail-closed** 的传输：它永远回
-/// [`TransportError::Failed`]，于是 BYO 安装得到 **503 `wecom_credentials_unverifiable`**
-/// （"凭据没被改动，稍后再试"）。这**不是**"先放行、以后再验"：证明控制权是安全不变式
-/// （`credential_probe.go` 的整段注释就是讲为什么），没有探针就**不能**落一行凭据。
-/// 登记为 `docs/32` §31 的 **D9**（M7-16 落传输、M7-21 复核该端点转绿）。
-#[derive(Debug, Clone, Copy)]
-struct PendingWsTransport;
-
-#[async_trait::async_trait]
-impl ProbeTransport for PendingWsTransport {
-    async fn subscribe_ack(
-        &self,
-        _bot_id: &str,
-        _secret: &PlaintextSecret,
-    ) -> Result<i32, TransportError> {
-        Err(TransportError::Failed {
-            stage: "ws-transport-not-wired",
-        })
-    }
-}
+/// M7-FU（`LUM-2136`）用 `#[path]` 把这个子模块声明在**本文件**里，而不是往
+/// `channels/mod.rs` 加 `pub mod wecom_probe;` —— 后者被 M7-0 anchor **冻结**
+/// （该文件逐字写着「M7 后续切片**不得**编辑」，并要求把需要的子文件记进
+/// `docs/32` §10 由集成方统一加）。本片是**读侧**的接线、不是第 25 条路由，
+/// 所以遵守那条冻结：文件仍落在 `channels/wecom_probe.rs`（§193 钉死的路径），
+/// 声明点则挂在本文件下 ⇒ `mod.rs` 逐字不动。
+#[path = "wecom_probe.rs"]
+mod probe;
 
 /// 把 adapter 的安装错误映射到 HTTP（逐条对齐上游 `writeWecomInstallError`）。
 fn install_error(error: &InstallError) -> Response {

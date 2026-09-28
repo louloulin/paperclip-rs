@@ -37,9 +37,15 @@
 
 use std::sync::Arc;
 
-use mc_channel::engine::ChannelDeps;
+use mc_channel::engine::{
+    ChannelDeps, ChannelIssueOutcome, ChannelIssueParams, ChatRunParams, Engine, EngineError,
+    InProcessLeaseStore, Installation, InstallationStore, IssueCreator, NoCommands, Router,
+    RouterConfig, RunTriggerer, SessionReader, WorkspaceIdentity,
+};
 use mc_channel::registry::Registry;
 use mc_core::channel::ChannelKind;
+use mc_core::id::Id;
+use mc_core::timestamp::Timestamp;
 use mc_http::state::ChannelKeys;
 
 /// 渠道面的装配结果：注册表 + 已配置平台 + 已起的监管句柄。
@@ -135,17 +141,28 @@ pub fn start(keys: &ChannelKeys, deps: Option<Arc<ChannelDeps>>) -> ChannelHandl
         };
     };
 
-    // 每个已配置的平台注册自己的工厂（anchor 期五个 `register()` 都是空实现 ⇒
-    // 注册表仍为空，这正是"零路由、零读数变化"的形态证据）。
-    for kind in &configured {
-        match kind {
-            ChannelKind::Slack => mc_channel::slack::register(&registry, &deps),
-            ChannelKind::Lark => mc_channel::lark::register(&registry, &deps),
-            ChannelKind::DingTalk => mc_channel::dingtalk::register(&registry, &deps),
-            ChannelKind::WeCom => mc_channel::wecom::register(&registry, &deps),
-            ChannelKind::Telegram => mc_channel::telegram::register(&registry, &deps),
-            ChannelKind::Custom => {}
+    // `Engine` 持有**同一个** `Arc<Registry>`（`Engine::new` 内部 `Arc::clone`），所以先建
+    // engine、后注册工厂是安全的：sweep 在**运行时**才读注册表。
+    let engine = match Engine::new(Arc::clone(&registry), deps) {
+        Ok(engine) => engine,
+        Err(error) => {
+            // 时间不变式不成立（`poll <= renew < ttl`）⇒ 这是**装配期**的硬错误，不是某条安装
+            // 的失败，所以明说并不起连接（绝不假装连上了）。
+            tracing::error!(error = %error, "channel engine could not be assembled; no long-connection will be started");
+            return ChannelHandles {
+                registry,
+                configured,
+                supervisors: Vec::new(),
+                wired: false,
+            };
         }
+    };
+
+    // 每个已配置的平台注册自己的**真**工厂（`register_with`，不是 anchor 期的空 `register`）：
+    // 部署密钥从 `ChannelKeys::get(kind)` 解成 `SecretBox` 交给平台自己的解密器 —— 这是
+    // "配了密钥才起连接"这条判据的落点。
+    for kind in &configured {
+        register_platform(*kind, &registry, keys);
     }
 
     tracing::info!(
@@ -154,13 +171,233 @@ pub fn start(keys: &ChannelKeys, deps: Option<Arc<ChannelDeps>>) -> ChannelHandl
         "channel registry assembled"
     );
 
-    // 起监管任务归 M7-1：`Supervisor::spawn` 现在仍是 `todo!()`，所以这里**不**调用它
-    // （调用会让服务器在"配了密钥"的部署里 panic —— 那是比"没接上"更糟的失效形态）。
+    // 起监管任务（M7-1 的 `Supervisor::spawn` 已实现，anchor 期那条"`todo!()`"注释已过期）。
+    // 它的返回值就是停机句柄 ⇒ 进 `supervisors`，停机链第一步（`shutdown`）才收得掉。
+    let supervisors = match Arc::clone(engine.supervisor()).spawn() {
+        Ok(handle) => vec![handle],
+        Err(error) => {
+            tracing::error!(error = %error, "channel supervisor could not be started; no long-connection will be started");
+            return ChannelHandles {
+                registry,
+                configured,
+                supervisors: Vec::new(),
+                wired: false,
+            };
+        }
+    };
+
     ChannelHandles {
         registry,
         configured,
-        supervisors: Vec::new(),
+        supervisors,
         wired: true,
+    }
+}
+
+/// 把一个已配置平台的**真**依赖装进注册表（宿主交密钥，不交 env —— `mc-channel` 不读 env）。
+///
+/// `SecretBox` 由 [`ChannelKeys::get`] 交出；每个平台的 `register_with` 签名**各不相同**
+/// （lark 按值收、其余按引用收），所以这里逐条写开而不是硬造一张同签名表。
+fn register_platform(kind: ChannelKind, registry: &Registry, keys: &ChannelKeys) {
+    // 已配置 ⇒ `get` 必为 `Some`（两者读同一张 `ChannelKeys` 表）；`expect` 只在两者漂移时触发。
+    let Some(boxed) = keys.get(kind) else {
+        tracing::error!(kind = %kind.as_str(), "configured channel has no deployment key; skipping");
+        return;
+    };
+    match kind {
+        ChannelKind::Slack => {
+            let deps = mc_channel::slack::SlackDeps::with_secret_box(boxed.clone());
+            mc_channel::slack::register_with(registry, &deps);
+        }
+        ChannelKind::Lark => {
+            // lark 的 `register_with` 按值收 `FeishuChannelDeps`；连接器是 M7-11 的产物，
+            // 这里**没有** ⇒ 工厂在 `build` 时响亮地拒装配（`InvalidConfig`），不是假装连上。
+            mc_channel::lark::register_with(
+                registry,
+                mc_channel::lark::feishu_channel::FeishuChannelDeps {
+                    connector: None,
+                    api_client: Arc::new(mc_channel::lark::client::StubApiClient::new()),
+                    decrypter: mc_channel::lark::feishu_channel::Decrypter::secret_box(
+                        boxed.clone(),
+                    ),
+                    enricher: None,
+                },
+            );
+        }
+        ChannelKind::DingTalk => {
+            // dingtalk 的 `Decrypter` 收的是**函数值**（`Fn(&str) -> Result<String, String>`），
+            // 而落库的 `app_secret_encrypted` 是 **base64** 的 `secretbox` 密文
+            // （`dingtalk::config::encode_ciphertext`）⇒ 这里现搭那条解密链。
+            // ⚠️ 错误文案**不带**密文也不带明文（凭据纪律）。
+            let decrypt = dingtalk_secretbox_decrypter(boxed.clone());
+            let deps = mc_channel::dingtalk::DingTalkDeps::default().with_decrypter(decrypt);
+            mc_channel::dingtalk::register_with(registry, &deps);
+        }
+        ChannelKind::WeCom => {
+            // wecom 要的是 `CredentialsResolver`（能解封 `Installation.secret_encrypted`），
+            // 不是 `Decrypter` —— 生产实现 `SecretboxCredentialsResolver` 正是同一把盒子。
+            mc_channel::wecom::wecom_channel::register_with(
+                registry,
+                Arc::new(mc_channel::wecom::WeComDeps::new(Arc::new(
+                    mc_channel::wecom::credentials::SecretboxCredentialsResolver::new(
+                        boxed.clone(),
+                    ),
+                ))),
+            );
+        }
+        ChannelKind::Telegram => {
+            let deps = mc_channel::telegram::TelegramDeps::with_secret_box(boxed.clone());
+            mc_channel::telegram::register_with(registry, &deps);
+        }
+        ChannelKind::Custom => {}
+    }
+}
+
+/// dingtalk 的生产 `Decrypter`：落库 base64 → `secretbox` 解封 → UTF-8 明文。
+///
+/// 三个失败分支的错误文案都**不带**密文/明文（`docs/60` §2.3）：`Decrypter::decrypt` 会把这条
+/// 串拼进 `ChannelError::InvalidConfig`，而那个错误值会被 HTTP 层序列化。
+fn dingtalk_secretbox_decrypter(
+    boxed: mc_secrets::secretbox::SecretBox,
+) -> mc_channel::dingtalk::Decrypter {
+    mc_channel::dingtalk::Decrypter::new(
+        "secretbox",
+        Arc::new(move |ciphertext: &str| {
+            use base64::Engine as _;
+            // PostgreSQL 的 `encode(…, 'base64')` 每 64 字符折一行 ⇒ 先去 ASCII 空白
+            // （与 `dingtalk::config::strip_whitespace` 同一条判据）。
+            let stripped: String = ciphertext
+                .chars()
+                .filter(|c| !matches!(c, ' ' | '\t' | '\n' | '\r'))
+                .collect();
+            let sealed = base64::engine::general_purpose::STANDARD
+                .decode(&stripped)
+                .map_err(|_| "app secret ciphertext is not valid base64".to_string())?;
+            let plain = boxed
+                .open(&sealed)
+                .map_err(|_| "app secret could not be decrypted".to_string())?;
+            String::from_utf8(plain).map_err(|_| "app secret is not valid utf-8".to_string())
+        }),
+    )
+}
+
+/// 组装 engine 的端口袋（`main.rs` 第 7 步调用；`start` 的签名不变）。
+///
+/// # 为什么端口实现住在**这个二进制 crate** 里
+///
+/// 与 `scheduler/*_port.rs` 同一条纪律（见模块文档）：要打真库、构造 `Id`/时间戳的端口实现
+/// 不该塞进 `mc-channel`。`mc-channel` 那边 [`InstallationStore::list_active`] 的文档逐字写着
+/// 「DB 实现由后续片落地」——**本片就是那个后续片**。
+///
+/// # 入站面为什么是**失败关闭**的三个端口
+///
+/// `Router` 的四个端口里，`CommandClassifier` 有生产实现（`NoCommands`）、`RunTriggerer` 有
+/// （`RunBatcher` 包的那个内层触发器属于人起的 chat turn，**还没有**生产实现），
+/// 而 [`SessionReader`] / [`IssueCreator`] **一个生产实现都没有**（全仓只有 `#[cfg(test)]` 替身）。
+/// 本片要交付的是「连接真的被监管器跑起来」，而 `/issue` 建单与 workspace 身份解析要打
+/// `mc-repos`，属于后续片 ⇒ 这里给**失败关闭**的实现：装配照常成功、连接照常起，
+/// 真有入站消息走到那两个端口时**响亮地报错**，而不是静默丢弃（静默丢弃 = "渠道没接"的
+/// 运行期事故，`docs/37` 反复登记的那一类）。
+pub fn build_deps(pool: &sqlx::PgPool) -> Result<Arc<ChannelDeps>, EngineError> {
+    let router = Arc::new(Router::new(
+        Arc::new(NoCommands),
+        Arc::new(NoRunTrigger),
+        Arc::new(NoSessionIdentity),
+        Arc::new(NoIssueCreation),
+        RouterConfig::default(),
+    ));
+    let leases = InProcessLeaseStore::new("multica", Arc::new(Timestamp::now))
+        .map_err(|error| EngineError::infra(error.to_string()))?;
+    Ok(Arc::new(ChannelDeps::new(
+        router,
+        Arc::new(PgActiveInstallations { pool: pool.clone() }),
+        Arc::new(leases),
+    )))
+}
+
+/// `InstallationStore` 的**真** PG 实现（`channel_installation` 里的 `status = 'active'`）。
+///
+/// 跨全部渠道类型（`channel_type` 逐行解回 [`ChannelKind`]，不按平台过滤 —— 这是
+/// `ports.rs` 明确要的形状：上游把这个硬编码的 `feishu` 当成要消灭的限制）。
+struct PgActiveInstallations {
+    pool: sqlx::PgPool,
+}
+
+#[async_trait::async_trait]
+impl InstallationStore for PgActiveInstallations {
+    async fn list_active(&self) -> Result<Vec<Installation>, EngineError> {
+        // 指纹 = `md5(config::text || updated_at)`：**不透明、确定、且凭据一换就变**
+        // （密文在 `config` 里）⇒ sweep 之间重装过的渠道会被拆掉重建，而不是拿过期凭据一直跑。
+        // ⚠️ 用 PG 的 `md5` 而不是进程内哈希：零新依赖，且**不**把 `config` 明文带进进程。
+        let rows: Vec<(uuid::Uuid, String, serde_json::Value, String)> = sqlx::query_as(
+            "SELECT id, channel_type, config, md5(config::text || updated_at::text) \
+             FROM channel_installation WHERE status = 'active'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| EngineError::infra(format!("channel_installation sweep: {error}")))?;
+
+        // 认不出的 `channel_type` 跳过并**记一条**（不静默：那是迁移与代码漂移的信号）。
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, channel_type, config, fingerprint) in rows {
+            let Some(kind) = ChannelKind::from_storage_str(&channel_type) else {
+                tracing::warn!(channel_type = %channel_type, "unknown channel_installation.channel_type; skipping");
+                continue;
+            };
+            out.push(Installation {
+                id: Id(id),
+                kind,
+                fingerprint,
+                config,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// 失败关闭的运行触发（人起的 chat run 还没有生产触发器）。
+struct NoRunTrigger;
+
+#[async_trait::async_trait]
+impl RunTriggerer for NoRunTrigger {
+    async fn schedule_chat_run(&self, _params: ChatRunParams) -> Result<(), EngineError> {
+        Err(EngineError::infra(
+            "channel run trigger is not wired yet; inbound messages are refused, not dropped",
+        ))
+    }
+
+    async fn drain(&self) -> Result<(), EngineError> {
+        Ok(())
+    }
+}
+
+/// 失败关闭的 workspace 身份读取（`/issue` 的标识符与深链要它；生产实现要打 `mc-repos`）。
+struct NoSessionIdentity;
+
+#[async_trait::async_trait]
+impl SessionReader for NoSessionIdentity {
+    async fn workspace_identity(
+        &self,
+        _workspace_id: Id,
+    ) -> Result<WorkspaceIdentity, EngineError> {
+        Err(EngineError::infra(
+            "channel session reader is not wired yet; /issue is refused, not silently ignored",
+        ))
+    }
+}
+
+/// 失败关闭的 `/issue` 建单（同上：要有 `mc-repos` 的建单端口）。
+struct NoIssueCreation;
+
+#[async_trait::async_trait]
+impl IssueCreator for NoIssueCreation {
+    async fn create_issue(
+        &self,
+        _params: ChannelIssueParams,
+    ) -> Result<ChannelIssueOutcome, EngineError> {
+        Err(EngineError::infra(
+            "channel issue creation is not wired yet; /issue is refused, not silently ignored",
+        ))
     }
 }
 
@@ -193,6 +430,54 @@ mod tests {
         assert!(
             handles.registry().is_empty(),
             "端口未接线 ⇒ 不起任何连接、注册表为空"
+        );
+    }
+
+    /// **D-1 的验收核心**：配了密钥 + 端口已接线 ⇒ `has_connections() == true`。
+    ///
+    /// 这一条在 M7-FU 之前**必红**：anchor 期 `start` 从不调 `Supervisor::spawn`，
+    /// `supervisors` 恒为空 ⇒ 五个平台一条长连接都没被生产宿主跑起来
+    /// （`docs/60-M3-PLAN` 登记的两项掉棒之一）。
+    ///
+    /// 池子用 `connect_lazy` 指向一个**不存在**的库：`list_active` 会在 sweep 里失败并被
+    /// 记一条 error（这正是我们想要的——它证明监管任务**真的在跑**，而不是空壳），
+    /// 但不影响本条断言。
+    #[tokio::test]
+    async fn configured_keys_with_wired_ports_actually_start_connections() {
+        let pool =
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").expect("惰性池构造");
+        let deps = build_deps(&pool).expect("端口袋装配");
+
+        let keys = ChannelKeys::from_env_with(|name| {
+            (name == "MULTICA_SLACK_SECRET_KEY")
+                .then(|| "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_string())
+        });
+        assert_eq!(keys.configured(), [ChannelKind::Slack]);
+
+        let handles = start(&keys, Some(deps));
+        assert!(handles.is_wired(), "端口已接线");
+        assert!(
+            handles.has_connections(),
+            "配了密钥 + 端口已接线 ⇒ 必须真的起了监管任务"
+        );
+        assert_eq!(
+            handles.registry().kinds(),
+            [ChannelKind::Slack],
+            "已配置的平台注册了**真**工厂（`register_with`），不是 anchor 期的空实现"
+        );
+    }
+
+    /// 无密钥时**不**起连接（装配判据不变：有密钥才装配）。
+    #[tokio::test]
+    async fn no_keys_means_no_connections_even_with_wired_ports() {
+        let pool =
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").expect("惰性池构造");
+        let deps = build_deps(&pool).expect("端口袋装配");
+        let handles = start(&ChannelKeys::default(), Some(deps));
+        assert!(handles.configured().is_empty());
+        assert!(
+            !handles.has_connections(),
+            "没配密钥 ⇒ 不装配、不起连接（正常路径）"
         );
     }
 }

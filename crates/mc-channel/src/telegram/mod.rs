@@ -118,7 +118,10 @@ use crate::engine::ChannelDeps;
 use crate::message::SharedInboundHandler;
 use crate::registry::Registry;
 use api::SendMessage;
-use config::{parse_stored_bot_id, Decrypter, Sensitive, TelegramDeps};
+// M7-FU（`LUM-2136`）：`TelegramDeps` / `Decrypter` 从此**公开**（理由同 `slack`：
+// 宿主的 `channels.rs` 要拿部署密钥造生产依赖，而在此之前外部造不出来）。
+use config::{parse_stored_bot_id, Sensitive};
+pub use config::{Decrypter, TelegramDeps};
 use inbound::{inbound_from_update, parse_message_ref, Update, TYPE_TELEGRAM};
 use replier::{is_addressed_issue_command, UNSUPPORTED_TYPE_TEXT};
 
