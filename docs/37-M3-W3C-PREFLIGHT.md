@@ -16855,3 +16855,67 @@ known_gap 0 / unclaimed 0 / regression 0 / local_only 8`、`OK: every upstream r
 ④ 新片交 PR ⇒ **当轮即回收其 `target/`**（§190.4），再跑任何编译型门；
 ⑤ 合并单提交 PR 时**先比 tree hash**（§190.1），相同即可免跑本地 `--with-db`；
 ⑥ `LUM-1824` / `LUM-2110` 维持「不回网不 rerun / 不重复 @」。
+
+## 191. 20:00 cycle（`LUM-2446`）—— 零收割 + **宿主熄火片改派成功**
+
+base `49890f42` → **`e6d2f2c1`**（§191 docs-only 直推）；GH 收尾 **0 open PR**；
+df 起手 **28G(42%)** → 收尾 **27G(42%)**；PG `online`；checkout 落 `main` 线**第 29 次** ⇒ reset。
+
+### 191.1 门读（四个零编译门，与 §189.1/§190 逐字相同）
+
+```
+upstream 456 | local 546 | baseline 546
+implemented 455 real + 1 placeholder = 456/456   known_gap 0  unclaimed 0  regression 0
+local_only 8（1 ph）   owners {}   ok=true
+GATE_SLASH_ALIAS_EXIT=0（tree 模式）   GATE_FILE_SIZE_EXIT=0
+```
+
+`known_gap 0 / owners {}` 连续第二轮成立 ⇒ **M3–M10 全波次已无待实现路由**。
+`LUM-1824`（M9-9）是 M9 唯一剩余片，且是 **0 路由片** ⇒ 合并后上面 8 个数字**必须逐字不变**。
+
+### 191.2 派发面：连续第三轮实测 = **结构性 1 台**（§190.3 复现）
+
+`runtime list × agent list` 按 `runtime_id` 连接（agent 侧字段仍是 `runtime_id` / `runtime_bound`，
+顶层**没有** `runtime` 键）：`3c6087f9`(devbox5 `bd3d2b9d`) **online = 我**；
+`22e8b20d`→`041bf509` offline；`7db7fb73`→`e3b45a25` offline 16332 min；
+`3df1a3e8`→`4a7f29e1` offline 10342 min；`763a92a6`→`478b7f4b` offline 3501 min。
+另 3 台 online 的空 pi runtime（`7e6471d9` / `46140255` / `8b9c725f`）**依然零绑定**。
+⇒ **本项目可派运力 = 1（且那 1 台就是 cycle 自己）**。`LUM-2110` 属结构型，原地 `queued`，不重复 @。
+
+### 191.3 🔴 头号产出：**「宿主熄火」片的改派判据 —— 沉默 2h 后即可改派，不必等回网**
+
+`LUM-1824` run `01a0e777` 自 `10:03:16Z` `running`，其宿主 `041bf509` `last_seen` 停 `10:24:00Z`；
+**同宿主 `Claude becb92e6` / `Codex 08fa5fc9` 共享同一秒** ⇒ §189.3 签名成立。
+前两轮（§189/§190）的处置是「等宿主回网」，本轮**改变了这个口径**：
+
+- **可回收成果判定 = 远端 `git ls-remote --heads origin | grep <issue>` 零命中** ⇒ 无论宿主何时回网，
+  都**不可能**有可 push 的成果（跨 device 拿不到它的磁盘，只能靠远端分支判存）。
+  **一旦这条成立，「等回网」就没有任何收益**，只剩「占着一个 assignee 名额」。
+- 🔴 **新口径：`running` 状态的 run 不是自动重试磁铁**（§184 的磁铁是 `failed`）⇒
+  改派**不会**凭空造出第二个写者。旧 run 只在**宿主回网时**才可能复活，
+  而那属于「另一个 device 的另一个 run」，用**描述里的重复 run 条款**兜住即可（§191.4 第 2 条）。
+- 结论：**判「可改派」= ①宿主级熄火签名 ②远端无本片分支 ③存在一个在线且空闲合规的 device。**
+  三条同时成立就改派，不要用「等回网」无限期占位。
+
+### 191.4 改派执行（判据全部命中）
+
+写集预飞 **5/5 在位**：`mc-entitlement/src/{client,cache,stub}.rs`（75/69/197 行）、
+`apps/mc-server/src/entitlement.rs`（181 行）、`issue_table/mod.rs`（509 行，`limit_usage` 在 `:500`、
+注册在 `:96`）。**第二类漏项 = 0**：`apps/mc-server/src/main.rs:39` 已有 `mod entitlement;`、`:222`
+已有 `entitlement::start(&entitlement_config)` ⇒ **不必改任何 `mod.rs`**。
+派发三步（§181.7：**一律 `--to-id`**，assign 后回读 `assignee_id`）：
+`update --description-file`（rev 6→8，追加 §191）→ `assign --to-id 3c6087f9…`（回读确认）→
+**踢回 `todo` 再触发**（它已是 `in_progress`，同值重设**不产生 run**，§172.2）。
+⇒ run **`01a0e7e4`** `created/dispatched/started` **同一秒** `12:02:07Z`，`/proc` 扫到新 workdir
+`lum-1824-83c48bbb2349` 的活 `pi` ⇒ **端到端确认拿到任务**（对比 §188.4 devbox2/devbox4 的 31 min 黑洞）。
+
+### 191.5 下一轮
+
+① 起手 `df` 连采（`avail` + `du -sm` 配对）+ `pg_isready` → `rev-parse` 对 `ls-remote` → GH open PR；
+② §184 第 0/0.5/0.6 步；③ **`LUM-1824` 在本机跑 `--with-db`** ⇒ **cycle 自身本轮只准跑零编译门**
+   （§183.7 第 2 推论），且**不得在同一 device 派第二片**；
+④ 它交 PR ⇒ 走七条判据链（**先比 tree hash**，§190.1；单提交 squash 才成立），
+   合并后 §191.1 的 8 个数字**必须逐字不变**（0 路由片），
+   验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**；
+⑤ 交 PR 即回收其 `target/`（§190.4），再考虑编译型门；
+⑥ `LUM-2110` 结构型原地 `queued`；`LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，不重复 @。
