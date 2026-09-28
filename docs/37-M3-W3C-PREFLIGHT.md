@@ -16919,3 +16919,98 @@ GATE_SLASH_ALIAS_EXIT=0（tree 模式）   GATE_FILE_SIZE_EXIT=0
    验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**；
 ⑤ 交 PR 即回收其 `target/`（§190.4），再考虑编译型门；
 ⑥ `LUM-2110` 结构型原地 `queued`；`LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，不重复 @。
+
+## 192. 20:30 cycle（`LUM-2448`）—— 监控轮：**在飞片的构建盘上做外科回收**；清掉 8 个**重试磁铁**；`LUM-2136` 预飞
+
+起手 base **`71bb6a8f`**（= §191 docs 直推），GH **0 open PR**，daemon `active_task_count 2` = cycle ∥
+`LUM-1824`（run `01a0e7e4`，`12:02:07Z` 起，**本 device 唯一在飞的 `--with-db` 编译片**）。
+
+### 192.1 门读（base `71bb6a8f` 当场重跑四个零编译门，~1.6s）
+
+```
+upstream 456 | local 546 | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0  unclaimed 0  regression 0
+local_only 8（其中 1 placeholder）   owners {}   ok=true
+GATE_SLASH_ALIAS_EXIT=0（tree 模式）   GATE_FILE_SIZE_EXIT=0   audit_workspace_deps A1/A2/A3=0
+```
+
+与 §190.1 / §191.1 **逐字相同** ⇒ 又一次复现「docs-only 推进不动物理计数」。
+`local_only` 8 条逐条（`--json`）：`GET /api/issues/:id/reactions`(实)、`GET /api/issues/:id/quick-actions`(**ph**，M3)、
+`GET /api/health`、`GET /api/health/db`、`GET /api/openapi.json`、`GET|POST /api/me/pats`、`DELETE /api/me/pats/:id`。
+
+### 192.2 🔴🔴 本轮头号产出 = 外科回收**可以在别人的活构建上进行**，只要把「排除当前单元」做成硬条件
+
+`LUM-1824` 的 `target/` 起手 **20.9 GB**、`avail 5.6 GB`，正跑 `cargo build --workspace --all-targets`
+（门 ①）⇒ 按 §175/§185「唯一出路 = 等它交付后回收」本应**零动作**，但那意味着**在 5.6 GB 上跑完
+后面 7 道门**（clippy / clippy-util / test / conformance 都要再写盘）⇒ **本轮 ENOSPC 的概率高于不干预**。
+
+实测可回收：`incremental` 12.2 GB / 390 桶，按 §169 配方分档 ——
+`>3min` 155 桶 / 6.2 GB，`>5min` 84 桶 / 4.5 GB，`>10min` 79 桶 / 2.1 GB；
+`/proc/*/fd` 命中**恰好 1 个**桶（`mc_channel-3av0jyckzam1l`，正在编译 ⇒ mtime 新，天然不在 `>5min` 集里）。
+删 `>5min` 且 `-name 'mc_channel-*'` 排除 ⇒ **回收 3.7 GB**（`target` 22.6 GB → 18.9 GB，`avail` 5.6 → **8.4 GB**），
+**`gates.sh` PID 与 7 个 cargo/rustc 进程逐个存活，零中断**。
+
+🔴 **新配方（把 §169 的两条纪律合成一条可执行判据）**：
+`find target/debug/incremental -maxdepth 1 -mindepth 1 -type d -mmin +5 ! -name '<当前正在编译的 crate 前缀>*' -print0 | xargs -0 rm -rf`
+—— **「fd 命中」在多 crate 并行编译时不够用**（fd 只能证明「此刻开着」，证明不了「马上要写」），
+**用「当前 `rustc --crate-name X` 的桶名前缀」做 `-name` 排除**才是闭包条件。删完**必须**回读
+`pgrep -c -f 'cargo|rustc'` 与 `gates.sh` 的 PID 存活。
+
+⚠️ 边界：这只对**门 ① build 阶段**安全。若片正在跑 `cargo test`/`conformance`（大量**读**已编译产物、
+写测试二进制），删 `>5min` 桶仍安全（它们属于已完成的编译单元）；但**不要**在这时候动 `deps/`。
+
+### 192.3 派发面**连续第三轮**实测 = 结构性 1 台（口径复述 + 本轮新增证据）
+
+`runtime list × agent list` 按 `runtime_id` 连接（agent 侧字段是 `runtime_id` / `runtime_bound`，
+**顶层没有 `runtime` 键**）：本项目 24 个 agent 里，`3c6087f9`(devbox5 / `bd3d2b9d` online = 本 cycle)、
+`22e8b20d`(devbox1 / `041bf509` offline 停 `10:24:00Z`)、`7db7fb73`(devbox2 / `e3b45a25` offline 09-17)、
+`3df1a3e8`(devbox4 / `4a7f29e1` offline 09-21)、`763a92a6`(devbox / `478b7f4b` offline 09-26)。
+另 3 台 **online 空 pi runtime**：`7e6471d9` / `46140255` / `8b9c725f` **依然零绑定**
+（`7e6471d9` 上只挂 `投资研究助手lin`）⇒ **owner 动作仍是改绑 `runtime_id`，不是代码问题**。
+`22e8b20d` 显示 `working` 是**残留 run `01a0e777`**（devbox1 宿主熄火片），**不是**它真在跑。
+
+### 192.4 🔴 清掉 8 个**重试磁铁**（§184 纪律 B 首次批量执行）
+
+名下 8 条**早已交付、却仍停在 `in_progress`** 的 cycle issue：`LUM-2438` `2436` `2428` `2426` `2409`
+`2403` `2392`（全部）+ `LUM-2415`（`todo`，其 run `01a0e662` **23 秒就 completed**，是个空 cycle）。
+全部 `status done --no-start` ⇒ 一次性拔掉自动重试的落点（§184：`run failed` 的自动重试**不回原 issue**，
+会落到**下一条没关的 `in_progress`** 上）。**每轮起手把「已交付但没关」列出来关掉，应成为固定动作**：
+成本 7 条命令，收益是消除一整族「凭空多出第二个写者 + 十几 GB 构建缓存」的事故（§184.4）。
+
+### 192.5 `LUM-2136`（M7-FU 接线，0 路由）预飞 @ `71bb6a8f`：两条**描述已过期**的证据 + 一个**写集风险**
+
+写集 3/3 在位：`apps/mc-server/src/main.rs`(305 行) / `apps/mc-server/src/channels.rs`(198) /
+`crates/mc-http/src/routes/channels/wecom.rs`(463)，**全部 < 800**（门 ⑩ 无风险）。
+PG 16 / 5432 **online** ⇒ DoD 2ⓑ 的真库用例可跑（需当轮建带 `CREATEDB` 的库与角色）。
+
+**D-1 四条实证复核**：`channels.rs` 末次改动仍是 **`ab998afe`**（M7-0 anchor）✅；
+`main.rs` 的 `channels::start(&channel_keys, None)` 现在在 **`:194`**（描述写的 `:184` **已过期**）✅ 仍硬编码 `None`；
+`grep -rn 'register_with' apps crates/mc-http --include=*.rs | grep -v '#\[cfg(test)\]'` = **0** ✅。
+
+🔴 **描述第 4 条证据已不可复现，且方向会误导**：`grep -rn 'Supervisor::spawn' apps crates` 现在返回 **4 条**，
+但**逐条看全是文档注释** —— `channels.rs:157`（就是本片要修的那条过期注释）、
+`mc-channel/src/engine/mod.rs:32` 与 `:135`（`//!` 文档）、`supervisor.rs:255`（`/// [`Supervisor::spawn`]`）。
+**真实的非注释调用点仍是 0**，`grep -c 'todo!' supervisor.rs` = 0 也仍成立。
+⇒ **判据必须写成「排除注释行的调用点 = 0」，否则实施者会以为 D-1 的第 4 条已经不需要做。**
+正确写法：`grep -rn 'Supervisor::spawn(' apps crates --include=*.rs | grep -v '^\S*:[0-9]*: *//'`。
+
+🔴 **写集风险（本片唯一的真实不确定性）**：`impl ProbeTransport` 全仓 **3 处** ——
+`wecom.rs:175`（生产，就是 `PendingWsTransport`）、`mc-channel/src/wecom/credentials.rs:581/601`
+（`RotatingTransport` / `FailingTransport`，**都在 `#[cfg(test)]` 里**）。
+而 `wecom.rs:161-164` 的注释指着 M7-16 的三个文件
+`mc-channel/src/wecom/{ws_frame.rs, ws_sender.rs, stream_store.rs}`，并明说「**本片写集不含那三个文件**」。
+⇒ **生产侧不存在任何真探针传输**，`mc-channel` 也没有可被 http crate 直接复用的 `ProbeTransport` 实现
+（该 trait 的两个实现都在测试模块里、且是测试替身）。**D-2 因此很可能需要新增一个模块**
+（放在 `mc-channel` 还是 `mc-http` 侧、要不要 `pub` 导出）⇒ **要么在派发时预授权「可新增 1 个传输模块」**，
+要么把它拆成独立一片。**本轮不预判结论，登记为派发前必须先答的问题。**
+
+### 192.6 下一轮
+
+① 起手 `df` 连采（`avail` + `du -sm` 配对）+ `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR；
+② §184 第 0/0.5/0.6 步（陌生 workdir 依然是发现，不是噪音）；③ **`LUM-1824` 若还在编译，先按 §192.2 外科回收
+再让它跑 `--with-db`**（它 DoD 第 1 条要 10/10，而 `avail` 只有 8.4 GB ⇒ 不回收必撞 `os error 28`）；
+④ 它交 PR ⇒ 七条判据链（**先比 tree hash**，§190.1）⇒ **交 PR 即回收 20 GB**（§190.4）⇒
+合并后 §192.1 的 8 个数字**必须逐字不变**（0 路由片），验收证据只能来自它自己的 18 格矩阵单测 + 门禁；
+⑤ 槽位空出且 `avail ≥ 20 GB` ⇒ 派 `LUM-2136`，**但必须先答 §192.5 的写集问题**；
+⑥ 起手固定动作：**关掉已交付却没关的 issue**（§192.4）；⑦ `LUM-2110` 结构型原地 `queued`；
+`LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，不重复 @。
