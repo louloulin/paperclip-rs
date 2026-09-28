@@ -66,6 +66,7 @@ mod crud;
 mod dto;
 mod env;
 mod labels;
+mod mika;
 mod skills;
 mod stats;
 
@@ -136,6 +137,19 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/agent-task-snapshot", get(stats::task_snapshot))
         .route("/api/agent-activity-30d", get(stats::activity_30d))
         .route("/api/agent-run-counts", get(stats::run_counts))
+        // M9-7：内置 agent（Mika）的供给 + onboarding 会话（上游 `mika_agent.go`）。
+        //
+        // **单形态**：`docs/fixtures/m9-declared-routes.tsv:118` 只声明了不带尾斜杠
+        // 一种形态 ⇒ 补尾斜杠别名就是 `EXTRA_ALIAS` 硬失败（对照：`crud.rs` 顶部
+        // 注释里那两条尾斜杠别名对应的是上游 chi 的 `Route+Get("/")` 两种写法，
+        // 本条上游只有 `Post("/api/agents/mika")` 一种）。
+        //
+        // 静态段 `mika` 与参数段 `:id` 同 depth（depth 1）：matchit 0.7 静态优先，
+        // 静态键会遮蔽 `:id` 键。二者**方法集不相交** ⇒ 实际无碍：
+        // 本键 = 仅 POST；`/api/agents/:id` = 仅 GET + PUT（`:92-98`），
+        // 另有 `/api/agents/:id/archive` 等更深的 POST（不受同层遮蔽影响）。
+        // 与 `:123-124` 那条「静态段 `add` 与 `:skill_id` 不冲突」是同一条依据。
+        .route("/api/agents/mika", post(mika::create_mika_agent))
 }
 
 // ---------------------------------------------------------------------------

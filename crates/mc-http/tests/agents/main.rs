@@ -21,11 +21,13 @@
 //! - `agents/env.rs`：env 明文 + 审计 + `****` 哨兵
 //! - `agents/stats.rs`：三条 workspace 级聚合
 //! - `agents/auth.rs`：鉴权 / workspace 解析 / 私密可见性
+//! - `agents/mika.rs`：M9-7 的 `POST /api/agents/mika`（供给幂等 / 不可铸造 / 白名单 / 单形态）
 #![cfg(feature = "test-util")]
 
 mod auth;
 mod crud;
 mod env;
 mod labels;
+mod mika;
 mod stats;
 mod support;
