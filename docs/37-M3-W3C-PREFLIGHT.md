@@ -15336,3 +15336,114 @@ rm -rf target
 
 **回收的第一问是「这片交付了吗」，不是「怎么精挑」**；**`--declared` 的缺陷数是常数，不是门读**；
 **`in_review` 会释放 slot 并触发下一片起飞，是可用的调度手段**。
+
+## §176. 2026-09-28 12:30 cycle（LUM-2413）：**M9-6 收割合入（PR #135）；起手 279M/100% → 单笔回收 28.8G 复活；§175 复活了 §174.3 已作废的判据，本轮独立复核并纠正**
+
+**基线**：`44775d47`（= PR #135 `Merge pull request #135 … agent/devbox5/ad5c354d35bf`，M9-6 stripe webhook）。
+**GitHub open PR = 0**。**在飞** = 本 cycle ∥ `LUM-1822`（M9-7，本轮新派，run `01a0e649`）。
+
+### §176.1 🔴 本轮头号产出：**28.8G 单笔回收，项目历史最大**
+
+起手 `df -h /` = **used 47G / avail 279M / 100%** —— 比 §172.2 记录的 6.9G 历史最低**还低一个量级**。
+按 §175 的判活序扫（`/proc/*/cwd` + `ps`）：**全盘零 `cargo`/`rustc`/`ld` 进程**，`/proc` 里唯一的
+`pi` 是本 cycle 自己 ⇒ 无在飞片。
+
+定位：全盘 30G 里 **`lum-1821-ad5c354d35bf/workdir/paperclip-rs/target` 独占 28.8G**，
+其余 workdir 全部 ≤130M。判交付四判据全过：
+① `git status --porcelain` **空**（工作树干净）② HEAD = `44775d47` = 合并树本身
+③ `git branch -r --contains HEAD` 命中 `origin/feat/multica-rs-initial`（**已推远**）
+④ 该 run 早已 `pr_url` 非空 + PR merged。
+⇒ **整块删 `target/`，零风险** ⇒ **avail 279M → 29G**（39%）。
+
+> **§175 的「磁盘杠杆用尽」结论（当时说「唯一出路 = 等在飞片交付后回收它的 `target/`」）在本轮得到证实**：
+> 那 20G 确实在交付后一次性变成了 29G。**纪律补一条**：交付判据里
+> **`git branch -r --contains HEAD` 命中 `origin/<base>`** 这一条最能区分
+> 「已推远可删」与「只在本地、删了就没了」——它比 `status` 干净更关键，因为工作树干净**不等于**已交付。
+
+### §176.2 独立复核 §174.3：`--declared` 恒假，**同一棵树上的 A/B 对照**
+
+§174.3 已定位根因（`slash_alias_audit.py` `--declared` 分支把 `declared` 而非 `routes` 喂给
+`audit()` ⇒ 缺陷数与代码无关，是常数）。但 **§175 又把「合入后 `--declared` 必须 3 → 0」
+这条已作废的判据搬了回来**（写成「M9-7 合入后缺陷必须 3→0」）。本轮在 base `44775d47` 上
+重新独立复现，并给出**同一棵树、同一 extractor 的 A/B**：
+
+```
+tree 模式（无参）  : registered upstream-key literals: 540
+                    shapes OK: every registered upstream key matches the form upstream serves
+                    => 0 defect(s) from findings, 0 warning(s)      exit 0   ← 真实结论
+--declared 模式    : => 3 defect(s) from findings, 0 warning(s)      exit 1   ← 常数
+```
+
+代码侧逐字为证（**M9-5 没有留下任何形态缺陷**）：
+- `crates/mc-http/src/routes/notification_preferences.rs:79-90` —— `:82` 注册无斜杠形态、
+  `:88` 注册带斜杠形态，**两个 `.route()` 都在**；
+- 直接调 `w3b_premerge_audit.extract_routes()` 抽该文件 ⇒ 拿到 **6** 个 `(METHOD, path)`，
+  `GET/PATCH/PUT × {带斜杠, 不带斜杠}`；
+- 声明表侧：`docs/fixtures/m9-declared-routes.tsv:113-115` 三行只记带斜杠形态，
+  `grep -c 'notification-preferences$'` = **0**（确认无尾斜杠行）⇒ `by_fold` 的 `raws`
+  恒为单元素 ⇒ `has_slash and has_plain` 恒假 ⇒ **恒触发 `MISSING_ALIAS`**。
+
+⇒ **判形态只有一个门：`python3 scripts/slash_alias_audit.py`（tree 模式）报 0 defect + exit 0。**
+`--declared` 只在**写代码之前**用来预测「我这条键该注册哪种形态」，其缺陷数
+**不可跨轮比较、不可当验收门、绝不可为了让它变绿去动别人的 route 文件**。
+（本轮已把这条写进 `LUM-1822` 描述 §176 ③ —— 否则该片会为 3 条幻影缺陷去改 `notification_preferences.rs`。）
+
+### §176.3 合入后 ⑦ 门读（base `44775d47` 当场重跑，零编译 1.4s）
+
+| 键 | 值 |
+|---|---|
+| `upstream` | **456** |
+| `local` | **545** |
+| `implemented` | **455**（`implemented_real` 453 + `implemented_placeholder` 2）|
+| `known_gap` | **1** |
+| `unclaimed` | **0** |
+| `regressions` | **0** |
+| `local_only` | **8**（`local_only_placeholder` 1）|
+| `owners` | `{"M9": 1}` |
+
+`known_gap` 逐条（`owner` 机器可数，**只此 1 条**）：
+`{"method": "POST", "path": "/api/agents/mika", "owner": "M9", "router_line": 2184}`
+⇒ **就是 M9-7**。`455 + 1 = 456` ✅，且**逐字命中 §175 锁的预测链**（M9-6 后 `local 545 / 455 / gap 1`）。
+
+**M9-7 合入后期望链**（交付后核对用）：`local 546 / implemented 456（454 real + 2 placeholder）/
+known_gap 0 / owners.M9 = 0` ⇒ `LUM-1825`（M9-INT，唯一 `--write-baseline` 片）硬前置全达成。
+
+其余零编译门：`route_parity --quiet` exit 0 ✅、`slash_alias_audit --quiet` exit 0 ✅、
+`file_size_check --quiet` exit 0 ✅、`audit_workspace_deps` `A1=0 A2=0 A3=0 E1=0 E2=0`
+（`B=43` / `C1=2` / `C2=2` / `D=2` 为长期存量，不在 A/E 门内）。
+`schema_drift` **未跑**（需 DB URL，`mc_dev` 密码不可恢复；不在零编译门集内）。
+
+### §176.4 M9-7（`LUM-1822`）预飞复核 + 派发
+
+base 推进到 `44775d47` 后**重新实测**写集，§175 的结论**全部仍成立**：
+- `crates/mc-repos/src/agent/mika.rs` = 61 行 anchor 空桩 ✅；`agent.rs:44 pub mod mika;` ✅
+  （**不要**改 `lib.rs:67`）
+- `crates/mc-http/src/routes/agents/mika.rs` **不存在** ⇒ 本片新建 ✅
+- `routes/agents.rs:65-70` 的 `mod` 段实测 = `crud/dto/env/labels/skills/stats`（**6 个，无 `mika`**）、
+  `router()` 无 `.merge(mika::…)` ⇒ **第二类漏项仍 = 1，本片自己加那 2 行**
+- `:51 use axum::routing::{delete, get, post, put};` 已有 `post` ✅
+- `POST /api/agents/mika` 是**单形态**键（fixture 只有无尾斜杠一种）⇒ **不补尾斜杠**
+  （补了 = `EXTRA_ALIAS` 硬失败）
+- 不需改 `routes/mod.rs:44` / `mount.rs` / `lib.rs`
+
+描述刷到 **rev 6**（追加 §176：base `44775d47`、上表实测读数、`--declared` 恒假纠偏、写集复核、
+**订正 §175 ⑤ 的 `avail ≥ 30G` 旧门槛为实测 29G**）。派发走 §174 的三步
+（`update --description-file` → `assign --to-id` → `status todo`）⇒ 立刻拿到 run `01a0e649`。
+
+**槽位**：`running_task_count` **2/3**（本 cycle ∥ M9-7）。
+真余量 = `avail 29G − 可回收 0` = **29G**（全盘已无任何 `target/`），
+对着全量 `--with-db` 冷建峰值 **18–30G** 只够**一片** ⇒ **本轮不派第二片**，
+M9-INT（`LUM-1825`）等 M9-7 合入后再排。**两条 INT（`LUM-1825` / `LUM-2111`）不得同轮刷基线。**
+
+### §176.5 下一轮起手
+
+`df -h /` + `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → GH open PR →
+**`/proc/*/cwd` 判活 `LUM-1822`**（`ps` 零编译进程 ≠ 死亡，见 §173.1）→ 交付看 `result.pr_url`
+⇒ 交 PR 后走判据链（**等 head CI 3/3 转绿再合**、钉 40 位 sha + `merge_method=merge`、
+**落地树 ≡ 预演树**）⇒ 合入后 `owners.M9` 应 **1 → 0**、`known_gap` **1 → 0**、
+`slash_alias_audit`（**tree 模式**）仍 **0 defect** ⇒ 此时才够格派 `LUM-1825`（M9-INT，
+唯一 `--write-baseline`，基线 `473 → ~546`）。
+
+🔴 **M10 硬阻塞未变**：`LUM-2109`（M10-7）/ `LUM-2110`（M10-8）依赖 `docker`/`podman`/`buildah`，
+本机**三者皆无**，且 `deploy/` 与 `scripts/stop_condition.sh` 在 base **不存在** ⇒ 需 owner 裁决
+（按口径不重复 @）。
