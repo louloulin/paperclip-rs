@@ -16456,3 +16456,79 @@ error: could not compile `mc-http` (test "smoke") due to 1 previous error
 4. 回收其 `target/` ⇒ 本机回 ~28G ⇒ 才考虑派 `LUM-1824`（M9-9，0 条路由 ⇒ ⑦ 全计数不变，
    验收证据只能来自它自己的 18 格矩阵单测 + 门禁，**不能来自 ⑦**）。
 5. `LUM-2111`/`LUM-2109`/`LUM-2110` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
+
+## 186 收割轮（`LUM-2438` cycle，2026-09-28 18:00 Asia/Shanghai）—— 收割 PR #139（M9-8 timeline）+ 派 `LUM-1824`（M9-9）⇒ **`known_gap 0`，M9 路由面收口**
+
+base 起手 `8b8cbf54`（checkout 第 **28** 次落 `origin/main` ⇒ reset）。df 起手 **20G / 58%** ⇒ 收尾（回收后）**28G / 42%**。PG `online`。
+GH 起手 **1 open PR**（#139）。本机无编译进程。
+
+### 186.1 收割判据链（PR #139，五步逐条过）
+
+| 步 | 判据 | 实测 | 判定 |
+|---|---|---|---|
+| 预检一 | 分支自身改动 == PR API 逐字 | 三点 diff（`merge-base 6ad9e281`）= **5 文件 / +1747 / −57** == API `changed_files 5 +1747 −57` | ✅ |
+| 预检二 | base 前进段是否非 docs | `6ad9e281..8b8cbf54` 的**非 docs 文件数 = 0**（`1 file changed, 247 insertions`）⇒ 纯 docs 位移 | ✅ |
+| 预检三 | head CI | `db` / `fast` / `contract` **3/3 success** | ✅ |
+| 预检四 | `mergeable_state` | `clean`（PR base 已 = `8b8cbf54`，**不需要 rebase**） | ✅ |
+| 合并 | squash | `c659c074`，落 base `feat/multica-rs-initial` | ✅ |
+
+**形态③免跑分支成立**（② 前进段非 docs = 0 **且** ④ head CI 3/3）⇒ 合并树上**不重跑 `--with-db` 10/10**。
+合并树只补跑了两个零编译门（§186.2）。
+
+### 186.2 合并树门读（预测逐字命中）
+
+`bash scripts/gates.sh --only route-parity,file-size` ⇒ **2/2 PASS，合计 0s**：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented  455 real +   1 placeholder =  456 / 456   known_gap    0   unclaimed    0   regression   0   local_only    8
+GATE_ROUTE_PARITY_EXIT=0   GATE_FILE_SIZE_EXIT=0
+```
+
+- 与交付时的预测**逐字一致**：`placeholder 2→1`、`local 546`/`baseline 546`/`known_gap 0`/`local_only 8` **全部不变**（占位升级不刷基线）。
+- `455 + 1 = 456` ✅ 不变式成立。
+- 合并 diff = **5 文件 +1747/−57**，`scripts/file_size_baseline.tsv` **未出现在 diff 里**（DoD 第 4 条 ✅）。
+
+### 186.3 🔴 新陷阱：预检一必须用**三点 diff**，两点 diff 会凭空造出 247 行「违规删文档」
+
+| diff 口径 | 结果 |
+|---|---|
+| `git diff 8b8cbf54..head`（**两点**） | **6 文件 / +1747 / −304** |
+| `git diff $(merge-base 6ad9e281)..head`（**三点**） | **5 文件 / +1747 / −57** ✅ |
+| PR API | **5 文件 / +1747 / −57** ✅ |
+
+差额 247 行全部来自 `docs/37-M3-W3C-PREFLIGHT.md`，而那 247 行**不是本 PR 删的** —— 是 **base 自己在
+`merge-base` 之后删的**（§184/§185 的 docs 改写把该文件从别处并了过来）。两点 diff 站在「新 base」上看旧 base 的历史位移，
+于是把它算成 head 的删除。
+
+**纪律**：收割判据链的预检一**一律三点**（`git diff $(git merge-base <base> <head>)..<head>`）。
+若按两点 diff 读，会看到「PR 删了 247 行文档」而误判为违规删档；反之若 base 前进段含真实代码位移，
+两点 diff 又是唯一能看见它的口径 ⇒ **两点用于「base 前进段有没有代码位移」，三点用于「PR 自身改了什么」，两者不可互换**。
+
+### 186.4 唯一剩下的 placeholder：**M3 面，不是 M9 的账**
+
+`GET /api/issues/:id/quick-actions`（`crates/mc-http/src/routes/issues/mod.rs:220`）——
+`LUM-1823` 第三步（占位升级类切片必做的三步之一）把 `issues/auth.rs` 的耐久断言改指向了它，
+owner = **M3（未立项）**。⇒ **`known_gap 0` 的同时仍有 1 个 placeholder，两者不矛盾**：
+`known_gap` 只数「上游有、本仓没注册」，占位是「注册了但 handler 仍是 `placeholder`」。
+
+### 186.5 回收与派发
+
+- 回收 `LUM-1823` workdir 的 `target/` **7.7G**（20G → 28G）。该片 PR 已合、issue `in_review`、本机零进程 ⇒ 安全。
+- 派 **`LUM-1824`（M9-9 entitlement 接线，0 路由）** → **`编程助手-devbox1`**（`--to-id 22e8b20d…`）。
+  描述追加「§186 起手补充」：base `c659c074`、⑦ 八数字、硬前置逐条复核（**M2-A 尾账 LUM-1691 / LUM-1793 均已落 base** ⇒ 不再同飞）、
+  写集与第二类漏项预判 0、ENOSPC 配方。
+- 派发健康度：`--to-id` + `status todo` 后 **8 秒**回读，run `01a0e777` 已 `running` ⇒ 派发面本轮**正常**（与 §181/§182 的 `queued` 黑洞相反）。
+- 🔴 **再次确认 `--to-id` 不起 run、`status todo` 才起**：本轮严格按「先 assign、回读 `assignee_id`、再 `status todo`」三步走。
+
+### 186.6 订正：`local_only` 的权威值是 **8**，不是 9
+
+`LUM-1824` 描述的通用 DoD 第 2 条写 `local_only == 9`，那是 **M9-10 INT 刷新基线之前**的值。
+INT（PR #137）已合并、当轮实测 **8** ⇒ 以实测覆盖，`docs/62` §6.1 预测表同此。
+**通用纪律：门读数字一律以「当轮合并树实测」为准，issue 描述里的不变式是上一轮的快照，会过期。**
+
+### 186.7 本轮槽位算式（按 §180.1 device 分账 + §183.3 硬规则）
+
+`avail 28G − 可回收 0`（回收已完成，全盘再无 `target/`）⇒ 满足「同 device 同时 1 片 `--with-db`」，**恰好派 1 片**。
+cycle 自身本轮**零编译**（只跑 ⑦/⑩ 两个 python 门）⇒ 不与在飞片争盘。
+剩余 2 个槽位**刻意留空**：M9 只剩 `LUM-1824` 一片，`LUM-1825`（M9-10 INT）已交付并合并；M10 全波被 docker 硬阻塞（§183.7 / 前轮）⇒ 无第二片可派。
