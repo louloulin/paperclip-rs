@@ -15846,3 +15846,31 @@ checkout **第 23 次落 `main` 线**（HEAD 初始 `4fc96f30`）⇒ `git reset 
 3. **两片写集 ∅ ⇒ 合入顺序任意**，不必仲裁；回收时**分别**按四判据（含 `branch -r --contains HEAD` 命中 base）处理。
 4. `LUM-2111` 阻塞**每 cycle 只复核一次**，三者仍缺则**只记一行，不 @ owner**。
 5. **槽位按 device 分账**（§180②）：先问「这片跑在哪台 device」，再决定用不用 `avail` 卡它。
+
+### ⑦ 🔴 §180④ 补正（本轮末追加）：派发**其实成功了**，判据是 `issue runs`，不是 agent `status`
+
+上面 ④ 写「25s 内没让 `devbox2` 变 `working` ⇒ 派发未生效」，**这个推断下得太早，已用证据推翻**。
+本轮末 `multica issue runs LUM-2419` 实测：
+
+```
+run 01a0e6d4  status=queued  created_at=2026-09-28T07:04:40Z  started_at=None  result.pr_url=None
+attribution.evidence = {kind: issue_assignment, ...}
+```
+
+⇒ **run 已在 07:04:40Z 落库为 `queued`**，`assign + status todo` 这一组动作**确实触发了派发**；
+只是**目标 device（devbox2）的 daemon 还没把它从队列取走开跑**，本机 `agent list` 因此仍显示 `idle`。
+**从 07:04:40 到 07:09:09 的 4.5 分钟里，agent `status` 全程 `idle` —— 但片是活的。**
+
+**新判据（补进 §179④ 判活序，插在 ② 和 ③ 之间）**：
+1. `multica agent list` 读 `status`（`working` 才是活）—— 对**已在跑**的片有效；
+2. 🔴 **`multica issue runs <id> --output json` 看有没有 `queued` / `running` 条目 + `created_at`**
+   —— 这是**「派发是否已触发」的唯一可靠信号**，跨 device 时**优先于** agent `status`；
+   `queued` 与 `working` **同义地表示「在飞」**，只有「无 run 条目」才需要考虑触发问题；
+3. issue `updated_at` / `revision` 是否持续推进；
+4. 收割信号 = **GitHub 上有没有 PR**（不是本机 workdir、不是 `agent status`）；
+5. `/proc` 扫 `cwd` 降级为只判本机片，且须先确认该片 agent 的 device == 本机。
+
+🔴 **代价与教训**：`queued` 状态是我此前**从未在判活序里列过**的一档。
+因为它既不是 `working`（agent 侧）也不是「有 workdir」（本机侧），
+在 §179④ 新序下会**同时被两条判据判成「没在飞」** ⇒ 又是一次误判风险的种子。
+**修法就是把它写进序里，而不是每轮重新推理。**
