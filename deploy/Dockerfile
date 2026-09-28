@@ -23,6 +23,13 @@
 #    workspace 有 37 个 crate，造假 manifest 需要逐个复刻每个 crate 的依赖边，
 #    一旦漏一个就在 `cargo metadata` 阶段炸出一句极难读的错。依赖缓存改用 BuildKit
 #    的 cache mount（见下），它**不需要**伪造任何文件。
+# 5. **`/src/target` 绝不能挂 cache mount。** 第 1 版把编译缓存也挂成
+#    `--mount=type=cache,target=/src/target` ⇒ 产物写进 cache 而不是 builder
+#    层的文件系统 ⇒ `COPY --from=builder /src/target/release/multica-server` 报
+#    `not found`，**而 `cargo build` 那一步是绿的**（门 ⑪ 第 1 次跑就死在这里，
+#    由 CI 的 `image` job 抓到）。BuildKit 的 cache mount 只在**同一 builder
+#    内部**复用，跨 stage 的 `COPY --from` 看不到它。凡是「要 COPY 出去」的路径，
+#    就必须留在真实层里。registry / git 两个 mount 不受影响（没人从它们 COPY）。
 #
 # 门 ⑧ 的扫描范围（`scripts/file_size_check.py` 的 SCOPE）只含
 # `crates/**/*.rs` / `apps/**/*.rs` / `scripts/**/*.{py,sh}` / `.github/workflows/*.yml`
@@ -47,7 +54,6 @@ COPY . .
 # 只编这一个二进制：`--bin multica-server` 是本仓的硬事实（见文件头第 1 条）。
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target \
     cargo fetch --locked && \
     cargo build --release --locked --bin multica-server
 
