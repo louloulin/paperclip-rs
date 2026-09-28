@@ -16650,3 +16650,99 @@ run `01a0e77c` 自 10:08:05Z 起 `queued`，`dispatched_at`/`started_at` **32 mi
 ④ 两片都是 **0 路由** ⇒ 合并后 §188.1 的 ⑧ 个数字**必须逐字不变**，漂移即误碰注册面或基线快照；
 ⑤ **回收**：任一片交付后按四判据（含 `git branch -r --contains HEAD` 命中 `origin/feat/multica-rs-initial`）整删其 `target/`；
 ⑥ 槽位空出且**存在空闲且合规的 device** 时，才把 `LUM-2110` 改派出去（见 §188.4）。
+
+---
+
+## 189 监控轮（`LUM-2442` cycle，2026-09-28 19:00）—— 零收割；🔴 派发面不是「本轮忙」，是**结构性只剩 1 台**；新故障族：**宿主整机熄火**（`running` 判据缺位）
+
+起手 base **`eefe8138`**（= §188 直推）｜GH **0 open PR**｜df 起手 **17G（66%）→ 收尾 14G（71%）**｜PG 5432 `online`｜
+本地 `rev-parse` 与 `ls-remote` **逐字相同**（`eefe8138b6d9…`，checkout 显式落在 `origin/feat/multica-rs-initial`）。
+
+在飞 2/3：`LUM-2433`（devbox5，门 ⑥ 竞态第四族，run `01a0e794` 自 10:33:59Z `running`，实测在跑 `gates.sh --only clippy,clippy-util`）、
+`LUM-1824`（M9-9，run `01a0e777` 自 10:03:16Z `running`）。第 3 槽按算式**留空**：`avail 14G − 可回收 0`（全盘唯一大 `target/` =
+`LUM-2433` 自己的 13.6G，属在飞 run，按 §184 回收四判据不可动） `< 全量 `--with-db` 峰值 18–30G`。
+
+### 189.1 门读（base `eefe8138` 当场重跑，四个零编译门 <1s）—— 与 §188.1 **逐字相同**
+
+⑦ `upstream 456 / local 546 / implemented 456 = 455 real + 1 placeholder / known_gap 0 / unclaimed 0 /
+regressions 0 / local_only 8（其中 1 ph）/ owners {} / ok=true`；⑦b（tree）`exit 0`、⑦b `--declared` = **5 defect / 0 warning, exit 0**（非回归）；
+⑩ `exit 0`，`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`。⇒ base 连续两轮零位移，M9 波合并后基线已完全稳定。
+
+### 189.2 🔴🔴 承重发现：派发面是**结构性 1 台**，不是「本轮两个都忙」
+
+§188.4 把 `LUM-2110` 判为「判死但**无处可派**」，理由是「devbox1/devbox5 都在飞、devbox2/devbox4 是黑洞」。
+本轮把 `runtime list` × `agent list` **按 `runtime_id` 做了连接**，得到的是更强的事实：
+
+| pi runtime | 状态 | `last_seen` 龄 | 绑定的「编程助手」类 agent |
+|---|---|---|---|
+| `Pi (devbox5)` `bd3d2b9d` | online | 0.5 min | `3c6087f9`（= 本 cycle，**且 `LUM-2433` 在写盘**） |
+| `Pi (xingubuntu)` `8b9c725f` | **online** | 0.5 min | **无** |
+| `Pi (jiangx-mac)` `46140255` | **online** | 0.5 min | **无** |
+| `Pi (louloulinindeMacBook…)` `7e6471d9` | **online** | 0.5 min | 仅 `a8db4213 投资研究助手lin`（非本项目） |
+| `Pi (MS-AJRFTMRSXMHB)` `041bf509` | offline | 44.5 min | `22e8b20d 编程助手-devbox1` / `ca3d7cba -window` / `dbe772db -winpi` |
+| `Pi (devbox2)` `e3b45a25` | offline | **16279 min ≈ 11.3 天** | `7db7fb73 编程助手-devbox2` |
+| `Pi (devbox4)` `4a7f29e1` | offline | 10289 min ≈ 7.1 天 | `3df1a3e8` |
+| `Pi (devbox)` `478b7f4b` | offline | 3449 min ≈ 2.4 天 | `763a92a6` |
+
+⇒ **本项目可用的 pi 派发面 = 1 台（devbox5），且正被 `LUM-2433` 占用。**
+另有 **3 台 online 的 pi runtime 完全没有绑本项目的 agent**（`max_concurrent_tasks` 富余：devbox5=10、devbox2=20）。
+
+**纪律升级（改写 §188.4 的口径）**：
+「无处可派」有两种，处置完全不同 ——
+- **(A) 槽位型**：设备都在飞，**等**就会空出来 ⇒ 原地 `queued` 即可（§188.4 写的就是这一类，判对了）；
+- **(B) 结构型**：**绑在该 agent 上的 runtime 根本不在网**（本轮 `LUM-2110` 就是：它挂在 `编程助手-devbox2` 上，
+  而 `Pi (devbox2)` 已离线 **11.3 天**）⇒ **等多久都不会空**，必须**换绑**（owner 动作，监控轮做不了）。
+
+⇒ `LUM-2110` 属 **(B)**：run `01a0e77c` 已 `queued` **62 min**，`dispatched_at` 仍 null
+——这与 §183 的「device 抖动导致派发失败」**不是同一回事**，它压根没有可派发的目标。
+**唯一能解开 M10 尾账（`2110 → 2111`）的杠杆不在代码侧，是给 `xingubuntu` / `jiangx-mac` / `louloulinMacBook`
+其中任一 pi runtime 绑一个本项目 agent**（绑完立刻回到 2 台并行面，且当轮即可派出）。
+本轮按「不重复 @」口径**只登记不催促**，但这是**结构性依赖 owner 动作**的一条，与 docker 那条不同（那条是环境缺装）。
+
+### 189.3 🔴 新故障族：**宿主整机熄火**（`running` 判据缺位，§183 只覆盖了 `queued`）
+
+`LUM-1824` 的 run `01a0e777` 自 10:03:16Z 起 `running`、agent `22e8b20d` 状态 `working`，
+但它绑定的 `Pi (MS-AJRFTMRSXMHB)` 的 `last_seen` 停在 **10:24:00Z（龄 44.5 min）**。
+**决定性证据**：同一宿主上的另两个 runtime（`Claude` `becb92e6`、`Codex` `08fa5fc9`）
+的 `last_seen` **也是 10:24:00Z，逐秒相同**。
+
+⇒ **判据（可复用）：对一条 `running` 的 run，要区分「安静地长编译」与「设备已死」，
+唯一可用的服务器侧代理是**同宿主兄弟 runtime 的 `last_seen` 是否共享同一秒**：
+共享 ⇒ **宿主级熄火**（进程被杀/断网/机器挂起，工作产物不可信）；不共享 ⇒ 单 runtime 崩溃，或确实在跑。**
+这补上了 §183 判据链的空白（那条只定义了 `queued` + `dispatched_at=null` 一种形态）。
+本机侧仍以 §165 判活序（workdir 存在性 + `target/` 增长 + 进程 cwd）为准，两条**互补不冲突**。
+
+`LUM-1824` 已 `running` 44.5 min、宿主熄火 44.5 min ⇒ **判为宿主级熄火，产物视为不可信**。
+远端 workdir 本机不可见，且 `git ls-remote` 里**没有任何 `LUM-1824` 的分支**
+（`agent/devbox1/*` 三条分支均属历史片）⇒ **它没有可回收的成果**。
+本轮**不 rerun**（rerun 会把同一片塞回同一台熄火宿主；改派则受 §189.2 的结构约束所限，同样无目标），
+处置 = **原地保留 + 登记**，等宿主回网后先查 workdir 再决定重跑。
+
+### 189.4 流程自查（§184 第 0 / 0.5 / 0.6 步）
+
+- **第 0 步**：`/proc` 逐 PID 扫（筛词含 `multica_workspaces` / `gates` / `paperclip`）⇒ 写盘进程只有
+  `LUM-2433` 的 `bash scripts/gates.sh --only clippy,clippy-util`（cwd = `lum-2433-ca2e35a8d593/…/paperclip-rs`）
+  与 clippy-driver 一族；agent `pi` 进程恰好 **2 个**：`28415`（cwd = 本 cycle `lum-2442-…`，etime 7:53）、
+  `60389`（cwd = `lum-2433-…`，etime 34:14）⇒ **无陌生 workdir、无第二个写者**，§184.4 未复发。
+- **第 0.5 步**：`df` 与 `du -sm` 对账 —— 全盘唯一 >1G 的 `target/` 是 `lum-2433-…/target` = **13600 MB**，
+  `df` 从 17G 掉到 14G 与其增长同向 ⇒ 账实相符，**无「消失的 target」**。
+- **第 0.6 步**：按 assignee 反查我名下 47 条 open issue，末 12 条全为 `in_review` 的历史 cycle/片，
+  无新增 `failed`(ENOSPC) 磁铁。
+
+### 189.5 ENOSPC 前瞻告警（本轮新增观察项）
+
+`LUM-2433` 的 `target/` = 13.6G，本机 `avail` = **14G**，余量 ≈ 0.4G。
+它现在跑的是 clippy（增量、峰值不高），但**若它接着跑需要重建大量依赖的 `--with-db` 门**，
+ENOSPC 概率不低。⇒ **本轮起，`LUM-2433` 一旦交 PR，先回收其 `target/` 再做任何编译型门**（§184 回收四判据）。
+
+### 189.6 下一轮
+
+① 起手 `df` 连采 + `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR；
+② §184 第 0/0.5/0.6 步照走；**新增**：`multica runtime list` 与 `agent list` 按 `runtime_id` 连接，
+   逐条算 `last_seen` 龄 + 是否有同宿主兄弟 runtime 共享同一秒（§189.3 判据）；
+③ `LUM-2433` 若出 PR ⇒ 七条判据链（**预检一三点 diff**、等 head CI 3/3 绿、钉 40 位 sha + `merge_method=merge`、
+   `Content-Type: application/json`、落地树 ≡ 预演树）；**合并后 §189.1 的 9 个数字必须逐字不变**（0 路由片）；
+④ **回收** `LUM-2433` 的 `target/`（见 §189.5 的余量理由）；
+⑤ `LUM-1824`：宿主回网前**不 rerun**；回网后先查其 workdir 有无成果再决定；
+⑥ `LUM-2110`：属结构型（§189.2-B），**不靠等**；owner 若把 agent 绑到任一 online 空 pi runtime，
+   当轮即可派出 —— 在此之前原地 `queued` 不动。
