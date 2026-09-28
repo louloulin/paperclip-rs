@@ -14647,3 +14647,94 @@ implemented 443 → 448 | known_gap 13 → 8 | owners {M9: 13 → 8} | unclaimed
 
 **零收割、零派发、零编译**（只跑了不编译的 ⑦），产出是把「下一片」从「需要预飞」变成「已预飞完毕」——
 外加一条算式纪律：`余量 = avail − 可回收量`，两项都要实测。
+
+
+## §169 —— 08:00 cycle（`LUM-2394`）零收割轮：🔴 **起手 20 分钟内撞 567M/99%**，外科回收 11G 保住 PG；M9-5 预飞复核全过
+
+- **起手**：base `e9b5851a`（`git ls-remote` 实测；`multica repo checkout` 落 `main` 线**第 18 次** ⇒ 手动 `git checkout -B`）。
+  GH **0 open PR**；daemon `running_task_count=2`（cycle ∥ `LUM-1819`）⇒ **1 个空槽**。
+  df 起手 **11G/78%**，**十分钟后掉到 8.6G/82%**，写本文时进一步到 **567M/99%**。
+  PG 5432 `online`（起手按 §146 口径查过）。
+
+### §169.1 🔴 本轮唯一实质产出：**「空槽」与「可派」是两件事，而这一轮的空槽差点用一次 ENOSPC 去换**
+
+- 唯一在飞片 `LUM-1819`（M9-4）的 `target/` 在本轮内从 **9.1G → 19G → 28G** 一路上涨，
+  吃掉的正是**它自己**跑全量 `--with-db` 的那段时间。**它是活物、不可回收**；
+  其余 30 个 workdir **全部 < 150M** ⇒ **可回收量 ≈ 0**，于是
+  `真余量 = avail − 可回收量 = 8.6G − 0`，而**新片冷建峰值实测 12–20G** ⇒ §150.2 ① 算术否决。
+- **ENOSPC 已 9 次，其中至少一次连带杀死 PG 5432**（那正是 09-26→09-27 的 **29 小时停摆**根因）。
+  ⇒ 在 `avail < 峰值` 的窗口里**多跑一片的期望收益为负**，这是连续第 3 轮同一个结论。
+- **但真正的新东西是时序**：前两轮（§167/§168）在起手就否决了派发，**余量还够撑到收尾**；
+  本轮不同 —— **余量是在轮内被在飞片吃掉的**，起手那 20 分钟里它一路 11G→8.6G→567M。
+  ⇒ 🔴 **新纪律：起手只采一次 `df` 不足以支撑「留空」这个决定。**
+  判据化动作 = **在飞片正跑全量时，把 `df` 当作会衰减的量来管理**：
+  ① 记录起手值与「在飞片 `target/` 的增长速率」两个数；② 增长速率 > 余量时，
+   **不等它撞墙，直接对 `target/debug/incremental` 做 `-mmin +3` 外科**（本轮就是这条救了场）；
+  ③ 外科只在**判活三件套确认该片仍活**之后做 —— 否则你可能删掉一个已经死掉的片的全部可回收量，而真正的死物（已终态片）你反而没找。
+
+### §169.2 外科回收的实测口径（沿用 §158/§167，本轮第 N 次生效，零中断）
+
+```
+find <在飞片>/target/debug/incremental -maxdepth 1 -mmin +3 -type d ! -name incremental \
+  | xargs -r rm -rf
+```
+
+- 本轮：**382 个陈旧桶 / `incremental` 11G → 1.9G**，`avail` **565M → 8.5G**，`RECLAIM_EXIT=0`。
+- **禁区（不变）**：**`deps` 永不可动**；**在飞片的整个 `target/` 永不可动**。
+- **无中断的证据**：回收后 `gates2.log` mtime = 回收时刻同秒、测试继续 `... ok`、
+  `issue runs` 仍 `running`、PID 未变 ⇒ **回收确实零干扰**（不是「没打断」，是「实测没打断」）。
+- 🔴 `incremental` 体量**仍不是**阶段/存活信号（§162 已记，本轮再次印证：11G/382 桶时该片离交付还早）。
+
+### §169.3 门读（base `e9b5851a`，三条零编译门全 exit 0，**零编译**）
+
+- 门 ⑦ `upstream 456 | local 530 | baseline 473`、`implemented 441 real + 2 placeholder = 443 / 456`、
+  `known_gap 13`、`unclaimed 0`、`regression 0`、`local_only 8`、**`gaps by owner: M9=13`**（`443+13=456` ✓）
+- 门 ⑦b `registered upstream-key literals: 531` ⇒ `0 defect(s) from findings, 0 warning(s)`
+- 门 ⑩ `OK: 0 violation(s)`（`scanned 1276 / baseline 10`）
+- **与 §168 逐字相同（第 11 次）**，理由命令化：
+  `git diff --name-only 1e6c0865 e9b5851a -- crates contracts docs/fixtures scripts Cargo.lock migrations | wc -l` = **0**。
+- 门 ⑨ **未跑**（冷编 14G，盘只剩 8.5G）⇒ 本轮**不做继承声明**（`LUM-1819` 交付时必须真跑）。
+
+### §169.4 `LUM-1819`（M9-4）判活 = **活，且正在门禁段**
+
+- `HEAD=92cc3efd`（1 提交）、`porcelain=0`、**分支未推、无 PR** ⇒ **零收割物**。
+- 判活证据三连：`.logs/gates2.log` mtime 与采样**同秒**、`mc-http` 100 tests 在跑且 `... ok` 连出、
+  daemon 仍 `running`（`01a0e51d`，23:05Z 起）。
+- ⚠️ **「0 提交 / 未推 / 无 PR」不是死的判据**（本轮它同时是「活」和「未推」）；
+  反过来 §166 记的第四类死法才是「porcelain 前两列 `M `/`A ` + `git log` 仍停在 base」——
+  本片 `porcelain=0` ⇒ **两类都不是**，不介入。
+
+### §169.5 M9-5（`LUM-1820`）预飞**复核**全过 ⇒ 已刷到可零延迟派发（rev 1 → 2）
+
+在 §168 预飞基础上**当轮重新实测**（不抄上一轮）：
+
+- **写集 6/6 `PRESENT`**；**第二类漏项 = 0** —— M9-0 anchor 已预声明**三个注册面**：
+  `mc-repos/src/lib.rs:81/86/99`（三个 `pub mod`）、`routes/mod.rs:202/204/205`、
+  `mount.rs:598-600`（三个 `.merge(...)`）⇒ **本片一行都不用改** `lib.rs`/`mod.rs`/`mount.rs`。
+- **限流器供体已就位**：`mc-autopilot/src/webhook/ratelimit.rs`（13748 B，`SlidingWindowLimiter` 实测 1 处）
+  ⇒ DoD 第 5 条「复用不重写」零成本，**且零 manifest 编辑**。
+- **双形态欠账已量化**：`slash_alias_audit.py --declared docs/fixtures/m9-declared-routes.tsv`
+  ⇒ `MISSING_ALIAS (3)` **恰好就是本片那 3 个键**，其余 34 个声明键零缺陷；
+  `upstream-routes.tsv:290-292` 三个键上游都带尾斜杠 ⇒ **交付后必须 3 → 0**，且**不得**加 allowlist 行。
+- **账本闭合**：`M3+` 退休后 `gaps by owner` 只剩 `M9=13` 一格，
+  而 `13 = M9-4 的 6 + M9-5 的 5 + M9-6 stripe + M9-7 mika` ⇒ **本波收官后 `M9` 归零**。
+- 描述 **rev 1 → 2**（2711 → 6045 字符，`get` 回读复核，**7 个 needle 逐字命中**），
+  含当轮三门读数 + **两行预测表**（M9-4 合入后 `536/449/7`，本片交付后 `535/448/8`，`448+8=456` ✓）
+  + 号段 `## 55.`/`### 9.25` + **「合并即刷新、禁 delta 平移」** + 本轮磁盘算式。
+
+### §169.6 顺位（下一轮）
+
+1. **收割 `LUM-1819`**：判据链**七条**（numstat 用 `merge-base..head`、形态两半、`merge-tree` **按 exit code 判**、
+   **先 `git diff --name-only <base>..<head> -- scripts/`** 非 0 则弃 delta、等 **CI `fast`/`db`/`contract` 3/3 转绿**再合、
+   钉 40 位 sha + `merge_method=merge`、落地树逐字 == 预演树）。
+   **验收信号**：`gaps by owner` 里 `M9` **13 → 7**、`known_gap 13 → 7`、`local 530 → 536`。
+2. **腾位即派 `LUM-1820`**（rev 2 已就绪，**起手先重取 base + 重跑三门**，别用 §169.5 的表做平移）；
+   其后 M9-6（`LUM-1821` stripe）、M9-7（`LUM-1822` mika）⇒ **`M9` 归零**。
+3. 两条 INT（`LUM-1825` M9-10、`LUM-2111` M10-9）都是**基线写者**，**不得同轮**；普通片禁 `--write-baseline`。
+4. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`，**需 owner 裁决**（本轮仅登记，未重复 @）。
+5. **号段**：`docs/32` 下一空号 `## 57.`/`### 9.27`；`docs/37` 本节 §169 ⇒ 下轮 **§170**。
+
+### §169.7 本轮一句话
+
+零收割、零派发，**却差点在轮内被 ENOSPC 带走 PG**——
+新纪律不是「派发前算一次余量」，而是**「在飞片跑全量期间，余量是会衰减的量」**：要么按增长速率提前外科，要么就别开第三片。
