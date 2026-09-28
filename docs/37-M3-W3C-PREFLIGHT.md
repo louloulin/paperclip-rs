@@ -16751,3 +16751,107 @@ ENOSPC 概率不低。**收尾复读（同一轮内，约 8 min 后）**：`df` 
 ⑤ `LUM-1824`：宿主回网前**不 rerun**；回网后先查其 workdir 有无成果再决定；
 ⑥ `LUM-2110`：属结构型（§189.2-B），**不靠等**；owner 若把 agent 绑到任一 online 空 pi runtime，
    当轮即可派出 —— 在此之前原地 `queued` 不动。
+
+---
+
+## 190 收割轮（`LUM-2444` cycle，2026-09-28 19:30）—— 合入 PR #140（门 ⑥ 第四族）+ 回收 **22.5 GiB**；🔴 派发面**连续第二轮**实测仍为结构性 1 台
+
+起手 base **`59929b8e`**（= §189 收尾值）｜GH **1 open PR**（`#140`，非 0）｜df 起手 **6.1G avail / 87%**｜
+PG 5432 `online`｜本地 `reset --hard origin/feat/multica-rs-initial` 落在 **`e13f8b2a`**。
+
+在飞实现片 **0**：`LUM-2433` 上一轮已交 PR（`in_review`）⇒ 本轮是**纯收割轮**。第 2/3 槽不可派（§190.3）。
+
+### 190.1 PR #140 七条判据链 —— 三点 diff 全过
+
+预检一三点 diff 逐字对：
+
+| 项 | 分支自身（`git diff --numstat origin/base...HEAD`，cwd = `lum-2433-ca2e35a8d593`） | PR API | 判定 |
+|---|---|---|---|
+| 文件数 | 2 | `changed_files = 2` | ✅ |
+| 行数 | `63/2` + `50/0` = **+113/−2** | `additions 113 / deletions 2` | ✅ |
+| 路径 | `crates/mc-repos/src/plugin/hook.rs`、`docs/32-M3-DAEMON-FACE.md` | 同两文件 | ✅ |
+
+base 祖先判定：PR `base.ref = feat/multica-rs-initial`，其 `mergeable_state = clean`、`rebaseable = true`
+⇒ 无落后、无冲突。head = **`a3eea660`**，head CI **3/3 绿**（`fast`= fmt/build/clippy/test/file-size、
+`contract`= route parity + conformance、`db`= postgres:16 + DB e2e）。
+
+🔴 **本轮新增一条零成本的合入免跑判据（比 §188 形态③ 更强）：核对「合并树 ≡ head 树」的 tree hash，
+而不只看 `mergeable_state`。** squash 之后父提交会变（`59929b8e → e13f8b2a`），直觉上「squash 就不等价了」，
+但**单提交 PR 的 squash 只重写提交对象、不重写任何 blob**：
+
+```
+merge tree: edcf7cd924dbded6db4a5441c86e70854acf37ad   (e13f8b2a^{tree})
+head  tree: edcf7cd924dbded6db4a5441c86e70854acf37ad   (a3eea660^{tree})   ← 逐字相同
+```
+
+⇒ **head CI 3/3 绿就是合并后 base 的编译证据**，本地冷跑 `--with-db` 10/10（18–30G / 30+ min）**纯冗余**。
+⚠️ 该判据**只在 squash / 单提交时成立**；真正的 merge commit 或多提交 PR 必须另核（`git diff head..merge` 非空即作废）。
+
+### 190.2 门读（合并树 `e13f8b2a` 当场重跑，四个零编译门）—— 与 §189.1 **逐字相同**
+
+⑦ `upstream 456 / local 546 / baseline 546 / implemented 456 = 455 real + 1 placeholder /
+known_gap 0 / unclaimed 0 / regression 0 / local_only 8`、`OK: every upstream route is either implemented or owned`、`exit 0`；
+⑦b（tree）`exit 0`；⑩ `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`、`exit 0`
+（附 `file_size_check` 独立读数 `limit=800 scanned=1281 baseline=10 violations=0`）。
+
+⇒ 0 路由片（只动 `mc-repos` + docs）的**预测成立**：九个数字 + ⑩ 整行**一个都没漂**。
+本片交付后 **`known_gap` 仍为 0、`owners {}` 为空** ⇒ **M3–M10 全部波次已无待实现路由**，
+剩下的只有 §190.3 的**运力**问题，不是**工作量**问题。
+
+🔴 **口径订正（`slash_alias_audit --declared` 的正确用法）**：`--declared` 是**必填路径参数**，
+不是布尔开关 —— `--declared m9` 会 `FileNotFoundError: 'm9'` 栈回溯（§174.3 已记），
+`--declared --quiet` 则被 argparse 当成「`--declared` 缺参数」`exit 2`。
+本轮把 8 张表 `docs/fixtures/m{3-6,4,5,6,7,8,9,10}-declared-routes.tsv` **逐张**跑完：
+**8/8 `exit 0`，缺陷合计 32**（`m9` 独占 3 条 = `notification-preferences` 的 GET/PATCH/PUT 双形态，
+其余 29 条分布在 m3-6…m8）。⚠️ **此前几轮记的「`--declared` 5 defect」是单张表口径，不是全部 8 张之和**；
+引用这个数字时必须写明是哪张表，否则跨轮不可比。
+
+### 190.3 🔴 派发面：连续第二轮实测**仍是结构性 1 台**，与 §189.2 逐字同构
+
+`multica runtime list` × `agent list` **按 `runtime_id` 连接**（注意 agent 侧的字段是 `runtime_id` / `runtime_bound`，
+顶层**没有** `runtime` 键）：
+
+| 编程助手类 agent | 绑定的 pi runtime | runtime 状态 | `last_seen` 龄 |
+|---|---|---|---|
+| `3c6087f9` 编程助手devbox5 | `bd3d2b9d` Pi (devbox5) | **online** | 0.5 min（本 cycle 自己） |
+| `22e8b20d` 编程助手-devbox1 | `041bf509` Pi (MS-AJRFTMRSXMHB) | **offline** | 停在 `10:24:00Z` |
+| `7db7fb73` 编程助手-devbox2 | `e3b45a25` Pi (devbox2) | **offline** | 2026-09-17 ⇒ **≈11.4 天** |
+| `3df1a3e8` 资深编程运维助手devbox4 | `4a7f29e1` Pi (devbox4) | **offline** | 2026-09-21 |
+| `763a92a6` 编程助手devbox | `478b7f4b` Pi (devbox) | **offline** | 2026-09-26 |
+| `ca3d7cba` / `dbe772db` / `7e410c22` | `041bf509` | **offline** | 同上 `10:24:00Z` |
+
+⇒ **本项目可用 pi 面 = 1 台（我），且被我这个 cycle 占着 ⇒ 结构性可派运力 = 0**。
+另 3 台 online 的 pi runtime（`8b9c725f` xingubuntu / `46140255` jiangx-mac / `7e6471d9` louloulinMacBook）
+**依然没绑本项目任何 agent**（`7e6471d9` 上只挂着 `投资研究助手lin`）。
+**这是 owner 动作**：把某个 agent 的 `runtime_id` 改绑到那 3 台之一，当轮即可恢复 3 槽并发。
+
+`LUM-1824`（M9-9）本轮**仍不 rerun**：`041bf509` 的 `last_seen` 依旧停在 **`10:24:00Z`**，
+且同宿主兄弟 `Claude becb92e6` / `Codex 08fa5fc9` **共享同一秒** ⇒ §189.3 的**宿主整机熄火**签名依旧，
+`LUM-1824` 无分支（`git ls-remote` 无 1824）⇒ 无可回收成果，**等宿主回网**。
+`LUM-2110` 仍属结构型（挂离线 11.4 天的 devbox2），按「不重复 @」原地 `queued` 不动。
+
+### 190.4 磁盘：起手 87% → 收尾 42%，回收 **22.5 GiB**（§189.5 纪律首次正向执行）
+
+起手 `avail 6.1G / 87%` 已是**红线区**（低于一片 `--with-db` 冷建峰值下限 18G 的 1/3）。
+按 §189.5 落盘的纪律**先做配对采样**：`du -sm` 全盘只有一处大 `target/` ——
+`lum-2433-ca2e35a8d593/workdir` **21518 MB**，而 `LUM-2433` 的 issue 已是 `in_review`、PR 已开、树干净、
+无 `cargo/rustc` 进程 ⇒ **§184 回收四判据全过**，`cargo clean` 回收 **22.5 GiB（Removed 12176 files）**，
+`avail` **6.1G → 27G（87% → 42%）**。
+
+🔴 **新口径：回收的时机点就是「交 PR」，不是「PR 合并」。**
+`in_review` + PR 已开 + 树干净已足够判定该 run 不再需要 `target/`；
+若等到合并后才清，本轮就会在 6.1G 上空跑一整个 cycle。**ENOSPC 第 N 次的真正杠杆是回收时机，不是磁盘大小。**
+
+⚠️ 同轮二次采样仍然必要：本轮 `df` 起手 `avail 6.1G` 时**唯一**的 `target/` 就是那片已交付片的，
+若按 §189.5 的口径只看单次 `df`，会误判成「余量不足 0.4G、绝无可能再跑门」——
+而真实结论是「回收 22.5G 后有 27G，全量 `--with-db` 可跑」。
+
+### 190.5 下一轮
+
+① 起手 `df` 连采（`avail` + `du -sm` 配对，§189.5）+ `pg_isready` → `rev-parse` 对 `ls-remote` → GH open PR；
+② §184 第 0/0.5/0.6 步照走；`runtime list × agent list` 按 `runtime_id` 连接（§190.3）；
+③ 无 PR 可合时按「零收割预飞轮」处理：只跑四个零编译门（`route_parity` / `slash_alias_audit` /
+   `file_size_check` / `audit_workspace_deps`），**新 checkout 无 `target/` 时不冷编 `mc-conformance`**；
+④ 新片交 PR ⇒ **当轮即回收其 `target/`**（§190.4），再跑任何编译型门；
+⑤ 合并单提交 PR 时**先比 tree hash**（§190.1），相同即可免跑本地 `--with-db`；
+⑥ `LUM-1824` / `LUM-2110` 维持「不回网不 rerun / 不重复 @」。
