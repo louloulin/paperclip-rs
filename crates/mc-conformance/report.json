@@ -7,9 +7,9 @@
   },
   "totals": {
     "fixtures": 365,
-    "pass": 32,
-    "mismatch": 23,
-    "unmounted": 4,
+    "pass": 33,
+    "mismatch": 25,
+    "unmounted": 1,
     "placeholder": 0,
     "unevaluable": 306,
     "by_actor": {
@@ -17,9 +17,9 @@
         "unevaluable": 13
       },
       "anonymous": {
-        "mismatch": 23,
-        "pass": 32,
-        "unmounted": 4
+        "mismatch": 25,
+        "pass": 33,
+        "unmounted": 1
       },
       "member": {
         "unevaluable": 293
@@ -27,10 +27,10 @@
     },
     "by_via": {
       "handler": {
-        "mismatch": 23,
-        "pass": 24,
+        "mismatch": 25,
+        "pass": 25,
         "unevaluable": 280,
-        "unmounted": 4
+        "unmounted": 1
       },
       "router": {
         "pass": 8,
@@ -39,18 +39,18 @@
     },
     "tiers": {
       "stateless": {
-        "mismatch": 23,
-        "pass": 32,
+        "mismatch": 25,
+        "pass": 33,
         "unevaluable": 306,
-        "unmounted": 4
+        "unmounted": 1
       }
     }
   },
-  "contract_equivalence_rate": 0.08767123287671233,
-  "mounted_equivalence_rate": 0.5818181818181818,
+  "contract_equivalence_rate": 0.09041095890410959,
+  "mounted_equivalence_rate": 0.5689655172413793,
   "offline_decidable": {
     "fixtures": 59,
-    "pass": 32
+    "pass": 33
   },
   "fixtures": [
     {
@@ -5278,12 +5278,12 @@
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/cloud_billing_test.go:864",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 403"
+      "detail": "status matched"
     },
     {
       "id": "webhooks/TestStripeWebhookMissingSignatureRejectedLocally@server/internal/handler/cloud_billing_test.go:792#1",
@@ -5294,12 +5294,12 @@
       "via": "handler",
       "status_expected": 401,
       "source": "server/internal/handler/cloud_billing_test.go:792",
-      "outcome": "unmounted",
+      "outcome": "mismatch",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "mismatch",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 401"
+      "detail": "status 403 != expected 401"
     },
     {
       "id": "webhooks/TestStripeWebhookRateLimited@server/internal/handler/cloud_billing_test.go:890#3",
@@ -5310,12 +5310,12 @@
       "via": "handler",
       "status_expected": 429,
       "source": "server/internal/handler/cloud_billing_test.go:890",
-      "outcome": "unmounted",
+      "outcome": "mismatch",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 403,
+      "offline": "mismatch",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 429"
+      "detail": "status 403 != expected 429"
     },
     {
       "id": "working_agents/TestIssueTableWorkingIssueProjectionMatchesTaskIssuesNotAssignees@server/internal/handler/issue_table_query_test.go:347#1",

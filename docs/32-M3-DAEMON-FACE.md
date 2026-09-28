@@ -8960,3 +8960,108 @@ D-14 `truncate` 按**字符**而非字节切（永不切坏 UTF-8）。
 **读回文本这条是本片最容易复发的坑**：`inet` / `cidr` / `jsonb` 这类列一旦绑
 `String` 就**必须**在读面转文本，写面转不转是另一回事（D-11 只覆盖了写面）。
 
+
+## 60. M9-6（`LUM-1821`）：stripe webhook 1 条（per-IP 限流 + 缺签名 401 + 原始体逐字转发）的落点与偏离登记
+
+本片 = `docs/62-M9-PLAN.md` §4.1 的 **M9-6**，**1 条**路由 / 上游 **117 行**
+（`internal/handler/cloud_billing.go` L38–L48 两个常量 + L520–L604 handler）。
+硬前置 M9-0 anchor（`LUM-1815`）。base `b7701dfe`（M9-5 PR #134 合并树）。
+
+### 60.1 写集与文件布局
+
+| 文件 | 性质 | 门 ⑩ 前 → 后 | 装什么 |
+| --- | --- | ---: | --- |
+| `crates/mc-cloud/src/webhook.rs` | 原地填充 anchor 空桩 | 39 → 113 | `OP` 计量标签 + `has_stripe_signature` + `stripe_webhook_request` |
+| `crates/mc-cloud/src/webhook/tests.rs` | 新建（anchor 期不存在） | 0 → 140 | 11 条出站契约用例 |
+| `crates/mc-http/src/routes/cloud/webhook.rs` | 原地填充 anchor 空 router | 29 → 309 | 1 条公开路由 + 四段判定 + 错误映射 |
+| `crates/mc-http/src/routes/cloud/webhook/tests.rs` | 新建 | 0 → 580 | 20 条入站/替身用例 |
+
+**零 manifest 编辑、零 `Cargo.lock` 变更、零 anchor 冻结件改动** ——
+`routes/cloud/mod.rs:51` 的 `.merge(webhook::router())` 与 `mc-cloud/src/lib.rs:46` 的
+`pub mod webhook;` 都由 M9-0 预声明 ⇒ **第二类漏项 = 0**（起手预飞实测逐字一致）。
+另有一处**非代码**写集：`crates/mc-conformance/report.json`（门 ⑨ 的 `--check` 是**逐字节**
+比对，路由一挂上来快照必然漂移 ⇒ 必须随片重生成，这是本波第一片触发该条的）。
+
+### 60.2 🔴 四段的**顺序**：`403` 在最前（本片最容易做反的一处）
+
+上游 `HandleCloudBillingStripeWebhook`（`cloud_billing.go:520–604`）的第一个语句就是：
+
+```go
+if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
+    writeFeatureDisabled(w, "cloud_runtime_not_configured", "cloud runtime is not configured")
+    return
+}
+// Per-IP rate limit BEFORE reading the body or hitting upstream.  …
+// Mandatory Stripe-Signature header. …
+// r.Body = http.MaxBytesReader(w, r.Body, maxStripeWebhookBodySize)
+```
+
+⇒ 本仓逐段落位：**403（未配置）→ 429（per-IP，抢在读 body 之前）→ 401（缺签名）→ 413（> 1 MiB）→ 逐字回写**。
+
+⚠️ **`docs/62` §9.5 容易读反**：它把「per-IP 限流 ① / `Stripe-Signature` ② / 1 MiB ③」列成
+①②③，那是**清单**（本地做哪三件事）**不是顺序**（403 由第一步产出，先于三件事）。
+本片按**上游源码**落位；`LUM-1821` 派发描述里那条顺序与上游一致，无需订正。
+
+**顺序为什么是判据**（`docs/62` §6.5 的 M9-6 行第 2 条），用三条断言钉住：
+`unconfigured_cloud_is_403_before_everything_else`（未配置 ⇒ 缺签名/超大体都给 403）、
+`rate_limit_precedes_signature_and_body_checks`、`signature_check_precedes_the_body_cap`。
+
+### 60.3 限流用**哪一条**闸（`docs/62` §9.5 末段要求的逐字复核）
+
+| 本地闸 | 键 | 何时消费 | 语义 | stripe |
+| --- | --- | --- | --- | :-: |
+| `WEBHOOK_ABSOLUTE_IP_LIMITER` | IP | **每次请求**（`allow`） | 绝对天花板 600 / 60s | ✅ **就是它** |
+| `WEBHOOK_IP_LIMITER` | IP | 只记「坏凭据」的债（非消费 check） | 30 / 60s | ❌ 那是 autopilot 的凭据债，与 stripe 无关 |
+| `WEBHOOK_TRIGGER_LIMITER` | `trigger_id` | 每次派发 | worker 侧 | ❌ 不在入站 |
+
+判据链三条：① 上游变量名是 `h.WebhookIPRateLimiter`；② 上游注释逐字点名「we deliberately
+reuse the same limiter as the autopilot webhook … budgeting them together gives a single
+knob to tune」⇒ **同一个字段**；③ 本地三条闸里只有绝对 IP 那条是「每次请求都消费」。
+⇒ **复用 `mc-autopilot` 那个进程级 `LazyLock` 单例本身**（不是另建一个同参数的 limiter），
+**零新限流器**。用例 `the_production_gate_is_the_shared_absolute_ip_limiter` 把 600 / 60s 钉住。
+
+### 60.4 登记的偏离（5 条）
+
+| # | 偏离 | 理由 |
+| --- | --- | --- |
+| **D-1** | 读体失败一律 **413**（上游拆 413 `MaxBytesError` / 400 其它） | `axum::body::to_bytes` 的错误是**不透明**的 `axum_core::Error`（没有 `BytesRejection` 那种可匹配枚举）⇒ 与 `routes/cloud/billing.rs`（`docs/32` §46 的 D-6）走**同款归并**。只在客户端已断开时有差别，而那个响应对客户端不可见。 |
+| **D-2** | 显式 `Stripe-Signature: ""` **算缺失**（401） | 上游**注释**逐字：「we use `Header.Values` to detect presence rather than `Get`, so a header explicitly set to `""` still counts as missing」，但上游**代码**是 `len(Values(...)) == 0` —— Go 里 `Set(k, "")` 之后 `Values(k)` 长度是 1 ⇒ 字面量代码判为**存在**。**注释与代码自相矛盾**；本仓跟注释（`docs/62` §6.5 的 M9-6 行也这么写），因为它与**云侧**行为一致（缺签名云侧也回 401）⇒ 不会改变 Stripe 投递视图。用例 `explicitly_empty_signature_is_401` 把口径钉死。 |
+| **D-3** | 拿不到对端地址 ⇒ **跳过**限流（**逐字跟上游**，与 `contact_sales.rs` / `webhooks/autopilots.rs` 同一立场） | 上游 `if ip := h.clientIPForRateLimit(r); ip != ""`。`ConnectInfo` 由 `apps/mc-server/src/main.rs` 的 `into_make_service_with_connect_info` 注入 ⇒ **生产永远拿得到**；拿不到的只有直连 `Router::oneshot` 的测试与 `mc-conformance` 回放器。用例 `missing_peer_address_skips_the_gate_verbatim`。**这一条直接决定了 60.5 的结论。** |
+| **D-4** | 出站 `Op` **显式**写 `"billing"`，不靠 `infer_op` 推导 | 上游 `cloud_billing.go:596` 逐字 `Op: "billing"`；而路径 `/api/v1/webhooks/stripe` 里没有 `/billing` ⇒ `infer_op` 会推成 `fleet`。`billing.rs` 显式给 `billing` 是**因为推导也恰好是它**（路径含 `/billing`），这里不同 ⇒ 必须显式。用例 `op_is_billing_verbatim_not_inferred` 顺带**反证**推导桶是 `fleet`。 |
+| **D-5** | 错误信封用本仓**嵌套**形（`{"error":{"code":…,"message":…}}`），不是上游的扁平 `{"error": "…"}` | 上游 `writeError` 产出**扁平**体；`writeErrorCode` 才带 `code`。本仓既有约定（`routes/cloud/{billing,subscriptions}.rs` / `contact_sales.rs`）是嵌套信封 + `code` 用上游字面量 ⇒ 跟本仓约定，**状态码与 code 逐字**。`message` 也逐字取上游（`rate limit exceeded` / `missing Stripe-Signature header` / `request body is too large`）。 |
+
+### 60.5 🔴 ⑨：`webhooks` 三条 fixture 只转绿 **1** 条，另两条**结构上不可复现**（实测，非推断）
+
+`docs/62` §6.2 承诺「本波承诺 3 条 `unmounted → pass`」。本片**实测只做到 1 条**
+（`pass 32 → 33`、`unmounted 4 → 1`、`mismatch 23 → 25`）。**根因有据可查** —— 上游那三条
+测试各自**注入**了不同的 handler 状态，而 `mc-conformance` 回放的是**同一个** router、
+`MULTICA_CLOUD_URL` **未配置**、且直连 `Router::oneshot` **没有 `ConnectInfo`**：
+
+| fixture | 上游测试注入的（`cloud_billing_test.go`） | 回放器里的实况 | 结果 |
+| --- | --- | --- | :-: |
+| `TestStripeWebhookDisabledReturnsForbidden` | `enabled: false`（:864） | 未配置 ⇒ 与上游同 | ✅ **403 pass** |
+| `TestStripeWebhookMissingSignatureRejectedLocally` | **`enabled: true`**（:792）+ 缺签名 | 未配置 ⇒ **步 1 先给 403** | ❌ 403 ≠ 401 |
+| `TestStripeWebhookRateLimited` | **`enabled: true`** + `denyingWebhookIPRateLimiter`（:890） | 未配置 ⇒ 403；且按 D-3 **无 ip ⇒ 跳过限流** | ❌ 403 ≠ 429 |
+
+**两条让它们转绿的路，都不接受**：
+
+1. 把步 1 的 403 挪到步 3 之后 —— 那样第二条能过（实测能到 2/3），但**违背上游源码**，
+   且 `LUM-1821` 的 DoD 第 2 条明写 403 在最前；
+2. 把「无归属流量」的配额压到 ≤ 2/60s，好让单次回放第三次撞线 —— 那是**为测试而改生产语义**。
+
+⇒ **本片按上游落位，⑨ 实测 1/3 如实入 `report.json`**。这与 §56 那 17 条 `member` fixture
+属**同一类**结构限制（本地无法构造这次请求），差别只在于它们被抽成了 `unevaluable`，
+而这两条因为路由已挂而落在 `mismatch`。**给 M9-10 的一条待办**：让
+`scripts/extract_upstream_fixtures.py` 为 `site: "direct_handler"` 的 fixture 记录所需的
+handler 前置（`enabled` / 注入的 limiter），或给 `mc-conformance` 的 stateless 装置加一个
+「注入 `MULTICA_CLOUD_URL` + 预置拒绝限流器」的装置 —— **两者都在本片写集之外**。
+
+### 60.6 收割轮门禁与本片自查
+
+- 门 ⑩：四个文件 113 / 140 / 309 / 580 行，**全部**在 800 行硬限下；
+- 门 ⑨：`--check` 需要随片重生成 `crates/mc-conformance/report.json`（60.5）；
+- 门 ⑥ ⑥-e2e 在本机首次跑是 **ENOSPC 伪装成红**（`ld` 的 `Bus error` + `os error 28`，
+  与本片派发描述里的磁盘纪律同款）：`rm -rf target/debug/incremental` 后
+  `CARGO_INCREMENTAL=0 bash scripts/gates.sh --only db` ⇒ **PASS（migrate=0, e2e=0）**。
+  10/10 全绿。
+- `CARGO_INCREMENTAL=0` 是本片新增的一条本地跑法（`--with-db` 全量跑在 49G 盘上峰值触顶）。
