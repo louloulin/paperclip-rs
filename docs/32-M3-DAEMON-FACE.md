@@ -9958,3 +9958,109 @@ POST /api/webhooks/stripe        POST /auth/google         POST /auth/send-code
 已改为实测清单；③ 描述里的 `docs/32` 号段（`§9.14` / `## 37.` / 末号 `9.11`）**三条全过期**，
 本片起手复核后落在 **`## 64.` + `### 9.33`**。
 
+
+---
+
+## 65. M11-1（`LUM-2477`）：门 ⑨ 装配补齐 —— `actor.kind=daemon` + `extraction.requires`（0 路由 / 0 迁移 / +1 接缝）
+
+本片**不新增任何路由、不动任何 handler**。它改的是**判据**：门 ⑨ 此前把
+「本质上需要已装配资源（凭据 / cloud 配置 / 数据库）的场景」丢进一个**刻意不装配任何资源**的
+harness 回放，再把基础设施的短路响应当成行为差异。定性见 `docs/37` §201.2，逐条复核与修法见 §203。
+
+### 65.1 `actor.kind` 新增 `daemon`（D-A1）：身份在 request context 里，不在 header 上
+
+上游 `newDaemonTokenRequest` 的身份由 `middleware.WithDaemonContext(req.Context(), …)` 施加
+（`server/internal/handler/daemon_test.go:86-96`），**线上一个身份 header 都没有**。
+抽取器只看字面 header ⇒ 21 条 daemon 场景被判 `anonymous` ⇒ 回放不带凭据 ⇒ 每个都在
+`routes/daemon/scope.rs:105` 的 `unauthorized("missing Authorization header")` 得 401，
+**根本走不到被测逻辑**（期望值是 200/404/400/500 各异的）。
+
+⇒ 抽取器（`scripts/extract_requirements.py::split_headers`）新增 `daemon` 形态，并写
+`actor.identity_source = "middleware.WithDaemonContext"`。**20 条** `anonymous → daemon`。
+
+🔴 **偏离登记（本片最承重的一条）**：§201 描述里「凭据是纯 header、不需要库，所以 A 可以在
+stateless 层补」**不成立**。本仓 `DaemonAuth` 的**每一条**路径都查库
+（`mdt_`→`daemon_token`、`mul_`→`pat`、dev-mode→`member`）
+⇒ **本仓的 daemon 认证面是 DB-backed 的**，stateless 层**补不出**任何凭据。
+⇒ 这 20 条的归宿是**恒 `unevaluable`**，理由逐条写在报告里；要变成真判定需要**新装配能力**
+（回放器签发并登记一个 `mdt_` 令牌 + 种下场景自己的行），**不是改 handler**。
+
+### 65.2 `extraction.requires`：回放前先问「这一层能不能判定」（D-A2）
+
+新增一条与「身份」正交的问法，两问都过才回放；不过则 `unevaluable` + 逐条点名缺什么。
+**零 fixture 被删、零期望值被改写。** 前提来自两处，**刻意分开**：
+
+- **上游注入的**（抽取器写）：daemon context 身份、cookie/JWT 会话、mock DB 故障注入、
+  `&Handler{}` 没接线、假 cloud proxy（分「只断言本地判定」与「断言替身录下的流量」两档）、
+  拒绝一切的限流器替身、stub 掉的 OAuth 往返；
+- **本仓的**（`mc_conformance::REPO_SIDE_PRECONDITIONS`，`(method, path, &[ids])` 常量表）：
+  `POST /auth/send-code` —— 本仓的 `send_code` 走 `VerificationCodeRepo` 两次查库，
+  而 stateless 池是**不可达端口上的懒连接池** ⇒ 必然 500。**上游那条 handler 不查库**，
+  所以这条事实**只能**住在本仓，不能由抽取器推出来。
+  ⚠️ 表里写错 path 的后果不是「少一条判定」，而是一条**永远不会被评估的声明**（§199 的形态），
+  故 CLI 与测试都断言「每条至少命中一个 fixture」，否则报错退出。
+
+🔴 **规则一律只允许把 fixture 变成 `unevaluable`，绝不允许变成 `pass`**：过宽的规则只损失一次判定，
+过窄的规则会造出**假 mismatch** —— 那正是本片要根除的东西。
+
+### 65.3 `webhooks` 两条归宿不同（与 §60 / `docs/62` §9.13 的登记**冲突，以本段为准**）
+
+`routes/cloud/webhook.rs` 步 1 就是「cloud 未配置 ⇒ 403」。stateless 层此前**只有**一个形态。
+本片让 `TierRouters` 支持**同层两个部署形态**：
+
+| fixture | 期望 | 缺什么 | 归宿 | 结果 |
+| --- | --- | --- | --- | --- |
+| `TestStripeWebhookMissingSignatureRejectedLocally` | 401 | 一个 cloud 基址 | 补装配 | ✅ **真 pass** |
+| `TestStripeWebhookRateLimited` | 429 | 限流器**替身** + 对端地址 | 正名分 | `unevaluable` |
+| `TestStripeWebhookDisabledReturnsForbidden` | 403 | —（默认形态） | 不变 | ✅ 仍 pass |
+
+⇒ **`docs/62` §9.13 与本文件 §60 里「两条结构上不可复现、都不可接受两条路」的结论，
+对第一条已被本片证否**：只要 stateless 层多一个「已配置 cloud」的形态，401 就是**真判定**，
+而**不是**必须改步序或改配额。**仍然不做**的只有 429 那条（它要的是替身）。
+
+🔴 **不能把默认形态改成「已配置」**：上游有**三个**互不相同的部署场景，403 那条断言的正是
+「未配置」那个 ⇒ 第二个形态必须**显式多造一个 router**（`TierRouters` + `AppState::with_cloud_config`），
+不能是一个全局开关。
+
+### 65.4 `mc_http::AppState::with_cloud_config`（**新增接缝**，1 个方法 / +18 行）
+
+`state/cloud.rs` 纪律 #2「不新增 `AppState::new` 参数」**未被破坏**（21 个调用点一个不动）。
+形状与既有的 `CloudConfig::with_recorder` 同一：组合根拿不到构造期拿不到的东西 ⇒ 给一个**事后替换口**。
+
+🔴 **为什么不走 env**：`MULTICA_CLOUD_URL` 是在 `AppState::new` 构造体内读的，最自然的写法是
+「`set_var` 构造完再 `remove_var`」。**这是错的**：`set_var` 是**进程全局**的，
+`cargo test` 的多线程下**必然**互相污染 —— 实测过：本该「未配置」的另一个 router 被配成已配置，
+断言「未配置 ⇒ 403」的那条 fixture 在两个形态之间**随机漂移**（见一次 502）。
+⇒ **进程级配置注入在测试里是隐式全局状态**；要两个形态共存，就**必须**有每个装配点自己的接缝。
+
+### 65.5 门读（`docs/37` §203.5 有完整账，本段只列结论）
+
+- stateless：`pass 33 → 34`（**+1，唯一一条真判定**）、`mismatch 25 → 0`、`unmounted 1 → 0`、
+  `unevaluable 306 → 331`；契约等价率 `0.0904 → 0.0932`（分母 365 未变）。
+- 🔴 **已接入路由等价率 `0.5690 → 1.0` 必须连分母一起读**：分母从 **58 缩到 34**，
+  它现在回答的是「这一层能判定的那 34 条判对了没有」，**不是**「多少契约成立」。
+- database（证据层）：`pass 187 → 187`（**一条不掉**）、`mismatch 159 → 127`、`unmounted 4 → 3`、
+  `unevaluable 15 → 48`；**32 + 1 = 33 一条不差**。⇒ 那 32 条本来就是**假 mismatch**
+  （拿真实/不可达的传输去满足一个 fake 的期望），移出分母是修正。
+- `gates.sh --with-db` **10/10 绿**（256s）；⑨ `--check` exit 0；抽取器 `--check` 逐字节一致；
+  ⑦ 八个数字**逐字不变**（0 路由片）。
+
+### 9.34 M11-1（`LUM-2477`）：门 ⑨ 装配补齐 —— `actor.kind=daemon` + `extraction.requires` 的偏离登记（**索引段**）
+
+本片 **0 路由 / 0 迁移**，但有 **3 条偏离/新增**需要登记（详见上文 §65）：
+
+| 编号 | 内容 | 登记位置 |
+| --- | --- | --- |
+| **D-A1** | `actor.kind` 新增 `daemon` 形态（身份在 request context 里，不在 header 上）。**§201 描述里「凭据是纯 header、可在 stateless 层补」被证否**：本仓 `DaemonAuth` 每条路径都查库 ⇒ stateless 层补不出凭据 ⇒ 那 20 条恒 `unevaluable`，要真判定需**新装配能力**而非改 handler | §65.1 / `docs/37` §203.0-1 |
+| **D-A2** | `extraction.requires`：回放前先问「这一层能不能判定」（与身份正交）。前提两个来源**刻意分开**：上游注入的（抽取器写）+ 本仓的（`REPO_SIDE_PRECONDITIONS` 常量表，`POST /auth/send-code`）。**零 fixture 被删、零期望值被改写** | §65.2 / `docs/37` §203.1 |
+| **D-A3** | `mc_http::AppState::with_cloud_config` 事后接缝（+18 行，**不给 `AppState::new` 加参数**）。用于 stateless 层的**第二个部署形态**（cloud 已配置）。🔴 **不走 env**：`set_var` 进程全局，多线程下互相污染、让「未配置 ⇒ 403」随机漂移（实测过一次 502） | §65.4 / `docs/37` §203.7-1 |
+
+**与既有登记的冲突（1 处，以本段为准）**：`docs/62` §9.13 与本文件 §60 断言
+`webhooks` 两条「结构上不可复现、都不可接受两条路」—— 对**第一条（期望 401）已被本片证否**：
+多一个「已配置 cloud」形态即得**真 pass**。仍然不做的是**第二条（期望 429）**，它要的是限流器替身。
+
+**门读结论**（完整账见 `docs/37` §203.5）：
+`mismatch 25 → 0` 中**只有 1 条是真判定**（webhooks 401，`pass 33 → 34`）；
+database 层 `pass 187 → 187` **一条不掉**、`mismatch −32` / `unmounted −1` 全部转为诚实的 `unevaluable`。
+⚠️ **`已接入路由等价率 0.5690 → 1.0` 是分母从 58 缩到 34 的结果，不是「契约全部成立」**——
+沿用 §201.2 的口径订正：**任何等价率都要连分母一起读**。

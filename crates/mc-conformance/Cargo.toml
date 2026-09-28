@@ -19,6 +19,7 @@ tower = { workspace = true, features = ["util"] }
 uuid = { workspace = true }
 
 mc-core = { path = "../mc-core" }
+mc-cloud = { path = "../mc-cloud" }
 mc-db = { path = "../mc-db" }
 mc-http = { path = "../mc-http" }
 mc-realtime = { path = "../mc-realtime" }

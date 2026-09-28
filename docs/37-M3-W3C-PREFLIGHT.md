@@ -17942,3 +17942,197 @@ devbox2 `e3b45a25`（离线自 09-17）/ devbox4 `4a7f29e1` / devbox `478b7f4b` 
 - `LUM-2477` 交 PR ⇒ 走 §193.1 判据链（**先比 tree hash**，squash 单提交可免本地全量门）；
   它是 0 路由片 ⇒ 合并后 §202.1 八个数字必须**逐字不变**，验收证据只能来自它自己的读数 + 门禁，**不能来自 ⑦**。
 - **交 PR 即回收 `target/`**（§190）⇒ 回 ~29G 后才派 `LUM-2482`。
+
+## §203 【LUM-2477 / M11-1】门 ⑨ 装配补齐：26 条逐条正名分，`mismatch 25 → 0`，**其中只有 1 条是真判定**
+
+**base** = `1cbf2aa3`（§201 的落点）。0 路由片 ⇒ ⑦ 的八个数字**必须逐字不变**（收工后复核见 §203.6）。
+本片只碰 `mc-conformance` / 抽取器 / 文档，**一行 handler 都没改**。
+
+### §203.0 先复核 §201.2 的定性：**26 条里 0 条 handler 缺陷成立**，但描述里的**两条前提被证否**
+
+DoD 要求逐条打开 26 条 fixture + 上游 Go 测试复核。**结论：§201.2 的核心判断成立** ——
+26 条里 0 条是「Rust handler 行为写错」。但复核过程中有**两条前提**与实测不符，逐字记录：
+
+1. 🔴 **「A 可以在 stateless 层补，因为凭据是纯 header、不需要库」不成立。**
+   `routes/daemon/scope.rs::DaemonAuth` 的**每一条**路径都要查库：`mdt_` 查 `daemon_token`、
+   `mul_` 查 `pat`、dev-mode 的 `X-Multica-User-Id` 查 `member`。
+   ⇒ **本仓的 daemon 认证面本身就是 DB-backed 的**，「补一个 header」在 stateless 层**做不到**。
+   这不是措辞问题：它决定了 A 只能走「正名分」，而**不是**描述预期的「补装配」。
+   ⇒ 承重判据：**读上游的 header 形状推不出本仓需要什么**；本仓的装配需求是**本仓的事实**，
+   必须写在**本仓**（`mc_conformance::REPO_SIDE_PRECONDITIONS`），不能由抽取器代劳。
+2. 🔴 **B 的两条归宿**与描述不同：期望 `401` 的那条**真的能补装配**（见 §203.3），
+   期望 `429` 的那条**连 stateless 带 ConnectInfo 都做不到**（缺的是**限流器替身** + 对端地址）。
+   ⇒ 「修好 401 大概率顺带修好 429」的级联猜想**不成立**：它们卡在**两个不同的**东西上。
+
+### §203.1 机制：新增 `extraction.requires` —— **回放前先问「这一层能不能判定」**
+
+根因是**一条判据问错了问题**。旧口径用「actor 是不是 anonymous」代理「stateless 层能不能判定」，
+而这个代理在**两个方向**都错：
+
+- **反向漏判**：`POST /auth/send-code` 身份是 anonymous，但它一上来就查库 ⇒ 不可判定（子根因 C）；
+- **正向误判**：21 条 daemon 场景把「身份在 request context 里」当成「没有身份」（子根因 A）。
+
+⇒ 新增一条**正交**的问法，两问都过才回放：
+
+| 问 | 判据 | 不过 ⇒ |
+| --- | --- | --- |
+| 身份 | stateless 只判 `anonymous`；其余需 database 层 | `unevaluable`（旧口径） |
+| **前提** | `extraction.requires` 每一项都由**这一层**供得起 | `unevaluable` + 逐条点名缺什么 |
+
+**前提有两个来源，刻意分开**（这是本片最容易被后来者搞错的一处）：
+
+- **上游注入的**（抽取器写，`extraction.requires`）：读上游代码才知道 ——
+  daemon 身份经 `middleware.WithDaemonContext` 注入 request context、
+  cookie/JWT 会话、mock DB 注入的故障、`&Handler{}` 没接线、假 cloud proxy、
+  拒绝一切的限流器替身、stub 掉的 Google OAuth 往返。
+- **本仓的**（`REPO_SIDE_PRECONDITIONS`，一张 `(method, path, &[ids])` 常量表）：
+  同一个请求在**本仓**第一步就要什么。`POST /auth/send-code` 是唯一一条（子根因 C）。
+  ⚠️ 它**不能**由抽取器推出来 —— 上游那条 handler 不查库，本仓的查。
+
+**零 fixture 被删、零期望值被改写**：场景全部留在语料里，报告逐条写明「缺哪一样装配」。
+**恒不可判定不是缺陷，是诚实的记账** —— 硬造一个替身把它们「判成通过」就是在测自己造的假货。
+
+### §203.2 子根因 A：抽取器跟着 helper 走，但**看不见 context 注入**
+
+`newDaemonTokenRequest` 的身份是这一行施加的：
+
+```go
+ctx := middleware.WithDaemonContext(req.Context(), workspaceID, daemonID)
+return req.WithContext(ctx)
+```
+
+它**不是 header**，所以只看字面 header 的 `split_headers` 必然判成 `anonymous`。
+修法：`ReqState` 增加 `oob`（out-of-band identity）字段，**在跟着 helper 走的那一步**记下
+`DAEMON_CONTEXT_CALLS`，`split_headers` 据此把 actor 命名为新的 `daemon` 形态
+（并写 `actor.identity_source = "middleware.WithDaemonContext"`，让「为什么不是 anonymous」
+在 fixture 本身里可读）。
+
+⇒ **21 条 daemon：20 条 `anonymous → daemon`**，1 条（`daemon/019`）保持 `anonymous`
+（它根本没有身份 —— 见 §203.4）。
+
+### §203.3 子根因 B：webhooks 两条**归宿不同**，而且其中一条是真装配
+
+`routes/cloud/webhook.rs` 步 1 就是「cloud 未配置 ⇒ 403」。stateless 层此前**只有**一个形态。
+
+| fixture | 期望 | 缺什么 | 归宿 | 结果 |
+| --- | --- | --- | --- | --- |
+| `TestStripeWebhookMissingSignatureRejectedLocally` | 401 | **一个 cloud 基址** | **补装配**（第 2 个部署形态） | ✅ **真判定 pass** |
+| `TestStripeWebhookRateLimited` | 429 | 限流器**替身** + 对端地址 | 正名分 | `unevaluable` |
+
+- **401 那条真的能补**：`MULTICA_CLOUD_URL` 配上一个**不可达**基址即可 —— 步 1 过、步 2 因无对端
+  地址按上游跳过、步 3（缺签名）返回 401，**一个字节都不会发出去**。断言从「403 ≠ 401」变成
+  **实测 401**。这是本片**唯一**一条由 mismatch 变成**真 pass** 的 fixture。
+- 🔴 **但不能把默认形态改成「已配置」**：上游有**三个**互不相同的部署场景，
+  `TestStripeWebhookDisabledReturnsForbidden`（期望 403）断言的正是「未配置」那个。
+  所以第二个形态是**显式多造一个 router**（`TierRouters`），不是一个全局开关。
+- **429 那条做不到**：它的 429 是 `denyingWebhookIPRateLimiter{}` 这个**替身**的判词；
+  本仓的限流器是**真实的进程级单例**，放行前 N 次；且回放**没有对端地址**，闸门按上游语义
+  直接跳过。⇒ 两条路都不接受（改步序 = 违背上游；把配额调到 ≤2/60s = 为测试而改生产语义）。
+
+### §203.4 「期望值伪影」那 2 条 + `daemon/019`：三条**结构上不可复现**
+
+§201.2 把 `auth/google` / `users/me` 两条叫「期望值伪影」。复核确认，并给出机制化的归宿：
+
+- `auth/001`：`/auth/google` 期望 200 依赖**被 stub 的 Google OAuth 往返**（client id/secret env +
+  注入的 HTTP client + 一个 user 行）—— 三样都不是 router 的输入 ⇒ `external_oauth`。
+- `users/001`：`/users/me` 期望 200，而上游那次请求带的是 **`authCookie`**
+  （`meReq.AddCookie(authCookie)`）。抽取器**把 cookie 丢了**，于是回放的是一个**与上游不同的请求**
+  却顶着同一个期望值 —— 这是抽取器缺陷，不是 tier 问题 ⇒ `browser_session_cookie`。
+  ⚠️ 该规则**按变量名收窄**（只认 `meReq.AddCookie(`），否则同测试里 `auth/001` 会被误伤。
+- `daemon/019`：期望 500 `daemon_websocket_misconfigured` —— 这个 500 **就是「没接线」本身**
+  （上游传了一个没有 hub 的 `&Handler{}`），而回放**永远**驱动完整装配的 router。
+  ⇒ `bare_handler_no_wiring`。⚠️ 该规则**按期望状态收窄**（只对 5xx 生效）：
+  `&Handler{}` 驱动的 2xx/4xx 期望并不需要任何前提（端点本身不特殊），
+  不收窄就会误伤 `config`×3 / `lark` / `workspaces` 五条**本来判得好好的** fixture。
+
+### §203.5 🔴 承重：`mismatch` 变小**本身不是成果**，本片的新读数必须这样读
+
+> **两条路都能让 `mismatch` 变小：① 真的补上了装配（`pass` 变多）；
+> ② 把场景改判成不可判定（`unevaluable` 变多）。只有 ① 是进步。**
+
+**stateless 层（门 ⑨ / `report.json`，本片交付的读数）**：
+
+| | 改前 | 改后 | Δ |
+| --- | --- | --- | --- |
+| `pass` | 33 | **34** | **+1**（webhooks 401，真判定） |
+| `mismatch` | 25 | **0** | −25 |
+| `unmounted` | 1 | **0** | −1 |
+| `unevaluable` | 306 | 331 | +25 |
+| 契约等价率 | 0.0904 | 0.0932 | 分母未变（365） |
+| 已接入路由等价率 | 33/58 = 0.5690 | **34/34 = 1.0** | ⚠️ 见下 |
+
+🔴 **`0.5690 → 1.0` 是本片最容易被误读的一个数**：分母从 **58 缩到 34**，
+它现在回答的是「**这一层能判定的那 34 条，判对了没有**」，**不是**「多少契约成立」。
+旧口径把 24 条**根本无法判定**的场景算进了分母，才得到 0.569。
+⇒ 沿用 §201.2 的口径订正并加一条：**任何等价率都要连分母一起读**，
+`report.json` 的 `totals` 与新增的 `requires` 列就是为此存在的。
+
+**database 层（本机证据层，`--db-url`，非门禁）**：
+
+| | 改前 | 改后 | Δ |
+| --- | --- | --- | --- |
+| `pass` | 187 | **187** | **0** |
+| `mismatch` | 159 | 127 | −32 |
+| `unmounted` | 4 | 3 | −1 |
+| `unevaluable` | 15 | 48 | +33 |
+
+⇒ **32 + 1 = 33，一条不差**；而 **`pass` 一个都没掉**。这 33 条 =
+21 条 daemon + 2 条期望值伪影 + 1 条 send-code + **9 条本轮顺带发现的 cloud fixture**
+（`cloud_runtime`×3 / `cloud_subscriptions`×6，它们断言的是**假 cloud proxy 录下的流量**，
+分成 `cloud_runtime_stub`（读 `proxy.req`）与 `cloud_runtime_configured`（只断言本地判定）两档）。
+⇒ 这 32 条**本来就是假 mismatch**：对着真实/不可达的传输去满足一个 fake 的期望。
+**把它们移出分母是修正，不是遮掩** —— 唯一的反证是 `pass` 会掉，而它没掉。
+
+**逐条归宿（26 条 = 全部 35 条带 `requires` 的子集 + 说明）**：
+
+| 簇 | 条数 | 归宿 | 是「真判定」吗 |
+| --- | --- | --- | --- |
+| daemon 身份 | 20 | `daemon_token`（两层都供不起） | ❌ 恒 `unevaluable` |
+| daemon mock-DB | 2 | `+ db_fault_injection`（其中 1 条另有 `bare_handler_no_wiring`） | ❌ |
+| daemon nil-hub | 1 | `bare_handler_no_wiring` | ❌ |
+| webhook 缺签名 | 1 | **补装配**（cloud 已配置形态） | ✅ **是，pass** |
+| webhook 限流 | 1 | `+ webhook_rate_limiter_denying` | ❌ |
+| `send-code` | 1 | `database` | ✅ **是（db 层 pass 200）** |
+| OAuth 伪影 | 1 | `external_oauth` | ❌ |
+| cookie 伪影 | 1 | `browser_session_cookie` | ❌ |
+
+⇒ **26 条里 2 条变成真判定（webhooks 401、send-code@db 层），24 条改判 `unevaluable`。**
+⚠️ **这 24 条的归宿是「本仓还没有这个装配能力」或「需要测试替身」**，
+不是「实现有问题」。要让它们变成真判定，需要的是**新能力**（在回放器里签发并登记一个
+`mdt_` 令牌 + 种下场景自己的行），不是改 handler —— 已登记为后续工作，本片**不做**。
+
+### §203.6 门与门读
+
+- **`gates.sh --with-db` 10/10 绿**（256s，warm）：`fmt / build / clippy / clippy-test-util /
+  test / db / schema-drift / route-parity / conformance / file-size`。
+- ⑨ `cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` **exit 0**（逐字节）。
+- 抽取器 `extract_upstream_fixtures.py --check`：**365 fixtures reproduce byte-identically**。
+- ⑦ **八个数字逐字不变**（`456/546/546 / 455r+1ph=456 / gap 0 / unclaimed 0 / regression 0 / local_only 8`）
+  —— 0 路由片的应有形状。
+- `stop_condition.sh` T1-5 的 `mismatch 0 ∧ unmounted 0` **本轮首次真正满足**（T1-6 真库层仍红，
+  那是 §201.3 与本片范围外的 Tier-2 残余）。
+
+### §203.7 本轮踩坑（两条都写进了代码注释）
+
+1. 🔴 **`std::env::set_var` 是进程全局的，并发回放会互相污染。**
+   第二个部署形态最初写成「在构造那一小段里 `set_var(MULTICA_CLOUD_URL)` 再 `remove_var`」，
+   在 `cargo test` 的多线程下**必然**踩中：另一个本该「未配置」的 router 也会被配成已配置，
+   于是断言「未配置 ⇒ 403」的那条 fixture 在两个形态之间**随机漂移**（实测过一次 502）。
+   ⇒ 改走 `mc_http::AppState::with_cloud_config` 这个**事后接缝**（与既有的
+   `CloudConfig::with_recorder` 同一形状、同一理由，**不给 `AppState::new` 加参数**）。
+   **承重**：进程级配置注入在测试里是**隐式全局状态**；要两个形态共存就必须有**每个装配点自己的**接缝。
+2. 🔴 **门 ⑩ 的基线「只减不增」**：本片让 `mc-conformance/src/lib.rs`（1024→1342）与
+   `extract_upstream_fixtures.py`（1863→2019）双双超线，**不能**改基线，只能**拆**。
+   ⇒ 拆出 `mc-conformance/src/requirements.rs`（前提登记表）+ `report.rs`（呈现层）与
+   `scripts/extract_requirements.py`（actor 分类 + 场景前提），三个新文件都远在 800 行以内，
+   两个老文件回到 **960 / 1863 行（净缩）**。
+   ⚠️ 拆分不是纯搬移：`requirements.rs` 与 `extract_requirements.py` 各自带了一整段
+   「为什么这些规则只允许把 fixture 变成不可判定、不允许变成 pass」的**理由**——
+   那是本轮唯一的调研产出，混在逻辑里会被下一个人顺手删掉。
+
+### §203.8 下一轮起点
+
+- base = `1cbf2aa3` + 本片；0 路由片 ⇒ 合并后 §203.6 的 ⑦ 八个数字**必须逐字不变**。
+- 剩余可做工作量：**不是路由**，而是 ① `daemon_token` 装配能力（回放器签发 + 登记 `mdt_` 令牌，
+  可把那 20 条从恒不可判定变成真判定）；② §201.3 的 `T1-1a/1b` 判据自身（与 `trigger-preview` 裁定冲突）；
+③ Tier-2 残余（`stop_condition.sh` T1-6 真库层 127 条 mismatch 的正名分）。

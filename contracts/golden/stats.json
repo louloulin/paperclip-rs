@@ -17,7 +17,8 @@
   "fixtures": {
     "by_actor_kind": {
       "agent": 13,
-      "anonymous": 59,
+      "anonymous": 39,
+      "daemon": 20,
       "member": 293
     },
     "by_domain": {
@@ -76,7 +77,7 @@
       "handler": 331,
       "router": 34
     },
-    "offline_decidable": 59,
+    "offline_decidable": 39,
     "total": 365,
     "with_json_subset": 0
   },

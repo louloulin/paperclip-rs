@@ -40,6 +40,9 @@
     "bindings": {
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
-    }
+    },
+    "requires": [
+      "cloud_runtime_stub"
+    ]
   }
 }

@@ -39,6 +39,9 @@
     ],
     "bindings": {
       "$testWorkspaceID": "workspace_id"
-    }
+    },
+    "requires": [
+      "cloud_runtime_configured"
+    ]
   }
 }

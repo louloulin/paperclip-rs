@@ -24,10 +24,28 @@
 //! | `mismatch` | 打到了已实现的路由，但状态码/字段与上游断言不符（**这才是缺陷**）|
 //! | `unmounted` | 本仓没有这条路由（404 空 body / 405）—— 属"未实现"，单独计数 |
 //! | `placeholder` | 路由存在但是 M0 占位实现（501 / `{"code":"not_implemented"}`）|
-//! | `unevaluable` | 本仓无法构造这次请求（如 `Authorization` 令牌型 actor 没有绑定）|
+//! | `unevaluable` | 本仓无法构造这次请求（如需要真凭据、缺装配、或需要本层不具备的替身）|
 //!
 //! `unmounted` / `placeholder` / `unevaluable` **不算失败**，但一定出现在报告里 ——
 //! 分子分母都从报告行里数出来，所以"等价率"不可能靠遮掉难看的行来变好看。
+//!
+//! # `requires`：先问「这一层能不能判定」，再回放
+//!
+//! 一条 fixture 的期望值只在**它背后的场景能被重建**时才是契约。上游很多测试在驱动
+//! handler 之前先装配了额外状态：请求 context 里的 daemon 身份、cookie/JWT 会话、
+//! 注入的 mock DB、`&Handler{}` 这种没接线的裸 handler、假的 cloud proxy、拒绝一切的
+//! 限流器替身、被 stub 掉的 Google OAuth 往返。抽取器以前只看得到**字面 header**，于是
+//! 把这些场景统统标成 `anonymous`，stateless 层就「不装配任何资源地」把它们跑了一遍，
+//! 再把基础设施的短路响应当成行为差异记下来（`docs/37` §201.2 的三个子根因）。
+//!
+//! 现在抽取器把每条场景的前提写进 `extraction.requires`（`scripts/extract_upstream_fixtures.py`
+//! 的 `requirements_for`），本仓自己那部分前提（哪些端点一上来就查库）写在
+//! [`REPO_SIDE_PRECONDITIONS`]。层在回放之前先过 [`requirements`]：**前提凑不齐就不判定**，
+//! 落 `unevaluable` 并写明缺哪一样。
+//!
+//! 🔴 **这是本 crate 最容易被误用的一处**：`mismatch` 变小本身**不是**成果。把它变小有两条路 ——
+//! 真的补上了装配（`pass` 变多），或者把场景改判成不可判定（`unevaluable` 变多）。
+//! 只有第一条是进步。`docs/37` §203 记的就是这一刀怎么下的。
 //!
 //! # 两层回放（tier）
 //!
@@ -45,6 +63,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod harness;
+pub mod report;
+pub mod requirements;
+
+pub use report::{OfflineSplit, Report, Row, Totals};
+pub use requirements::{
+    missing_requirements, requirement, requirements_detail, Requirement, REPO_SIDE_PRECONDITIONS,
+    REQUIREMENTS,
+};
 
 use anyhow::{anyhow, Context, Result};
 use axum::body::{to_bytes, Body};
@@ -79,6 +105,14 @@ pub enum ActorKind {
     Agent,
     /// 带 `Authorization`（个人访问令牌）。
     Token,
+    /// daemon 身份：上游把它放在**请求 context** 里（`middleware.WithDaemonContext`），
+    /// 所以线上一个身份 header 都没有 —— 而这不等于「匿名」。
+    ///
+    /// 🔴 这个 variant 是 §201.2 子根因 A 的修复面：抽取器以前只看字面 header，
+    /// 于是把 21 条 daemon 场景标成 [`Self::Anonymous`]，回放时**不带任何凭据**，
+    /// 每个都在 `routes/daemon/scope.rs` 的 `unauthorized("missing Authorization header")`
+    /// 那一层得 401，**根本走不到被测逻辑**（而期望值是 200/404/400/500 各异的）。
+    Daemon,
     /// 系统内部调用。
     System,
 }
@@ -91,6 +125,7 @@ impl ActorKind {
             Self::Member => "member",
             Self::Agent => "agent",
             Self::Token => "token",
+            Self::Daemon => "daemon",
             Self::System => "system",
         }
     }
@@ -101,6 +136,11 @@ pub struct Actor {
     pub kind: ActorKind,
     #[serde(default)]
     pub upstream_identity: BTreeMap<String, String>,
+    /// 身份是怎么施加的（仅 [`ActorKind::Daemon`] 有值）：上游把 daemon 身份放在**请求
+    /// context** 里，所以它不出现在任何一个 header 上。保留这个字段是为了让「为什么这条
+    /// 不是 anonymous」在 fixture 本身里可读 —— 判据靠的是它，不靠回忆。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -131,6 +171,13 @@ pub struct Extraction {
     /// `$symbol -> 语义`，由抽取器声明；回放器只接受自己会绑定的语义。
     #[serde(default)]
     pub bindings: BTreeMap<String, String>,
+    /// 上游测试在驱动这次请求前**额外装配**了什么（daemon 身份 / cookie 会话 /
+    /// mock DB / 假 cloud proxy / 拒绝一切的限流器 / stub 掉的 OAuth 往返）。
+    ///
+    /// 抽取器写这一份（它读得到上游代码），[`REPO_SIDE_PRECONDITIONS`] 写本仓那一份；
+    /// [`Fixture::requirement_ids`] 是两者的合流。
+    #[serde(default)]
+    pub requires: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +219,13 @@ impl Fixture {
         if !self.path.starts_with('/') {
             return Err(anyhow!("{}: path must be absolute: {}", self.id, self.path));
         }
+        // 前提 id 必须在回放器的登记表里（见 `requirements`）：两边不同名是拼写错误，
+        // 而一个拼错的 id 会让「不可判定」的理由变成空白 —— 正是本 crate 禁止的形态。
+        for id in self.requirement_ids() {
+            if requirement(id).is_none() {
+                return Err(anyhow!("{}: unknown requirement id {id:?}", self.id));
+            }
+        }
         // 每个 `{name}` 都必须有 path_params 提供取值，否则请求会带着字面量 `{name}` 打出去。
         for seg in self.path.split('/') {
             if let Some(name) = seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
@@ -190,6 +244,26 @@ impl Fixture {
     #[must_use]
     pub fn domain(&self) -> String {
         self.id.split('/').next().unwrap_or("_").to_string()
+    }
+
+    /// 这条场景的全部前提：抽取器记的（上游装配了什么）+ [`REPO_SIDE_PRECONDITIONS`]
+    /// 记的（本仓的实现第一步就要什么）。去重且有序，让报告可字节复现。
+    #[must_use]
+    pub fn requirement_ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self
+            .extraction
+            .requires
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for (method, path, extra) in REPO_SIDE_PRECONDITIONS {
+            if self.method.eq_ignore_ascii_case(method) && self.path == *path {
+                ids.extend(extra.iter().copied());
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ids
     }
 }
 
@@ -375,8 +449,12 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
             ));
             notes.push("actor member: 以 X-Multica-Session + X-Multica-User-Id 注入身份".into());
         }
-        // 令牌 / agent 身份需要真令牌或 agent 行，当前回放器不伪造它们。
-        ActorKind::Token | ActorKind::Agent => {
+        // 令牌 / agent / daemon 身份需要真凭据，当前回放器**不伪造**它们。
+        // daemon 身份是 §201.2 子根因 A 的正主：上游把它放在请求 context 里，
+        // 而本仓的 `DaemonAuth` 每一条路径（`mdt_` / `mul_` / dev-mode）都要查库 ——
+        // 所以「补一个 header」在这里是**做不到**的，`Tier::supports` 已经在回放前
+        // 把它挡成 `unevaluable`；这一支只是让直接调 `plan` 的调用方拿到同样的实话。
+        ActorKind::Token | ActorKind::Agent | ActorKind::Daemon => {
             return Err(format!(
                 "actor kind {:?} needs a real credential; this runner does not fabricate one",
                 fx.actor.kind
@@ -676,238 +754,23 @@ pub async fn replay_one(app: &Router, fx: &Fixture, bindings: &Bindings) -> Fixt
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// 报告
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Row {
-    pub id: String,
-    pub domain: String,
-    pub method: String,
-    pub path: String,
-    pub actor: String,
-    pub via: String,
-    pub status_expected: u16,
-    pub source: String,
-    pub outcome: Outcome,
-    pub tier: String,
-    pub status_observed: Option<u16>,
-    pub offline: Option<Outcome>,
-    pub database: Option<Outcome>,
-    pub detail: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Totals {
-    pub fixtures: usize,
-    pub pass: usize,
-    pub mismatch: usize,
-    pub unmounted: usize,
-    pub placeholder: usize,
-    pub unevaluable: usize,
-    pub by_actor: BTreeMap<String, BTreeMap<String, usize>>,
-    pub by_via: BTreeMap<String, BTreeMap<String, usize>>,
-    pub tiers: BTreeMap<String, BTreeMap<String, usize>>,
-}
-
-/// 报告的头部：口径写进产物本身，读者不必去翻文档才能解释数字。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Report {
-    pub schema_version: u32,
-    pub golden_dir: String,
-    pub bindings: BTreeMap<String, String>,
-    pub totals: Totals,
-    /// 契约等价率 = pass / fixtures（打不到 = 未实现，仍留在分母里）。
-    pub contract_equivalence_rate: f64,
-    /// 已接入路由等价率 = pass / (pass + mismatch)：只问"实现了的路由对不对"。
-    pub mounted_equivalence_rate: Option<f64>,
-    /// 离线可判定的 fixture 数与其中 pass 的数量（`actor.kind == "anonymous"`）。
-    pub offline_decidable: OfflineSplit,
-    pub fixtures: Vec<Row>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct OfflineSplit {
-    pub fixtures: usize,
-    pub pass: usize,
-}
-
-impl Report {
-    #[must_use]
-    pub fn from_rows(golden_dir: &Path, bindings: &Bindings, mut rows: Vec<Row>) -> Self {
-        rows.sort_by(|a, b| a.id.cmp(&b.id));
-        let mut totals = Totals {
-            fixtures: rows.len(),
-            ..Totals::default()
-        };
-        for r in &rows {
-            match r.outcome {
-                Outcome::Pass => totals.pass += 1,
-                Outcome::Mismatch => totals.mismatch += 1,
-                Outcome::Unmounted => totals.unmounted += 1,
-                Outcome::Placeholder => totals.placeholder += 1,
-                Outcome::Unevaluable => totals.unevaluable += 1,
-            }
-            *totals
-                .by_actor
-                .entry(r.actor.clone())
-                .or_default()
-                .entry(r.outcome.as_str().to_string())
-                .or_insert(0) += 1;
-            *totals
-                .by_via
-                .entry(r.via.clone())
-                .or_default()
-                .entry(r.outcome.as_str().to_string())
-                .or_insert(0) += 1;
-            *totals
-                .tiers
-                .entry(r.tier.clone())
-                .or_default()
-                .entry(r.outcome.as_str().to_string())
-                .or_insert(0) += 1;
-        }
-        let eq = if totals.fixtures == 0 {
-            0.0
-        } else {
-            ratio(totals.pass, totals.fixtures)
-        };
-        let mounted_den = totals.pass + totals.mismatch;
-        let mounted = if mounted_den == 0 {
-            None
-        } else {
-            Some(ratio(totals.pass, mounted_den))
-        };
-        let offline_rows: Vec<&Row> = rows.iter().filter(|r| r.actor == "anonymous").collect();
-        let offline_decidable = OfflineSplit {
-            fixtures: offline_rows.len(),
-            pass: offline_rows
-                .iter()
-                .filter(|r| r.outcome == Outcome::Pass)
-                .count(),
-        };
-        let mut binding_map = BTreeMap::new();
-        binding_map.insert("user_id".into(), bindings.user_id.to_string());
-        binding_map.insert("workspace_id".into(), bindings.workspace_id.to_string());
-        Self {
-            schema_version: SCHEMA_VERSION,
-            golden_dir: golden_dir.display().to_string(),
-            bindings: binding_map,
-            totals,
-            contract_equivalence_rate: eq,
-            mounted_equivalence_rate: mounted,
-            offline_decidable,
-            fixtures: rows,
-        }
-    }
-
-    /// 稳定的 JSON 文本（`--check` 就是拿它做字节比对）。
-    pub fn to_json(&self) -> Result<String> {
-        let mut s = serde_json::to_string_pretty(self)?;
-        s.push('\n');
-        Ok(s)
-    }
-
-    pub fn render_text(&self) -> String {
-        use std::fmt::Write as _;
-        let mut out = String::new();
-        let _ = writeln!(
-            out,
-            "golden: {}  fixtures: {}",
-            self.golden_dir, self.totals.fixtures
-        );
-        let _ = writeln!(
-            out,
-            "  pass {}  mismatch {}  unmounted {}  placeholder {}  unevaluable {}",
-            self.totals.pass,
-            self.totals.mismatch,
-            self.totals.unmounted,
-            self.totals.placeholder,
-            self.totals.unevaluable
-        );
-        let _ = writeln!(
-            out,
-            "  契约等价率 = {}/{} = {:.1}%",
-            self.totals.pass,
-            self.totals.fixtures,
-            self.contract_equivalence_rate * 100.0
-        );
-        match self.mounted_equivalence_rate {
-            Some(r) => {
-                let _ = writeln!(
-                    out,
-                    "  已接入路由等价率 = {}/{} = {:.1}%",
-                    self.totals.pass,
-                    self.totals.pass + self.totals.mismatch,
-                    r * 100.0
-                );
-            }
-            None => {
-                let _ = writeln!(
-                    out,
-                    "  已接入路由等价率 = n/a（没有打到已实现路由的 fixture）"
-                );
-            }
-        }
-        let _ = writeln!(
-            out,
-            "  离线可判定（anonymous）= {}/{} pass",
-            self.offline_decidable.pass, self.offline_decidable.fixtures
-        );
-        let _ = writeln!(out, "  --- 非 pass ---");
-        for r in &self.fixtures {
-            if r.outcome != Outcome::Pass {
-                let _ = writeln!(
-                    out,
-                    "  {:<11} {:<6} {:>3} {:<44} {}",
-                    r.outcome.as_str(),
-                    r.method,
-                    r.status_expected,
-                    r.path,
-                    r.id
-                );
-            }
-        }
-        out
-    }
-
-    /// 汇总一行（给 CI 日志 / issue 评论用）。
-    #[must_use]
-    pub fn summary_line(&self) -> String {
-        format!(
-            "pass {}/{} ({:.1}%) · mismatch {} · unmounted {} · placeholder {} · unevaluable {}",
-            self.totals.pass,
-            self.totals.fixtures,
-            self.contract_equivalence_rate * 100.0,
-            self.totals.mismatch,
-            self.totals.unmounted,
-            self.totals.placeholder,
-            self.totals.unevaluable
-        )
-    }
-}
-
-#[allow(clippy::cast_precision_loss)] // 计数远小于 2^53，比例精度足够。
-fn ratio(num: usize, den: usize) -> f64 {
-    (num as f64) / (den as f64)
-}
-
-// ---------------------------------------------------------------------------
 // 回放驱动
 // ---------------------------------------------------------------------------
 
 /// 回放层次。
 ///
-/// 层与 fixture 的匹配规则是**显式**的：stateless 层只判定 `anonymous` fixture
-/// （它的全部结论都能在没有数据库时得出）；其余 fixture 在这一层标 `unevaluable`
-/// 并写明原因 —— 不用"没库导致的 500"冒充 `mismatch`。
+/// 层与 fixture 的匹配规则是**显式**的，且分两问：**身份**与**前提**。
+/// 1. 身份：stateless 层只判定 [`ActorKind::Anonymous`] fixture（它的全部结论都能在没有
+///    数据库时得出）；其余 fixture 在这一层不可判定。
+/// 2. 前提：即使身份是匿名，场景本身需要的装配凑不齐时同样不判定（见 [`requirements`]）——
+///    `POST /auth/send-code` 就是这一类：匿名，但它一上来就查库。
+///
+/// 任何一问答「否」都落 `unevaluable` 并写明原因，**不用「没库导致的 500」冒充 `mismatch`**。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     /// 无数据库连接（懒连接池指向不可达端口），只判定匿名断言。
     Stateless,
-    /// 真库 + 迁移 + 种子身份，全部 fixture 都可判定。
+    /// 真库 + 迁移 + 种子身份。
     Database,
 }
 
@@ -920,38 +783,106 @@ impl Tier {
         }
     }
 
-    #[must_use]
-    pub fn supports(self, fx: &Fixture) -> bool {
-        match self {
+    /// 这一层能不能**判定**这条 fixture：身份可判定 ∧ 前提全齐。
+    ///
+    /// `Result` 只在前提表不同名时是 `Err`（加载期已拦过一次，这里是第二道）。
+    pub fn supports(self, fx: &Fixture) -> Result<bool, String> {
+        let identity_ok = match self {
             Self::Stateless => fx.actor.kind == ActorKind::Anonymous,
             Self::Database => true,
+        };
+        Ok(identity_ok && missing_requirements(fx, self)?.is_empty())
+    }
+}
+
+/// 一层里可能不止一个 router：**部署形态不同，判定能力就不同**。
+///
+/// `base` 是默认装配；`cloud_configured` 是第二个 router，只给声明了
+/// `cloud_runtime_configured` 的 fixture 用。上游有三个互不相同的部署场景
+/// （`fakeCloudRuntimeProxy{enabled:false}` ⇒ 403、`:true` + 本地短路 ⇒ 401/429、
+/// `:true` + 转发 ⇒ 上游响应），而 stateless 层只能选一个作为默认；所以第二个形态
+/// 显式存在，而不是把默认改成「已配置」—— 那会让断言「未配置 ⇒ 403」的那条失真。
+#[derive(Clone)]
+pub struct TierRouters {
+    base: Router,
+    cloud_configured: Option<Router>,
+}
+
+impl TierRouters {
+    /// 只有一个 router 的层（database 层当前如此）。
+    #[must_use]
+    pub fn single(base: Router) -> Self {
+        Self {
+            base,
+            cloud_configured: None,
+        }
+    }
+
+    /// stateless 层的两个部署形态。
+    #[must_use]
+    pub fn with_cloud_configured(base: Router, cloud_configured: Router) -> Self {
+        Self {
+            base,
+            cloud_configured: Some(cloud_configured),
+        }
+    }
+
+    /// 这一条声明了「必须有 cloud 配置」的前提吗？
+    fn wants_cloud_configured(fx: &Fixture) -> bool {
+        fx.requirement_ids().contains(&"cloud_runtime_configured")
+    }
+
+    /// 这条 fixture 该打哪个 router。
+    ///
+    /// 声明了 `cloud_runtime_configured` 却没有第二个 router 时**回落到 base**，
+    /// 不是一个静默的错误：那一层根本不判定这类 fixture（`Tier::supports` 先答了否），
+    /// 所以回落到哪都不影响结论。
+    pub fn for_fixture(&self, fx: &Fixture) -> &Router {
+        match &self.cloud_configured {
+            Some(cloud) if Self::wants_cloud_configured(fx) => cloud,
+            _ => &self.base,
         }
     }
 }
 
-/// 跑一层：`app` 是这一层的 router。
+/// 跑一层：`routers` 是这一层可用的 router（按 fixture 选）。
 pub async fn run_tier(
-    app: &Router,
+    routers: &TierRouters,
     fixtures: &[Fixture],
     bindings: &Bindings,
     tier: Tier,
 ) -> Vec<FixtureOutcome> {
     let mut out = Vec::with_capacity(fixtures.len());
     for fx in fixtures {
-        let mut got = if tier.supports(fx) {
-            replay_one(app, fx, bindings).await
-        } else {
-            FixtureOutcome {
+        let mut got = match tier.supports(fx) {
+            Err(e) => FixtureOutcome {
                 outcome: Outcome::Unevaluable,
                 tier: tier.as_str().into(),
-                detail: format!(
-                    "{} actor needs the database tier (rerun with --db-url); stateless tier cannot decide it",
-                    fx.actor.kind.as_str()
-                ),
+                detail: e,
                 status_observed: None,
                 offline: None,
                 database: None,
+            },
+            Ok(false) => {
+                let detail = match fx.actor.kind {
+                    // 身份这一关就没过：沿用旧口径，说清缺的是哪一层。
+                    ActorKind::Anonymous => requirements_detail(fx, tier),
+                    other => format!(
+                        "{} actor needs the database tier (rerun with --db-url); \
+                         stateless tier cannot decide it",
+                        other.as_str()
+                    ),
+                };
+                FixtureOutcome {
+                    outcome: Outcome::Unevaluable,
+                    tier: tier.as_str().into(),
+                    detail,
+                    status_observed: None,
+                    offline: None,
+                    database: None,
+                }
             }
+            Ok(true) => replay_one(routers.for_fixture(fx), fx, bindings).await,
         };
         got.tier = tier.as_str().to_string();
         match tier {
@@ -1014,6 +945,11 @@ pub fn to_row(fx: &Fixture, merged: &FixtureOutcome) -> Row {
         },
         status_expected: fx.expect.status,
         source: format!("{}:{}", fx.source.file, fx.source.line),
+        requires: fx
+            .requirement_ids()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         outcome: merged.outcome,
         tier: merged.tier.clone(),
         status_observed: merged.status_observed,
