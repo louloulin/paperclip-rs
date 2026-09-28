@@ -125,20 +125,24 @@ async fn issue_auth_workspace_and_not_implemented() {
     // 把 labels 面整个实现后，改用 `GET /api/issues/:id/pull-requests`；M8-4（LUM-1801）
     // 又把它实现成真实读面，于是改用 `GET /api/issues/:id/attachments`；
     // **M10-B1（`LUM-2112`）把附件面也实现掉了**（6 行里的那 1 条占位升级），
-    // 于是最后一次改用 `GET /api/issues/:id/timeline`。
+    // 于是改用 `GET /api/issues/:id/timeline`；**M9-8（`LUM-1823`）把 timeline 面
+    // 也实现掉了**（comments + `activity_log` 合并 + keyset 四参 + 两侧独立截断），
+    // 于是第六次改用 `GET /api/issues/:id/quick-actions`。
     //
     // 为什么这条断言要一直换落点：它验的是「**还没实现的**上游键仍回 501」
     // —— 一旦把落点实现掉，这格就自动失去判据意义，必须让位给另一条仍占位的键。
     //
-    // 选 timeline 的理由：它是**本仓余下仅有的 2 条 501 占位之一**
-    // （另一条是 `/api/issues/:id/quick-actions`，归 **M10-B3**）⇒ 耐久。
+    // 选 quick-actions 的理由：它是**本仓余下仅有的 2 条 501 占位之一**（另一条是
+    // `POST /api/issues/{id}/comments/trigger-preview`，owner M3，`docs/10` §2
+    // M2-B 明确不做）⇒ 两边都耐久。它的 owner 是 **M3+**（`scripts/route-owners.tsv:62`
+    // 「依赖 task queue，`docs/10` §5.2：M3+，未立项」）⇒ 没有在飞的波次会去实现它。
     // ⚠️ 写这条断言时若发现它红了，先看是不是**落点又被实现了**（那就再换一条），
     // 而不是去改 handler（那是本仓反复踩过的坑，见上面那串换落点的历史）。
     let res = app
         .clone()
         .oneshot(req(
             "GET",
-            &format!("/api/issues/{}/timeline", Uuid::new_v4()),
+            &format!("/api/issues/{}/quick-actions", Uuid::new_v4()),
             ws,
             user,
             None,

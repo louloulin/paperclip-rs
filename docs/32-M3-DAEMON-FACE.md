@@ -9388,3 +9388,103 @@ unclaimed 0 | regression 0 | local_only 8 | owners {}`、`456 + 0 == 456` ✅。
 🔴 **本片最重要的一条结论**：切片描述 §0 的硬前置「M9-0…M9-9 全部合入 base」**不成立** ——
 **`M9-8`（`LUM-1823`）与 `M9-9`（`LUM-1824`）当轮仍是 `backlog`**（`timeline` 仍 501 占位、
 `limit_usage` 仍恒 204、`mc-entitlement` 仍是桩）。本次只完成**账面收口**，M9 波的真实尾账是这两片。
+
+---
+
+### 9.30 M9-8（`LUM-1823`）：`GET /api/issues/:id/timeline`（comments + `activity_log` 合并 + keyset 四参 + 两侧独立截断）的偏离登记（**索引段**）
+
+本片把 M9-0 anchor **搬运**过来的 501 占位换成真实现（门 ⑦ 记的**占位升级**）。
+上游口径：`multica` @ `f41fae6b08fb` 的 `internal/handler/activity.go` **`L63–L393`**
+（`L394+` 的 `GetAssigneeFrequency` 属 **M2-A**，本片**不碰**）。
+
+#### 9.30.1 🔴 写集偏离：门 ⑩ 的 800 行硬上限逼出**一个**子模块（3 文件，不是描述的 2 文件）
+
+| 文件 | 动作 | 行数 |
+| --- | --- | ---: |
+| `crates/mc-http/src/routes/timeline.rs` | 占位 → **真实现**（handler + DTO + 映射/合并/截断/水合） | 561 |
+| `crates/mc-http/src/routes/timeline/tests.rs` | **新建**（门 ⑤ 纯函数 + 门 ⑥ 真库证据） | 576 |
+| `crates/mc-repos/src/timeline.rs` | 空桩 → **两条 newest-N 窗口查询** + 4 个批量读面 | 559 |
+
+**为什么必须拆**：门 ⑩ 的上限是**单文件 800 行**（`scripts/file_size_check.py`，不在
+`scripts/file_size_baseline.tsv` 白名单里 ⇒ **不能**靠登记豁免）。实现本身已占 561 行，
+而 `docs/62` §6.5 的 M9-8 行要求**真库造行**断言合并 / keyset / 截断三个语义
++ 404/401/403 ⇒ 两者相加必然越过 800。
+
+**先例（本仓既有，不是本片发明的）**：**D10**（本文件 §30，
+`routes/cloud/subscriptions/tests/{support,db}.rs`）、`routes/onboarding/tests/`、
+`routes/uploads/tests/`、`routes/cloud_runtime/tests/`。**登记而非默默扩大写集**。
+
+**没有踩的另一条线**：`routes/mod.rs` / `routes/mount.rs` / `routes/issues/mod.rs` /
+`Cargo.toml` / 迁移 / `docs/fixtures/route-parity-baseline.json` **一个字都没动**
+（`mod.rs:207` 的 `pub mod timeline;` 与 `mount.rs:601` 的 `.merge(super::timeline::router())`
+是 anchor 预声明的，第二类漏项 = 0）。
+
+#### 9.30.2 门 ⑦ 的位移（base `6ad9e281`，当轮实测）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+  implemented  455 real +   1 placeholder =  456 / 456   known_gap 0  unclaimed 0  regression 0  local_only 8
+```
+
+**只有 `implemented_placeholder 2 → 1` / `implemented_real +1`**；`local 546`、`baseline 546`、
+`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8` **逐字不变**
+（占位升级**不改变注册键集合** ⇒ 本片**不刷** `route-parity-baseline.json`，与 §11.4 的预测逐字相符）。
+余下唯一 placeholder = `POST /api/issues/{id}/comments/trigger-preview`（owner **M3**，
+`docs/10` §2 M2-B 明确不做 ⇒ M3 历史遗留，不属 M9 波）。
+⑦b **tree 模式** `541 literals / 0 defect`（本片**不加新注册键** ⇒ 字面数不变）。
+
+#### 9.30.3 六条口径订正
+
+1. 🔴 **keyset 四参在 `f41fae6b` 已不是 keyset**。上游 `#2128` → `#1929` **删掉了**时间游标
+   分页（它把回复线程**切在页边界**上，而实测规模 p99 ≈ 30 条评论下游标机制纯属开销）⇒
+   `limit` / `before` / `after` **除了选形态之外没有任何别的效果**：不裁窗口、**不** 400、
+   非法值也**不**回落。本片逐字照搬并写成用例（这是「四参边界」在当前上游的准确含义）。
+2. 🔴 **wrapped 的判定是「四参任一非空」**（上游逐字 `q.Get(x) != ""`）⇒ `?limit=`
+   （给了键、值是空串）**不**切形态。`around` 是四参里唯一有第二个作用的：在 DESC 切片里
+   定位锚点并回 `target_index`（未知锚点 ⇒ **键不出现**，不是 `null`、也不是 `0`）。
+3. 🔴 **两侧独立截断、不 clamp 到同一个 floor**（上游注释逐字，本片最承重的一段）：两半各自
+   按 `timelineHardCap = 2000` 砍到 newest-N，合并后**可能超过**单侧上限。共享 floor
+   **几乎总是活动面的 floor 在砍已经取回、本可正常渲染的评论**（评论是人类节奏、活动是机器
+   节奏）⇒ 那是纯亏损。截断经**响应头** `X-Timeline-Truncated` 报告，取值由
+   `truncatedKinds` 渲染成 `activity` / `comment` / `activity,comment`。
+   🔴 **本片偏离**：上游那个头是 `X-Timeline-Truncated`，本仓的 header 名一律**小写**
+   （HTTP/2 与 `HeaderName` 的规范化；全仓惯例）⇒ 落为 `x-timeline-truncated`，
+   **取值逐字不变**。另：上游把它导出给 CORS 的 `corsExposedHeaders` 引用，本仓 CORS 层
+   未 expose 自定义头 ⇒ 该头对浏览器 JS **不可见**（API 客户端可见）。已登记，不在本片修。
+4. 🔴 **member actor 水合认两种词表**。上游只认 `actor_type == "member"`；本仓的「人」写作
+   `user`（`migrations/compat/538` + `routes/issues` 的 `normalize_assignee_type`：
+   `member` → `user`，**单向**）⇒ 只认 `member` 会让**本仓自己写的**评论**永远**没有
+   `actor_name`。本片两种都认（`user` 与 `member`）。水合读的仍是**全局** `user` 行
+   （**不是**「当前成员名录」）：活跃成员目录**故意**排除已离开的成员，但时间线的归属必须
+   在他们离开后**仍可读**。
+5. `resolveAvatarURL` 在上游 `Storage == nil`（本仓**恒**如此，没有 CDN 概念）那一支是
+   **原样返回**存储值 ⇒ 本片逐字原样透传 `user.avatar_url`（全仓惯例同款，
+   `routes/workspaces.rs`）。**不做**签名/前缀化。
+6. **可空列不写键**（本仓全仓惯例）vs 上游 Go `omitempty`：上游对 `*string` / `[]T` 的
+   `omitempty` 恰好也是「空则省略」，但 `Revision int64` 的 `omitempty` 会把 `0` 省略 ⇒
+   本片用 `skip_serializing_if` 逐项对齐（`revision == 0` 也省略）。
+
+#### 9.30.4 两条**不做**（与 `docs/62` §6.5 的 M9-8 行逐字一致）
+
+- **不碰** `GetAssigneeFrequency`（`activity.go:394+`）—— **M2-A** 的账，已由
+  `crate::routes::issue_table` 交付；
+- 🔴 **不补** `activity_log` 的写入面，也**不实现** `completeCommentThreads`（线程回补，
+  在上游 `comment.go` 而非 `activity.go` 的 `L63–L393` 段内，且不在本片 DoD 里）。
+  **代价（已登记）**：硬上限真的响了且窗口切在某个线程中间时，**可能出现孤儿子回复**
+  （parent 掉在窗口外）—— 上游靠 `completeCommentThreads` 修，本片不修。
+  本片的上限是 2000 而评论 p99 ≈ 30、生产上见过最多 ≈ 1.1k ⇒ 该形状**正常不会发生**。
+  **写入面覆盖率**（本地只有 `crates/mc-repos/src/agent/env.rs:80` 一个写者，上游只有
+  3 处 `CreateActivity`）由 **M9-10** 登记（**R-M9-4**），本片**只报告不修**。
+
+#### 9.30.5 证据面（门 ⑤ 纯函数 7 条 + 门 ⑥ 真库 4 条 + `mc-repos` 真库 3 条）
+
+- `mod pure`（门 ⑤，不碰库）：四参「任一非空」判定、非法值不校验、两形态排序相反、
+  同刻靠 `id` 决胜、**两侧独立截断不 clamp**、截断头取值逐格、序列化形状。
+- `mod db_tests`（门 ⑥，真库造 `comment` + `activity_log` 两类行）：裸形态合并 + 升序 +
+  逐类字段 + member 水合 + **跨 workspace ⇒ 404**；wrapped 形态 DESC + 游标恒 null +
+  `around` 锚点 + 空值/非法值边界；**两侧独立截断 + 响应头点名**（上限缩到 1 ⇒ 1 条评论
+  未触顶、3 条活动触顶 ⇒ 头 `"activity"` 而合并后 **2 条 > 上限 1**）；授权链 401/400/403。
+  **造行只碰两条查询真实读取的表** ⇒ 不依赖别的波次补 `activity_log` 写者（R-M9-4）。
+- `mc-repos` 侧真库 3 条：两条 newest-N 窗口（砍**最老**、留**最新**、外层排回升序）、
+  评论半边的**租户谓词是真的**（活动半边**不带**该谓词的不对称被钉住）、member 身份读全局
+  `user` 行。
