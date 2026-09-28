@@ -17025,3 +17025,86 @@ PG 16 / 5432 **online** ⇒ DoD 2ⓑ 的真库用例可跑（需当轮建带 `CR
 **正确口径：先切出 ref 列再 grep** ——
 `git ls-remote --heads origin | awk '{print $2}' | grep <issue 号>`（本轮 = **0**，与事实一致）。
 凡是「按 issue 号/关键词判远端分支」的命令，一律**不得**直接在整行上 grep。
+
+## 193. 21:00 cycle（`LUM-2450`）—— 收割 PR #141（**M9 波全波合入**）+ 把 §192.5 的未决点**证否**
+
+**起手读数**：base `4c4dc59f`；GH **1 个 open PR**（#141）；daemon `running_task_count = 1`（= cycle 自身，无在飞片）；
+`df` **21G used / 27G avail / 44%**；PG 16/5432 `online`；mem 123G / 32 核。
+
+### 193.1 收割 PR #141（`LUM-1824` M9-9）—— 七条判据链全过，squash 合入 `cac3b0e7`
+| 判据 | 实测 |
+|---|---|
+| 分支自身 `--numstat` == PR API | `7 files / +2712 / −136` **逐字相符** |
+| `mergeable` / `mergeable_state` | `True` / `clean` |
+| base 祖先判定 | `git merge-base --is-ancestor` = **真** ⇒ **可快进，无冲突面** |
+| head CI | **3/3 绿**（`db` / `contract` / `fast`） |
+| 合并树 == PR head 树 | `1852d9ac…` **两边逐字相同** |
+| 合并后 ⑦ 八数字 | **逐字不变**（见 §193.2） |
+| 合并后 ⑦b / ⑩ | `exit 0` / `exit 0` |
+
+🔴 **本轮新增的可复用简化：squash 合入时「合并树 == PR head 树」是可判的，判中就免掉本地全量 `--with-db`**
+（省 18–30G 冷编译 + 数十分钟）。口径：`git rev-parse <merge>^{tree}` vs `git rev-parse <head>^{tree}` 相等
+⇒ head 上那 3 个 check-run 的绿**逐字适用于合并树**。base 是 head 的祖先时这条恒成立（squash 不改树内容）。
+
+⚠️ **本轮踩到并修正的一个真错误**：合并后我先 `git reset --hard origin/feat/multica-rs-initial` 再读门，
+而**本地 ref 还是旧的**（`reset` 不会 fetch）⇒ 读的是**合并前的树**，白读一轮。
+**正确顺序永远是 `git fetch` → `git reset --hard`**。§190/§191/§192 的「`rev-parse` 对 `ls-remote`」只对**远端**成立，
+**对本地 `origin/*` 缓存 ref 不成立** —— 后者每次用前都要 fetch。
+
+### 193.2 门读不变式第 5 次复现（base `cac3b0e7`）
+```
+upstream 456 | local 546 | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0  unclaimed 0  regression 0
+local_only 8   owners {}   ok=true          GATE_SLASH_ALIAS_EXIT=0   GATE_FILE_SIZE_EXIT=0
+```
+与合并前 `4c4dc59f` **逐字相同** —— 与「0 路由片」预期一致。
+**`known_gap 0 / owners {}` 连续第三轮** ⇒ M3–M10 全波次**已无待实现路由**，剩下是运力与收尾工具问题，不是工作量问题。
+
+### 193.3 `LUM-1824` 交 PR 后回收 773M（`target/`）
+合并后该片 workdir 只剩 `target/` 773M（全 device 唯一）⇒ 删。
+`avail` 26G → **27G**，重新满足 `LUM-2136` 的 `≥ 20G` 派发门槛。
+
+### 193.4 🔴 §192.5 的「D-2 写集可能不够」—— **未决点已证否，不必再问**
+§192 只把 (a)/(b) 抛给派发面。本轮实测把「会不会成环」**证否**了：
+
+```
+crates/mc-http/Cargo.toml:113              mc-channel = { path = "../mc-channel" }   ← 边早已存在
+crates/mc-channel/Cargo.toml                无任何 mc-http 依赖（第 20 行只是注释记录这条边的来由）
+crates/mc-channel/src/wecom/mod.rs:38,41,42  pub mod stream_store / ws_frame / ws_sender
+```
+
+⇒ 真传输三件套**早已全部 `pub` 导出在 `mc-channel` 侧**，`mc-http` **早已依赖** `mc-channel`。
+所以 D-2 **不需要新 crate、不需要新跨 crate 边、不需要动 `Cargo.toml` / `Cargo.lock`**：
+适配器放 mc-http 侧新增 `crates/mc-http/src/routes/channels/wecom_probe.rs` 即可，**依赖方向恒 `mc-http → mc-channel`，反向永不引入**。
+
+**裁定 = 选 (a) 并把路径钉死**（预授权 1 个新模块 + 预授权把个别 `pub(crate)` 放宽为 `pub`，后者须在交付注释逐条列出）。
+**为什么不选 (b) 拆片**：(b) 会与本片**争同一个 `wecom.rs` 写集**，且本 device 只有 1 个在写盘的名额（§183.3），
+拆片 = 两轮串行 + 一次额外冷编译；且 D-1 不带 D-2 交付时 BYO wecom 仍**恒 503**，属**半截价值**。
+
+🔴 **可复用结论**：「新增模块会不会造成依赖成环」这类问题，**先查既有 `path = ` 边的方向**，
+多数时候答案已写在 `Cargo.toml` 里（本仓 `mc-channel/Cargo.toml:20` 甚至把这条边的来由写成了注释）。
+**先证否再立项，不要把已可判定的问题挂成待决项推到下一轮。**
+
+### 193.5 派发面：连续第四轮 = 结构性 1 台（但**本轮有货可派**）
+`runtime list` × `agent list` 按 `runtime_id` 连接：
+- devbox5 `bd3d2b9d` **online**（= 本 cycle，唯一在飞）。
+- devbox1 `041bf509`、devbox2 `e3b45a25`（**offline 自 2026-09-17**）、devbox4 `4a7f29e1` 全 offline；
+  `chong` 的 `970fe6d2`、`go` 的 `d08c0c87` 也 offline。
+- online 空 pi runtime：`7e6471d9`（**本轮起已绑 `投资研究助手lin`**，不再算空）、`46140255`、`8b9c725f` 后者仍零绑定。
+
+⇒ **owner 动作仍是改绑 `runtime_id`**（改绑 `46140255` / `8b9c725f` 任一即当轮恢复槽位）。不重复 @。
+`LUM-2110` 结构型原地 `todo`（其宿主 devbox2 已熄火 11 天、远端 `2110` 分支 **0 命中** ⇒ 满足 §191 三条改派条件，
+但**本 device 只能同时跑 1 个在写盘的 run**，故不在本轮改派）。
+
+### 193.6 `LUM-2110`(M10-8) 的规格缺陷（**下轮立项前必须先订正**）
+实测 `bash scripts/gates.sh --list` 只有 **10 道门**：`fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size`
+—— **没有 `image` 门**；`.github/workflows/` 下只有 `ci.yml`，CI 实跑 **3 个 job**（`db` / `contract` / `fast`）。
+而 `LUM-2110` 的 T1-10 要求 `gates.sh --only image` 绿、T1-11 要求 **4 个 job** 全绿
+⇒ 这两条判据**指向不存在的门与不存在的 job**，照描述实现会必然 FAIL。
+**处置：下轮改派 `LUM-2110` 前，先把它 T1-10 / T1-11 改写成当轮实际存在的门与 job 集合（或先补一个 image 门），再派。**
+
+### 193.7 本轮下一轮起点
+- base = **`cac3b0e7`**；GH **0 open PR**；在飞实现片 **1** = `LUM-2136`（M7-FU 接线，workdir `lum-2136-04f6ab425571`，PID 35915 活跃）。
+- `LUM-2136` 交 PR ⇒ 走 §193.1 那条判据链（**含「合并树 == head 树 ⇒ 免本地全量门」**）；合并后 8 数字仍须逐字不变。
+- 起手**先 fetch 再 reset**（§193.1 的踩坑）。
+- 派发面若仍只 1 台：改派 `LUM-2110` 前**先按 §193.6 订正它的 T1-10/T1-11**。
