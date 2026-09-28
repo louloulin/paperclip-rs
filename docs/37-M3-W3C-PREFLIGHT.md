@@ -17358,3 +17358,97 @@ GATE_ROUTE_PARITY_EXIT=0   GATE_SLASH_ALIAS_EXIT=0   GATE_FILE_SIZE_EXIT=0
 - `LUM-2110` 交 PR ⇒ 走 §193.1 七条判据链（预检 `merge-base..head` numstat == PR API / 形态判定 / `merge-tree` **按 exit code 判** / head CI 3/3 绿或同树 `--with-db` / API 钉 40 位 sha + `merge_method=merge` / 落地树 ≡ 预演树）；**交 PR 即回收其 `target/`**。
 - 槽位空出且 `avail ≥ 20G` ⇒ 派 `LUM-2111`（M10-9 INT，唯一 `--write-baseline`，与任何基线写者不同轮）；`LUM-2109` 仍等 owner 裁决。
 - **积压登记（本轮新增 2 条）**：`LUM-2456`（22:30 window）与 `LUM-2458`（23:00 window）两个 cycle issue 的 run 均以 **`529 {"type":"server_error","message":"Upstream request fail…"}`** 终态失败（`LUM-2456` 13 分钟、`LUM-2458` 2 分 5 秒）⇒ 属**provider 侧上游 5xx**（与 ENOSPC 的 `mkdir … no space left` 签名不同源），窗口已过、**只登记不动状态、不 rerun**。
+
+## §197 00:30 cycle（`LUM-2465`）—— 磁盘救援轮（**204M → 2.5G**）；🔴 承重：**`deps` 的 80% 是测试二进制**；🔴 订正 §177 的 keep-latest 配方
+
+base **`a9ca6773`**（与 §196 收尾值**逐字相同**，GH **0 open PR** ⇒ 本轮**零位移**）；
+在飞 **1** = `LUM-2110`（M10-8，run `01a0e8a9` 自 15:36:26Z `running`，**门禁已跑完**）；
+起手 `df -h /` = **47G used / 204M avail / 100%**；PG `online`；checkout 落 feat 线**直接命中**（`--ref` 生效）。
+
+### 197.1 门读不变式第 7 次复现（base `a9ca6773` 当场重跑三道零编译门）
+
+```
+upstream 456 | local 546 | baseline 546
+implemented 456 = 455 real + 1 placeholder | known_gap 0 | unclaimed 0 | regressions 0
+local_only 8 (含 1 placeholder) | owners {} | ok=true
+GATE_ROUTE_PARITY_EXIT=0  GATE_SLASH_ALIAS_EXIT=0  GATE_FILE_SIZE_EXIT=0
+audit_workspace_deps FINDINGS: A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0
+```
+
+与 §190.1 / §191.1 / §193.1 / §196 **逐字相同**。`known_gap 0 / owners {}` **连续第五轮**。
+
+### 197.2 🔴🔴 头号产出：`deps` 的 **80% 是无扩展名的测试/CLI 二进制**，不是库产物
+
+起手 `204M` 时逐类实测 `LUM-2110` 的 `target/debug/deps`（合计 **26643 MB**）：
+
+| 类别 | 体积 | 个数 |
+|---|---|---|
+| **无扩展名可执行（测试二进制 / CLI）** | **21248 MB（80%）** | **227** |
+| `*.rlib` | 3315 MB | 681 |
+| `*.rmeta` | 1528 MB | 1376 |
+| `*.so` | 333 MB | 27 |
+| `*.o` | 246 MB | 532 |
+| `*.d` | 7 MB | 1687 |
+
+⇒ **49G 的容器装不下一整轮 `--with-db`**：基线占用约 8G（`/usr` 1.0G + `/var` 0.8G + `.cargo` 1.7G + `.rustup` 1.3G + `project` 5.0G + `workdir 残骸`），
+`--with-db` 峰值实测 **26.9G**，留给 ⑨ 收尾与 `git push` 的余量 ≈ `49 − 8 − 27 = 14G` 中已被前几门吃满。
+**门 ⑤（`cargo test --workspace`）单门就产出 21.2G**，它才是峰值主因，而不是 §185 归因的「两套 profile」。
+
+### 197.3 🔴 订正 §177 的 keep-latest 配方：**它在本轮回收 0 字节，原因是「重复组数为 0」**
+
+§177 记「按 `(stem, ext)` 留最新，实测放掉 **15.2 GB**」；§143.6 又部分证伪过一次。本轮给出**可判定的变量**：
+
+```
+ls | awk '{...stem, ext...}' | sort | uniq -c | awk '$1>1' | wc -l   ⇒   0
+```
+
+**重复 `(stem, ext)` 组数 = 0** ⇒ 该配方**回收量恒为 0**。§177 那 15.2G 之所以成立，是因为当时**多轮 profile/feature 趟**在同一 `deps` 上留下了同 stem 多哈希；
+**单趟构建下它是 0**。⇒ **新纪律：外科回收前先数重复组数，为 0 直接换路径**（与 §185「先量 `incremental` 桶数，为 0 就换路径」同款，但对象是 `deps` 不是 `incremental`）。
+
+### 197.4 🔴 承重：**§192.2 外科公式与 §195.4 的 `CARGO_INCREMENTAL=0` 互斥**
+
+实测 `target/debug/incremental` = **1 MB / 桶数 0**，因为在飞片按 §195.4 的建议设了 `CARGO_INCREMENTAL=0`。
+⇒ **凡是听 §195.4 建议起手的片，§192.2 的外科公式恒失效**（无桶可删）。
+两条纪律的适用条件必须写明：**外科公式只在 `incremental` 桶数 > 0 时存在**，而设 `CARGO_INCREMENTAL=0` 正是为了让 `deps` 少一半 —— **二者取一，不能同时指望**。
+
+### 197.5 本轮实际回收：**只动死 workdir，不动在飞 target**（2.3G）
+
+`204M` 时三条杠杆逐项算完：
+
+| 杠杆 | 可回收 | 判定 |
+|---|---|---|
+| `incremental` 外科（§192.2） | **0** | 桶数 0（§197.4） |
+| `deps` keep-latest（§177） | **0** | 重复组 0（§197.3） |
+| 死 workdir 外壳 | **~2.3G** | ✅ **唯一可用** |
+
+回收口径 = **逐 workdir 四判据**，且 `dirty > 0` 是**硬否决**：
+
+- 删：5 个只读上游克隆（`ups`/`upstream`，公开仓可再生，388M）+ **49 个 `git status --porcelain` 为空**的 cycle 外壳（~1.9G）。
+- **保留（`dirty > 0`，未提交成果，删了不可再生）**：`lum-1814`(4) / `lum-1818`(8) / `lum-2115-c4d914aeaaa7`(27) / `lum-2434`(22) / `lum-2362`。
+
+⇒ `204M → 2.5G`，**全程 `LUM-2110` 的 `gates.sh` / `pi` 零中断**（PID 逐个回读存活）。
+
+🔴 **承重教训：死 workdir ≠ 垃圾**。本轮 69 个 workdir 里**有 5 个带未提交成果**；
+一把 `rm -rf` 按目录名清盘会**静默销毁 5 份不可再生的实现**。**「死 workdir 可回收」这条旧口径不成立，必须逐个 `git status` 判定。**
+
+### 197.6 `LUM-2110` 状态：**门禁 10/10 绿**（首次），但 0 提交未推
+
+`/tmp/gates_evidence.log` 末行逐字 `overall: PASS — 10/10 gate(s) green in 275s` + `GATES_EXIT=0`；
+`grep -c 'os error 28'` = **0**（**在 204M 余量下零 ENOSPC** —— 因为构建是 `--only clippy,clippy-util` 之后的**温热**产物，不是冷建）。
+切片 HEAD = `f8cf89ee`，工作树 `M docs/65-STOP-CONDITION.md`（门禁后回填实测读数），**远端 0 命中、未开 PR**。
+🔴 **新签名：门禁绿 + 余量 204M ⇒ 距 ENOSPC 只差一次 `git push`**。**`df` 判危险要按「余量 / 剩余门禁产物」比，不是按绝对值。**
+
+### 197.7 派发面连续第 5 轮 = 结构性 1 台
+
+`runtime list × agent list` 按 `runtime_id` 连接：`3c6087f9`(devbox5 `bd3d2b9d`) **online = 本 cycle**，且被 `LUM-2110` 占着；
+devbox1 `041bf509` / devbox2 `e3b45a25`(offline 自 09-17) / devbox4 `4a7f29e1` / devbox `478b7f4b` 全 offline
+（devbox1 的同宿主 `becb92e6`/`08fa5fc9` 仍共享 `10:24:00Z` 逐秒 ⇒ §191 宿主熄火签名未消）。
+另 3 台 online 的 Pi runtime（`46140255` / `8b9c725f` / `7e6471d9`）**零绑定本项目 agent** ⇒ **owner 动作仍是改绑 `runtime_id`**（不重复 @）。
+⇒ 槽位 **1/3**，另 2 空**非磁盘所致，是结构性无处可派**。
+
+### 197.8 下一轮起点
+
+base `a9ca6773`；在飞 `LUM-2110`（0 路由 ⇒ 合入后八个数须逐字不变，验收只能来自它自己的脚本用例 + 门禁，**不能来自 ⑦**）。
+起手：`df` 连采 → **数 `deps` 重复组数（§197.3）** + 数 `incremental` 桶数（§197.4）→ 决定回收路径 → 再判活。
+`LUM-2110` 交 PR 后**立即回收其 27G `target/`**（§190：回收时机是「交 PR」不是「合并」）⇒ 回 ~29G。
+🔴 `LUM-2109`/`LUM-2111` docker 三者皆无仍需 owner 裁决；`LUM-2462`（门 ⑥ 连接预算，写集 `scripts/gates.sh`）排其后。
