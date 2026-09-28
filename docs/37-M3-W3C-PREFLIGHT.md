@@ -18341,3 +18341,126 @@ base **`2a3e64be`** + 本节直推；GH **0 open PR**；在飞 `LUM-2482`（0 �
 base = **`82584529` + 本节**；先判活 `LUM-2487`（它交 PR 后走 §206.2 同一条判据链：先比 tree hash，
 合并树当场重跑 `--with-db` 10/10，**八个数须逐字不变**）；**交 PR 即回收其 17G `target/`**；
 `avail` 回 ≥30G 才排 Tier-2。`LUM-2111`（M10-9 INT）仍卡 docker 三件套皆无，**待 owner 裁决，不重复 @**。
+## §205 【LUM-2487】`daemon_token` 签发+登记 ⇒ 20 条 daemon fixture 从恒不可判定变真判定（**0 路由片**）
+
+- base = **`82584529`**（PR #149 合并点）。写集 = `crates/mc-conformance/src/{daemon_token.rs(新),lib.rs,harness.rs,requirements.rs}`
+  + `crates/mc-repos/src/daemon.rs` + 本节。**未改** `crates/mc-http/src/routes/**`（0 路由）、
+  **未改** `migrations/**` / `scripts/gates.sh` / 任何 baseline，**`report.json` 逐字未动**（见 205.5）。
+- 起手实读复核：`REQUIREMENTS::daemon_token.satisfied_by == &[]`、`report.json` 20 条 daemon actor
+  且 `requires == ["daemon_token"]` —— 与派发描述逐字一致。
+
+### 205.1 缺口一句话：**「缺装配」与「缺能力」在报告里长得一模一样**
+
+`detail` 里那句 `the harness does not mint or register an mdt_ token` 是一张**空判据**：
+`satisfied_by = &[]` 表示「没有任何层供得起」，于是这 20 条**恒** `unevaluable`，而每轮 `exit 0`
+的报告里它只占一行，与真缺陷读起来没有区别。
+
+🔴 **本片最可复用的判别式**（承接 §204.5 的「每条判据都要能回答它在什么实现下会 FAIL」，这里是它的**镜像**）：
+
+> **恒不可判定**（真·替身缺失：`db_fault_injection` / `cloud_runtime_stub` / 限流器替身）**是诚实的记账**；
+> **缺装配**（本仓签发面/解析面都在，只是回放器没去调）是**一笔迟早要还的债**。
+> 区分它们的动作只有一个：**去查那条前提描述的机制，本仓是不是已经有了。**
+> `daemon_token` 的 `detail` 写着「harness 不会造」—— 主语是 **harness**，不是 **repo**。
+> ⇒ **凡主语是 harness 的前提，都不是能力缺口，是待办装配。**
+
+⇒ 顺带查出：`DaemonRepo::insert_daemon_token`（`daemon/registry.rs:351`）**在 base 上就已存在**
+（派发描述说「mc-repos 没有写入面」是**过期**的，`grep` 口径应是 `mc-repos/src/daemon/**` 子模块，
+`crates/mc-repos/src/daemon.rs` 只是模块根）。所以本片实际只缺**调用方**。
+
+### 205.2 三件事，零新领域概念
+
+| # | 做什么 | 落在哪 |
+|:-:|---|---|
+| 1 | **签发** `mdt_` + 2×v4 UUID（`getrandom`，不给 crate 加 `rand` 依赖） | `daemon_token::mint` |
+| 2 | **登记** `token_hash = hex(sha256(明文))`；`workspace_id` = **用 router 自己建出来**的那个 | `harness::database_router` → `daemon_token::register` |
+| 3 | **回放时带身份** `Authorization: Bearer <明文>` | `lib::plan` 的 `ActorKind::Daemon` 分支 |
+
+**哈希算法只有一个落点**：`mc_repos::daemon::hash_daemon_token`（新增），并**逐字钉住**测试向量
+（`sha256("mdt_test")`）+ 断言与 `PatRepo::hash_token` 同值（上游复用同一个 `auth.HashToken`）。
+🔴 解析面 `scope.rs:143` 有一份**同名私有副本**，本片 0 路由不许改 `mc-http` ⇒ 两处并存的注释里
+互相点名了，这是当前唯一能防止「算错哈希 ⇒ 刚签发的令牌立刻 401」的机器见证（另两处是本仓代码，无第三方 oracle）。
+
+**明文只活在内存里**（三道）：`RegisteredToken::Debug` / `Bindings::Debug` 手写脱敏（`derive` 会把它打进 CI 日志）；
+`Report::from_rows` 只登记 `user_id` / `workspace_id`，**连字段都不给它**；`report.json` 逐字未动（205.5）。
+
+### 205.3 `satisfied_by` 为什么是 `&[Tier::Database]` **单层**（不是含 `Stateless`）
+
+stateless 层的池指向不可达端口（`harness::STATELESS_URL`），**既登记不进去也查不出来**。
+把一个供不起的层写进 `satisfied_by` = 把「这一层供不起」记成「供得起」= **删掉这条前提的鉴别力**
+（§199 形态）。单测 `daemon_token_is_supplied_by_the_database_tier_only` 逐字断言 `== &[Tier::Database]`。
+
+### 205.4 真数据：database 层逐项读数（判据 1）
+
+`cargo run -p mc-conformance -- --db-url <fresh db>`，`--json` 读 `fixtures[*].database`：
+
+```
+totals 365 / pass 196 / mismatch 136 / unmounted 3 / placeholder 0 / unevaluable 30
+by_actor  member 152 pass + 127 mismatch + 11 unevaluable + 3 unmounted
+          daemon  9 pass + 9 mismatch + 2 unevaluable      ← 本片
+          agent  13 unevaluable   anonymous 35 pass + 4 unevaluable
+requires=daemon_token 的 20 条：database 层 pass 9 / mismatch 9 / unevaluable 2
+```
+
+- **9 pass**：真判定了（`status matched`，不再是 `needs the database tier`）。例：
+  `TestGetDaemonWorkspaceRepos_WithDaemonToken` exp 200 → obs 200；
+  `TestListDaemonWorkspaces_DaemonTokenIsWorkspaceScoped` exp 200 → obs 200；
+  `TestGetTaskStatus_ForeignWorkspace_Returns404` exp 404 → obs 404（外键 workspace 隔离真的生效了）。
+- **9 mismatch**：**不是回归，是真缺陷/真缺口第一次被看见**。多数是 `exp 200 → obs 404`：
+  上游那条测试在库里**种过 task**，而回放器只种了 user+workspace ⇒ 查无此行。
+  承重点：**这些格子此前是 `unevaluable`，被记成「没能力判」；现在它们诚实地变成 `mismatch`。**
+  🔴 这正是 §203 那条纪律（「`mismatch` 变小不是成果，`pass` 变多才是」）的对面：
+  **本片让 `pass` 9 条真涨，同时把 9 条从「不可判定」正名为「不匹配」** —— 分子分母都没动，是判定能力变了。
+- **2 条仍 `unevaluable`**：`TestGetTaskStatus_ErrNoRows_Returns404` 与
+  `TestGetTaskStatus_TransientDBError_Returns500` 额外挂了 `db_fault_injection`
+  （上游 mockDB 的 500 是**替身**的判决，本仓真池说不失败就不失败）⇒ 属 205.1 的**真·恒不可判定**，不归本片。
+  单测 `…no_longer_blocked_by_it` 把这个 20 − 2 = 18 的算式钉住，
+  **防止「缺口只是从 `daemon_token` 平移成别的 id」被当成进展**。
+
+### 205.5 🔴 报告刷新边界：本次 **`report.json` 逐字未动**（`git status` 空 + `--check` exit 0）
+
+`--write` / `--check` 走的是 **stateless 层**（`main.rs`：`--write` 注释「stateless 层；确定性的」）。
+stateless 层对 daemon fixture **两道关都答否**（身份非匿名 + 前提无库登记面）⇒ 结论一字不变。
+**判据 1 的证据因此只能来自 database 层的 `--json` 读数，不能来自 `report.json`** —— 报数时别混淆这两处。
+⇒ 本片**没有触发**任何 `report.json` 格子变化，所以「只许 `unevaluable → pass/mismatch`」这条约束
+是**空真**（不是被违反），`regressions` 也无从谈起。
+
+### 205.6 双向失败演示（判据 3）
+
+手段：在 `harness::database_router` 签发之后临时加一段 `MC_CONF_DEMO` 分支去 `UPDATE daemon_token`
+（本机该分支需要 `sqlx` 直连，故临时给 `mc-conformance` 加了 `sqlx` 依赖 —— **两处都已从备份还原**）。
+每次读数跑的是**完整 365 条回放**（不是单条 fixture）。
+
+| 演示 | 手法 | `requires=daemon_token` 20 条的 database 层读数 | 判读 |
+|:-:|---|---|---|
+| 基线 | 不动手 | `pass 9 / mismatch 9 / unevaluable 2` | — |
+| ① **过期** | `expires_at = now() - interval '1 hour'` | `pass 0 / mismatch 18 / unevaluable 2`，**全部 obs=401** | 原先 9 条 `pass`（obs 404/200）**逐条翻成 401 mismatch** ⇒ 它真的在查库、真的在判过期 |
+| ② **哈希错一字符** | `token_hash` 末位改写 | `pass 0 / mismatch 18 / unevaluable 2`，**全部 obs=401** | 同上 ⇒ 走的是**唯一索引查表**那条路，不是「反正不可判定」 |
+
+两次的残留**已复原**：`git diff --stat` 只剩本片 5 个文件，`grep -rn "TEMP-DEMO\|MC_CONF_DEMO" crates/` 空，
+`Cargo.lock` 已 `git checkout`。
+
+### 205.7 门禁与 ⑦ 读数
+
+`bash scripts/gates.sh --with-db --db-url …` ⇒ **10/10 绿**（754s：① 3s ② 136s ③ 54s ④ 45s ⑤ 159s
+⑥ 259s ⑦ 0s ⑧ 26s ⑨ 72s ⑩ 0s）。⑦ 八个数**逐字不变**（0 路由片）：
+
+```
+upstream 456 / local 546 / implemented 456 = 455 real + 1 placeholder
+known_gap 0 / unclaimed 0 / local_only 8 / owners {}      （regressions 0）
+```
+
+### 205.8 🔴 顺手撞见的一个 **base 上就已红**的测试（本片**没有**修，也**不该**在本片修）
+
+`cargo test -p mc-conformance --test golden -- --ignored database_tier_replays_every_decidable_fixture`
+在 **base `82584529` 上就 FAILED**（`git stash` 实测：同一个 panic、同一个 fixture
+`agents/TestGetAgent_RejectsForgedAgentIDHeader`）。根因是 `Tier::supports` 的**身份关**对 database 层恒真，
+而 `plan()` 对 `ActorKind::Agent` 造不出凭据 ⇒ **「说能判」与「造不出」不一致**，与本片修的
+`daemon_token` 是同一族缺陷（`Agent` 那一支，不是 `Daemon` 那一支）。
+
+**本片不修的三条理由**（不是「修不动」，是「修了会越界」）：
+① 写集外：修它要动 `Agent`/`Token` actor 的判定口径；
+② **会改 `report.json` 的 `detail` 逐字节文本**（13 条 agent actor 的「缺什么」措辞要变），
+而判据明写本片只许 `unevaluable → pass/mismatch` 方向的格子变化；
+③ 它是 `--ignored` 的真库测试，不在 `gates.sh` 任何一道门里 ⇒ 门禁不会因此变红。
+⇒ 留给下一片（与 §201 遗留的 Tier-2 一起），记为：**`Tier::supports` 的身份关必须与 `plan` 的
+可绑定分支共用同一个真相源**，而不是各写一份。

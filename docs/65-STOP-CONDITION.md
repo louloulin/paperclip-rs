@@ -138,6 +138,25 @@ contracts/golden-local/default  fixtures=10 pass=10 mismatch=0 unmounted=0 place
 contracts/golden-local/token    fixtures=3  pass=3  mismatch=0 unmounted=0 placeholder=0 unevaluable=0
 ```
 
+#### 4.2.1 订正（`82584529` / LUM-2487 实测）—— 上面两块都是**旧基线**的快照
+
+上面 4.2 的两组数字**都不是当前 `82584529` 的读数**（离线层那份 `pass 33 / mismatch 25 /
+unmounted 1 / unevaluable 306` 尤其旧：当前已提交 `report.json` 是 `pass 34 / mismatch 0 /
+unmounted 0 / unevaluable 331`）。保留原文是因为它记录的是**当时**的判定能力，不是错抄。
+
+`82584529` 上本片（daemon_token 签发+登记）当场实测：
+
+```text
+离线层 --no-db --check report.json   exit 0，report.json 逐字未动（0 路由片）
+真库层 --db-url <fresh db>  fixtures 365 | pass 196 | mismatch 136 | unmounted 3 | placeholder 0 | unevaluable 30
+  by_actor daemon: 9 pass + 9 mismatch + 2 unevaluable   ← 本片从 20 unevaluable 变过来的
+```
+
+🔴 **T1-6 仍是 FAIL，且本片让它 FAIL 得更有信息量**：20 条 daemon 里 18 条已从「不可判定」变成
+**真判定**（9 `pass` / 9 `mismatch`），余 2 条挂着 `db_fault_injection`（上游 mockDB 的替身）——
+那 2 条是**真·恒不可判定**，本仓真池说不失败就不失败。
+⇒ 报 T1-6 的数时必须写清**取自离线层还是真库层**（两者差一个量级），详见 `docs/37` §205.4–205.5。
+
 ### 4.3 ⑧（需库）
 
 ```text

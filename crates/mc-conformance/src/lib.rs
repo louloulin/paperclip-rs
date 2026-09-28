@@ -62,6 +62,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod daemon_token;
 pub mod harness;
 pub mod report;
 pub mod requirements;
@@ -309,10 +310,33 @@ pub fn load_dir(dir: &Path) -> Result<Vec<Fixture>> {
 /// 一次回放用的身份。抽取器只声明两类可绑定语义（见 `BINDABLE`）：
 /// 除它们以外的符号已在抽取期被 skip 成 `value_unresolved`，所以这里的
 /// `resolve` 对未知符号直接报错而不是猜一个值。
-#[derive(Debug, Clone, Copy)]
+///
+/// 🔴 `daemon_token` 是**明文凭据**且只在内存里：`Debug` 手写脱敏，报告侧
+/// （`Report::from_rows`）只登记 `user_id` / `workspace_id`，连字段都不给它。
+/// 见 [`daemon_token`] 模块文档的「明文只活在内存里」。
+#[derive(Clone)]
 pub struct Bindings {
     pub user_id: Uuid,
     pub workspace_id: Uuid,
+    /// database 层现场签发并登记的 `mdt_` 明文（`None` = 没有 daemon 身份，
+    /// stateless 层就是这种：它连库都没有，签不出来也用不上）。
+    daemon_token: Option<String>,
+}
+
+impl std::fmt::Debug for Bindings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bindings")
+            .field("user_id", &self.user_id)
+            .field("workspace_id", &self.workspace_id)
+            .field(
+                "daemon_token",
+                &self
+                    .daemon_token
+                    .as_ref()
+                    .map(|_| format!("{}<redacted>", daemon_token::DAEMON_TOKEN_PREFIX)),
+            )
+            .finish()
+    }
 }
 
 impl Bindings {
@@ -321,6 +345,7 @@ impl Bindings {
         Self {
             user_id: Uuid::from_u128(STATELESS_USER_ID),
             workspace_id: Uuid::from_u128(STATELESS_WORKSPACE_ID),
+            daemon_token: None,
         }
     }
 
@@ -329,7 +354,24 @@ impl Bindings {
         Self {
             user_id,
             workspace_id,
+            daemon_token: None,
         }
+    }
+
+    /// database 层的绑定：带一枚**已登记**的 `mdt_` 明文。
+    #[must_use]
+    pub fn with_daemon_token(user_id: Uuid, workspace_id: Uuid, token: String) -> Self {
+        Self {
+            user_id,
+            workspace_id,
+            daemon_token: Some(token),
+        }
+    }
+
+    /// 这次回放能不能施加 daemon 身份。
+    #[must_use]
+    pub fn daemon_token(&self) -> Option<&str> {
+        self.daemon_token.as_deref()
     }
 
     fn lookup(&self, sym: &str) -> Option<String> {
@@ -449,16 +491,32 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
             ));
             notes.push("actor member: 以 X-Multica-Session + X-Multica-User-Id 注入身份".into());
         }
-        // 令牌 / agent / daemon 身份需要真凭据，当前回放器**不伪造**它们。
-        // daemon 身份是 §201.2 子根因 A 的正主：上游把它放在请求 context 里，
-        // 而本仓的 `DaemonAuth` 每一条路径（`mdt_` / `mul_` / dev-mode）都要查库 ——
-        // 所以「补一个 header」在这里是**做不到**的，`Tier::supports` 已经在回放前
-        // 把它挡成 `unevaluable`；这一支只是让直接调 `plan` 的调用方拿到同样的实话。
-        ActorKind::Token | ActorKind::Agent | ActorKind::Daemon => {
+        // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入），
+        // 令牌（`mul_` / `mcn_`）需要另一条签发面 —— 两者都仍然**不伪造**。
+        ActorKind::Agent | ActorKind::Token => {
             return Err(format!(
                 "actor kind {:?} needs a real credential; this runner does not fabricate one",
                 fx.actor.kind
             ));
+        }
+        // §201.2 子根因 A 的正主：上游把 daemon 身份放在**请求 context** 里，而本仓
+        // 把它放在 `Authorization: Bearer mdt_…` 里，解析面要查 `daemon_token` 表。
+        // 所以「补一个 header」只有在 **database 层现场签发过一枚**时才成立
+        // （`harness::database_router` → [`daemon_token::register`]）；stateless 层
+        // 拿不到令牌，这里照旧说「不伪造」，而不是发一个注定 401 的假头。
+        ActorKind::Daemon => {
+            let token = bindings.daemon_token().ok_or_else(|| {
+                "actor kind Daemon needs an mdt_ credential this tier did not mint \
+                 (the database tier mints and registers one per replay)"
+                    .to_string()
+            })?;
+            headers.push((
+                HeaderName::from_static("authorization"),
+                format!("Bearer {token}"),
+            ));
+            notes.push(
+                "actor daemon: 以 Authorization: Bearer mdt_… 注入本次回放现场登记的身份".into(),
+            );
         }
         ActorKind::System => return Err("actor kind system is internal-only".into()),
     }
