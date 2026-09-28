@@ -45,7 +45,7 @@
 ^/api/agent-builder	M3	agent builder session
 ^/api/agents	M3	agent CRUD / env / 生命周期
 ^/api/runtimes	M3	runtime profile 生命周期
-^/api/cloud-runtime	M3	远程 runtime 节点池（执行后端，非计费）
+^/api/cloud-runtime	M9	远程 runtime 节点池（执行后端，非计费）
 ^/api/tasks/	M3	task queue 生命周期
 ^/api/working-agents	M3	worker agent 视图
 ^/api/client-usage	M3	runtime 用量上报

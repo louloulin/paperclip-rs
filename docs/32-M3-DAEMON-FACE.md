@@ -9254,3 +9254,137 @@ D-9 🔴 `kind='user'` **不是笔误**（§58.5：`kind='system'` 意为「不�
 regression 0 / unclaimed 0 / local_only 8`、`baseline 473` **不动**、`456 + 0 == 456` ✅。
 
 **门禁 10/10**（`--with-db`；⑥ = `migrate=0, e2e=0`）。本地跑法的两条经验见 §58.10。
+
+## 61. M9-10（`LUM-1825`）：M9 集成收口 —— ⑦ 基线 473→546、cloud-runtime owner 迁移、⑨ 真库 24 条与缺口登记
+
+**本片 0 路由**（`docs/62-M9-PLAN.md` §4.1 的 `M9-10`；收口片，不新增功能代码）。
+base `5a5c76b6`（= PR #136 / M9-7 的合并提交，当轮 `git fetch` 重取确认）。
+**偏离的完整登记在 `docs/62-M9-PLAN.md` §11（11.1–11.11）**；本节登记与 `docs/32` 有关的部分 + 门禁环境事实。
+
+> **号段起手复核（当轮实测）**：`### 9.x` 末号 = **`### 9.28`**（M9-7），`## N.` 末号 = **`## 60.`**（M9-6）；
+> `### 9.27` 仍是**空号段**（并发 cycle 预留）。切片描述写的「`§9.13` 只追加」写于更早的 base（那时末号还是 `### 9.13`），
+> 按本文件自 M7-0 起的裁定取**末号 +1**：本节 **`## 61.`**，索引段 **`### 9.29`**。
+> 跨分支复核：`git fetch origin '+refs/heads/*:refs/remotes/origin/*'` 后逐个远端分支
+> `git show <b>:docs/32-M3-DAEMON-FACE.md | grep -cE '^### 9\.29|^## 61\.'` ⇒ **全部 0 命中**（无争号）。
+> 🟡 **不动 `### 9.13`**（M9-0 anchor 的已落段落，逐字保持）。
+
+### 61.1 写集（逐字路径，全波最后一个 ⑦ 写者）
+
+| 文件 | 动作 | 行数 |
+| --- | --- | ---: |
+| `docs/fixtures/route-parity-baseline.json` | `--write-baseline`：`routes` **473 → 546**（+73 键、0 删除） | — |
+| `scripts/route-owners.tsv` | `:48` 的 `^/api/cloud-runtime` owner `M3` → `M9` | 1 |
+| `docs/fixtures/upstream-routes.tsv` | `:112-122` 11 行 owner 单元格 `M3` → `M9` | 11 |
+| `scripts/route_parity.py` | `rel_or_abs()` 统一出 `/`（跨平台产物稳定性，见 61.4 D-1） | 3 |
+| `docs/62-M9-PLAN.md` | §11 由占位换成实测记录（11.1–11.11） | — |
+| `docs/32-M3-DAEMON-FACE.md` | 本节 + `### 9.29` 索引段 | — |
+
+**一字节未动**：`migrations/**`、`contracts/**`、`crates/**`、`apps/**`、`Cargo.toml` / `Cargo.lock`、
+`docs/fixtures/slash-alias-allowlist.tsv`、`scripts/file_size_baseline.tsv`、
+`crates/mc-conformance/report.json`（实测 **0 行**改动 —— 门 ⑨ 的输入必须逐字恒等）。
+
+### 61.2 §9.2 的 cloud-runtime 归属迁移：**已执行**（执行条件当轮成立）
+
+执行条件复核 = 「M3 的 cloud-runtime 尾账**未派发 / 未在飞**」：`LUM-2116`（M9-11）已合入 base
+（`/api/cloud-runtime` 11 条已 `implemented`）、`owners == {}` ⇒ **不在飞** ⇒ 迁移而非仅登记。
+
+* **迁移后 ⑦ 逐字不变**：`local 546 / implemented 456（454 real + 2 placeholder）/ known_gap 0 /
+  unclaimed 0 / regressions 0 / local_only 8`、`owners == {}`、`ok == true`、exit 0。
+* ⇒ 切片描述 §2 的**口径订正（承重）成立**：`owners` 空 ⇒ **无直方图** ⇒ 旧预测
+  `owners.M3 11→0 / owners.M9 33→44` **作废**；本片**不动**任何一个 ⑦ 计数。
+* 🔴 **一条描述未预测到的副作用**：owner 迁移把 **4 条上游 `cloud_runtime` fixture** 从 `M3` 面
+  挪进 **M9 面** ⇒ ⑨ 的「M9 面 fixture」由描述写的 **20 条** 变为实测 **24 条**（21 member + 3 anonymous）。
+
+### 61.3 门禁读数与环境事实（🔴 交付前必读）
+
+**🔴 本仓在 Windows 上不可编译**：`crates/mc-runtime/src/lib.rs:51` 是 `#[cfg(unix)] pub mod conformance;`，
+而 25 个 adapter（`crates/mc-runtime/src/adapters/*/mod.rs`）无条件 `use crate::conformance::{…}`
+⇒ `cargo build --workspace --all-targets` 在 Windows 上 **25 处 E0432 / exit 101**。
+本机（devbox1）是 Windows，因此本片所有 cargo 类门**在 WSL（Ubuntu 24.04 / Linux 6.18）**里跑，
+并另起 **PostgreSQL 16.15**（= `.github/workflows/ci.yml:85` 的 `postgres:16` 同版本）；
+⑦/⑦b/⑩/⑧ 同机复跑。**Windows 工作树是 `core.autocrlf=true`（system 级）的 CRLF** ⇒ `bash` 跑不了
+`scripts/gates.sh`（`$'\r': command not found`）⇒ WSL 侧用 **LF 检出副本**跑。
+
+| 门 | exit | 结果 |
+| --- | ---: | --- |
+| ① fmt / ② build / ③ clippy / ④ clippy-test-util | 0 / 0 / 0 / 0 | PASS |
+| ⑤ test | 0 | PASS |
+| ⑥ db（`migrate=0,e2e=0`） | 0 | PASS |
+| ⑧ schema-drift | 0 | PASS（UTC 库） |
+| ⑦ route-parity（`route_parity.py --quiet` + `slash_alias_audit.py --quiet`） | 0 | PASS |
+| ⑨ conformance（`--no-db --check`） | 0 | PASS |
+| ⑩ file-size | 0 | PASS |
+| | | **`overall: PASS — 10/10 gate(s) green`（250s）** |
+
+* ⑦ 终值：`upstream 456 (f41fae6b08fb) | local 546 | baseline **546** | 454 real + 2 ph = 456/456 |
+  known_gap 0 | unclaimed 0 | regression 0 | local_only 8（1 条 placeholder）| owners {} | files_scanned 272`。
+* ⑦b：`registered upstream-key literals **541**` / `0 defect(s) / 0 warning(s)` ⇒ 本片**未引入**
+  `MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS`。
+* ⑩：`limit=800 baseline=10 **OK: 0 violation(s)**`；`scripts/file_size_baseline.tsv` **未动**。
+
+**两条环境级的红，逐条取证后判为非回归**：
+
+1. **⑤ `mc-channel` 抖动（判为基线级，不追）**：全量并行跑时偶发 2 条时序用例红
+   （`dingtalk::outbound::tests::http::*` 的 `Refused{InvalidAuthentication}` / `slack::tests::*` 的 `Elapsed(())`）。
+   取证三条：① **同树同包单跑绿**（`cargo test -p mc-channel --lib` ⇒ `1579 passed; 0 failed`）；
+   ② **在 pristine base `5a5c76b6`（本片改动之前）全量跑同样红**（实测 2 条）⇒ 与本片无关；
+   ③ 本片写集**不含任何 `.rs`**。**未**用 `--test-threads=1` 刷绿、**未**用 `--write-baseline` 掩盖。
+2. **⑧ 的 `+08` vs `+00`**：首次跑红（`46` 处差异 / 45 已登记 / **1 未登记** =
+   `differs column task_usage_hourly_rollup_state.watermark_at` 的 default 渲染为 `'…+08'::timestamptz`）。
+   🔴 **根因是服务器 `TimeZone` GUC，不是 schema** —— 该列 default 在 catalog 里**按会话时区渲染**，
+   本机 PG 默认 `Asia/Shanghai`，而 `contracts/upstream-schema.json` 基线是 UTC 渲染的。
+   把库设成 `TimeZone=UTC`（= CI 的 `postgres:16` 默认）后 **exit 0 / PASS**，
+   `by category=apply-exception 9 / differs 15 / extra 22`、`registry 45 row(s): 45 matched, 0 stale`
+   ⇒ 「本波 0 新迁移 ⇒ 头部 schema 与基线一致」成立。
+
+### 61.4 登记的偏离（`docs/62` §11 的 `docs/32` 侧摘要）
+
+| # | 偏离 | 判据 / 处置 |
+| --- | --- | --- |
+| **D-1** | 改 `scripts/route_parity.py` 的 `rel_or_abs()`（**工具**、非路由） | 它把 `os.path.relpath` 的原始分隔符写进 `route-parity-baseline.json` 的 `routes_dir` ⇒ Windows 上 `--write-baseline` 会写成 `crates\mc-http\src`，让这份签入产物按宿主 OS 抖动（该文件头逐字写 *do not edit by hand*）。改为统一出 `/`：Linux 行为不变、Windows 产物与 Linux 逐字一致。本片刷新后 `routes_dir` **未变** |
+| **D-2** | ⑤ / ⑧ 的两条环境红 | 见 61.3 的两条取证；**不改**被测代码、不改断言 |
+| **D-3** | cargo 类门在 WSL 跑（不在 Windows） | 见 61.3 的 `E0432` 事实；Windows 侧只有 ⑦/⑦b/⑩/⑧ 可复现 |
+| **D-4** | 号段取 `## 61.` / `### 9.29`（不是描述写的 `§9.13`） | 见本节头的号段复核（描述写于末号还是 `9.13` 的旧 base） |
+| **D-5** | 🔴 **硬前置不成立：`M9-8`（`LUM-1823`）/ `M9-9`（`LUM-1824`）仍是 `backlog`** | `crates/mc-http/src/routes/timeline.rs:50` 仍 `get(not_implemented)`；`crates/mc-repos/src/timeline.rs` 仍是 59 行空桩；`crates/mc-http/src/routes/issue_table/mod.rs:500-509` 的 `limit_usage` 仍恒 204；`crates/mc-entitlement/src/{client,cache}.rs` 仍是 75/69 行桩。**本片读数仍有效**（M9-8 的注册键已存在、M9-9 0 路由 ⇒ 546/456 在它们落地后不变），但**不能宣布 M9 收口** |
+| **D-6** | 缺口登记 6 项 | `docs/62` §11.8：(a) cloud-runtime 归属迁移**执行结论**（12 行）；(b) R-M9-6 `seatcapacity` 909 行**无主缺口**（`crates/ apps/` 0 命中，`415`–`419` 表族无人读写）；(c) R-M9-4 `activity_log` 写入面**覆盖率**（生产写者只有 `crates/mc-repos/src/agent/env.rs:80` 与 `crates/mc-repos/src/squad_evaluation.rs:237`；前者 `issue_id` 恒 `NULL`）；(d) §9.3 三 crate **不建**的落地（`crates/` 无 `mc-dashboard` / `mc-feedback` / `mc-onboarding` / `mc-mika`）；(e) §9.6 `task_usage_dashboard_*` legacy 表**存留口径**（`084` 建 3 张、`103:129-131` 全 DROP ⇒ head 里不存在，**不复活**）；(f) D-1 的工具侧缺陷 |
+
+### 61.5 ⑨ 真库 24 条（摘要；逐条见 `docs/62` §11.6）
+
+`cargo run -q -p mc-conformance -- --db-url <UTC 真库>`：总量
+`365 / pass 187 / mismatch 159 / unmounted 4 / unevaluable 15`、`contract_equivalence_rate 0.512329`
+（stateless 快照 `pass 33 / unevaluable 306`、rate `0.090411`）。
+**M9 面 24 条（21 member + 3 anonymous）：`pass 14` / `mismatch 10` / `unevaluable 0`**
+—— `unevaluable` **一条都没被改写成 `pass`**。
+10 条 mismatch 用三条环境反例（未配置 / 死端口 / 含 userinfo 的非法 URL）定根因：
+**5 条 =「cloud 未配置」403**（换死端口后变 502 ⇒ 证明是 §2.5 的未配置分支，不是路由缺陷）、
+**4 条 = `billing_workspace_subscriptions` flag 关 403**、**1 条 = fixture/harness 口径差异**
+（`…RejectsInvalidPayerID` 期望 400 实测 401，早于 body 校验就被身份闸拦下）。
+`webhook` 的 429 条**结构上不可复现**（`mc-conformance` 每条 fixture 只发一次请求，触不到限流窗口；
+与 §60.5 的结论一致）。
+
+### 9.29 M9-10（`LUM-1825`）：M9 集成收口（⑦ 基线刷新 + owner 迁移 + 缺口登记）的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离与读数的**唯一一份完整登记**在 **`## 61.`（61.1–61.5）** 与
+> **`docs/62-M9-PLAN.md` §11（11.1–11.11）**。
+> 号段起手复核：`grep -cE '^### 9\.29|^## 61\.'` = **0**（`### 9.27` 空号段仍留给并发 cycle）。
+
+**写集（4 个非文档文件 + 2 个文档）**：`docs/fixtures/route-parity-baseline.json`（`routes` 473 → **546**）·
+`scripts/route-owners.tsv:48`（`M3` → `M9`）· `docs/fixtures/upstream-routes.tsv:112-122`（11 行 `M3` → `M9`）·
+`scripts/route_parity.py`（`rel_or_abs()` 3 行，跨平台）· `docs/62-M9-PLAN.md` §11 · 本节。
+**`crates/**` / `apps/**` / `migrations/**` / `contracts/**` / `Cargo.lock` 一字节未动**；`report.json` 0 行改动。
+
+**⑦ 终值**：`local 546 | baseline **546** | implemented **456（454 real + 2 placeholder）** | known_gap 0 |
+unclaimed 0 | regression 0 | local_only 8 | owners {}`、`456 + 0 == 456` ✅。
+**owner 迁移已执行**（`docs/62` §9.2 的「执行点 = M9-10」）：迁移前后 ⑦ **逐字不变**（`owners == {}` ⇒ 无直方图），
+旧预测 `owners.M3 11→0 / owners.M9 33→44` **作废**；副作用 = ⑨ 的 M9 面 fixture **20 → 24 条**。
+
+**门禁 10/10**（WSL Ubuntu 24.04 + PostgreSQL **16.15** = CI `postgres:16` 同版本；⑥ = `migrate=0, e2e=0`）。
+🔴 **本仓在 Windows 上不可编译**（`crates/mc-runtime/src/lib.rs:51` 的 `#[cfg(unix)] pub mod conformance;`
+× 25 个 adapter，25 处 `E0432`）⇒ cargo 类门必须在 Linux 上跑；Windows 工作树的 `core.autocrlf=true`（CRLF）
+也让 `bash scripts/gates.sh` 直接报 `$'\r': command not found`。
+两条环境红判为**基线级**并逐条取证：⑤ 的 `mc-channel` 时序抖动（同包单跑绿 + **pristine base 上同样红**）、
+⑧ 的 `+08` vs `+00`（服务器 `TimeZone` GUC，设 UTC 即绿）。
+
+🔴 **本片最重要的一条结论**：切片描述 §0 的硬前置「M9-0…M9-9 全部合入 base」**不成立** ——
+**`M9-8`（`LUM-1823`）与 `M9-9`（`LUM-1824`）当轮仍是 `backlog`**（`timeline` 仍 501 占位、
+`limit_usage` 仍恒 204、`mc-entitlement` 仍是桩）。本次只完成**账面收口**，M9 波的真实尾账是这两片。
