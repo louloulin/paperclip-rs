@@ -17452,3 +17452,117 @@ base `a9ca6773`；在飞 `LUM-2110`（0 路由 ⇒ 合入后八个数须逐字�
 起手：`df` 连采 → **数 `deps` 重复组数（§197.3）** + 数 `incremental` 桶数（§197.4）→ 决定回收路径 → 再判活。
 `LUM-2110` 交 PR 后**立即回收其 27G `target/`**（§190：回收时机是「交 PR」不是「合并」）⇒ 回 ~29G。
 🔴 `LUM-2109`/`LUM-2111` docker 三者皆无仍需 owner 裁决；`LUM-2462`（门 ⑥ 连接预算，写集 `scripts/gates.sh`）排其后。
+
+## §198 01:00 cycle（`LUM-2467`）—— 收割 PR #143（M10-8）+ 🔴 证否 `LUM-2462` 的连接预算算术
+
+起手 base **`62d8e810`** ⇒ 收尾 **`aac8e86b`**。GH 0 → 1 → 0 open PR。`df` **29G avail（39%）**
+—— 上一轮 §197 的 204M 已被交 PR 后的 `target/` 回收抹平。派发面仍是**结构性 1 台**（见 §198.6）。
+
+### §198.1 收割 PR #143（M10-8 / `LUM-2110`）—— 走「形态③免跑分支」
+
+两条同时成立：② 前进段**非 docs 位移 = 0**（base 从 `959a4002` 前进到 `62d8e810` 的两个提交
+`a9ca6773` / `62d8e810` 全是 `docs(37):`，零位移）+ ④ head CI **3/3 绿**
+（`fast` / `contract` / `db` 全 success）⇒ 免本地全量门直接合。写集纯增量
+（`added` 2 文件 / **+947 / −0**：`docs/65-STOP-CONDITION.md` 301 + `scripts/stop_condition.sh` 646）。
+
+**合并树当场重跑三道零编译门，八个数逐字不变**（本片 0 路由的不变式成立）：
+
+```
+upstream 456 (f41fae6b08fb) | local 546 registered | baseline 546
+  implemented 455 real + 1 placeholder = 456/456  known_gap 0  unclaimed 0  regression 0  local_only 8
+⑦=0  ⑦b=0  ⑩=0
+```
+
+⇒ `known_gap 0 / owners {}` **连续第六轮**。`LUM-2110` 的验收证据全部来自它自己的脚本用例
+（18 格矩阵）+ CI 3/3，**没有一个字来自 ⑦** —— 与 §178/§182/§191 的定式一致。
+
+### §198.2 🔴 承重：`LUM-2462` 的 `nproc × 池4 = 128` 是**理论上界，真实峰值 8**
+
+`LUM-2462` 的现象描述给了一个很精确的算术：`nproc=32` ⇒ `cargo test` 默认 `--test-threads=32`，
+每个 db 用例 `Db::connect(&url, 4, 1)` ⇒ 「并发连接上限 ≈ 32 × 4 = 128 > `max_connections=100`」，
+据此判定 `--with-db` 恒 9/10，并开出处方「⑥ 加 `--test-threads=4`」。
+
+**当轮实测（起手重取，未抄任何基线）**：`nproc=32` ✅、`max_connections=100` / `superuser_reserved=3` ✅
+—— 两个输入都对，但**结论不成立**：
+
+| 条件 | `pg_stat_activity` 峰值 | ⑥ 结果 |
+|---|---|---|
+| ⑥ 单独跑（无共租） | **8** | PASS（e2e 829 条） |
+| ⑥ + 外部占住 80 条 | 90 | PASS（0 次 `pool timed out`） |
+| ⑥ + 外部占住 97 条 | 97 | **FAIL**（migrate 报 `pool timed out`） |
+
+**为什么 128 那个上界从未被逼近**（三条，都可复算）：
+
+1. `cargo test -p a -p b -p c -p d` 是**逐个 test binary 串行**跑的，不是「4 个 package 各起 32 线程」。
+   于是并发上限是「一个 binary 内的 32 线程」，不是 `32 × 4 个 package`。
+2. `Db::connect(&url, 4, 1)` 的 4 是**池上限**，sqlx **懒建**、连接**用完即还**，不是常驻 4 条。
+3. 于是真实需求比上界低一个数量级：**8**。
+
+⇒ 🔴 **可复用判据**：任何「并发 × 每任务资源 = 超限」式的容量论证，**先量实际峰值再下结论**。
+上界与峰值之间可以差 16 倍，而差得越远，越容易被当成「环境偶发」而反复重跑。
+
+### §198.3 🔴 承重：那条旋钮**压不动**—— `--test-threads=4` 的峰值**仍然是 8**
+
+按 `LUM-2462` 的首选处置实跑一遍，并同步采样连接数：
+
+| 模式 | ⑥ 连接峰值 | ⑥ 墙钟 |
+|---|---|---|
+| 默认（不传 = cargo 取 nproc=32） | **8** | **62s** |
+| `MULTICA_TEST_THREADS=4` | **8** | 65s |
+
+**收益 0 条连接，代价约 5% 墙钟。** 结论比「不划算」更强：**⑥ 的连接峰值不由 `--test-threads` 决定**，
+所以按 §198.2 的算术去拧它，在当前实现下是**无效**的（不是「锦上添花」，是「打不中」）。
+这也解释了为什么 §196 观测到的那 4 条红**不该**用这个旋钮治。
+
+### §198.4 🔴 复现确认：那个「极易误判」的签名是真的（且 PG 一声不吭）
+
+把连接占到 **97/100** 时，⑥ 的 **migrate** 步就以 `pool timed out while waiting for an open connection`
+失败，而同一份日志里 **`too many clients` 出现 0 次**：
+
+```
+GATE_DB_MIGRATE_EXIT=1
+Error: connect db
+Caused by:
+    0: database connection error: pool timed out while waiting for an open connection
+GATE_DB_E2E_EXIT=skip  # not run: migrate failed (exit 1)
+```
+
+⇒ `LUM-2462` 关于**机制**的描述完全正确且很有价值：sqlx 的 acquire 超时**先于** PG 的拒绝触发，
+所以「PG 从没抱怨过」**不能**当作「连接够用」的证据；panic 落在基础设施上而非业务断言上，
+于是极像「某个用例的缺陷」。**错的只是阈值（128 vs 实测 8）与由此推出的药方。**
+
+### §198.5 交付：`scripts/gates.sh` 单文件，把预算变成**可配置**但**不改默认**
+
+`LUM-2462` 的**目标**（「把连接预算从机器核数隐式决定改成显式可配置」）成立，**处方**被证否。
+所以按目标交付、按证据定默认值：
+
+- 新增 `MULTICA_TEST_THREADS`：非空 ⇒ ⑥ 传 `--test-threads=N`；**空 ⇒ 不传**（保持现状）。
+  正整数校验，不合法**当用法错误 exit 2**，绝不静默回落 —— 否则「预算」与「日志里印的值」会不一致，
+  那正是本片要消灭的歧义。
+- ⑥ 的日志行**显式印出**是否设了这个旋钮（「没设」也是信息）。
+- **默认不改**：`--test-threads=4` 实测收益 0、代价 5% ⇒ 默认设它是纯亏。
+- 🔴 **不动**任何测试代码、不动 `Db::connect(&url, 4, 1)` 的池大小、不动 PG 的 `max_connections`
+  —— 那是 owner/cycle 级动作，且不解决 CI 的可复现性。
+- 把「`pool timed out` ⇒ 先查这台 PG 上已有多少别人的连接」写进文件顶部的「已知坑」，
+  **连同「PG 一条 FATAL 都不打印」这个反直觉特征**，让下一次撞上的人 30 秒内认得出成因。
+
+本地实测（改动后）：默认模式 ⑥ **PASS / e2e 829 / 0 次 `pool timed out`**；
+`MULTICA_TEST_THREADS=4` 模式 ⑥ **PASS / e2e 829**（两侧计数逐字一致 ⇒ 旋钮不改变覆盖面）。
+⑦ **PASS**、⑨ **PASS**、⑩ **PASS**。①②③④⑤ 因 §197 的磁盘算式（余量 15G < 门 ⑤ 峰值实测 21.2G，
+ENOSPC 已 10 次、且曾连带杀掉 PG 5432）**本轮刻意不跑**，交由 PR 的 CI 3/3 覆盖 ——
+本次 diff 只碰 ⑥ 的命令行与一个 env 旋钮，**不触及** ①②③④⑤⑦⑨⑩ 的任何代码路径。
+
+### §198.6 派发面与下一轮
+
+- **槽位 1/3，另 2 空仍是结构性无处可派（非磁盘）**：devbox5（我）online；devbox1 `041bf509`、
+  devbox2 `e3b45a25`、devbox4 `4a7f29e1`、`478b7f4b` 全 offline；devbox1 同宿主的
+  `becb92e6` / `08fa5fc9` 仍共享 `10:24:00Z` 那一秒（§191 的宿主熄火签名未消）。
+  另 3 台 online Pi runtime（`7e6471d9` / `46140255` / `8b9c725f`）**依然零绑定本项目 agent**
+  （`7e6471d9` 绑的是「投资研究助手lin」）⇒ owner 动作仍是改绑 `runtime_id`（按口径不重复 @）。
+- **`LUM-2111`（M10-9 INT）仍不可派**，但阻塞原因**换了一条**：硬前置「全波 M10-0…M10-8」里的
+  **M10-7（`LUM-2109`）仍在 backlog**（docker/podman/buildah 实测三者皆无、`deploy/` 不存在）。
+  另外它的预测已**严重过期**（写的是 `known_gap 65 / owners {M9 33, M3+ 16, M3 11, M10 5}`、
+  `local 474 / baseline 458`，实测已到 `local 546 / baseline 546 / known_gap 0 / owners {}`）
+  ⇒ 下一轮要么先改它的描述与预测，要么就把它按「实测重写」重新立项。
+- **下一轮起点 base = `aac8e86b`**。`LUM-2462` 交 PR ⇒ 七条判据链；因 0 路由，合并树**八个数须逐字不变**，
+  验收只能来自它自己的 CLI 用例 + 门禁 ⑥ 双模式，**不能来自 ⑦**。
