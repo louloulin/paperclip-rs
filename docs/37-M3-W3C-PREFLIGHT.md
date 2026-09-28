@@ -15075,3 +15075,99 @@ daemon 会在本 turn 结束后派发。这比「反复试触发」省一整轮�
 
 6.9G 的余量不是「该省着点」，是**上一轮的成果还躺在盘上没交出去**；
 先判断「有没有已提交未交付的片」，比先算「还能不能再派一片」更值钱。
+
+---
+
+## §173. 2026-09-28 10:30 cycle（LUM-2405）：**M9-5 已被重新派发，本轮是等待轮**
+
+### §173.1 起手读数（全部当场实测，非继承）
+
+| 项 | 读数 |
+|---|---|
+| base `feat/multica-rs-initial` | **`33535345`** = `git rev-parse HEAD` 逐字等于 `origin/feat/multica-rs-initial`（无分叉） |
+| GitHub open PR | **0**（API 200，列表长度 0） |
+| PG 5432 | `online` |
+| `df /` | 起手 16G avail / 67% ⇒ 收尾同量级 |
+| daemon | `active_task_count: 2` = cycle 自身 ∥ `LUM-1820`；`resource_wait_task_count: 0` |
+| `LUM-1820` 的 run | 旧 run `01a0e570` 仍 `completed` 且 `pr_url` 空 ⇒ 按 §172.2 **不算已交付** |
+
+### §173.2 🔴 本轮头号产出 = 「`runs` 列表会长时间不新增，但片确实活着」
+
+`multica issue runs LUM-1820` **至今只有一条** `01a0e570`（00:35→01:14）。若只按这个判据，
+会得出「M9-5 没人做、可以随便重派」的结论 —— **错的**。本轮从 `/proc` 逐 PID 扫 `cwd` 拿到硬证据：
+
+```
+1237/1238  bash -c cd …/lum-1820-…/paperclip-rs && export PATH=…
+1239      bash scripts/gates.sh --with-db          （02:30:12 起，etime 25s）
+1261      cargo build --workspace --all-targets --locked
+```
+
+⇒ daemon **确实在 02:30:12 派发了新 run**（就是本 cycle 起来的那一刻），只是
+`issue runs` 的**新条目还没落库**。**教训：`issue runs` 是滞后指标，`/proc/*/cwd` 才是实时指标。**
+§172.2 的判据（「run `completed` ≠ 交付」）仍然成立，但要补一条：
+**`runs` 只有一条 ≠ 没在飞** —— 判「在飞」用 `/proc` 扫 `cwd` + `ps -o etime`，
+判「已交付」用 `result.pr_url` 非空。两者不可互换。
+
+### §173.3 门读（base `33535345` 当场重跑，三道零编译门，全部 `exit 0`）
+
+新 checkout **无 `target/`** ⇒ 只跑不需编译的 ⑦/⑦b/⑩，**不跑** ⑨（冷编 `mc-conformance` 不值当）：
+
+- ⑦ `local 536 / upstream 456 / baseline 473 / implemented 449 (447 real + 2 placeholder) / known_gap 7 / unclaimed 0 / regression 0 / local_only 8` ⇒ `449 + 7 = 456` ✅，**逐字命中 §171 的预测**（base 自 09:30 起只动过 docs，读数本应不变 —— 复现成立）。
+- ⑦b 无参 `--quiet` **exit 0**。
+- ⑩ `file_size_check --quiet` **exit 0**。
+
+`known_gap` 的 7 条 `--json` 逐条 `owner` 清单（**不写绝对前推，按 §172 的纪律用机器可数的 `owner`**）：
+
+```
+M9  POST /api/agents/mika                     ← M9-7 / LUM-1822
+M9  POST /api/contact-sales                    ┐
+M9  POST /api/feedback                         ┘ M9-5 / LUM-1820 在飞，一片占 5 条中的 3 条
+M9  GET   /api/notification-preferences/       ┐
+M9  PATCH /api/notification-preferences/       ┘ M9-5 另 2 条（本波唯一双形态片）
+M9  PUT   /api/notification-preferences/       ┘
+M9  POST /api/webhooks/stripe                  ← M9-6 / LUM-1821
+```
+
+### §173.4 M9-6 / M9-7 预飞**在新 base 上复核通过**（零成本，非重做）
+
+base 从 `ab422405` 走到 `33535345` 只加了 `docs/37`（docs-only），按 §167 的「docs-only ⇒ 门读不变」
+应当无影响 —— 本轮把 §172 的预飞结论在新 base 上**逐条重新 grep 了一遍**，全部仍然成立：
+
+| 检查 | 结果 |
+|---|---|
+| M9-6 写集 `crates/mc-http/src/routes/cloud/webhook.rs` | 在位（29 行空脚手架） |
+| M9-6 第二类漏项：`cloud/mod.rs:39 pub mod webhook;` + `:51 .merge(webhook::router())` | 仍在位（M9-0 已预声明）⇒ **不必改任何 `mod.rs`** |
+| M9-7 写集 `routes/agents.rs`（唯一 `mod`+注册面，`grep '^mod '` 6 条、**无 `mika`**） | 仍在位（470 行） |
+| M9-7 repos 侧 `agent.rs:44 pub mod mika;`（+ 已有 `agent/mika.rs` 61 行） | 仍在位 ⇒ **别去改 `lib.rs:67`** |
+| `slash_alias_audit --declared`（`stripe` + `mika` 两条） | `declared 2 / dual-form required: 0`、**0 defect**、exit 0 ⇒ M9-6/M9-7 都是**单形态**片，补尾斜杠反而是 `EXTRA_ALIAS` 硬失败 |
+
+🔴 顺带订正一处 `--declared` 的**用法**：它接的是**文件路径**不是 owner 名 ——
+`python3 scripts/slash_alias_audit.py --declared m9` 会 `FileNotFoundError: 'm9'` 栈回溯退出。
+正确写法是 `--declared docs/fixtures/m9-declared-routes.tsv`（本波 34 条 ⇒ `dual-form required: 3`），
+或临时喂 `/tmp` 下的小表做单片预测（本轮即此用法）。
+
+### §173.5 槽位：连续第 4 轮**刻意留空**（在飞片正占着全部可回收量）
+
+- `avail 16G`；全盘唯一大 `target/` = 在飞片自己的 **14G**（`incremental` 5.5G / 其余温热 8.5G），
+  其余 workdir 全是 34–145M 的空壳（扫了 12 个，最大的一个 145M）⇒ **没有任何「陈旧垃圾」可清**。
+- `incremental` 里桶龄 >3min 的有 156 个 / 4.98 GiB，但 **`/proc/*/fd` 命中 `incremental` = 6**、
+  `pgrep -c 'cargo|rustc'` = **10** ⇒ 正在编译中，按 §172.3 的判据**一个字都不能删**。
+  （对比 §172：上轮是**门禁**段 ⇒ 阈值放宽到 `-mmin +5`；本轮是**编译**段 ⇒ 阈值 `-mmin +3` 且 fd 命中非 0 ⇒ 不动。）
+- ⇒ **真余量 = 16G − 0 = 16G < 冷编峰值 18–30G** ⇒ **不派 M9-6**。
+
+### §173.6 下一轮第一动作
+
+1. `df` 连采 + `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → GitHub API 查 open PR。
+2. **从 `/proc` 逐 PID 扫 `cwd`** 判 `LUM-1820` 是否还在编译/门禁（**不要**用 `issue runs` 的条目数当在飞判据，§173.2）；
+   判交付仍看 `result.pr_url`。
+3. 它交 PR 后走 §171.7 判据链：**等 head CI 3/3 转绿再合**、钉 40 位 sha + `merge_method=merge`、
+   落地树 ≡ 预演树；合入后 **⑦b `--declared m9` 的 `dual-form required: 3` ⇒ 缺陷必须 3 → 0**。
+4. `LUM-1820` 落地、`df` 回 ≥30G ⇒ 同轮派 `LUM-1821`(M9-6) → `LUM-1822`(M9-7)（两片零文件交集，§173.4 已复核）；
+   `owners.M9 → 0` 之后才派 `LUM-1825`（唯一 `--write-baseline` 的 INT 片）。
+   🔴 两条 INT（`LUM-1825` / `LUM-2111`）**不得同轮刷基线**。
+5. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），仍需 owner 裁决（按口径**不重复 @**）。
+
+### §173.7 本轮一句话 + 新纪律
+
+**在飞判据三件套**：`/proc/*/cwd`（实时在飞）→ `ps -o etime`（在哪个阶段）→ `result.pr_url`（已交付）。
+`issue runs` 的条目数**四个都不是**。本轮就差点因为只看它而误判「没人做」并重复重派。
