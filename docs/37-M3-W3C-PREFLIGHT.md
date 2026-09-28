@@ -17219,3 +17219,61 @@ devbox1 `041bf509` / devbox2 `e3b45a25`（offline 自 09-17）/ devbox4 `4a7f29e
 - 门 ③/④ 带 `-D warnings`，`doc_markdown` 只能改注释；**若 head 树的 CI 3/3 绿而本地红，判 base 已含修复**，以 CI 为准并重跑 `--only clippy,clippy-test-util` 复核。
 - 槽位空出**且**有空闲合规 device ⇒ 才派 `LUM-2110`（规格已就绪，只欠一台机器）。
 - `LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，需 owner 裁决，不重复 @。
+
+## 195. 22:00 cycle（`LUM-2454`）—— 零收割监控轮；**§194.8 的 3 红已被独立确认修复**；🔴 新签名：**门 ② 的字面 ENOSPC**；🔴 承重：**外科回收杠杆的前提是 `CARGO_INCREMENTAL`**
+
+**起手**：`multica repo checkout` **第 32 次**落 `main`（pc-* 世代）线 ⇒ 先 `git fetch --prune` 再 `git reset --hard origin/feat/multica-rs-initial` = **`cd43e83f`**（§194 三次 docs-only 直推，**非 docs 位移 = 0**）。
+GH API（`curl` + `git credential fill`，HTTP 200）**open PR = 0**；df 起手 21G(45%)→ 冷跑中掉到 17.9G(59%)；PG `online`；项目面 `in_progress` 只有本 cycle 与 `LUM-2136`。
+
+### 195.1 门读不变式第 7 次复现（base `cd43e83f`，四个零编译门 <1s）
+`upstream 456 / local 546 / baseline 546 / implemented 455r+1ph=456 / known_gap 0 / unclaimed 0 / regressions 0 / local_only 8(1ph) / owners {} / ok=true`；
+`slash_alias_audit --quiet` exit 0；`file_size_check --quiet` exit 0；`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`。
+**`known_gap 0 / owners {}` 连续第五轮** ⇒ 与 §193/§194 逐字相同，本轮前进段非 docs = 0（合入的只有 docs）。
+
+### 195.2 `LUM-2136`：§194.8 的 3 红**已修复**，第三轮全量门逐项复现（不采信自述，读 `/tmp/gates_m7fu3.log`）
+该片 13:44Z 的第二轮门（`/tmp/gates_m7fu2.log`）**只跑 104s 就 4/10**，第三轮 14:00:11Z 起**冷跑全量**（`target/debug/deps` 2674 个产物全部 `-mmin -30`，`proc-macro2` 起重 = 确证冷编）。
+到本轮收尾时逐项读到：
+`fmt 0 / build 0 / clippy 0 / clippy-test-util 0 / test 0 / db:migrate 0`（`db:e2e` 在跑）⇒
+**§194.8 点名的三条（① `fmt`、③ `clippy`、④ `clippy-test-util`）本轮全部 exit 0**。
+⇒ 结论：**那 3 条确实是「新建文件 + 中文注释」的固有代价，`cargo fmt` + 抽 `type` 别名 + 补反引号三步即可归零，不是设计缺陷**；§194.8 的写码期预防纪律成立。
+
+### 195.3 🔴 新签名：**门 ② `build` 上的字面 ENOSPC**（ENOSPC 累计第 10 次），且它会伪装成「4/10 绿」的伪读数
+`/tmp/gates_m7fu2.log` 的 ② 不是编译错，是：
+```
+error: couldn't create a temp dir: No space left on device (os error 28)
+       at ".../lum-2136-.../target/debug/deps/rustcWcPlF8"
+GATE_BUILD_EXIT=101
+```
+⇒ 该轮 `db:e2e 101 / schema-drift 2 / conformance 101 / test 101` **全部是 ENOSPC 的下游**，不是缺陷；
+**判别式 = `grep -c "os error 28" <log>`：非 0 ⇒ 这一轮的「红」一律作废，不得计入 DoD，也不得据此改代码。**
+（§185 记过 §⑤ 上的字面 ENOSPC；本轮把同一族补上 **②** 这一位。）
+⇒ 派发面新增一条算式：**片若需要「跑完全量门 → 改码 → 再跑一次**冷**全量门」，则 `avail` 门槛不再是 18–30G 的 1 倍，而是「冷跑峰值 + 再一次冷跑峰值」**；
+本轮实测：起手 21G → 一次冷跑后 `target/` 7.7G、`avail` 17.9G，**第二跑尚未开始就已吃掉 3G**。
+本片能跑完是因为 §194.3b 把 `avail` 从 6.6G 拉到了 14.9G —— **回收的收益要按「能不能撑住第二轮」计价，不是按「第一轮绿不绿」计价。**
+
+### 195.4 🔴 承重：`CARGO_INCREMENTAL=0` 时，§192.2 的外科回收**前提不成立**（不是 bug，是无桶可删）
+本片在飞门进程的 environ 里实测：`CARGO_INCREMENTAL=0`（PID 2933 / 46028），而 `.cargo/config.toml` 的 `[build] incremental = true` 被环境变量覆盖。
+⇒ `target/debug/incremental` **恒为空目录**（本轮 14:04 实测 `du -sm` = 1M、桶数 0；`ls -la` 显示目录 mtime 14:00 但无任何条目）。
+⇒ **§192.2 那条 `find target/debug/incremental …` 命令在这种 run 上注定零回收** ——
+与 §194.2（括号 bug）/§194.3b（空守卫）**不是同一族**：那两例是命令有桶却没删，本例是**根本没有桶**。
+🔴 **新判据（闭式）**：动手回收前先读
+`tr '\0' '\n' < /proc/<gates PID>/environ | grep CARGO_INCREMENTAL`
+—— 值为 `0` ⇒ 杠杆改道 `target/debug/deps`（按 `-mmin` 挑旧产物）或**等整轮跑完整目录回收**，**不要**对 `incremental` 反复重试（那只会复现「静默零回收」）。
+
+### 195.5 磁盘：本轮**主动不回收**（无可回收量）
+`avail` 26G(起手 df 21G used) → 冷跑中 17.9G；全盘唯一的 `target/` 就是在飞片自己的 7.7G，其余 workdir <150M，`.cargo` 1.7G / `.rustup` 1.3G 不可动。
+按 §194.3b 的纪律逐项判：**`incremental` 桶数 = 0（前提不成立，见 195.4）**、`deps` 全是本轮 30 分钟内的活产物（删它等于打断在飞编译）⇒ **本轮回收杠杆为 0，如实记录，不做任何动作**。
+（`du -sm -d1 /home/devbox` 本轮返回空且 exit 1 —— `du` 在该路径上不可靠，磁盘结论一律以 `df -m --output=avail` + 定点 `du -sm <dir>` 为准。）
+
+### 195.6 派发面连续第六轮 = 结构性 1 台（无变化，不重复 @）
+`runtime list`：`Pi (devbox2) e3b45a25` / `Pi (MS-AJRFTMRSXMHB) 041bf509` / `Pi (devbox4) 4a7f29e1` 全 offline；
+online 但**零绑定本项目 agent** 的 Pi runtime 仍是 `7e6471d9`（已绑「投资研究助手lin」）、`46140255`（jiangx-mac）、`8b9c725f`（xingubuntu）⇒ **owner 动作 = 改绑 `runtime_id`，当轮恢复 2–3 槽**。
+本 device 唯一可派位 = devbox5，而它**已被 `LUM-2136` 占住**（§183.3 同 device 只允许 1 个在写盘 run）⇒ **本轮零派发**，`LUM-2110` 按 §194.6 维持原地 `todo`（结构型无处可派，不是槽位型空缺）。
+
+### 195.7 下一轮起点
+- base **`cd43e83f`**；GH **0 open PR**；在飞 `LUM-2136`（第三轮全量门跑在 ⑥，已过 ①②③④⑤）。
+- 起手**先 fetch 再 reset**；df 连采两次再判 ENOSPC。
+- **先读在飞 gates PID 的 `CARGO_INCREMENTAL`** 再决定回收杠杆打哪（195.4）。
+- 见到 `os error 28` 的日志 ⇒ 该轮全部读数作废，等下一轮冷跑（195.3）。
+- `LUM-2136` 交 PR ⇒ §193.1 判据链（含「合并树 == head 树 ⇒ 免本地全量门」）；**交 PR 即回收它的 `target/`（7.7G）**。
+- 槽位空出 **且** 有空闲合规 device ⇒ 才派 `LUM-2110`；`LUM-2109`/`LUM-2111` docker 三者皆无仍硬阻塞，需 owner 裁决。
