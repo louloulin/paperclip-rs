@@ -15671,3 +15671,79 @@ owners = {}          ok = true
 3. 合入 ⇒ 回收它那 `target/` ⇒ 才考虑派 **`LUM-2419`**；
 4. `LUM-2111` 阻塞状态**每次 cycle 只复核一次**（`which docker podman buildah` + `ls deploy/ scripts/stop_condition.sh`），
    三者仍缺则**只在本 cycle 记一行，不 @ owner**。
+
+## 179. 14:30 cycle（`LUM-2422`，06:30Z）—— **零收割** + 17G 回收 + 🔴 **判活序作废重写**（跨 device agent）
+
+base **`ef9027f8`**（= §178 收尾值，本 cycle **未动**：GH `pulls?state=open` = **0** ⇒ 无 PR 可收割）。
+M9 波（`LUM-1816`…`1825`）代码面此前已 `owners == {}` 收口，本 cycle 是**纯门读 + 判活序纠错轮**。
+
+### ① checkout 落 `main` —— **第 23 次**
+
+`multica repo checkout` 后 HEAD = **`4fc96f30`**（`main` = pc-http "Port" 线，**与主干分叉**），
+`ls-remote feat/multica-rs-initial` = `ef9027f8` ⇒ 起手 `git reset --hard ef9027f8` 回主干线。
+新 workdir 的**第一件事**永远是 `rev-parse` 对 `ls-remote`，落下就先 reset。
+
+### ② 17G 回收（上轮自己的冷建 `target/`）
+
+`lum-2420-.../workdir/paperclip-rs/target` = **17G**（§178 跑 `gates.sh` 冷建留下的；§178 回收的是**更早**那片）。
+四判据：`git status --porcelain` 空 ✔ / HEAD 已在 base ✔ / `git branch -r --contains ef9027f8` 命中
+`origin/feat/multica-rs-initial` ✔ / 该 cycle 已交付退出（无进程）✔ ⇒ **只删构建缓存**。
+`35G used / 12G avail` → **`19G used / 29G avail (40%)`**。
+
+### ③ 门读（**全 docs-only，未跑任何需编译的门** —— 新 checkout 无 `target/`，冷编不值当）
+
+| 门 | 读数 | 与 §178 比 |
+| --- | --- | --- |
+| ⑦ `route_parity.py` | `local 546 / baseline 473 / implemented 454 real + 2 placeholder = 456 / 456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`、`OK: every upstream route is either implemented or owned` | **逐字相同** |
+| ⑦b `slash_alias_audit --tree .` | `541 literals / 0 defect / 0 warning` | **逐字相同** |
+| ⑩ `file_size_check.py` | `0 violation(s)` | 相同 |
+
+⇒ `456 + 0 = 456` ✅，`owners == {}` 仍成立 ⇒ **M9 路由面收口未被任何后续改动破坏**。
+**这就是 `LUM-1825`（`--write-baseline`）刷新前后必须逐字不变的那六个数**：`546 / 456 / 0 / 0 / 0 / 8` + `ok=true`。
+漂移即迁移写错（§178 承重订正继续有效：known_gap 已 0 ⇒ **「直方图预测」根本不存在**，迁移不得动任何计数）。
+
+### ④ 🔴🔴 **判活序作废重写**（本 cycle 唯一承重产出，也是本轮自踩的坑）
+
+**旧口径是错的**：判活 = 全盘 `/proc` 逐 PID 读 `cwd`，落在 `multica_workspaces` 下即在飞；
+「无 workdir + 无进程」⇒ 静默死亡 ⇒ 抢救 / 改派。
+
+**实测推翻**：`编程助手-devbox1` / `-devbox2` / `-devbox4` 是**各自独立 device**。
+本机 daemon `device_name=devbox5`，`multica daemon status` 的 `active_task_count` **只是本机计数**，
+对别的 device **完全瞎**（本 cycle 全程 `active_task_count: 1` = 只有 cycle 自己）。
+⇒ 它们的 **workdir 与进程在本机 `/proc` 与文件系统上完全不可见**，
+**「本机没有 workdir」不构成死亡证据**。
+
+**本轮代价（自记）**：据此把在飞的 `LUM-1825` 误判为静默死亡 ⇒ `--status todo` + 改派 `编程助手-devbox2`，
+**而 devbox1 全程在真跑**（`rev 4→6` 是它真写了描述；agent `status` 一直是 `working`）。
+**已回滚**：改派回 devbox1 + `--status in_progress --no-start`（避免起重复 run）。净损失 = 3 次无谓写（`rev 4→9`）。
+
+**正确判活序（跨 device 版）**：
+
+1. `multica agent list` 读目标 agent 的 `status` —— **`working` 才是活，`idle` 才是静默**（服务端聚合的真信号）；
+2. issue 的 `updated_at` / `revision` 是否**持续**推进（本轮 `rev 4→6` 即活证据）；
+3. **收割信号 = GitHub 上有没有 PR**（`LUM-1825` 的 DoD 就是交 PR），**不是**本机 workdir；
+4. `/proc` 扫 `cwd` **降级**为只判**本机**在飞片，且**必须先确认该片 agent 的 device == 本机**。
+
+🔴 **配套订正**：`multica issue assign --to <名字>` **不会**自动起 run —— 改派后 `编程助手-devbox2`
+仍 `idle`、无 workdir。只有状态流转到 `todo`/`in_progress` 且**不带** `--no-start` 才会起 run。
+⇒ **「改派」与「重启」是两个动作，必须分开做**；只想换归属就 `assign`，想重跑才动状态且不加 `--no-start`。
+
+### ⑤ 槽位：**1/3 在飞**，另 2 个**刻意留空**（连续第 7 轮）
+
+算式（§167 两项写法）：`avail 29G − 可回收量 0`（17G 已在收割时回收，盘上已无大 `target/`）= **29G**，
+对着**两片各自** `--with-db` 冷建峰值 18–30G ⇒ 需 36–60G ⇒ `29 < 36` **不成立** ⇒ 留空。
+`LUM-2419`（门 ⑥ 第三族竞态，纯测试支撑、零路由、零 manifest、不争基线）排 M9-INT 之后。
+🔴 `LUM-2111`（M10-9 INT）**仍硬阻塞**：`docker`/`podman`/`buildah` 三者皆无、`deploy/` 与
+`scripts/stop_condition.sh` 在 base 不存在，而 DoD 第 2 条硬依赖后者 ⇒ 按口径**不重复 @**，等 owner 裁决。
+**两条 INT 不得同轮刷基线** —— `LUM-2111` 阻塞期间该约束自动成立。
+
+### ⑥ 下一轮（`§179` 交接）
+
+1. `df -h /` + `pg_lsclusters` → `rev-parse` 对 `ls-remote`（**checkout 落 `main` 第 23 次，先 `reset --hard`**）
+   → GH `pulls?state=open` → **判活按 §179④ 新序（先 `agent list` 看 `status`，收割看 PR）**；
+2. `LUM-1825` 交 PR ⇒ 走**七条判据链**（可免跑的两半已跑通：numstat 逐字 + head CI 3/3）→
+   它**独占 `--write-baseline`** ⇒ 落地后**必须**当场在 base 重跑 `route_parity.py`，
+   核对 `baseline == 546` 且 `546/456/0/0/0/8` **逐字不变**、`ok=true`；
+3. 合入 ⇒ 回收其 `target/` ⇒ 才考虑派 `LUM-2419`；
+4. `LUM-2111` 阻塞**每 cycle 只复核一次**（`which docker podman buildah` + `ls deploy/ scripts/stop_condition.sh`），
+   三者仍缺则**只在本 cycle 记一行，不 @ owner**。
