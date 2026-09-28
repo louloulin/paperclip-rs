@@ -25,9 +25,12 @@
 //! 4. `scope.kind=my` 的 actor 取**当前登录用户**（上游从 session 取），请求里带的
 //!    `actor` 被忽略；本仓 `scope.relation=involved` 只覆盖 agent 归属 + squad leader。
 //! 5. `group.kind=priority` 是本仓新增维度（上游无），响应里多一个 `value.priority` 字段。
-//! 6. `GET /api/issues/limit-usage` 恒 **204**：本仓没有 entitlement/Cloud 订阅源，
-//!    等价于上游 `policy.Action != ActionEnforce` 的分支（“未强制限额，无 usage 可报”），
-//!    而不是伪造一个 `{"used":…,"limit":…}`。
+//! 6. `GET /api/issues/limit-usage` 的**策略源**在 M9-9 之后是已安装的 entitlement 平面
+//!    （`mc_entitlement::client::provider()` 的 `issue_count` gate，判据与上游
+//!    `ResolveIssueCountPolicy` 逐字相同）：未装平面 / 未强制限额 ⇒ 恒 **204**；
+//!    `enforce` 且 `limit > 0` ⇒ `200 {"used":…,"limit":…}`。
+//!    ⚠️ 计数只**采样**到 `limit`（上游 `CountIssueUsage` 同款），本仓复用
+//!    `IssueRepo::count_in_workspace`（其文档逐字点名本路由）。
 //! 7. 400 的错误体沿用本仓 `{"error":{"code","message"}}`；409/422 沿用上游的扁平
 //!    形状（`{"error":"cursor_query_mismatch"…}` / `{"error":"unsupported_group"…}`）。
 //!
@@ -62,6 +65,7 @@ use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 
 use mc_core::Id;
+use mc_entitlement::GateName;
 use mc_errors::Error;
 use mc_repos::issue_table::{
     IssueTableRepo, TableFacetsQuery, TableFilter, TableGroupKey, TableGroupKind, TableGroupSpec,
@@ -72,7 +76,7 @@ use mc_repos::RepoError;
 use crate::routes::auth_user::AuthUser;
 use crate::routes::invitations::require_workspace_member;
 use crate::routes::issues::{
-    load_catalog, repo_err, resolve_workspace, validation, IssueDto, WorkspaceQuery,
+    issue_repo, load_catalog, repo_err, resolve_workspace, validation, IssueDto, WorkspaceQuery,
 };
 use crate::state::AppState;
 
@@ -496,14 +500,105 @@ async fn table_facets(
 // GET /api/issues/limit-usage
 // ---------------------------------------------------------------------------
 
-/// 本仓没有 Cloud 订阅源 ⇒ 等价于上游“未强制限额”的分支：204 No Content（模块注释 6）。
+/// `GET /api/issues/limit-usage`。
+///
+/// 上游 `handler/issue_limit.go`：`policy.Action != ActionEnforce` ⇒ **204**；
+/// 否则报 `{"used":…,"limit":…}`。本仓的策略来自**已安装的 entitlement 平面**
+/// （`mc_entitlement::client::provider()`）—— 与 `GET /api/autopilots/usage` 读的是
+/// **同一个** `Arc`、同一份缓存（组合根 `apps/mc-server/src/entitlement.rs` 一次装两个槽）
+/// ⇒ 同一格不可能出现两个不同结论（`docs/62` §9.8 判据 ③）。
+///
+/// 🔴 **不**用 `mc_autopilot::quota::policy_for`：那条路读的是 `autopilot_runs` 那个 gate，
+/// 与本路由的 `issue_count` 是**两个不同的 enforcement point**。上游的
+/// `ResolveIssueCountPolicy` 判的也是 `GateIssueCount`。
 async fn limit_usage(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(selector): Query<WorkspaceQuery>,
     user: AuthUser,
-) -> Result<StatusCode, TableError> {
-    let _ = authorize(&state, &headers, &selector, &user).await?;
-    // 本仓没有 entitlement 源，无 usage 可报（模块注释 6）：204。
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Response, TableError> {
+    let workspace_id = authorize(&state, &headers, &selector, &user).await?;
+    let decision = mc_entitlement::client::provider().gate(workspace_id, GateName::IssueCount);
+    // 逐字上游 `ResolveIssueCountPolicy`：`off` / `observe` / 缺 limit / `limit == 0`
+    // 全部折成「没有强制限额」⇒ 204。**绝不用缓存或刷新的 reason 去推断「无限」**。
+    let Some(limit) = enforced_issue_limit(&decision) else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    let counted = issue_repo(&state)
+        .count_in_workspace(workspace_id)
+        .await
+        .map_err(repo_err)?
+        // 逐字上游 `CountIssueUsage`：采样到 `limit + 1` 为止，够判「已达上限」即可。
+        .min(limit);
+    Ok(Json(json!({ "used": counted, "limit": limit })).into_response())
+}
+
+/// `Decision` → issue-count 面真正会拦的上限（`Some` ⇒ 有强制限额）。
+///
+/// 逐字 `service.ResolveIssueCountPolicy` 的后半段 + 替身禁令：`off` ⇒ `None`；
+/// `enforce` 且 `limit > 0` ⇒ `Some(limit)`；其余（`observe`、缺 limit、`limit == 0`）
+/// 一律 `None`。**替身判决（`Reason::Stub`）永远不得驱动生产路由** —— 那会让
+/// `entitlementtest.Stub` 的返回值变成生产配额。
+fn enforced_issue_limit(decision: &mc_entitlement::Decision) -> Option<i64> {
+    if decision.reason == mc_entitlement::Reason::Stub
+        || decision.gate.action != mc_entitlement::Action::Enforce
+    {
+        return None;
+    }
+    decision.gate.limit.filter(|limit| *limit > 0)
+}
+
+#[cfg(test)]
+mod limit_usage_tests {
+    use super::*;
+    use mc_core::Timestamp;
+    use mc_entitlement::{off_decision, Action, Decision, Gate, Reason};
+
+    fn enforce(limit: Option<i64>, reason: Reason) -> Decision {
+        Decision {
+            gate: Gate {
+                action: Action::Enforce,
+                limit,
+                ..Gate::off()
+            },
+            reason,
+            policy_revision: 1,
+            subscription_version: 1,
+            cloud_valid_until: Timestamp::default(),
+        }
+    }
+
+    /// 只有「`enforce` + `limit > 0`」才报 usage；其余**一律 204**（逐字上游）。
+    #[test]
+    fn only_a_positive_enforced_limit_produces_a_body() {
+        assert_eq!(
+            enforced_issue_limit(&enforce(Some(50), Reason::CacheFresh)),
+            Some(50)
+        );
+        assert_eq!(
+            enforced_issue_limit(&enforce(Some(1), Reason::Refreshed)),
+            Some(1)
+        );
+        // limit 缺失 / 为 0 ⇒ 「没有强制限额」，不是「无限」。
+        assert_eq!(
+            enforced_issue_limit(&enforce(None, Reason::CacheFresh)),
+            None
+        );
+        assert_eq!(
+            enforced_issue_limit(&enforce(Some(0), Reason::CacheFresh)),
+            None
+        );
+        // observe 永不作废一个 issue。
+        let mut observed = enforce(Some(50), Reason::Stale);
+        observed.gate.action = Action::Observe;
+        assert_eq!(enforced_issue_limit(&observed), None);
+        // off / 无策略 ⇒ 204。
+        assert_eq!(enforced_issue_limit(&off_decision(Reason::Disabled)), None);
+        assert_eq!(
+            enforced_issue_limit(&off_decision(Reason::Unavailable)),
+            None
+        );
+        // 🔴 替身判决不得变成生产配额。
+        assert_eq!(enforced_issue_limit(&enforce(Some(50), Reason::Stub)), None);
+    }
 }
