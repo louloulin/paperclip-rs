@@ -15941,3 +15941,27 @@ OK: every upstream route is either implemented or owned        exit 0
 `19G used / 29G avail (40%)`；本机 workdir 全为 `34M–130M`，**无 `target/`**（上轮已按四判据回收）⇒ **本机可回收量 0**。按分账口径，在飞片 `LUM-1825`（已交）、`LUM-2419`、`LUM-1823` **全在别的 device**，`df` 账上记 **0** ⇒ 本轮 **槽位 3/3 满**（cycle + `LUM-2419` + `LUM-1823`），不因本机 `df` 留空。
 
 `LUM-2111`（M10-9 INT）仍 docker/podman/buildah **三者皆无**硬阻塞，按口径只记不 @。
+
+### 181.6 🔴🔴 本轮自踩：`issue assign --to <名字>` 会**前缀匹配到错误的 agent**
+
+派 `LUM-1823` 时先写 `multica issue assign LUM-1823 --to 编程助手-devbox`（本意 = agent `编程助手devbox`），CLI 报：
+
+```
+agent "编程助手-devbox2" (7db7fb73)
+```
+
+⇒ **它把 `编程助手-devbox` 当成 `编程助手-devbox2` 的前缀命中了**，命令失败、**assignee 仍是 `None`**，若只看尾行 `}` 会误判成成功。本工作区里有 `编程助手-devbox1` / `编程助手-devbox2` / `编程助手devbox`（**无连字符**）/ `编程助手devbox4` / `资深编程运维助手devbox4` 五个高度相似的名字 ⇒ **前缀歧义是结构性的，不是偶然**。
+
+**新纪律（取代所有按名字指派）**：
+1. **一律用 `--to-id <uuid>`**，UUID 从 `multica agent list --output json` 现取；
+2. 🔴 **`agent list` 会返回别的 workspace 的 agent**（本轮 `478b7f4b` 就是别家的，`--to-id` 报 `no member, agent, or squad found`）⇒ 取 UUID 时**必须同时按 `workspace_id` 过滤**，否则会拿到一个在本工作区不存在的 ID；
+3. 每次 assign 后**回读 `issue get` 的 `assignee_id`**，不信任命令的退出码。
+
+**顺带一条实测**：`status <issue> todo`（不带 `--no-start`）在 **assignee 为 `None` 时不创建任何 run**（rev 3→4 但 `--active` 为空）⇒ **「改派」与「派发」是两条独立的必要条件**：先有 assignee，状态流转才会产生 run。§179 的「改派 ≠ 重启」在这里要再补一句 —— **「无 assignee 时的状态流转」连 run 都不产生**。
+
+### 181.7 `LUM-1823` 派发结果（待观察，按 §181.3 的新判据）
+
+派给 `资深编程运维助手devbox4`（runtime `4a7f29e1`，与 devbox1 / devbox5 均不同 device ⇒ **磁盘隔离**，避免同盘两次 `--with-db` 并发触发 ENOSPC）。run `01a0e6f0` 起手 **2.5 分钟仍 `queued` / `dispatched_at=null`**。
+**尚不构成派发失败**（判据是**超过一个轮次间隔 ≈30 min**）。下一轮起手第一件事：查 `LUM-1823` 的 run —— `dispatched_at` 仍为 `null` 且已过 30 min ⇒ 按 §181.3 直接改派 `编程助手-devbox1`（`max_concurrent_tasks=5`，可并行接第二片，且本轮已实证其 daemon **秒级取走**：`LUM-2419` 的 run `01a0e6ee` 派发后 0 分钟即 `running`）。
+
+**若 devbox4 确实不可用**，则本项目的可用派发面收敛为 **devbox1（唯一实证在线）+ devbox5（我自己）**，此后每轮**最多只能并行 2 片**，第 3 槽必须留空 —— 这会改变后续所有 cycle 的吞吐预期，属需要 owner 知情的结构性事实。
