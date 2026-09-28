@@ -16083,3 +16083,129 @@ cycle + `LUM-2419` + `LUM-1823` = **3/3 已满** ⇒ **`LUM-1824` 本轮不派**
 5. `LUM-2111`（M10-9 INT）仍 `docker`/`podman`/`buildah` **三者皆无** + `deploy/`、`stop_condition.sh`
    在 base **不存在** ⇒ 硬阻塞，需 owner 裁决（装 docker / 改 DoD 去掉镜像面 / 明确不做）。
    按口径**不重复 @**。`LUM-2109`/`LUM-2110` 连带同因。
+
+---
+
+## 183. 2026-09-28 16:30 cycle（LUM-2430）—— 收割 PR #138 + 🔴「同 device 双 `--with-db` = ENOSPC」根因定位
+
+base `ae51ba40` → **合并 PR #138（`d07e07eb`）** → §183 docs-only = 本轮下一轮 base；
+GitHub 收尾 **0 open PR**；本机 `df` 起手 **19G used / 28G avail / 40%**、PG 5432 `online`；
+checkout 落 `main` 线**第 25 次**（`4fc96f30`）⇒ reset。
+
+### 183.1 收割：`LUM-2419` = PR #138，七条判据链全过
+
+| # | 判据 | 实测 |
+| --- | --- | --- |
+| 1 | head CI 3/3 绿（**先等**） | `db` 08:13:30Z / `fast` 08:16:16Z / `contract` 08:10:08Z，全 `success` |
+| 2 | 钉 40 位 sha + `merge_method=merge` | sha `45b6221e73aa60171c964f0c48f282c9a589c8fc`；合并点 **`d07e07eb513f52bdce1791f7fb922ffff8c7c023`** |
+| 3 | 分支 numstat == PR API **逐字** | 分支 `2 files / +51 / −25` == API `changed_files=2 additions=51 deletions=25` |
+| 4 | 写集零越界 | 仅 `crates/mc-http/src/routes/quick_actions/tests/db.rs`（+26/−16）与 `.../uploads/tests/db.rs`（+25/−9）；**0 生产码、0 `mod.rs`/`mount.rs`、0 `Cargo.toml`、0 迁移、0 baseline** |
+| 5 | base 祖先 / 可合 | 分支 merge-base = `ae96a7f5`（片在 §182 docs 直推前起手）；PR base = `ae51ba40`；`mergeable=true` / `mergeable_state=clean` ⇒ **无需 rebase** |
+| 6 | 落地树 ≡ 预演树 | `git diff ae51ba40 d07e07eb --stat` = **恰好那 2 个测试文件**（+51/−25），**`docs/37` 逐字未动**（16085 → 16085 行）⇒ 合并没有吞掉任何并发直推 |
+| 7 | 合并树门读 | 四个零编译门全 exit 0（见 183.2） |
+
+⚠️ **判据 6 的一个假信号（首次实测，值得记）**：直接比 `d07e07eb^{tree}` 与 `45b6221e^{tree}`
+会得到 **`docs/37` −118 行**的差异，看着像「合并吞了 docs 直推」。**实际不是**：
+分支起手于 `ae96a7f5`，天生不含 §182 的 118 行 docs 直推，而 `git merge` **保留**了 base 侧的版本
+⇒ 差异方向是「head 比 merged 少 118 行」，**是分支旧，不是合并错**。
+🔴 **正确判据 = `git diff <合并前 base> <合并后 base> --stat`**，看**合并对 base 树的净增**是否逐字等于 PR 的 numstat；
+不要拿「合并树 vs head 树」当落地树判据（那两个树本来就不该相等）。
+
+### 183.2 合并树门读（逐字命中 §182，无一处漂移）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+  implemented  454 real +   2 placeholder =  456 / 456   known_gap 0  unclaimed 0  regression 0  local_only 8
+OK: every upstream route is either implemented or owned          exit 0
+```
+
+- ⑦b **tree 模式**：`541 literals / 0 defect / 0 warning / exit 0`
+- ⑩ `file_size_check` exit 0
+- `audit_workspace_deps`：`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（存量逐字不变）
+- 🔴 **`audit_workspace_deps.py` 没有 `--quiet`**（只有 `--repo-root` / `--json`）⇒ 用
+  `python3 scripts/audit_workspace_deps.py 2>&1 | tail -25` 看末行 `FINDINGS:` 汇总。
+  `slash_alias_audit.py --quiet` 与 `route_parity.py --quiet` 存在，别照抄。
+
+**承重**：`LUM-2419` 是**纯测试文件**改动 ⇒ ⑦ 的**每一个计数都必须逐字不变**，实测确实一个没动。
+这是「无路由位移的片 ⇒ 验收证据只能来自它自己的单测 + 门禁」（§182）的正面样本：
+它的 18 格确定性载荷实验 + 门 ⑥ 连续 4 轮换库绿，才是它的验收证据；⑦ 只能证明**没有引入回归**。
+
+### 183.3 🔴🔴 本轮头号产出：`LUM-1823` 被 ENOSPC 打死，根因是「两片同 device」
+
+`LUM-1823`（M9-8 timeline）run `01a0e70c` 于 `2026-09-28T08:25:01Z` **失败**，
+系统评论逐字：**`ENOSPC: no space left on device, write`**，run `result.pr_url = null`，
+`agent/devbox1/*` 分支**无本片新分支** ⇒ **零可远程抢救物**，工作区残件留在 devbox1 盘上、cycle 取不到。
+
+🔴 **根因（本轮定位，承重）**：§182 同时把 `LUM-2419` 与 `LUM-1823` 派到 **devbox1**，
+两片**各自跑 `--with-db`**，峰值各 **18–30G**，合计 **36–60G** 落在**同一个文件系统**上。
+§182.5 当时写的是「两片都在 devbox1 ⇒ 在 `df` 账上记 0 ⇒ 磁盘不构成约束」——**这句话只在
+「别的 device 上跑的片」成立，对「同一个 device 上的第二片」是错的**。
+
+🔴 **订正 §180.1 的 device 分账公式**：
+
+```
+本片峰值需求 = 18–30G（--with-db）        # 单片自身
+同 device 同时在飞片数 K                 # 同一个文件系统上的 K 片
+该 device 需要的 avail ≥ K × 18–30G      # ❌ 不是 max()，是求和
+```
+
+**`df` 账要按 device 分别记，且同 device 的 K 片必须求和。**「一次最多三个任务运行」
+（LUM-1334）是**服务端并发上限**，**不是磁盘容量保证**；二者独立，撞上就是 ENOSPC 打死 run。
+
+🔴 **配套硬规则**：
+1. **同一 device 同时最多 1 片 `--with-db`**（要并行就得 device 数 ≥ 并行片数）。
+2. 派 `--with-db` 片之前先问一句「**这台 device 上还有别的 `--with-db` 片在跑吗**」——
+   §180.1 的「跨 device 记 0」**只对异 device 成立**，同 device 必须按上式求和。
+3. **run 状态 `failed` + 系统评论 `ENOSPC` ⇒ 判「设备磁盘事件」，不是「片写错了」**：
+   不要去读它的自述、也不要改它的实现，直接重派；但重派**必须换 device 或等该 device 回收**。
+4. 该 device 磁盘回收**只能由该 device 自己跑片时顺带做**（§183.4 的回收片），
+   cycle 在别的 device 上**无能为力** ⇒ 磁盘打满会**静默降低整个派发面**，需 owner 知情。
+
+### 183.4 派发面：本轮实测只剩 devbox5（我）一台可派
+
+| device | 证据 | 判定 |
+| --- | --- | --- |
+| `编程助手-devbox1` `22e8b20d` | 16:00 轮秒级取走（§182.2） | **本轮磁盘打满** ⇒ ENOSPC 打死 `LUM-1823`；`LUM-2419` 的 `target/` 仍在盘上，cycle **无法代清** |
+| `编程助手-devbox2` `7db7fb73` | §181.7 + §182 两次 `queued` 31 min / `dispatched_at=null` | 判不可用 |
+| `资深编程运维助手devbox4` `3df1a3e8` | §182.3 第二次连续 30.4 min 黑洞 | 判不可用 |
+| `编程助手devbox5` `3c6087f9`（我） | 本轮自身在跑；`avail 28G`、**全盘无任何 `target/`** | **唯一可派** |
+
+⇒ **本轮并行能力 = 1 片**（比 §182 的「2 片」再降一级）。
+`LUM-1824`（M9-9）本轮**不派**：没有第二个可派 device，且它要 `--with-db`。
+
+**两条自助动作**（都不需要 owner 动手）：
+1. 派 **`LUM-1823` → devbox5（本机）**：`avail 28G` ≥ 单片峰值 18–30G，且盘上无 `target/` ⇒ 成立。
+2. 另立**磁盘回收片 → devbox1**：任务只需 `rm -rf` 已完成 run 的 `target/`，**几乎不占盘**，
+   是把 devbox1 拉回可派面的**最低成本动作**（回收配方见 §178 四判据：
+   status 干净 / HEAD 已被 `origin/feat/multica-rs-initial` 包含 / run 早已 `pr_url` 非空 / 无在飞片）。
+   ⚠️ 盘 100% 时该片自身也可能起不来 ⇒ **它的交付物就是「盘空了」，能跑起来就是胜利**。
+
+### 183.5 门 ⑥ 竞态**第四族**（`LUM-2419` 交付时定位，已另立片）
+
+与第三族（无范围 `COUNT(*)`）**同族不同机制**：
+
+- 处：`crates/mc-repos/src/plugin/invocation_read.rs:191` / `:242`（`db_tests`）
+- 机制：`plugin/hook.rs:697` 的用例调用**生产侧** `delete_expired(Utc::now() + Duration::minutes(1))`，
+  而 `hook.rs:315` 是**全表** `DELETE FROM plugin_invocation WHERE created_at < $1`
+  ⇒ **无范围 DELETE + 未来 cutoff**，把并发用例刚建的行一并扫掉。
+- 实测：单跑绿；门 ⑥ 连续 7 轮里 **5 轮红**。
+- 为什么 `LUM-2419` 没顺手改：修它需要给该用例独立库 / 引入测试串行原语 / 改**生产函数签名**
+  ⇒ **越出「写集仅限测试文件」的边界**（边界纪律正确，如实登记而非越界）。
+- ⇒ **已另立片**（`plugin_invocation` 无范围 DELETE 收敛），**禁** `--test-threads=1` 刷绿、**禁** `--write-baseline`。
+
+### 183.6 槽位与下一轮
+
+本轮槽位：cycle ∥ `LUM-1823`（devbox5）∥ 回收片（devbox1）= 3/3。
+下一轮起手清单：
+
+1. `df -h /` + `pg_lsclusters`；`rev-parse` 对 `ls-remote`；GitHub API 查 open PR。
+2. 判活序：`agent list` status → **`issue runs` 的 `dispatched_at`/`started_at`** → `revision` 推进 → 收割看**有没有 PR**。
+   🔴 **新增第 0 步：先看有没有 `failed` + 系统评论 `ENOSPC` 的 run**（设备磁盘事件，改派而非改实现）。
+3. 收割 `LUM-1823` 的 PR ⇒ 七条判据链。落地后 `placeholder 2 → 1`（timeline 变真实现），
+   **`local 546` / `baseline 546` / `known_gap 0` / `local_only 8` 必须逐字不变**。
+4. 回收片交回后 devbox1 恢复 ⇒ 派发面回到 2 device ⇒ 才派 `LUM-1824`（M9-9，0 条路由 ⇒ ⑦ 全计数不变）。
+5. `owners.M9` 已为 0 ⇒ **M9 波只剩这 2 片**；两片齐 ⇒ `LUM-1825` 已完成（基线 546），
+   M9 波整体收口。
+6. `LUM-2111`（M10-9 INT）仍 `docker`/`podman`/`buildah` **三者皆无** + `deploy/`、
+   `stop_condition.sh` 在 base 不存在 ⇒ 硬阻塞，需 owner 裁决，按口径**不重复 @**；
+   `LUM-2109`/`LUM-2110` 连带同因。
