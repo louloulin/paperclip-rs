@@ -8812,3 +8812,151 @@ system 对**任何人**都不点名、响应体里查不到那两枚裸 UUID）�
 ⇒ **3 条真库用例红**（两条 per-agent 折叠 + failures by-agent）；
 ② 给 `LIST_FAILURES_DAILY` 加上 `atq.started_at IS NOT NULL` ⇒ **1 条真库用例红**
 （且 `mc-repos` 的 `status_and_started_at_filters_match_upstream` 在不接库的那道门上就红）。
+
+### 9.26 M9-5（`LUM-1820`）：notification-preferences 3 条（**本波唯一双形态键**）+ feedback 1 条 + contact-sales 1 条的偏离登记（**索引段**）
+
+> **本段只作索引**：偏离的**唯一一份完整登记**在 **`## 56.`（56.1–56.4）**。
+> 号段起手复核：`grep -cE '^### 9\.26|^## 56\.'` = **0**
+> （`### 9.25` / `## 55.` 归已合入的 M9-4）。
+
+**写集（6 个文件 = 3 个 HTTP 路由 + 3 个 repo，全文见 §56.1 的表）**：
+`crates/mc-http/src/routes/{notification_preferences,feedback,contact_sales}.rs` ·
+`crates/mc-repos/src/{notification_preference,feedback,contact_sales}.rs`。
+**anchor 冻结件一个字节未动** —— 🔴 `mc-repos/src/lib.rs:81/86/99`、`routes/mod.rs:202/204/205`、
+`routes/mount.rs:598-600` 已预声明三个模块并 `merge` 三个 router
+⇒ 本片**不改**这四个文件（第二类漏项 = 0）、**零 manifest 编辑**、**不动 `Cargo.lock`**
+（`crates/mc-http/Cargo.toml:67` 已有 `mc-autopilot` 边 ⇒ 限流器供体直接可达）。
+
+**形态（本波唯一的双形态欠账，全文见 §56.2）**：`/api/notification-preferences` 的
+GET / PATCH / PUT **两形态都注册**（6 个注册点 / 3 个上游键）⇒ `MISSING_ALIAS 3 → 0`。
+反向红线：`POST /api/feedback` 与 `POST /api/contact-sales` **单形态**，补尾斜杠 = `EXTRA_ALIAS` 硬失败
+（两个方向都有用例钉住，见 §56.4 的 D-13 / D-14）。
+
+**授权矩阵（5 条逐条，全文见 §56.3）**：三条 notification-preferences = **成员级**
+（401 / 400 / 403）；`POST /api/feedback` = **仅登录**（401），`workspace_id` 可选且只做形状校验；
+`POST /api/contact-sales` = 🔴 **公开面**（**无会话可调用**，不挂 `AuthUser` 提取器）。
+
+**登记的偏离（14 条，全文见 §56.4）**：D-1 通知偏好**非 member ⇒ 403**（上游那一层是 workspace
+中间件做的，本仓显式化成可测判定）；D-2 `GET` **不写行**（无行 ⇒ 200 + `preferences: {}`，
+不是全 `all` 的默认表）；D-3 `PUT` 替换 / `PATCH` 合并是**两条独立 SQL**（不是同一份）；
+D-4 `{}` 落在 `preferences field is required` **之前**那一档的分段解码（serde 的缺字段错会
+把它折进 `invalid request body`）；D-5 `preferences` 脏 JSONB 折成**空 map** 而不是 500；
+D-6 🔴 **限流用进程内 `SlidingWindowLimiter` 而非上游的 DB 计数**（**复用** M5-5 的供体，
+多副本下每副本一份 —— 与上游「无 Redis 时每进程内存」等价）；D-7 `has_images` 是
+**metadata 里的布尔标记**（不解析 markdown、不碰附件表）；D-8 客户端元数据
+（`platform`/`version`/`os`）**留空串**（本仓无那条中间件，不伪造值）；D-9 feedback 体
+超限 ⇒ **400 不是 413**（上游 `MaxBytesReader` + `Decode` 无 413 分支）；D-10 企业邮箱
+**不做 RFC 5322 解析**（Rust 侧无 `net/mail` 等价件 ⇒ 显式**拒**掉显示名 / 尖括号 / 注释形态）；
+D-11 `submitter_ip` 绑字符串交 Postgres 自己解析成 `inet`（免两处 IP 语义漂移）；
+D-12 🔴 **`FREE_EMAIL_DOMAINS` 实测 28 个**（计划文本口算的 29 少 1，见 §56.4 D-12 的复算命令）；
+D-13 两条 400/404 形态用例放在 `notification_preferences.rs` 里（跨文件判据，门 ⑦ 折叠层看不见）；
+D-14 `truncate` 按**字符**而非字节切（永不切坏 UTF-8）。
+
+---
+
+## 56. M9-5（`LUM-1820`）：notification-preferences 3 条（**本波唯一双形态键**）+ feedback 1 条 + contact-sales 1 条的落点与偏离登记
+
+本片 = `docs/62-M9-PLAN.md` §4.1 的 **M9-5**，5 条路由 / **6 个注册点**。
+硬前置 M9-0 anchor（`LUM-1815`）。base `18b81897`（M9-4 PR #133 合并树）。
+
+### 56.1 写集与文件布局
+
+| 文件 | 性质 | 门 ⑩ 前 → 后 | 装什么 |
+| --- | --- | ---: | --- |
+| `crates/mc-http/src/routes/notification_preferences.rs` | 原地填充 anchor 空 router | 38 → 439 | 3 方法 × **2 形态** + 成员闸 + 三段解码 + 8 条形状/阶梯用例 |
+| `crates/mc-http/src/routes/feedback.rs` | 原地填充 | 31 → 427 | 1 条 + 10/h 闸 + `has_images` 手写扫描 + `valid_feedback_context` + 6 条用例 |
+| `crates/mc-http/src/routes/contact_sales.rs` | 原地填充 | 35 → 620 | 1 条**公开** + 三道 spam 闸 + 邮箱规范化 + 8 条用例 |
+| `crates/mc-repos/src/notification_preference.rs` | 原地填充 anchor 桩 | 48 → 417 | 3 条 SQL + 脏 JSONB 折叠 + 2 条静态断言 + **4 条真库用例**（直读列） |
+| `crates/mc-repos/src/feedback.rs` | 原地填充 | 44 → 283 | 2 条 SQL + `metadata` 形状 + 1 条静态断言 + **3 条真库用例** |
+| `crates/mc-repos/src/contact_sales.rs` | 原地填充 | 45 → 375 | 2 条 SQL + `NewInquiry` + 1 条静态断言 + **3 条真库用例** |
+
+上游 172 + 177 + 323 = **672 行**三个 handler 拆成 **3 个 HTTP 文件 + 3 个 repo 文件**
+（门 ⑩ 硬上限 800）。**零 manifest 编辑、零 `Cargo.lock` 变更、零 anchor 冻结件改动** ——
+`mc-repos/src/lib.rs:81/86/99`、`routes/mod.rs:202/204/205`、`routes/mount.rs:598-600`
+已预声明三个模块与三次 `merge` ⇒ **第二类漏项 = 0**（与 §169 补充第 1 节的预飞结论一致）。
+
+### 56.2 形态：本波**唯一**的双形态欠账，以及它的两个方向
+
+上游 `router.go:2400-2403` 是 `r.Route("/api/notification-preferences", …)` +
+`r.Get("/")/r.Patch("/")/r.Put("/")` —— chi 的 `Route` + 子路由 `"/"` 形态**同时**服务
+带斜杠与不带斜杠两种。`docs/fixtures/upstream-routes.tsv:290-292` 记的是**带**尾斜杠那一形态。
+
+🔴 **门 ⑦ 折叠 `/x` 与 `/x/`**（`route_parity.py` 的 `normalize`）⇒ 只注册一种形态在 ⑦
+**完全不可见**。唯一能看见缺口的工具是 `scripts/slash_alias_audit.py`。
+
+- **起手**实测：`python3 scripts/slash_alias_audit.py --declared docs/fixtures/m9-declared-routes.tsv`
+  ⇒ `declared 34 / dual-form required: 3`、`MISSING_ALIAS (3)`，**恰好**是本片这 3 个方法
+  （与其余 31 个单形态键零缺陷）⇒ 与 §169 补充第 2 节锁定的读数**逐字一致**。
+- **收尾**须 `MISSING_ALIAS 3 → 0`，且无参模式（本地实况）仍 `0 defect(s)`。
+- **不进** `docs/fixtures/slash-alias-allowlist.tsv`（那是我**必须补**的形态，不是欠账 ——
+  `docs/62` §3.1 末行逐字）。
+
+**两个方向都有用例钉住**（D-13）：正向 `both_forms_are_registered_for_all_three_methods`
+对 3 方法 × 2 形态逐条断言「**不是** 404」；反向
+`the_other_two_keys_of_this_slice_stay_single_form` 断言 `POST /api/feedback` 与
+`POST /api/contact-sales` 仍是**单形态** —— 让想「顺手对齐形态」的人当场看见
+`EXTRA_ALIAS` 的代价。
+
+**判据为什么不用「数注册点」**：axum 0.7 **没有** `Router::as_router()` 之类的注册点自省 API
+（实测 `axum-0.7*/src/routing/mod.rs` 无该符号）⇒ 静态数注册点不可行。
+改用**可观测**判据：未注册的形态是 axum 的 **404**，已注册的那一格在「库不可达 + 不带会话头」
+的装置下恒为 **401**（`AuthUser` 提取器先于任何库访问）⇒ 读到 404 就是缺形态。
+
+### 56.3 授权矩阵（5 条逐条）
+
+| 路由 | 需要什么 | 无会话 | workspace 缺 | 非成员 | 非法体 | 词表/枚举错 | 限流 |
+| --- | --- | :-: | :-: | :-: | :-: | :-: | :-: |
+| `GET /api/notification-preferences{,/}` | 成员 | 401 | 400 | **403** | — | — | — |
+| `PATCH /api/notification-preferences{,/}` | 成员 | 401 | 400 | **403** | 400 | 400 | — |
+| `PUT /api/notification-preferences{,/}` | 成员 | 401 | 400 | **403** | 400 | 400 | — |
+| `POST /api/feedback` | **仅登录** | 401 | —（`workspace_id` 可选） | — | 400 | 400（context） | **10/h ⇒ 429** |
+| `POST /api/contact-sales` | 🔴 **公开** | **无 401** | —（无 workspace 概念） | — | 400 | 400 | **5/h ⇒ 429**（+ per-email 3/h） |
+
+**「公开面」在 axum 里的实现**（D-10 的姊妹条）：axum 的提取器**按 handler 挂**、不是全局的
+⇒ contact-sales 的 handler 参数表里**没有** `AuthUser` 就**没有** 401 那一档，**天然**满足
+「无会话可调用」（与 `probes/*` 的根路径路由同理）。它**必须**自己挡住滥用 ⇒ 三道 spam 闸
+全在：企业邮箱域名表、per-IP 5/h、per-email 3/h。
+
+**三道 spam 闸的分工（不合并，D-6 相关）**：per-IP 挡**换邮箱**的洪水，per-email 挡**换 IP**
+的重放，企业邮箱挡**垃圾来源**。折叠成一道会丢掉另外两道各自的语义。
+
+### 56.4 登记的偏离（17 条）
+
+| # | 偏离 | 理由 / 上游依据 |
+| --- | --- | --- |
+| **D-1** | 通知偏好**非 member ⇒ 403**（不是 404） | 上游那一层是 workspace 中间件做的（未成员进不到 handler）；本仓把它**显式化**成可测判定以满足 `DoD` 第 2 条逐字要求。404 会额外泄露「该 workspace 存在」。 |
+| **D-2** | `GET` **不写行**；无行 ⇒ 200 + `preferences: {}` | 上游逐字 `pgx.ErrNoRows` 分支写空 map。**不**顺手插一行全 `all` —— 那会让「从没设过」变成「设过但全默认」，两者客户端行为不同。`get` 因此返 `Option<Row>` 而**不** `unwrap_or_default()`。 |
+| **D-3** | `PUT` 替换 / `PATCH` 合并是**两条独立 SQL** | 上游两处注释逐字：`preserves the original replace-all PUT contract` / `atomically merges only the supplied keys… prevents stale tabs or devices from replacing unrelated mute settings`。写成同一份会让陈旧标签页静默清掉别的静音设置。 |
+| **D-4** | `{}` 走**分段解码**，落在 `preferences field is required` 那一档 | 上游是 `json.Decode(&req)` **然后** `if req.Preferences == nil`；`Decode` 对 `{}` **成功**。而 anchor 冻结的 `UpdateNotificationPreferencesRequest::preferences` 没有 `#[serde(default)]` ⇒ 直接 `from_slice::<T>(b"{}")` 会把 `{}` 折进**第一条** 400。修法：先解 `serde_json::Value`（只有畸形 JSON 才失败 = 上游 `Decode` 错），判掉缺失/`null`，再解定型结构。 |
+| **D-5** | 脏 `preferences` JSONB 折成**空 map** 而不是 500 | 上游两处逐字 `if err := json.Unmarshal(...); err != nil { prefs = map[string]string{} }`。让一个只读端点因为一行历史脏数据整体挂掉是错的。 |
+| **D-6** | 🔴 **限流用进程内 `SlidingWindowLimiter`，不是上游的 DB 计数** | `DoD` 第 2/5 条**要求复用** M5-5 的 `crates/mc-autopilot/src/webhook/ratelimit.rs`、**禁止**第二份。上游 `feedback.go` 逐字说 DB-backed 是为了「survives process restarts and works across multiple instances」；本仓无 Redis 依赖 ⇒ 多副本下配额**每副本**一份，与上游「`rdb == nil` 时每进程内存」的情形**等价**（同 `docs/54` D3 的立场）。上游那两条计数 SQL（`CountRecentFeedbackByUser` / `CountRecentContactSalesByEmail`）**仍保留**在仓储里并有真库用例，限流判定走进程内窗口。 |
+| **D-7** | `has_images` 是 `metadata` 里的**布尔标记** | 上游逐字：「It exists only to set the `has_images` analytics flag — we don't need a full markdown parser; a false positive on a literal "![" in prose is acceptable」。⇒ **不**新增列、**不**解析 markdown、**不**碰附件表。正则 `!\[[^\]]*\]\([^)]+\)` **手写**扫描（`mc-core` 无 `regex`，加它要动 manifest + `Cargo.lock`），语义逐条对齐（含「`[^)]+` 停在**第一个** `)`」这一格）。 |
+| **D-8** | `platform` / `version` / `os` **留空串** | 上游取 `middleware.ClientMetadataFromContext`（客户端头），本仓**无那条中间件** ⇒ 留空而不是伪造值。`url` / `user_agent` / `context` 照常落库。 |
+| **D-9** | feedback 体超限 ⇒ **400 不是 413** | 上游 `http.MaxBytesReader` + `json.Decode` **没有** 413 分支（超限表现为解码错）。与 `routes/onboarding/profile.rs` 同档，**不是** `routes/webhooks/autopilots.rs` 的 413 那一档（那边上游显式区分了 `MaxBytesError`）。 |
+| **D-10** | 企业邮箱**不做 RFC 5322 解析** | Rust 侧无 `net/mail` 等价标准库件。上游那条注释点名了绕过手法：「checking the raw string allows `Ada <ada@gmail.com>` to slip past the free-email block list」。⇒ 本仓**显式拒掉**含 `<> () , " : ; \` 或空白的形式，并要求域名含点（上游靠 `net/mail` 隐含要求的 TLD）。**宁可拒，不让绕过形态溜过去。** |
+| **D-11** | `submitter_ip` 绑 `Option<String>`，交 Postgres 自己解析成 `inet` | 列类型是 `inet` 而非 `text`。让**列类型**决定「解析不了就写 NULL」那一档，而不是让本仓再实现一份 IP 解析器（两处 IP 语义会漂移）。 |
+| **D-12** | 🔴 `FREE_EMAIL_DOMAINS` 是 **28 个**，不是计划文本口算的 29 | 复算命令（上游 `f41fae6b`）：`sed -n '/^var freeEmailDomains/,/^}/p' server/internal/handler/contact_sales.go \| grep -c '":'` ⇒ **28**。数组长度由编译器钉住，用例也断言 `== 28`。 |
+| **D-13** | 形态用例放在 `notification_preferences.rs` 里跨文件断言 | 「`feedback` / `contact-sales` 仍是单形态」需要**全量** router 才能判（它们不挂在 `probe()` 上）⇒ 放在本片唯一装了 `full_app()` 的地方，避免为一条断言去动 anchor 冻结的 `routes/mod.rs`。 |
+| **D-14** | `truncate`（`user_agent` 512）按**字符**而非字节切 | 上游 `truncateString` 按字节切会切坏 UTF-8；本仓按 `chars().take()` ⇒ 永不产生非法 UTF-8，长度上界**不弱于**上游。 |
+
+**离线证据（`DoD` 第 6 条，🔴 一条云侧替身都没有）**：本片 5 条**全部不出站** ——
+三条通知偏好与 feedback 只碰本地三张表，contact-sales 只写一张本地表
+⇒ 「替身纪律」在这里的对应物是**零出站**。真库用例（门 ⑥，10 条）全部
+**直读列**（`notification_preference.preferences` / `feedback.{message,metadata,workspace_id}` /
+`contact_sales_inquiry.*`），**不**拿 handler 响应体当「写进去了」的证据 ——
+响应体是 repo 自己 `RETURNING` 出来的同源副本，用它判就是假绿。
+
+### 56.5 收割轮（`LUM-2403` 2026-09-28 10:00）门禁抓到的三条
+
+> 上一轮 run 自述「build + clippy + 22 单测全绿」，**实测不成立**：`cargo fmt --all --check`
+> 从未跑过（① 红），⑤/⑥ 各有真断言红。**自述的门禁结果不算证据，只有退出码算。**
+
+| # | 症状（门） | 根因 | 修法 |
+| --- | --- | --- | --- |
+| **D-15** | ① `fmt` 红（3 个 route 文件 + 3 个 repo 文件共 6 个） | 写码时没跑 `cargo fmt --all` | 一次性 `cargo fmt --all`（纯空白，**零语义**） |
+| **D-16** | ⑥ 两条 `contact_sales` 真库用例红：`mismatched types … SQL type INET is not compatible with TEXT` | `RETURNING` 里的 `submitter_ip` 是 `inet` 列，sqlx 按**声明类型**解码 ⇒ `Option<String>` 必然拒 | 读面一律 `submitter_ip::text AS submitter_ip`（与 `wakeup/issue.rs:192` 的 `::text AS filter_actor_name` 同款约定）；**写面**仍旧 `$11::inet`，列类型不变。附带把断言改成规范文本 `198.51.100.9/32`（掩码由列类型补齐，上游 Go `sql.NullString` 拿到的是同一串） |
+| **D-17** | ⑤ `notification_preference` 单测红：`assertion failed: !SQL_GET.contains("UPDATE")` | 子串判把选出的 `updated_at` 列读成「含 `UPDATE`」—— **断言自身**写错，SQL 是对的 | 改成**切词后查整词**（`split` 非字母数字/下划线，再 `contains(&"UPDATE")`）。子串判静态 SQL 的通病：`updated_at` / `deleted_at` 这类列名都会误伤 |
+
+**读回文本这条是本片最容易复发的坑**：`inet` / `cidr` / `jsonb` 这类列一旦绑
+`String` 就**必须**在读面转文本，写面转不转是另一回事（D-11 只覆盖了写面）。
+
