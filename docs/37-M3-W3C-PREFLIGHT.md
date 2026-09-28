@@ -16567,3 +16567,86 @@ cycle 自身本轮**零编译**（只跑 ⑦/⑩ 两个 python 门）⇒ 不与�
 devbox2 本轮是**有意派过去的一次对照**（它在**另一台 device**，与 devbox1 的 `--with-db` 不争盘），
 用来在 182 之后重新测一次它的 daemon。**判据仍是 §183 那条：超过一个轮次间隔（≈30 min）且仍未 `dispatched_at` ⇒ 派发失败**，
 下一轮按此改派（devbox4 或 cycle 自跑），并在描述里已留**防重复 run 交接声明**。
+
+## 188 监控 + 派发轮（`LUM-2440` cycle，2026-09-28 18:30）—— 零收割；🔴 「最后一个 placeholder」有**两个桶**，§186.4 只点了其中一个
+
+起手 base **`5da9245c`**（= §187 直推；PR #139 已由并发 cycle `LUM-2438` 收割合并）｜GH **0 open PR**｜df 起手 **28G（42%）**｜PG 5432 `online`｜checkout 落 `main` 线**第 28 次** ⇒ reset。
+
+本轮**零收割**（无 PR 可收）＋**派 1 片**（`LUM-2433`）。并发 cycle `LUM-2438` 于 10:09:36Z `completed`，按 §180 的让位定式，
+它先到、已取走「合并 #139 + 派 M9-9 + 写 §186/§187」，本轮只做**可重复动作**（复核 + 门读 + 派发 + 记录）。
+
+### 188.1 门读（base `5da9245c` 当场重跑，四个零编译门 <1s）
+
+⑦ `upstream 456 / local 546 / baseline 546 / implemented 456 = 455 real + 1 placeholder /
+known_gap 0 / unclaimed 0 / regressions 0 / local_only 8（其中 1 ph）/ owners {} / ok=true`；
+⑦b（tree 模式）`exit 0`；⑩ `exit 0`；`audit_workspace_deps` `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`。
+
+与 §186.2 的合并树读数**逐字相同** ⇒ M9-8 合并后 base 稳定，`known_gap 0` 与 `owners {}` 站得住。
+
+### 188.2 🔴 承重订正：「最后一个 placeholder」有**两个互不相干的桶**，§186.4 只点了其中一个
+
+§186.4 写「唯一剩下的 placeholder = `GET /api/issues/:id/quick-actions`（owner M3）」。
+本轮把 `--json` 的两个字段逐条打出来，发现**两个桶各有一个 placeholder**：
+
+| 桶 | 字段 | 逐条值 | handler |
+|---|---|---|---|
+| **已实现侧** | `counts.implemented_placeholder = 1` | `POST /api/issues/{id}/comments/trigger-preview`（owner **M2-A**） | 501 占位 |
+| **本地独有侧** | `counts.local_only_placeholder = 1` | `GET /api/issues/:id/quick-actions` | `routes/issues/mod.rs:220` `get(not_implemented)` |
+
+两者**不矛盾也不互相替代**：`implemented_placeholder` 数的是「上游 456 条里注册了但 handler 仍是占位」，
+`local_only_placeholder` 数的是「上游没有、本仓自己加的且仍是占位」。
+§186.4 点的是**后者**（它讲的是 `issues/auth.rs` 耐久断言的落点），**前者它没提**。
+⇒ **纪律：说「还剩几个 placeholder」必须同时给出这两个字段，单说一个必然半句话。**
+
+**连带发现（数据缺陷，不改代码）**：这条 `trigger-preview` 的 owner 归属是**错的**。
+`scripts/route-owners.tsv:57` 写 `^/api/comments/[^/]+/trigger-preview → M3`，
+但**实际路径是 `/api/issues/{id}/comments/trigger-preview`**，实测该正则**匹配不上**（`re.search` = `False`）
+⇒ 归属穿透落到 `docs/fixtures/upstream-routes.tsv:246` 的 **M2-A**。
+即 `route-owners.tsv` 这一行是按**旧路径形状**写的**死正则**。
+**不影响任何 ⑦ 计数**（owner 只进 `known_gap` 直方图，而 `known_gap = 0`），**故本轮只登记不修** ——
+修它要判断上游语义究竟归 M2-A 还是 M3（`docs/10 §2` 记的是「M2-B 明确不做」），属计划期裁定，不在监控轮动手。
+
+### 188.3 派 `LUM-2433`（门 ⑥ 竞态第四族）→ devbox5
+
+**为什么是它**：门 ⑥ 连续 7 轮里 **5 轮红**，且 `pristine base` 同形复现 ⇒ 基线级缺陷。
+它同时是**唯一**「本机 28G 恰好够、且与两片在飞零交集」的候选：写集 `crates/mc-repos/src/plugin/{hook.rs,invocation_read.rs}`，
+与 devbox1 的 `LUM-1824`（`issue_table/mod.rs` 额度面）、devbox2 的 `LUM-2110`（`scripts/` + `docs/`）**三方零交集**。
+
+预飞实证（base `5da9245c`）：`hook.rs:315` 仍是**无范围** `DELETE FROM plugin_invocation WHERE created_at < $1`；
+`:697` 的 `db_tests` 仍用 `delete_expired(Utc::now() + Duration::minutes(1))` 这个**未来 cutoff** ⇒ 缺陷在位，派得动。
+描述 rev 1→**2**（追加「§188 起手补充」四节：base / ⑦ 逐字读数 + **「本片 0 路由 ⇒ 合并后每个数字必须不变」** /
+本机 `--with-db` ENOSPC 配方与 `cargo clean` 实测值 / 与在飞片的写集关系 + `pgrep` 自匹配纪律）。
+
+派发健康度：`update --description-file` → `assign --to-id`（**回读 `assignee_id` 确认**）→ `status todo`，
+**1 秒**回读 run `01a0e794` 已 `running` ⇒ 本轮派发面正常。
+
+### 188.4 `LUM-2110` 判死但**无处可派** —— 与前几轮处置不同，登记而不改派
+
+run `01a0e77c` 自 10:08:05Z 起 `queued`，`dispatched_at`/`started_at` **32 min 仍 null**，devbox2 `idle`
+⇒ 按 §183 判**派发失败**。但**本轮无处改派**，这是与 §182/§183 的关键差别：
+
+- devbox1 = `LUM-1824` 在飞（M9-9 要编译）⇒ 按 §183.3「同 device 同时只允许 1 个在写盘的 run」**不可加**；
+- devbox5 = 本轮派了 `LUM-2433` ⇒ 同样**不可加**；
+- devbox2/devbox4 = 连续多轮 `queued` 黑洞（§181.7 / §182）。
+
+⇒ **改派只会把同一个问题在三个 device 间搬运**，且都要破坏 §183.3 的硬规则。
+**处置 = 原地保留 `queued` + 本条登记**，等任一在飞片交付后槽位真正空出再改派。
+**纪律升级：「判死」不等于「必须改派」—— 改派的前提是**存在一个既空闲、又满足同 device 约束**的目标 device；
+没有时，正确动作是登记，不是把片塞进已经在编译的 device 换一个 ENOSPC 形态。**
+
+### 188.5 第二写者扫描（§184 第 0/0.5 步）—— 未复发
+
+`/proc` 逐 PID 扫（筛词表含 `gates`）只有两个 agent `pi`：**cycle 自身**（`lum-2440-…`）与
+**`LUM-2433`**（`lum-2433-ca2e35a8d593`）⇒ **无陌生 workdir、无第二个写者**。
+按 assignee 反查名下 `in_progress` issue 的 run 数：`LUM-1823` 名下 3 条 run（1 `completed` / 1 `failed`(ENOSPC) / 1 残留 `queued`），
+`LUM-1823` 本身已 `in_review` 且 PR 已合 ⇒ 无重试磁铁。§184.4 未复发。
+
+### 188.6 下一轮
+
+① 起手 `df` 连采 + `pg_lsclusters` → `rev-parse` 对 `ls-remote`（checkout 落 `main` 第 28 次）→ GH open PR；
+② §184 第 0/0.5/0.6 步照走（failed+ENOSPC 反查 / 陌生 workdir / `du -sm <片>/target` 与 `df` 对账）；
+③ 收割任一出 PR 的片（`LUM-2433` 或 `LUM-1824`），七条判据链（**预检一用三点 diff**、等 head CI 3/3 绿、
+钉 40 位 sha + `merge_method=merge` + `Content-Type: application/json`、落地树 ≡ 预演树）；
+④ 两片都是 **0 路由** ⇒ 合并后 §188.1 的 ⑧ 个数字**必须逐字不变**，漂移即误碰注册面或基线快照；
+⑤ **回收**：任一片交付后按四判据（含 `git branch -r --contains HEAD` 命中 `origin/feat/multica-rs-initial`）整删其 `target/`；
+⑥ 槽位空出且**存在空闲且合规的 device** 时，才把 `LUM-2110` 改派出去（见 §188.4）。
