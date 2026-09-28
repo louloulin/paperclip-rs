@@ -15747,3 +15747,102 @@ M9 波（`LUM-1816`…`1825`）代码面此前已 `owners == {}` 收口，本 cy
 3. 合入 ⇒ 回收其 `target/` ⇒ 才考虑派 `LUM-2419`；
 4. `LUM-2111` 阻塞**每 cycle 只复核一次**（`which docker podman buildah` + `ls deploy/ scripts/stop_condition.sh`），
    三者仍缺则**只在本 cycle 记一行，不 @ owner**。
+
+---
+
+## 180. 15:00 cycle（LUM-2424）—— 零收割 + **槽位算式按 device 分账（连续 7 轮少派的根因）** + 派 `LUM-2419`
+
+起手：`df -h /` = **19G used / 29G avail / 40%**；PG 5432 `online`；
+checkout **第 23 次落 `main` 线**（HEAD 初始 `4fc96f30`）⇒ `git reset --hard origin/feat/multica-rs-initial`
+回到 base **`7ee8070c`**。GitHub `pulls?state=open` = **0**。daemon 本机 `active_task_count 1`（= cycle 自身）。
+
+### ① 判活 `LUM-1825`（M9-10 INT）：**活，不抢救，不收割**
+
+按 §179④ 新序：① `agent list` → **`编程助手-devbox1` = `working`**（真信号）；② issue `revision 10`、
+`updated_at 06:36Z`（上轮收尾时刻）；③ 收割信号 = GitHub 上**没有 PR** ⇒ 尚未到交片。
+④ `/proc` 扫 `cwd` 对它**无意义**（跨 device，本机不可见）——**这条本轮再次得到验证：没扫，本机也确实什么都没看见。**
+另查 `origin` 上 devbox1 的分支 `agent/devbox1/48fba308995c`：**与 base 无 merge-base**（另一条血缘，
+`fix(LUM-258)` 线）⇒ **不是本片分支**，不能拿它当进度证据。
+⇒ 结论：**本轮零收割**，且**不误判、不抢救、不改派**（§179 教训的直接应用）。
+
+### ② 🔴🔴 本轮头号产出：**槽位算式必须按 device 分账，前 7 轮的系统性少派由此而来**
+
+§179 的算式是：`avail 29G − 可回收量 0 = 29G`，对着「**两片各自** `--with-db` 冷建峰值 18–30G ⇒ 36–60G」
+⇒ 29 < 36 ⇒ **留空**。**这条算式有一个隐藏前提：不成立。**
+`LUM-1825` 跑在 **`编程助手-devbox1`（独立 device）** 上，它的 `target/` **根本不落本机文件系统**
+（§179 已实测：跨 device workdir 与进程在本机 `/proc` 与 FS 上完全不可见）。
+⇒ **把一台别的机器的构建峰值记到本机 `avail` 账上，是重复计费。**
+**正确算式（分账）**：
+
+```
+本机账 = 本机 avail − 本机可回收量 − 本机自己这一片（cycle）的占用
+外部片 = 不占本机任何字节，只受服务端全局并发上限约束
+本轮 = 29G − 0 − 0 = 29G，对「外部再起一片」的峰值需求 0 ⇒ 成立
+```
+
+⇒ **本轮打破连续 7 轮的留空，派出了 `LUM-2419`。**
+**纪律（写死）**：判槽位时先问「**这片跑在哪个 device**」。
+同 device 的片才互相抢 `df`；跨 device 的片在 `df` 账上**记 0**，
+只受 **服务端 3 并发上限**约束（本轮全局 = cycle + `LUM-1825` + `LUM-2419` = 3/3，**满**）。
+🔴 上一条推论同样重要：**若某片是派给本机 agent 的，才需要用 `avail` 卡它**；
+把这条搞反的方向有两个错：多派（爆盘，ENOSPC 已 11 次）或少派（本轮纠正的，浪费 7 轮槽位）。
+
+### ③ 门读（base `7ee8070c` 当场重跑，4 个零编译门，~4s）
+
+| 门 | 结果 |
+|---|---|
+| ⑦ `route_parity.py --json` | `ok=true` / `upstream 456` / **`local 546`** / `implemented 456 = 454 real + 2 placeholder` / `known_gap 0` / `unclaimed 0` / `regressions 0` / `local_only 8`（其中 1 ph）/ `baseline_routes 473` / `files_scanned 272` / `upstream_commit f41fae6b` |
+| ⑦b `slash_alias_audit.py`（**tree 模式**） | `registered upstream-key literals: 541` / `0 defect / 0 warning` / **exit 0** |
+| ⑩ `file_size_check.py --quiet` | **exit 0** |
+| deps `audit_workspace_deps.py` | `A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（**逐字同 §176–§179**） |
+
+**与 §178/§179 逐字相同**（base 自 §178 起只多了两个 docs-only commit）⇒ **无回归**。
+`owners == {}`（`known_gap 0` ⇒ 根本没有直方图，§178 承重订正继续成立）。
+未跑需编译的门：**本机新 checkout 无 `target/`，冷编 mc-conformance 不值当**（29G 要留给收割后的回收余地）。
+`schema_drift` 未跑（需 `MULTICA_TEST_DATABASE_URL`，`mc_dev` 口令不可恢复）—— 同 §176–§179。
+
+### ④ 派 `LUM-2419`（门 ⑥ 第三族竞态，纯测试支撑）→ `编程助手-devbox2`
+
+预飞**全部实测**（不是转述旧描述）：
+
+- **写集 = 1 个文件**：`crates/mc-http/src/routes/quick_actions/tests/db.rs`。
+  零路由 / 零 `mod.rs` / 零 `Cargo.toml` / 零 `docs/fixtures` / 零 manifest
+  ⇒ **与在飞 `LUM-1825` 写集交集 = ∅**（它只碰 `route-owners.tsv` + `upstream-routes.tsv` + `docs/62`）。
+- 🔴 **行号订正**：旧描述第一节的 `db.rs:330-338` **不准**（`LUM-1822` 合并前的行号）。
+  base 实测：`before` **312** / `after` **334** / `assert_eq!` **337–338**。
+- 🔴 **同族普查当场做完**（省下一片一次 grep）：
+  `grep -rn 'COUNT(\*)::bigint FROM comment"\|COUNT(\*) FROM comment"' crates --include=*.rs`
+  = **全仓 4 处，全在同一个文件、同两个函数**：
+  `render_returns_the_body_without_posting_anything()`（`async fn` @299）的 **312 / 334**，
+  `archived_actions_and_triaged_issues_refuse_to_run()`（`async fn` @397）的 **423 / 471**。
+  **该文件之外 = 0** ⇒ 收敛范围就这 4 个字面量，**明令不得扩大写集**。
+- **限域列已存在**（`contracts/upstream-schema.sql:1472-1489`）：
+  `issue_id` / `quick_action_id` / `workspace_id` / `author_id` / `created_at` / **`deleted_at`（软删）**
+  ⇒ 三种修法都**无需改 schema**；并要求交付注释写明 `deleted_at IS NULL` 的取舍。
+- 描述刷到 **rev 4**（追加「§七 预飞实测」+「§八 边界」），`assign --to-id 编程助手-devbox2` + `status todo`。
+
+🔴 **派发实测（补 §179④ 的后半句）**：`assign --to-id` + `status todo`（不带 `--no-start`）
+**这一组动作本轮也没在 25s 内让 `devbox2` 变 `working`**（仍 `idle`，`rev 4` 已落库）。
+与 §172.2/§174 的差异在于**目标 agent 的 daemon 在另一台 device 上**，本机看不见它的派发延迟。
+⇒ **正确处置同 §172.2：描述写全 + 留 `todo`，本轮收尾后由 daemon 派发；不要在同一轮里反复试触发**
+（反复 `status` 流转会刷 `revision`，反而污染下一轮的进度判据）。
+
+### ⑤ 槽位：**3/3 满**（cycle ∥ `LUM-1825` ∥ `LUM-2419`），首次满槽
+
+🔴 `LUM-2111`（M10-9 INT）**仍硬阻塞**，本轮按口径**只复核不 @**：
+`which docker podman buildah` 三者皆无、`deploy/` 与 `scripts/stop_condition.sh` 在 base 不存在，
+而 DoD 第 2 条硬依赖后者 ⇒ 等 owner 裁决。**两条 INT 不得同轮刷基线**（`LUM-2111` 阻塞期间自动成立）。
+
+### ⑥ 下一轮（`§180` 交接）
+
+1. `df -h /` + `pg_lsclusters` → `rev-parse` 对 `ls-remote`（**先 reset，checkout 第 23 次落 `main`**）
+   → GH `pulls?state=open` → 判活按 §179④ 新序（`agent list` 看 `status`，收割看 PR）；
+2. **两片都可能在这轮出 PR**，各自走**七条判据链**（等 head CI 3/3 绿、钉 40 位 sha + `merge_method=merge`、
+   落地树 ≡ 预演树）：
+   - `LUM-1825`（**独占 `--write-baseline`**）⇒ 落地后**必须**当场在 base 重跑 `route_parity.py`，
+     核对 **`baseline == 546`**（`473 → 546`）且 `546 / 456 / 0 / 0 / 0 / 8` **六项逐字不变**、`ok=true`；
+     **漂移即迁移写错**（多半误改了 method/path 列，§178 承重订正）。
+   - `LUM-2419` ⇒ 落地后 **⑥ 必须连续 3 轮绿**才认收口（DoD 第 2 条），单轮绿不算。
+3. **两片写集 ∅ ⇒ 合入顺序任意**，不必仲裁；回收时**分别**按四判据（含 `branch -r --contains HEAD` 命中 base）处理。
+4. `LUM-2111` 阻塞**每 cycle 只复核一次**，三者仍缺则**只记一行，不 @ owner**。
+5. **槽位按 device 分账**（§180②）：先问「这片跑在哪台 device」，再决定用不用 `avail` 卡它。
