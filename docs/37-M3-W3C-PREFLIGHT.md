@@ -14980,3 +14980,98 @@ daemon 报 2/3 ⇒ 名义空 1。但按 §162/§167 的两项算式：
 ### §171.9 本轮一句话
 
 实测读数最便宜、也最能纠错：`--json` 里那 7 行 `owner` 字段，三分钟就作废了上一轮的一整张前推表。
+
+---
+
+## 172.
+
+### §172.1 cycle `LUM-2401`（2026-09-28 09:30）起手读数
+
+| | |
+|---|---|
+| base | **`ab422405`**（= §171 docs-only，未动 `crates/**`） |
+| GH open PR | **0**（GitHub API 实测，非 `git ls-remote` 推断） |
+| daemon | `running_task_count 1 / 3`、`active_task_count 1` ⇒ 只有 cycle 自身 |
+| 🔴 `df` 起手 | **6.9G / 86%** ← 全项目历史最低水位，**远低于** §169 实测的冷编峰值 18–30G |
+| PG 5432 | `online` |
+| `LUM-1820` run `01a0e570` | **`completed`（01:14:48Z），但 `pr_url` 为空、门禁停在 ⑤** ⇒ **未交付** |
+
+### §172.2 🔴 本轮核心产出 = 「run 终态 `completed` ≠ 交付」
+
+上一轮 §171 把 `LUM-1820` 记作「在飞、门禁段」；本轮起手才发现它的 run 早已终止。这不是新问题，是**判据缺位**：
+
+`multica issue runs <id> --output json` 的 `status: completed` 只说明**那一个 turn 结束了**，
+与「本片是否交付」无关。run 的 `result.pr_url` 才是交付信号。⇒ **新纪律：判一片是否在飞，不能只看
+run status，必须同时看 `result.pr_url` 是否为空**；空 ⇒ 立刻按「已提交未交付」处理。
+
+本轮据此判定 `LUM-1820` = **待收割片**，实测其成果完好：
+
+- HEAD `e4de3059`、分支 `agent/devbox5/d9ff17dbbfc8`、工作树**干净**；
+- 与 base 的 `--numstat` = 7 文件 **+2565 / −111**（3 个 http route + 3 个 repos + `docs/32` §9.26/§56），
+  **零越界**：未碰 `lib.rs` / `mod.rs` / `mount.rs` / `Cargo.lock` / 基线 json；
+- 上个 run 自述 `build` 干净、`clippy -D warnings` 干净、**22 单测全绿**（并自陈 3 个被测试抓出的真 bug 已修）。
+
+**抢救动作（无破坏性）**：`git push -u origin` 把该分支**固化到 origin**（`e4de3059edd…`），
+防 GC/防 workdir 被回收导致成果丢失。**不**代开 PR —— 门禁从未跑完，开 PR 等于把未验证代码送上 base。
+
+### §172.3 🔴 外科回收创新高 **+11.1 GiB**，并给出「按 `target/` 子目录分治」配方
+
+`LUM-1820` 的 `target/debug` = 21.4G，其中 `target/debug/incremental` = **11.75G / 424 桶**（桶龄全部 >5min、
+`/proc/*/fd` 命中 `incremental` = **0**、`cargo`/`rustc` 进程 = **0**）。按 §171 已验证的零中断配方切陈旧桶：
+
+```
+find <target>/debug/incremental -maxdepth 1 -mindepth 1 -mmin +5 -type d | xargs -r rm -rf   # 删 423 桶
+```
+
+⇒ `avail 6.9G → 18.3G`（+11.1 GiB，0 87% → 62%）。
+
+🔴 **本轮新配方：外科回收要按 `target/` 子目录分治，不能整目录照旧。** §171 那次是在飞片的
+`incremental` 只有 6.3G；这次同一个目录长到 11.75G，而**只删 `incremental`、刻意保留
+`target/debug/{deps,build}`（9.6G 温热）**，让重跑的片直接省掉冷编。整目录 `rm -rf target/` 会把这 9.6G
+一起丢掉，逼出 18–30G 冷编峰值 —— 在 18G 余量下那是自杀。
+
+### §172.4 🔴 本轮第二个产出 = 「cycle 自己占着 agent 并发槽 ⇒ cycle 内派不动自己的片」
+
+想重派 `LUM-1820` 时，**三种触发方式全部只落状态、不派发**（`daemon status` 全程
+`active_task_count: 1` = cycle 自身，另有 `resource_wait_task_count: 0` ⇒ 不是排队等待，是**没触发**）：
+
+| 触发方式 | 结果 |
+|---|---|
+| `issue status <id> todo` | 状态变 `todo`，`runs` 列表**无新条目** |
+| `issue assign <id> --to <agent>` | 状态/assignee 更新，`runs` **无新条目** |
+| `issue status <id> in_progress` | 同上，仍无新条目 |
+
+⇒ **cycle 的一轮之内无法给自己派活**（`running_task_count 1/3` 看着有空位，但那是 cycle 自己占的）。
+**正确姿势**：把片留在 **`in_progress`**、把交接说明**一次写全**进描述，然后结束本轮 ——
+daemon 会在本 turn 结束后派发。这比「反复试触发」省一整轮。
+
+### §172.5 槽位决策 = 本轮**只重投 1 片**（磁盘算式，非「没活干」）
+
+派发准入沿用：`真余量 = avail − 可回收量`。
+
+- 起手 `avail 6.9G`、可回收量 = 0（全盘唯一大 `target/` 就是在飞片自己的 21.4G 活物）⇒ **真余量 6.9G < 冷编峰值 18–30G** ⇒ 当时**一片都不能派**。
+- 外科回收后 `avail 18G`；`LUM-1820` 重跑是 **warm**（deps 保留，代价仅局部重编 **+3–8G**）⇒ 18G 够。
+- 再加一片 **M9-6 / `LUM-1821`** 就是冷编（18–30G）⇒ `18 − 8 < 18` **不成立** ⇒ **本轮不派**。
+- ENOSPC 已 **9 次**（至少一次连带杀死 PG 5432，即 29 小时停摆根因）⇒ **期望收益为负时宁可不派。**
+
+### §172.6 下一轮第一动作
+
+1. `df` 连采 + `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → GitHub API 查 open PR。
+2. 查 `LUM-1820` 是否已被派发出新 run（本轮把它留在 `in_progress` 等 daemon 派发），
+   判据是 **`runs` 列表出现新 id** 且 `result.pr_url` 最终非空。
+3. 它交 PR 后走 §171.7 的判据链：**等 head CI 3/3 转绿再合**、钉 40 位 sha + `merge_method=merge`、
+   落地树 ≡ 预演树；合入后 **⑦b `--declared m9` 的 `MISSING_ALIAS` 必须 3 → 0**。
+4. `M9=2` 归零前**不派 `LUM-1825`**（唯一 `--write-baseline` 的 INT 片）。
+   `LUM-1821`(M9-6) / `LUM-1822`(M9-7) 零文件交集、`df` 回到 ≥30G 后可同轮两派。
+5. 🔴 `LUM-2109`（M10-7）**docker 缺失**硬阻塞 ⇒ 连带 `LUM-2110`（M10-8），仍需 owner 裁决（按口径**不重复 @**）。
+
+### §172.7 本轮两条新产出（归并进 §171.8 的纪律表）
+
+1. **判活/判交付要看 `result.pr_url`，不能只看 run `status`**（§172.2）。
+2. **外科回收按 `target/` 子目录分治：只切 `incremental`，保留 `deps`/`build`**（§172.3）。
+3. **cycle 内不能给自己派活**（§172.4）——交接写全 + 留 `in_progress` + 结束本轮。
+
+### §172.8 本轮一句话
+
+6.9G 的余量不是「该省着点」，是**上一轮的成果还躺在盘上没交出去**；
+先判断「有没有已提交未交付的片」，比先算「还能不能再派一片」更值钱。
