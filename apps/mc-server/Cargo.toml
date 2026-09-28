@@ -52,6 +52,12 @@ mc-scheduler = { path = "../../crates/mc-scheduler" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+# M7-FU（`LUM-2136`）：`channels.rs` 现在在**本 crate** 里实装 engine 的四个端口
+# （`InstallationStore` / `RunTriggerer` / `SessionReader` / `IssueCreator`），它们全是
+# `#[async_trait]`，而 dingtalk 的 `secretbox` 解密器要把落库的 base64 密文解回字节。
+# 三条都是 workspace 已有依赖，不新增任何外部 crate 版本。
+async-trait = { workspace = true }
+base64 = { workspace = true }
 # M7-0 anchor（docs/60-M7-PLAN.md §3.1 / §5）：渠道长连接的宿主（`src/channels.rs`）
 # 要拿到 `Registry` 与五个 `register()`，并把 `SupervisorHandle` 挂进停机链 ——
 # 这是让「渠道运行时真的被链进二进制」的唯一手段（同 M5-9 给 mc-scheduler 补边的手法）。

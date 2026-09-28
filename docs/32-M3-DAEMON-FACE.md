@@ -9615,3 +9615,130 @@ upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
   「适配器 == 已安装平面」与「适配器 == `quota::policy_for`」。
 - **回归保护**：同文件的 `without_a_valid_base_url_the_plane_is_never_installed`
   （6 种部署形态 ⇒ 不装平面、quota 恒 off）+ 该用例开头的「冷平面 ⇒ `off` 形状」。
+
+---
+
+## 63. M7-FU（`LUM-2136`）：五渠道生产装配 + wecom 凭据探针换真传输（0 路由 / 0 迁移）
+
+`LUM-1786`（M7-21 INT）交付时登记的两项**掉棒**（`docs/60` §11.8、§31 的 **D1**/**D9**）。
+本片**0 路由 / 0 迁移** ⇒ ⑦ 基线一个数字都不许动。
+
+### 63.1 起手取证（四条**逐条可复算**，当轮 base `cac3b0e7` 实测）
+
+1. `git log --oneline -1 -- apps/mc-server/src/channels.rs` = **`ab998afe`**（M7-0 anchor）
+   ⇒ 该文件自锚点起全波未再被碰过；
+2. `apps/mc-server/src/main.rs:194` = `channels::start(&channel_keys, None)` —— **`None` 硬编码**；
+3. `grep -rn 'register_with' apps crates/mc-http --include=*.rs | grep -v '#\[cfg(test)\]'` = **0**；
+4. `grep -rn 'Supervisor::spawn(' apps crates --include=*.rs | grep -v ':[0-9]*: *//'` = **0**
+   （不带 `grep -v` 会返回 4 条，**但逐条全是文档注释** ⇒ 不加那一层过滤就会误判成"已接"）；
+   `grep -c 'todo!' crates/mc-channel/src/engine/supervisor.rs` = 0。
+
+⇒ 后果：M7 的 **5 条长连接一条都没被生产宿主跑起来**（代码面全绿）。
+
+### 63.2 D-1：五渠道真装配（`register_with` + `Supervisor::spawn`）
+
+- `main.rs:194` 改成 `Some(deps)`；`channels.rs` 新增 `build_deps(&PgPool)` 造端口袋，
+  逐个**已配置**平台调 `register_with`（`SecretBox` 由 `ChannelKeys::get(kind)` 交出），
+  再 `Arc::clone(engine.supervisor()).spawn()` 把句柄推进 `ChannelHandles::supervisors`
+  ⇒ 停机链第一步（`shutdown`）收得掉。
+- 验收核心用例 `configured_keys_with_wired_ports_actually_start_connections`：
+  「配了密钥 ⇒ `has_connections() == true`」—— 这条在 M7-FU 之前**必红**
+  （`supervisors` 恒空）。**新绿的证据只能来自它自己**，不能来自 ⑦（0 路由）。
+- 过期注释（`channels.rs:157`「`Supervisor::spawn` 现在仍是 `todo!()`」）已删。
+
+### 63.3 登记的偏离（8 条）
+
+- **D-1 🔴 碰了 `Cargo.toml` / `Cargo.lock`（§193 的预判在这两条上不成立）。**
+  §193 判定「D-2 不需要动 manifest」，那条对**探针**成立；但 D-1 的四个端口实现住在
+  `apps/mc-server`，全是 `#[async_trait]`，而 dingtalk 的 `secretbox` 解密器要把落库 base64
+  解回字节 ⇒ 加了 `async-trait` + `base64` **两个 workspace 已有依赖**（不新增 crate、
+  不新增版本，`Cargo.lock` 只 +2 行成员边）。**无第二个在飞片**，不构成同轮冲突。
+- **D-2 🔴 新模块用 `#[path]` 声明，`channels/mod.rs` 逐字未动。**
+  文件落在 §193 钉死的 `crates/mc-http/src/routes/channels/wecom_probe.rs`；但
+  `channels/mod.rs` 被 M7-0 anchor **冻结**（逐字：「M7 后续切片**不得**编辑」，且要求把需要的
+  子文件记进 §10 由集成方统一加）⇒ 改用 `wecom.rs` 里的 `#[path = "wecom_probe.rs"] mod probe;`。
+  **同时满足**「路径按 §193」与「`mod.rs` 不破冻结」，且本片**不是**第 25 条路由。
+- **D-3 🔴 放宽了 `mc-channel` 的 4 个符号可见性（§193 预授权的那一项）。**
+  `slack::{SlackDeps, Decrypter}` 与 `telegram::{TelegramDeps, Decrypter}` 此前只出现在
+  `pub fn register_with` 的**签名**里、类型本身在私有 `config` 模块 ⇒ **外部根本造不出来**
+  （`register_with` 等于没法用）。四条 `use` 改 `pub use`，**没有任何行为变化**。
+- **D-4 `InstallationStore::list_active` 的 PG 实现在本片落地。** 它的文档逐字写着
+  「DB 实现由后续片落地」，全仓只有 `#[cfg(test)]` 替身。实现在 `channels.rs`（与
+  `scheduler/*_port.rs` 同造型：**端口实现住在二进制 crate 里**）。指纹取
+  `md5(config::text || updated_at::text)`（**在 PG 里算**，零新依赖、不把 `config` 明文带进进程），
+  且凭密文在 `config` 里 ⇒ 重装必换指纹。
+- **D-5 ⚠️ 入站面三个端口是**失败关闭**的，这是登记过的缺口不是遗漏。**
+  `Router` 的四个端口里 `SessionReader` / `IssueCreator` / 内层 `RunTriggerer`
+  **全仓零生产实现**（要打 `mc-repos`，属后续片）。本片交付的是「连接真的被监管器跑起来」，
+  所以给这三个**失败关闭**实现：装配成功、连接照起，真有入站消息走到它们时**响亮报错**，
+  而不是静默丢弃（静默丢弃 = `docs/37` 反复登记的那类运行期事故）。
+- **D-6 ⚠️ lark 的 `connector` 传 `None`。** M7-11 的连接器产物不存在 ⇒ 工厂在 `build` 时
+  响亮地拒装配（`InvalidConfig`），**不**交出假装连上的半成品（同 anchor 期的
+  `register` 手法）。dingtalk 的 `Decrypter` 收的是**函数值**（`Fn(&str) -> …`），
+  本片现搭了 base64 → `secretbox` → UTF-8 那条链（错误文案不带密文/明文）。
+- **D-7 BYO 成功是 **200**，不是立项描述写的 201。** 路由实现是
+  `Ok(Json(WecomInstallationResponse::…))` ⇒ **200**（上游 `registerBYO` 是 upsert）。
+  用例按**实际且上游对齐的 200** 断言；把 200 改成 201 是**未授权的端点语义变更**。
+- **D-8 探针的用例覆写是 `#[cfg(test)]` 单槽 `OnceLock`。** 生产二进制**不存在**该符号
+  （不是运行时开关）。⚠️ 单槽的坑：若每条用例自带参数，后跑的那条会因 `set` 失败而
+  **静默沿用**前一条的替身 ⇒ 两条用例变成"谁的 `bot_id` 先被认得谁绿"。本片把分支写成
+  **约定**（`bot_id` 以 `-unreachable` 结尾 ⇒ 够不着），用例只管按约定取名 ⇒
+  **与执行顺序无关**（已用 `--test-threads=1` 与默认并行各跑一遍，8/8 双绿坐实）。
+
+### 63.4 D-2：wecom 凭据探针换真传输（关闭 **D9**）
+
+- 新文件 `wecom_probe.rs` 实作 `ProbeTransport`：`TungsteniteDialer` 拨号 → `WsSender` 写
+  `aibot_subscribe` → **并发**跑一个"喂 ack"的读（握手阶段还没有读循环，ack 账本得有人喂，
+  与 M7-16 重连握手逐条同款）→ 判决后**显式关连接**（一次连接、一次订阅、不注册、不发布）。
+- **判决分工**：传输只答"够不够得着" —— 拿到 ack 就把 `errcode` **原样交回**
+  （`Ok(0)` / `Ok(code)`），"这个码算拒绝还是算够不着"由
+  `credentials::classify_subscribe_ack` 统一判（**两个读者共用那一个函数**，
+  所以"限频，等等"不会在一处是 `Unverifiable`、在另一处变成"去修这个安装"）。
+- **依赖方向恒为 `mc-http → mc-channel`**（那条边早已存在，`mc-channel` 不依赖 `mc-http`）
+  ⇒ 不成环、不新增 crate。
+- `tests/db.rs` 那条从「期望 503」翻成 **`byo_persists_the_row_once_the_probe_transport_is_wired`**
+  （**200 + 落行 + 库里只有密文**），并**另立**一条
+  `byo_answers_503_and_writes_nothing_when_the_probe_cannot_reach_wechat`
+  （够不着 ⇒ 503 + 一行不落）—— 安全不变式（探针失败就不能落凭据）**没变**，
+  变的只是"够得着"这条路上不再恒 503。
+
+### 63.5 门禁与读数（当轮实测，base `cac3b0e7` + 本片）
+
+- **全量十门 10/10 绿**（`--with-db`，311s）：① fmt ② build ③ clippy ④ clippy-test-util
+  ⑤ test ⑥ db ⑦ route-parity ⑧ schema-drift ⑨ conformance ⑩ file-size。
+- 门 ⑥：`mc-migrate` 566 条迁移 + **829 passed / 0 failed**（含本片 8 条 wecom 真库用例）。
+- ⑦ 读数与派发说明**逐字相同**：`upstream 456 / local 546 / baseline 546`、
+  `implemented 455 real + 1 placeholder = 456/456`、`known_gap 0 / unclaimed 0 / regression 0 /
+  local_only 8`、`owners {}`、`OK: every upstream route is either implemented or owned`。
+  **未跑 `--write-baseline`**。
+- ⑩ 十个文件全部在 800 硬上限内（`channels.rs` 198 → **483**、`main.rs` 305 → 308、
+  `wecom.rs` 463 → 448、新文件 `wecom_probe.rs` **536**）。
+- 另记一条**与本片无关**的瞬时红（同 §62 已登记的同一现象）：首轮冷跑 ⑥ 在
+  `routes::attachments::…` 报 `pool timed out while waiting for an open connection`；
+  单跑该组 **22/22 绿**、换新库重跑全量门 ⑥ 即绿（本机 `max_connections=100` 而每个
+  fixture 各开连接池）—— **不属本片写集**。
+
+---
+
+### 9.32 M7-FU（`LUM-2136`）：五渠道生产装配 + wecom 探针换真传输的偏离登记（**索引段**）
+
+**写集**（3 个既有 + 1 个预授权新建 + 4 处顺带）：
+
+| 文件 | 性质 | 依据 |
+| --- | :-: | --- |
+| `apps/mc-server/src/channels.rs` | 改（198 → 483） | 本片写集；D-1 装配 + D-4 的 `list_active` PG 实现 + D-5 三个失败关闭端口 |
+| `apps/mc-server/src/main.rs` | 改（305 → 308，仅 `:194` 一行 + 端口袋两行） | 本片写集 |
+| `crates/mc-http/src/routes/channels/wecom.rs` | 改（463 → 448） | 本片写集；`:158` 的 `PendingWsTransport` 换成真传输 |
+| `crates/mc-http/src/routes/channels/wecom_probe.rs` | **新建（536 行）** | §193 预授权；D-2 的传输 |
+| `crates/mc-http/src/routes/channels/wecom/tests/db.rs` | 改 | DoD 2ⓑ 点名的那条用例 |
+| `crates/mc-channel/src/{slack,telegram}/mod.rs` | 改（各 5 行） | **D-3** 可见性放宽，零行为变化 |
+| `apps/mc-server/Cargo.toml` + `Cargo.lock` | 改（+6 / +2） | **D-1** 两个 workspace 已有依赖 |
+
+**与 §193 预判的两处不符（已在 §63.3 逐条登记）**：① 碰了 manifest（D-1）；
+② `channels/mod.rs` 走 `#[path]` 而非 `pub mod`（D-2，为守 anchor 冻结）。
+`ChannelDeps` 三件套里**只有 `LeaseStore` 有生产实现**（`InProcessLeaseStore`），
+`InstallationStore`（D-4）与入站 `Router` 的四个端口（D-5）是本片补的或登记为缺口的。
+
+**⑦ 结论**：0 路由 ⇒ 合并后 `456/546/546`、`455r+1ph`、`gap 0`、`owners {}` 必须**逐字不变**；
+本片验收证据**全部**来自它自己的单测（`channels.rs` 4 条 + `wecom_probe.rs` 7 条 +
+真库 8 条）与门禁，**不来自 ⑦**。

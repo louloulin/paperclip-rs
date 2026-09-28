@@ -189,9 +189,12 @@ async fn main() -> anyhow::Result<()> {
     //    （无 webhook 路由，`docs/60` §1.5），所以它们与 HTTP 面**共享同一个进程**但走
     //    自己的装配点。判据 = **部署密钥存在**（缺则整体不装配），装配与停机都在
     //    `channels.rs`。
-    //    ⚠️ 第二个实参现在是 `None`（端口实现归 M7-1/M7-2）⇒ 即使配了密钥也**只 warn 不起连接**，
-    //    绝不假装连上了；接线后这里换成 `Some(deps)`，签名不变。
-    let channel_handles = channels::start(&channel_keys, None);
+    //    ⚠️ 第二个实参此前是 `None`（锚点期的端口实现归 M7-1/M7-2）⇒ 即使配了密钥也**只 warn
+    //    不起连接**。端口已落地（M7-FU / `LUM-2136`）⇒ 这里传 `Some(deps)`，签名不变。
+    let channel_deps = channels::build_deps(db.pool())
+        .map_err(anyhow::Error::from)
+        .context("channel engine port bag")?;
+    let channel_handles = channels::start(&channel_keys, Some(channel_deps));
     tracing::info!(
         configured = ?channel_handles.configured(),
         factories = ?channel_handles.registry().kinds(),

@@ -5,7 +5,9 @@
 
 use super::*;
 use mc_channel::wecom::binding::hash_binding_token;
-use mc_channel::wecom::credentials::CredentialsResolver;
+use mc_channel::wecom::credentials::{
+    CredentialsResolver, PlaintextSecret, ProbeTransport, TransportError,
+};
 use mc_channel::wecom::installation::InstallationService;
 use mc_channel::wecom::store::{
     InstallationQueries, InstallationStore, PersistInstall, PersistOutcome,
@@ -286,19 +288,99 @@ async fn list_and_revoke_work_end_to_end() {
     );
 }
 
-/// BYO：探针的 wire 一半在 M7-16 ⇒ 现在**必然** 503，且**一行都不许写**
-/// （证明控制权是安全不变式，没有探针就不能落凭据）。
+/// 传输替身：**按 `bot_id` 后缀**分支。
+///
+/// - 以 `-unreachable` 结尾 ⇒ 传输失败（“够不着 `WeCom`”）；
+/// - 其余 ⇒ 订阅成功。
+///
+/// ⚠️ 分支是**约定**而不是参数：`probe::install_test_override` 是**单槽**（同进程只能装
+/// 一个），若每条用例自带参数，后跑的那条会因 `OnceLock::set` 失败而**静默沿用**前一条的
+/// 替身 ⇒ 两条用例变成“谁的 `bot_id` 先被认得谁绿”。把约定写进替身、让用例只管按约定
+/// 取名，两条用例就与**执行顺序无关**。
+struct ConventionProbe;
+
+#[async_trait::async_trait]
+impl ProbeTransport for ConventionProbe {
+    async fn subscribe_ack(
+        &self,
+        bot_id: &str,
+        _secret: &PlaintextSecret,
+    ) -> Result<i32, TransportError> {
+        if bot_id.ends_with("-unreachable") {
+            Err(TransportError::Failed { stage: "dial" })
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+/// 装上路由层的传输替身（幂等：单槽，重复装是同一个）。
+fn install_convention_probe() {
+    probe::install_test_override(Arc::new(ConventionProbe));
+}
+
+/// **M7-FU 的验收核心（真库）**：探针的 wire 一半已接上 ⇒ BYO 安装**真的能成**。
+///
+/// M7-FU 之前这条用例钉的是反面（`PendingWsTransport` ⇒ 恒 503 且一行不落）。
+/// 那是一条**“未接线”的绿**，不是 `docs/32` §31 D9 要求的“已转绿” ⇒ 本片把它翻过来：
+/// 认得的 `bot_id` ⇒ **200 + 落行**，且库里只有**密文**。
 #[tokio::test]
 #[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
-async fn byo_answers_503_while_the_probe_transport_is_not_wired() {
+async fn byo_persists_the_row_once_the_probe_transport_is_wired() {
     let db = fixture!();
     let seed = seed(&db).await;
+    install_convention_probe();
     let app = mount(app_state(db.clone()));
     let uri = format!(
         "/api/workspaces/{}/wecom/install/byo?agent_id={}",
         seed.workspace_id, seed.agent_id
     );
     let body = json!({ "bot_id": seed.bot_id, "secret": PLAINTEXT_SENTINEL, "bot_name": "itest" });
+    let (status, response) =
+        call_with_body(&app, "POST", &uri, Some(seed.admin), &body.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["bot_id"], json!(seed.bot_id));
+    assert!(
+        !response.to_string().contains(PLAINTEXT_SENTINEL),
+        "响应回显了密钥：{response}"
+    );
+    assert!(
+        !response.to_string().contains("secret_encrypted"),
+        "响应带密文列：{response}"
+    );
+
+    // 真的落行了，且**只有密文**。
+    let config_text: String = sqlx::query_scalar(
+        "SELECT config::text FROM channel_installation \
+             WHERE channel_type = 'wecom' AND config ->> 'app_id' = $1",
+    )
+    .bind(&seed.bot_id)
+    .fetch_one(db.pool())
+    .await
+    .expect("row");
+    assert!(
+        !config_text.contains(PLAINTEXT_SENTINEL),
+        "明文入库了：{config_text}"
+    );
+}
+
+/// 够不着 `WeCom` ⇒ **503** 且**一行都不许写**（安全不变式没变：探针失败就不能落凭据）。
+///
+/// 与上一条共用同一个传输槽，靠**不同的 `bot_id`** 区分（`ConventionProbe` 认不得它）。
+#[tokio::test]
+#[ignore = "needs PostgreSQL (MULTICA_TEST_DATABASE_URL)"]
+async fn byo_answers_503_and_writes_nothing_when_the_probe_cannot_reach_wechat() {
+    let db = fixture!();
+    let seed = seed(&db).await;
+    // 本用例的 bot_id **不被**替身接受 ⇒ 传输失败。
+    let unreachable = format!("{}-unreachable", seed.bot_id);
+    install_convention_probe();
+    let app = mount(app_state(db.clone()));
+    let uri = format!(
+        "/api/workspaces/{}/wecom/install/byo?agent_id={}",
+        seed.workspace_id, seed.agent_id
+    );
+    let body = json!({ "bot_id": unreachable, "secret": PLAINTEXT_SENTINEL, "bot_name": "itest" });
     let (status, response) =
         call_with_body(&app, "POST", &uri, Some(seed.admin), &body.to_string()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{response}");
@@ -314,13 +396,13 @@ async fn byo_answers_503_while_the_probe_transport_is_not_wired() {
         "SELECT count(*) FROM channel_installation \
              WHERE channel_type = 'wecom' AND config ->> 'app_id' = $1",
     )
-    .bind(&seed.bot_id)
+    .bind(&unreachable)
     .fetch_one(db.pool())
     .await
     .expect("count");
     assert_eq!(rows, 0, "凭据没能验证 ⇒ 一行都不许写");
 
-    // 缺 `agent_id` ⇒ 400（调用方补一个字段就能成，与"够不着 WeCom"是两件事）。
+    // 缺 `agent_id` ⇒ 400（调用方补一个字段就能成，与“够不着 WeCom”是两件事）。
     let uri = format!("/api/workspaces/{}/wecom/install/byo", seed.workspace_id);
     let (status, response) =
         call_with_body(&app, "POST", &uri, Some(seed.admin), &body.to_string()).await;

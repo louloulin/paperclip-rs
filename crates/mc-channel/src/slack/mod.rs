@@ -107,7 +107,10 @@ use mc_repos::member::MemberRepo;
 
 use crate::engine::{ChannelDeps, Router};
 use crate::registry::Registry;
-use config::{Decrypter, SlackDeps};
+// M7-FU（`LUM-2136`）：`SlackDeps` / `Decrypter` 从此**公开**——宿主的
+// `channels.rs` 要拿部署密钥造出生产依赖再交给 `register_with`，而在此之前这两个类型
+// 只在 `pub` 函数签名里出现、外部**造不出来**（`register_with` 等于没法用）。
+pub use config::{Decrypter, SlackDeps};
 use replier::{BindingMinter, OutboundLedger, SlackOutboundReplier};
 use resolvers::SlackResolverSet;
 use typing::TypingIndicatorManager;
