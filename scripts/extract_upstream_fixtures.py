@@ -997,8 +997,13 @@ def apply_statement(file: str, interp: Interpreter, span: tuple[int, int], text:
                 ctx.env[hdr.group(1)].headers[k.value] = v
         return
 
-    # 5. `name = expr` / `name := expr` / `var name = expr`
-    assign = re.match(r"^(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*\s*(?::=|=)\s*", text)
+    # 5. `name = expr` / `name := expr` / `var name = expr` / `const name = expr`
+    # 🔴 `const` is load-bearing: a function-local `const key = "…"` must shadow
+    # `pkg_literals` (repo-wide, keyed by **bare name**). Unregistered, the bare `key`
+    # fell through to an unrelated `key = "workspaces/"` (handler/file.go) and the
+    # fixture replayed `?status=workspaces/`. `ctx.defs` wins over `pkg_literals`, and
+    # a locally-declared literal is no longer *borrowed*, so it is not rebound to a row.
+    assign = re.match(r"^(?:(?:var|const)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*\s*(?::=|=)\s*", text)
     if not assign:
         return
     name = assign.group(1)
