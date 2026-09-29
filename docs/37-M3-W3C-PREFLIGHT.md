@@ -18922,3 +18922,126 @@ base = **`c1e37fd4`**；GH **0 open PR**；在飞 **`LUM-2494` 唯一**（正跑
 下轮第一动作：若 `LUM-2494` 交 PR ⇒ 按 **§210.1 预登记的新判据链**（⑦ 八数字 + ⑨ `--db-url` 六数字，
 **弃用 `contracts/golden` 逐 blob 恒等**）当场复核；收尾第一动作 `rm -rf target`。
 `LUM-2111`（M10-9 INT）仍卡 docker/podman/buildah 三件套皆无，**待 owner 裁决，不重复 @**。
+
+## §213 【2026-09-29 cycle / LUM-2502】Tier-2 桶 C：种子符号从「每类一行」改成「每类每测试一行」—— 隔离**修好了**，同时**拆穿 3 条假通过**
+
+起手：base = **`740d3f28`**（`LUM-2494` / PR #151 已合入），分支 `agent/devbox4/c75ca614ea91`。
+本片修的是 `LUM-2494` **自己引入**的 23 条缺口（§209.4 C 桶），做法与验收口径都在工单里写死。
+
+### §213.1 机理（复核后与 §209.4 一致，但多一类实体）
+
+每类**只种一行**、全回放共享的代价是**独立测试之间互相摧毁**。回放序实测：
+
+| 序 | 摧毁者 | 摧毁的东西 | 其后受害 |
+|----|--------|------------|----------|
+| 57 | `chat/TestClearQueuedChatTasks_PreservesUnclaimedHeadAndDeletesFollowUps` | 唯一的 chat session | 6 条 |
+| 206 | `issues/TestIssuesCRUDThroughRouter` 的 `DELETE` | 唯一的 issue | 12 条 |
+| **335** | `workspaces/TestDeleteWorkspace_CleansResourceLabelAssignments`（**实测 204 pass**） | **唯一的 workspace** | **5 条** |
+
+⇒ 共 23 条，与 §209.4 的 C 桶逐字对齐。**但摧毁的不止四类实体**：`$testWorkspaceID`
+也是「被 `DELETE` 摧毁的共享行」，所以本片的分组键要覆盖它，写集也必须落到
+`seed.rs` 之外的 `harness.rs`（见 §213.5）。
+
+### §213.2 做法
+
+分组键 = **`Fixture.source.test`**（`lib.rs` 的 `Source::test`；实测 300 个上游测试名
+全仓**无一重名**，所以它天然是「同一个上游测试」的键）。每个分组独占：
+
+* 一个 workspace（`$testWorkspaceID` 就是它）＋ 一枚 `mdt_` 令牌（令牌带
+  `REFERENCES workspace(id)` 外键，daemon 身份被 workspace 限死，所以令牌也得按组分）；
+* 四行实体：agent / issue / chat session / task。
+
+要种哪些测试由新函数 `seed::groups_for(fixtures)` 从 fixture 面算出 —— **只有**真的
+引用了那五类符号的测试才被种，实测 **158 个分组**（不是给 300 个测试各建一套）。
+`plan()` 的 6 个 `bindings.resolve()` 调用点全部持有 `fx`，所以传分组键是**纯加参**：
+`Bindings::resolve(group, raw)` / `daemon_token_for(group)` / `workspace_for(group)`。
+
+### §213.3 门 ⑨ database 层前后读数（当轮新建库）
+
+| | pass | mismatch | unmounted | unevaluable |
+|---|---|---|---|---|
+| §209（base） | 252 | 80 | 3 | 30 |
+| §213 | **268** | **64** | 3 | 30 |
+
+23 条 C 桶的 `404` **全部消失**（这是「转真判定」的字面含义），但它落成了
+**19 pass + 4 条另一种 mismatch**，并且**拆穿了 3 条原本是 `pass` 的假通过**：
+
+* `chat/TestChatSend_UnboundAgentReturnsStructuredConflict`：旧 409 是**别的测试**把
+  共享 agent 的 runtime 改坏换来的（`agents/TestAgentsThroughRouter` 序 6 的 `PUT`）；
+* `daemon/TestGetChatSessionGCCheck@…:3815#11` 与 `:3840#13`：旧 404 只是**共享 session
+  被序 57 删掉**。这三条 fixture 与 `:3821#12`（期望 200）**共用同一个
+  `$testChatSessionID`**，即三条请求字面相同、期望 404/200/404 互相矛盾 —— 那是**抽取
+  侧的欠拟合**，隔离修好之后至多只有一条能成立。
+
+⇒ 净额 `+16 pass / −16 mismatch`。**本片没有达到工单写死的 `≥275 / ≤57`**，差 7 条，
+逐条归因见 §213.4。
+
+### §213.4 4 条「离开 404 但没落到 pass」+ 3 条「假通过被拆穿」（逐条点名）
+
+| # | fixture | 旧 | 新 | 期望 | 真正的缺口（**不在本片写集内**） |
+|---|---------|----|----|------|-----------------------------------|
+| 1 | `chat/TestPrioritizeQueuedChatTask_BroadcastsQueueInvalidation@…:586#19` | 404 | 409 | 200 | 队列头状态：需要「同一条 session 上排好序的 queued task」 |
+| 2 | `chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@…:73#27` | 404 | 201 | 409 | 需要**一个 runtime 不可用的 agent**；`POST /api/agents` 强制 `runtime_id` 可用 |
+| 3 | `issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@…:277#66` | 404 | 200 | 409 | 版本冲突：需要先制造一个 stale revision |
+| 4 | `workspaces/TestDeleteWorkspace_RequiresOwner@…:141#29` | 404 | 204 | 403 | **需要第二个身份**（非 owner 成员）—— 与 §209.4 B 桶同一族 |
+| 5 | `chat/TestChatSend_UnboundAgentReturnsStructuredConflict@…:78#1` | 409 | 201 | 409 | 同 #2（假通过被拆穿） |
+| 6 | `daemon/TestGetChatSessionGCCheck@…:3815#11` | 404 | 200 | 404 | 同 §213.3（抽取欠拟合，与 #12 互斥） |
+| 7 | `daemon/TestGetChatSessionGCCheck@…:3840#13` | 404 | 200 | 404 | 同上 |
+
+**结论**：本片**修好的是隔离**（23 条 404 全部消失、算式恒等于 95），**没有**顺手去修
+上面 7 条各自的第二缺口 —— 它们每一条都需要本片写集之外的新装配（第二个身份 /
+runtime-unavailable 的 agent / 队列或版本状态 / 抽取侧区分）。**不许**把它们算成本片
+的成绩；`golden.rs` 里 `LEFT_404_FOR` 与 `LOST_RESOLVED` 两份常量把它们**逐条点名**。
+
+### §213.5 三桶算式（`seeded_symbols_convert_404_into_real_judgements`）
+
+| 桶 | §209 | §213 | 含义 |
+|----|------|------|------|
+| `RESOLVED` | 56 | **68** | 判成 `pass` 且观测码**等于**期望 |
+| `STILL_404` | 24 | **6** | 仍观测到 404（A/B 桶：非法 id 形态、缺第二个身份） |
+| `OTHER` | 15 | **21** | 既不是 pass 也不是 404（`200→400`、`409`、`201`、`200`…） |
+
+**恒等式 68 + 6 + 21 ≡ 95 仍成立**（95 = 带种子符号的 fixture 总数）。本片把护栏**加强**
+而不是放松：`STILL_404` 的 6 条**逐条点名**（`STILL_404_IDS`）—— 只钉个数的话，
+「把一条 404 换成 400 再补一条进来」可以骗过数字断言；点名之后**任何一条被换成别的
+状态码都会红**。另外 `LEFT_404_FOR` / `LOST_RESOLVED` 必须确实落在 `other` 里。
+
+### §213.6 门禁读数（本机，`--only` 与全量各一轮）
+
+```
+①  fmt 0 | ② build 0 | ③ clippy 0 | ④ clippy-test-util 0 | ⑤ test 0
+⑦  route-parity 0 | ⑨ conformance 0 | ⑩ file-size 0        ⇒ 8/8 绿（169s）
+⑦ 八数字逐字不变：upstream 456 | local 546 | baseline 546
+   implemented 455 real + 1 placeholder = 456/456 | gap 0 | unclaimed 0 | regr 0 | local_only 8
+```
+
+`cargo test -p mc-conformance -- --include-ignored`（当轮新建库）：**12 绿 / 1 红**，
+红的仍是 `database_tier_replays_every_decidable_fixture`，崩在
+`agents/TestGetAgent_RejectsForgedAgentIDHeader@…:520#13: actor kind Agent needs a real
+credential`。**这是 `LUM-2501` 的存量缺陷**：该 fixture 在 §213 前后**都是
+`unevaluable` 且 detail 逐字相同**（本条测试与 actor=agent 的装配面本片未触碰）。
+`every_seeded_symbol_is_provided_by_the_seeder` 仍绿（离线判据，无需库）。
+
+### §213.7 写集（比工单多两个文件，都是**签名级**改动）
+
+工单写集：`seed.rs`（385→696 行，< 800 上限）/ `bindings.rs` / `lib.rs`（只加 1 个
+`let group` + 6 个加参点）/ `tests/golden.rs` / 本 `docs/37` §213。
+**禁改面 0 改动**：`contracts/golden/**`、`migrations/**`、`scripts/gates.sh`、
+`docs/fixtures/*` 全部未动。
+
+多出来的两个文件是**必要**的，因为「种哪些分组」这件事只有拿到 fixture 列表才算得出，
+而 `seed()` 在工单设计里拿不到它：
+
+* `crates/mc-conformance/src/harness.rs`：`database_router(url)` → `database_router(url,
+  fixtures)`，把 workspace/令牌的创建**移交**给 `seed.rs`（该文件因此 187→157 行，变短）；
+* `crates/mc-conformance/src/main.rs`：调用点补一个 `&fixtures` 参数。
+
+### §213.8 下一轮起点
+
+base = **`740d3f28` + 本片**；GH 上 `LUM-2502` 提 PR。**在飞**：`LUM-2501`（§209.9 的存量红灯）。
+下轮第一动作：**按 §213.4 的 7 行表**判「值不值得为它们各开一片」——#4 与 §209.4 B 桶
+同族（第二个身份），应当合并成一片；#2/#5 同族（runtime 不可用的 agent）；#6/#7 是
+**抽取侧欠拟合**（同一测试的多条请求被压成同一个 `$` 符号），应回到
+`scripts/extract_upstream_fixtures.py` 而不是 conformance 侧再打补丁。
+本机余量仍是硬约束（本轮 `ENOSPC` 又出现 2 次，靠删 `~/.npm/_cacache` / `~/.bun` /
+`~/.cache/pnpm` 三个**可再生的包缓存**换回空间，未动任何在飞片的 `target/`）。
