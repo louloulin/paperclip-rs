@@ -21422,3 +21422,83 @@ run 正常 completed —— 而交付物不存在。** 两条原因都不是需�
 **⇒ 本节与 §233.9 合起来是一条完整教训：两条并发片撞同一个文件时，「谁先合」不是执行细节，而是决定另一片要不要重做的开关；
 而当收割由第三个执行体（并发 cycle）代劳时，**下轮第一动作必须是重取板面 + 逐个 PR 回读 `state`/`merged_at`/head 是否已成 base 祖先**，
 不能沿用自己写下的顺序。**
+
+## §235 【2026-09-29 21:00 cycle / LUM-2557】**收割 PR #162（并发 cycle 留下的半成品接手）** ＋ **`T1-6` 的 87 条坏 fixture 首次逐条正名** ＋ 派发 `LUM-2560` ＋ 🔴 承重一：**「平局没有代价」这个结论，是拿错了比较对象测出来的**
+
+起手 base `b9041b14`，收尾 base **`fc56c3e6`**。GH open PR 1 → 0。在飞 1/3。
+
+### 1. 收割 PR #162（`LUM-2552`，门 ⑨ 回放器补 PAT 签发面 / T1-6-B）
+
+**接手的是并发 cycle 的现场，不是从零做。** `LUM-2556` 的 run 于 `12:37:39Z` 终态（`completed`、`error=null`），而它**已经把冲突解完、门禁启动**，然后就断了：workdir `lum-2556-9694d1dc7d15` 停在分支 `harvest162`，索引里 18 个文件已 staged，`lib.rs` / `request_plan.rs` 两个手工重放的文件还是 unstaged，**12G 热 `target/` 留在盘上**。判据链六条全绿：
+
+| # | 判据 | 结果 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API 逐字 | **20 文件** 逐字相同（page1=20 / page2=0） |
+| ② | 形态判定 | base **不是** head 祖先（merge-base `d7400dc2`）⇒ 真合形态 |
+| ③ | 冲突面 | `git merge-tree --write-tree` **rc=1**，唯一冲突文件 `crates/mc-conformance/src/lib.rs` |
+| ④ | 证据 | **合并树当场 `--with-db` 10/10 / 754s**（③ clippy 55s、⑤ 160s、⑥ 275s、⑨ 68s） |
+| ⑤ | API 钉 sha | `1ac45ade6d4f75321b2fcf65d21487531ce8f0c7` + `merge_method=merge` |
+| ⑥ | 落地树 | `fc56c3e6^{tree}` = `e3020178…` **≡ 预演树逐位相同**；`base^2` **== 钉的 sha**；`git diff` 空 |
+
+**冲突按 §233.10 的搬法处理，不机械取任一侧**（`lib.rs` 那一侧是**整文件重写**：base 97 行薄壳、PR 979 行）。实际做法与 §233.10 的预登记略有出入，**这一条要更正**：
+
+- §233.10 写「业务改动只是搬了家 ⇒ 只有 `lib.rs` 那一处手工重放」——**不够**。实测 base 的 `crates/mc-conformance/src/request_plan.rs:122` 仍是 `ActorKind::Agent | ActorKind::Token | ActorKind::System` 三合一，**base 里没有 PAT 分支**。所以必须**两处**动：`lib.rs` 只补一行 `pub mod pat_token;`（+1/−0），`request_plan.rs` 重放 `ActorKind::Token` 分支（+29/−3，doc-link 改成 `[`crate::pat_token::register`]`）。
+- 行数守恒可作交叉核对：PR 自述 `lib.rs +30/−3` ⇒ 合并后变成 `lib.rs +1` + `request_plan.rs +29` = 30。**其余 18 个文件与 PR 逐字相同**（净 diff vs base 仍 20 文件）。
+
+⏱ **「门禁不幂等」第 2 次付账**：门禁跑完 `avail` 掉到 **2.2G/96%**（`target/` 12G → **24G**）。`rm -rf target` 后回 **26G/46%**。本片**没有**在热 target 上叠第二遍，所以只付了一遍。
+
+### 2. `T1-6` 现状（合并树 `fc56c3e6` 上实测，`--db-url`）
+
+```
+totals  365 / pass 275 / mismatch 57 / unmounted 3 / placeholder 0 / unevaluable 30     ⇒ BAD = 87
+by_actor  member {mismatch 48, pass 223, unevaluable 11, unmounted 3}
+          agent  {unevaluable 13}      daemon {mismatch 8, pass 10, unevaluable 2}
+          token  {mismatch 1, pass 7}  anonymous {pass 35, unevaluable 4}
+```
+
+与 §213 逐字对照：`365/268/64/3/0/30`（BAD 94）⇒ **本片把 7 条从 `mismatch` 挪进 `pass`，`unevaluable` 一条没动** —— 这是 §203 要求的**唯一**进步方向。`T1-6` 仍 FAIL（需 `mismatch 0 ∧ unevaluable 0`），它是 Tier-1 唯一剩下的红。
+
+**87 条的族分解（本轮第一次把「mismatch」拆到能派工的粒度）**：
+
+| 族 | 条数 | 签名 |
+|---|---|---|
+| `agent` 无签发面 | 13 | `X-Agent-ID` / `X-Task-ID` 全是**字面 UUID**，`extraction.bindings` 一条都解析不了 |
+| `member`/`daemon` 前提不足 | 13 | `requires` ∈ `cloud_runtime_stub` / `cloud_runtime_configured` / `daemon_token` / `db_fault_injection` |
+| `2xx←4xx`（上游成功、本仓拒） | 26 | 400×13（`/api/issues` 7 + `/api/chat/sessions` 4 + …）、401×4、404×8、409×1 |
+| `4xx←2xx`（上游拒、本仓放） | 18 | 201←409（chat）、200←404（daemon 若干） |
+| `4xx←4xx` 不同码 | 10 | |
+| 其余 | 3 | 5xx 2 + 2xx 2xx 1 |
+
+### 3. 🔴 承重一（本轮最要紧）：**「平局没有代价」这个结论，是拿错了比较对象测出来的**
+
+§233.1 的承重说「`merge()` 的平局裁决把 database 层的理由整段丢掉」。本轮我先做了一次**证伪**测量，得到相反结论：把 30 条 `unevaluable` 的 **stateless 层 detail** 与**合并后 detail** 逐字比，**30/30 完全相同**，于是差点记成「平局不丢信息、这条承重不成立」。
+
+**那次测量是错的，比较对象错了。** 正确的对象是 **database 层单独那一侧**。而这 13 条 `(offline, database)` 配对**全部**是 `("unevaluable","unevaluable")` —— database 层**也**判不了，**但理由不同**（它们缺的是 `requires` 里的前提，不是凭据）。`merge()` 在平局时取 stateless 侧，于是那 13 行的 `detail` 是「member actor needs the database tier (rerun with --db-url)」—— **在一次已经给了 `--db-url` 的运行里**。
+
+⇒ §233.1 的承重**成立**，而 `requirements.rs:256-267` 的**文档注释自己早就写明了这个危害**（「否则读者会顺着一条假线索去 rerun `--db-url`」）。
+
+🔴 **可复用的定式**：「A 侧 vs 合并结果相同」**推不出**「合并没丢东西」—— 合并结果的字段**本来就取自 A 侧**。要证「合并是否丢弃了 B 侧」，必须取到 **B 侧自己**的读数。本仓没有「只跑某一层」的 CLI 开关，所以这件事在**当前工具下不可直接测**，只能靠代码路径判（`merge()` 只搬运 `winner.detail`）。
+
+🔴 **顺带一条自查**：我一度在**收割前 merge 之后**仍从**旧 worktree**（`b9041b14`）读源码，得出「`ActorKind::Token` 的凭据表还是 `satisfied_by: &[]`，与实现不同步」的错误结论。真实情况是 `#162` **同时**改了那一条（`requirements.rs +33/−5`）。⇒ **判据链走完之后，源码阅读一律用 `git show <landed-base>:<path>`，不要读任何工作树。** 工作树是「起手那一刻的 base」，不是「合并后的 base」。
+
+### 4. 派发
+
+并发 cycle `LUM-2558` 于本轮途中建单 ⇒ 切片位从 2 降到 **1**（`空位 = 3 − 在跑的 cycle 数 − 在飞片数`）。两片工单本轮都已写完，按「价值 × 可靠 runtime」选一片派出：
+
+- **`LUM-2560` 已派 `资深编程运维助手devbox4`**（runtime `4a7f29e1` online，近 6 条 run **6/6 completed**，本仓 41 分钟交付 PR #162 的那台）= **T1-6-D2「harness 按 fixture 种实体」**。目标 = 那 13 条 agent fixture。先例 = `daemon_token::register` / `crate::pat_token::register`。工单里**显式给了路 A / 路 B 二选一**，因为 11/13 条走的是 `X-Actor-Source: task_token`，而 `actor_guard.rs:75` 写明该头是**服务端盖章、客户端伪造会被剥掉** ⇒ 可能根本到不了 handler。**「逐条登记偏离」是合格交付**，凑数字不是。
+- **`LUM-2559` 停放 `backlog`（零 assignee / 零 run）** = **T1-6-D1「`merge()` 丢理由 + 13 行假线索」**。工单已写完（描述 rev 1，可直派），但它 0 路由、纯报告面，价值低于 D2，且 `lin`（`700c7941`）近 6 条 run 有 3 条传输层 failed（firewall / sleep / connection lost）⇒ 有位时优先给 devbox4。
+
+**两片写集零相交**（D1 动 `replay.rs`/`report.rs`；D2 动 `harness.rs`/`seed.rs`/`request_plan.rs`/`requirements.rs`）。**两片都禁改 `scripts/file_size_baseline.tsv`**（第 8b 批刚动过它，白名单现只剩 1 条：`extract_upstream_fixtures.py 1863`）。
+
+### 5. 门读（合并树 `fc56c3e6` 当场重跑，`--with-db` 10/10）
+
+- ⑦ 八数字**第 38 轮逐字不变**：`upstream 456 | local 546 | baseline 546 | implemented 455 real + 1 placeholder = 456 | known_gap 0 | unclaimed 0 | regression 0 | local_only 8`；`route_parity` rc=0。
+- ⑦b `slash_alias_audit` rc=0；⑩ `file_size` rc=0。
+- ⑨ stateless 层 `365 / 34 pass / 0 mismatch / 0 unmounted / 0 placeholder / 331 unevaluable`；`report matches`（`report.json` md5 `5412d32c…`）。
+- 快照零位移：`docs/fixtures/route-parity-baseline.json` md5 `294c2c2a7f76517b4f4013b1be779220`。
+- **门 ⑩ 白名单只剩 1 条**（`scripts/extract_upstream_fixtures.py`，tsv 记 1863 / `wc -l` 实测 **1862** ⇒ 天花板 ≠ 实测，§230 承重）。其余最大文件 `scripts/schema_drift.py` **799**（距硬上限 800 只剩 **1 行**）—— 下一批 ⑩ 拆分片的唯一真目标。
+
+### 6. 待 owner（不重复 @）
+
+- `LUM-2111` 卡 docker/podman/buildah（本机三者皆无，`T1-10b` `SKIP-NO-ASSET`）。
+- `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
