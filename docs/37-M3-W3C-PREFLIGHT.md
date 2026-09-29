@@ -22251,3 +22251,96 @@ for line in open(session):
 §240 那条规则是在一个真死掉的会话上归纳出来的 —— 归纳集里只有负例，字段名就没人核对过。
 **判别式要有正例对照组**，否则它会把「读错了」和「真死了」混成同一个结论，而后者是不可逆动作
 （改派 / rerun / 杀 run）的唯一依据。
+
+### §242
+
+**2026-09-30 00:0x-00:4x cycle（`LUM-2568`）续：收割 `LUM-2569`（T1-6-D，PR #167）。**
+
+派发 5 分钟后即终态并开 PR —— **本项目有史以来最快的切片**，原因就是 §241.3 给它选的是
+「0 Rust / 0 cargo / 0 真库 / 0 磁盘」的那一类。
+
+#### §242.1 六步判据链（全过，逐条留证）
+
+| 步 | 内容 | 结果 |
+| --- | --- | --- |
+| ① | 预检 `merge-base..head` numstat == PR API **逐文件逐字** | `1/1` `2/2` `12/1` `107/0` —— **VERBATIM MATCH** |
+| ② | base 前进段（`9df46b70..f02d630f`）非 docs 路径 | **0** ⇒ 合并树 ≡ 切片树（就代码面而言） |
+| ③ | `git merge-tree --write-tree` | **exit 0**，单哈希 `3d6e463d` |
+| ④ | 证据 | **合并树上当场跑验收五条**（0 编译，见 §242.2），**不跑** `--with-db` 10/10 |
+| ⑤ | API 钉 head sha | `6946359acdb0e12d34580d997692ca217cf76f28`（40 位）+ `merge_method=merge` |
+| ⑥ | 落地树 | `d28610b1^{tree}` == `3d6e463d` == 预演树 **逐字**；`git diff head..landed` **只有 `docs/37` +177**（= §241/§241.9 两笔 docs，与切片零交集） |
+
+**④ 为什么可以不跑 10/10**：§236 承重一 —— 写集 = 3 个 `.py` + 2 个 `.json`，
+**零 Rust / 零 manifest / 零 migrations / 零路由** ⇒ 门 ②③④⑤⑥⑧ 的输入一个字节都没动。
+**这不是「省一次门禁」，是「输入未变所以那几门测的东西没变」**；而 ⑦/⑦b/⑩ 三门
+（零编译、**输入确实会变**：`scripts/` 与 `stats.json` 都在它们的读数面上）**照跑不误**。
+
+#### §242.2 验收五条（全部在**合并树** `/tmp/mt167` 上跑，非切片工作树）
+
+```
+A1 判别式            agent-kind WITHOUT x-task-id: 0        （切片前 = 1）
+A2 stats.json        {'agent': 12, 'anonymous': 39, 'daemon': 20, 'member': 286, 'token': 8}
+A3 纯 Python 单测     Ran 6 tests — OK
+A4 门 ⑦              455r+1ph = 456 / 456   known_gap 0   unclaimed 0   regression 0   local_only 8   rc=0
+A4 门 ⑦b             541 literals / 0 defect   rc=0
+A4 门 ⑩              0 violation   rc=0
+```
+
+A4 门 ⑦ 的八个数字**与合并前逐字相同** —— 这正是 §241.3 §3 里那条「0 路由 ⇒ ⑦ 必须逐字不变」
+的**反向验证**：切片动了 `contracts/golden/**`（门 ⑨ 的输入），**没有**动门 ⑦ 的读数面，
+两者的输入边界在本轮第一次被同一批产物同时证实。
+
+#### §242.3 代码改动（就 4 处，逐字读过）
+
+- `scripts/extract_requirements.py`：新增 `AGENT_CREDENTIAL_HEADER = "x-task-id"`，
+  把 `:271` 的 `elif lower & set(AGENT_HEADERS)`（**OR**）改成 `elif AGENT_CREDENTIAL_HEADER in lower`，
+  并附注释说明「`X-Agent-ID` 单独出现是**声明**不是**凭据**」。
+- `013-TestGetAgent-RejectsForgedAgentIDHeader-L520.json`：`actor.kind` `"agent"` → `"member"`，
+  **其余字段一个字节没动**（path / headers / bindings / notes / expect 全保留）。
+- `contracts/golden/stats.json`：`by_actor_kind` 的 `agent 13→12`、`member 285→286`。
+- `scripts/test_extract_requirements.py`（新，107 行）：6 个纯 Python 用例，**不依赖上游 Go 树**。
+
+**一处已知无害的残留**：`AGENT_HEADERS` 常量现在不再参与 `kind` 判定，但仍被
+`extract_upstream_fixtures.py:74` import。删它属于切片写集之外的改动，**本轮刻意不做**，登记为清理项。
+
+#### §242.4 ⚠️ 交付面又一次「状态变更 ≠ 交付」
+
+`LUM-2569` 的 issue 被置 `in_review`、`revision` 到了 7，但**唯一那条交付评论的 body 是空的**
+（与 §239.4 记录的 `LUM-2560` 同形）。**所幸这次产物是真的**：分支 `agent/devbox5/6f7f97ee4c33`
+@ `6946359a`、PR #167、提交标题与内容都对得上，工作树干净。
+
+⇒ **「评论空」与「零交付」必须分开判**：判零交付要查
+**分支是否存在 + PR 是否存在 + `merge-base..head` 是否有 diff** 三样，
+不能只看评论，也不能只看 `delivered_comment_ids`（§209.4 已栽过一次）。
+反过来，**评论空本身就是缺陷** —— 下游的 cycle 读不到任何上下文，本条是靠翻 git 才复原的。
+
+#### §242.5 回收：零磁盘，**这一类切片的收益是可度量的**
+
+四判据全过（PR 已合 ∧ run 终态 ∧ `/proc` 逐 PID 零命中 ∧ `porcelain` 空），
+但 `lum-2569-6f7f97ee4c33` **总共只有 35M，且从头到尾没有 `target/`**。
+
+⇒ **对 §241.4 的一个重要校准**：磁盘紧张时最该派的就是这一类 ——
+**它的成本不是「小」，是「零」**：不建 `target/`、不占 `deps/`、不与在飞片抢增量缓存。
+反过来，`LUM-2565` 那一类（真库 + 全量门禁）在 15 分钟里吃掉 12.5G。
+**派片排序应当把「峰值磁盘占用」当第一成本项，而不是把「体量小」当便宜。**
+
+#### §242.6 当前状态与下一轮
+
+- base = **`d28610b1`**（= `f02d630f` §241/§241.9 + merge commit of PR #167）。
+- 在飞 **1 片** = `LUM-2565`（T1-6-B；第一轮 `--with-db` = **FAIL 7/10**，正按 `--only` 重跑红门；
+  工作树 10 项未提交、HEAD 仍 `7b91304c`、分支未推、无 PR、`pi` 健在 ⇒ **活物，不介入**）。
+- `df` **16G / 66%**（§241.4 放掉的 14.3G 已被 2565 重建测试二进制吃掉大半 —— 这是预期内的，它要跑红门）。
+- `LUM-2567`（PRECONDITION 30）仍 `blocked`，**rerun 条件不变**：`LUM-2565` 交付 + 回收其 `target/`
+  之后，且 `df` **≥ 35G**（§241.5 的不等式）。
+
+**下一轮**：
+1. `df` 连采 + `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → 认证 GH `pulls?state=open`。
+2. `LUM-2565` 出 PR ⇒ 六步判据链。**0 路由 ⇒ 门 ⑦ 八个数字必须逐字不变**，
+   证据只能来自 **⑨ 族计数 `REALM_DIFF 36→29`** + 门禁 10/10（它动 `mc-repos`/`mc-http`，是 Rust 片）。
+   ⚠️ 它若交付后 `df` 回到 **≥ 35G**，**立即** `rerun LUM-2567`（PRECONDITION 30 是当前体量最大的族）。
+3. `LUM-2567` 交 PR ⇒ `PRECONDITION 30→≤26`、`bad_total 89→≈85`（**不是 59**，见它的分析）、
+   **`mismatch` 不增**（增了要在 PR 里逐条列，是信息不是回归）。
+4. 🔴 **槽位空出来时优先派「0 磁盘类」**（见 §242.5），而不是急着派第二片 Rust —— 那是本轮
+   df 从 20G 塌到 7.4G 的唯一原因。
+
+**下一空号**：`## §243`。
