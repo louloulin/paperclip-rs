@@ -9,10 +9,14 @@ from .fields import obs
 from .rules import classify
 
 #: 已知正例：必须被指定规则命中（每条一个代表）。
+#:
+#: ⚠️ 维护纪律（2026-09-29 05:00 cycle 实测）：**本表只许在「该族确有残余成员」时成立。**
+#: 若某一族的成员被前序切片**真的修好了**（成员转 `pass`、该族在 report.json 里 0 命中），
+#: 那它的正例会变成**永远满足不了的一条**（`classify` 返 `None`，`ok` 恒 `False`）——
+#: 也就是一条没人看守的雷：分类器自检永远红，下一个接的人只会以为分类器坏了。
+#: 处置**不是删掉这条断言**，而是把它**移到 `KNOWN_NEGATIVE`** 并注明「该族已被消灭」，
+#: 这样断言反而**变强**：从「必须命中 X」升级成「必须一条都不命中」（防修复回退）。
 KNOWN_POSITIVE = [
-    ("chat/TestDeleteChatSession_PrunesChannelRows"
-     "@server/internal/handler/chat_test.go:772#27",
-     "EXTRACT_IDENTITY_WORKSPACE_HEADER_ABSENT"),
     ("issues/TestListIssuesStatusSortCountsCustomStatuses"
      "@server/internal/handler/issue_sort_test.go:19#71",
      "EXTRACT_QUERY_LITERAL_MISBOUND"),
@@ -27,6 +31,14 @@ KNOWN_POSITIVE = [
 #: 已知反例：**必须一条规则都不命中**。这几条就是被「天真判别式」吃掉过的 —— 坑 ① 与 ②，
 # 外加两条已知的别族成员（装置面 daemon / AUTH_401）。
 KNOWN_NEGATIVE = [
+    # 该族（`EXTRACT_IDENTITY_WORKSPACE_HEADER_ABSENT`）的 4 条成员已被 PR #173（LUM-2578）
+    # **真的修好**：抽取器补上 `X-Workspace-ID` 绑定后它们全部转 `pass`（本条 observed=204），
+    # 且该族名在 `report.json` 里 **0 命中** ⇒ 规则已无残余成员。
+    # 所以它从正例降级为反例：**必须一条子族都不命中** —— 锁定「已消灭的族不会复活」。
+    # （`SUB_RULES` 里那条规则保留不动：它判的是**形状**，将来若有新 fixture 命中同一形状，
+    #   仍应被归到这一族；有成员时再把代表加回 `KNOWN_POSITIVE` 即可。）
+    ("chat/TestDeleteChatSession_PrunesChannelRows"
+     "@server/internal/handler/chat_test.go:772#27", None),
     ("chat/TestListChatMessagesPage_RejectsInvalidLimit"
      "@server/internal/handler/chat_test.go:709#26", None),
     ("daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3815#11", None),
