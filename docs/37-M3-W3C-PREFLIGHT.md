@@ -23539,3 +23539,98 @@ head `272acce6` 未动）；daemon 3/3 = cycle ∥ `LUM-2578` ∥ `LUM-2567`（�
 **禁**：普通片刷 `report.json`（§6.2 死锁待 owner 裁决）；`UNMOUNTED 1` 加路由（`known_gap=0`）。
 号段 `docs/37` 末号 `§250` ⇒ 下轮 **`§251`**。
 
+
+## §251 【LUM-2579 03:00 cycle】收割 PR #173（T1-6-H 抽取缺陷 lane）—— **本轮真正的考验是跨片交互**，不是这一片本身
+
+`LUM-2578` 在 §249 写下工单后终态交 **PR #173**（head `388fb050`，base `85dd84cb`）。
+本片与 §250 那片（#172）**写集零交集**（`contracts/golden/chat/**` 5 文件 ＋ `scripts/extract_*.py` 2 文件
+vs `crates/mc-conformance/**` 7 文件）—— **但它们通过 golden 语料间接耦合**，所以不能各自单判。
+
+### 7.1 判据链
+
+| # | 判据 | 结果 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API `files` | **逐字相同**：8 文件（5 × `4/2` ＋ `docs/37 136/0` ＋ `extract_requirements.py 29/0` ＋ `extract_upstream_fixtures.py 1/5`） |
+| ② | 形态判定 | **形态③，且是「真交互」形态**：`85dd84cb..145b21bb` 的前进段含 **#172 的 7 个 `mc-conformance` 文件** ⇒ **必须真合 + 重跑**，不可继承任一片的自报读数 |
+| ③ | `merge-tree` | **exit=1，冲突**（唯一冲突路径 `docs/37-M3-W3C-PREFLIGHT.md`）。按 §146.3 机械式解决（见 §7.2），产出合并提交 `7034239a` / tree `66712409` |
+| ④ | 证据 | 见 §7.3（**合并树当场重跑**，含 #172 新增的护栏测试） |
+| ⑤ | 合入方式 | 冲突 PR **不能用** `PUT /pulls/N/merge` ⇒ 改走「**推合并提交到 base**」：`388fb050` 成为 base 祖先 ⇒ GH 自动置 `merged: true`（19:25:08Z） |
+| ⑥ | 落地树 | `origin/feat/multica-rs-initial^{tree} == 66712409`，`git diff` **空**；`merge-base --is-ancestor 388fb050 base` = true |
+
+⚠️ **一个必须记的坑**：`refs/pull/173/merge^{tree}` **不能用**。它的 `^1` 是 `85dd84cb`
+（PR 开出时的 base），GitHub 只对**它自己算出来的那个 base** 算合并树。
+本片的合并树是我自己解冲突算出来的 `66712409`，**两者不是一回事**。
+
+### 7.2 冲突解决（docs-only，两片都取了 §249）
+
+`docs/37` 的 EOF 追加冲突，且 **#173 与 §250 的 cycle 记录都占用了 `§249`**。
+处置：**两段都保留，号段归位到编号单调位** —— #173 保留 `§249`，cycle 那段（本文件 §250）让位。
+文档序：`§248 → §249(#173) → §250(#172 harvest)`。
+⚠️ 文档里 `20959` / `21067` 两处 `<<<<<<< HEAD` **是 base 与 #173 双方都有的既有正文**
+（有人把一次合并冲突贴进了笔记里），**不是本次冲突**，别去"修"它。
+
+### 7.3 🔴 跨片交互取证（本轮唯一值得单列的产出）
+
+#172 新增了一条护栏测试 `declared_upstream_facts_match_the_golden_corpus`
+（`crates/mc-conformance/tests/golden.rs:647`）：它断言 `upstream_facts::FOREIGN_DAEMON_REQUESTS`
+每条**恰好命中 1 条 golden fixture**。#173 改的正是 golden 语料 ⇒ **这是两片之间唯一的硬耦合点**，
+必须在合并树上真跑。实测：
+
+* `cargo test -p mc-conformance --test golden` ⇒ **`5 passed; 0 failed; 3 ignored`** ⇒ **护栏存活，无回归**。
+* 合并树内容抽查：#173 的 `apply_helper_identity`（`scripts/extract_requirements.py:124`）在位；
+  golden diff 正是 `X-Workspace-ID: $testWorkspaceID` 进 `upstream_identity` ＋ `$testWorkspaceID` 进 `bindings`；
+  #172 的 `upstream_facts.rs`（13552 B，`FOREIGN_DAEMON_REQUESTS` 4 处引用）完好。
+* CI：head `388fb050` **3 绿 1 红**，`db` job 绿；唯一红的 `contract` 里 **⑦ `GATE_ROUTE_PARITY_EXIT=0`**，
+  ⑨ 是**与 §250 §6.2 逐字相同**的存量漂移（`line 17` / `13→12`）⇒ **不是本片回归**。
+
+### 7.4 合并树 DB 回放（当轮新建库 `mc_c2579` / 244917 B / 40s）
+
+| 项 | #172 后（§250） | **#173 后（本片）** | 判据 |
+|---|---:|---:|---|
+| `fixtures` | 365 | **365** | 不许动 ✅ |
+| `pass` | 289 | **293** | +4 ✅ |
+| `mismatch` | 46 | **42** | −4 ✅ |
+| `unevaluable` | 29 | **29** | 逐字不变 ✅ |
+| `unmounted` / `placeholder` | 1 / 0 | **1 / 0** | 不变 ✅ |
+| `UNMOUNTED` | 1 | **1** | 不变 ✅（`autopilots/TestUpdateAutopilotRejectsMalformedID`） |
+| `PRECONDITION` | 29 | **29** | 不变 ✅ |
+| `AUTH_401` | 6 | **6** | 不变 ✅ |
+| `SEED_404` | 17 | **17** | 不变 ✅ |
+| `REALM_DIFF` | 23 | **19** | −4 ✅ |
+| `bad_total` | 76 | **72** | 对账式 `76 − (293−289) = 72` ✅ |
+
+`1+29+6+17+19 = 72 == bad_total` **自洽**。⇒ **两片的 delta 精确可加，零交叉污染。**
+
+子族表（`t1_6_realm_diff_taxonomy.py`，`candidates 18 / rows_scanned 365 / subfamily_count 14`）：
+
+* 🔴 **`EXTRACT_IDENTITY_WORKSPACE_HEADER_ABSENT`（4 条）整族消失** —— 正是 #173 真修的那 4 条
+  （`withChatTestWorkspaceCtx` 用 `middleware.SetMemberContext` 把工作区塞进 Go context，线上无 header）。
+* 抽取缺陷**余 5 条 / 4 子族**：`EXTRACT_QUERY_LITERAL_MISBOUND 1`、`EXTRACT_REQUEST_SHAPE_STALE 2`、
+  `EXTRACT_PATH_BOUND_TO_SEEDED_WORKSPACE 1`、`EXTRACT_WORKSPACE_BINDING_WRONG_DELETE 1`
+  ⇒ 与 #173 自报的「4 条真修 ＋ 5 条归因订正」**逐字吻合**。
+* 装置面 **7 条**（`DEVICE_CHAT_AGENT_RUNTIME_STATE 3` / `QUEUED_TASK_ROW 1` / `INTRA_TEST_SEQUENCING 2` /
+  `DB_FAULT_INJECTION 1`）与行为面 **6 条**（各 1）**逐字不变** ⇒ 证实 §250 派 `LUM-2580`
+  挑的两条行为面子族**确实存在且未被别的片顺带解决**。
+* 对账：`5 + 7 + 6 = 18 == candidates` ✅。
+
+### 7.5 环境坑（本轮踩到，永久记）
+
+`multica-migrate` **不是** `cargo run -p mc-migrate` 就能跑：它要**子命令**
+（`Usage: multica-migrate [OPTIONS] <COMMAND>`，直接跑只打 help 并 **rc=0** ⇒ **假绿**）。
+且 `mc-conformance --db-url` 自带建表，**不依赖**显式迁移这一步也能起库。
+⇒ **判据：`cargo run -p mc-migrate` 的 rc=0 不构成「已迁移」的证据**，必须看表数或 replay 是否真跑起来。
+（本片以 `information_schema` 表数 ＋ replay 实际播种成功为准。）
+
+### 7.6 下一 cycle 起手
+
+base 起手 `git rev-parse` 实测（现 `7034239a`）；GH **1 open PR = `#168`**（维持 §243 不合并裁定，
+head `272acce6` 未动）。**T1-6 剩余量已收敛到 18 条 / 14 子族**，三条通道的现状：
+
+| 通道 | 条数 | 写集 | 可派性 |
+|---|---:|---|---|
+| 装置面 `DEVICE_*` | 7 | `mc-conformance/src/**` | 🔴 **必须等 `LUM-2567` 终态**（同写集） |
+| 行为面 `BEHAVIOR_*` | 6 | `mc-http/src/routes/**` | ✅ 已派 `LUM-2580`（取其中 2 条） |
+| 抽取缺陷 `EXTRACT_*` 余 | 5 | `scripts/extract_*.py` ＋ `contracts/golden/**` | ✅ 可派（与前两者写集都空） |
+
+**禁**：普通片刷 `report.json`（§250 §6.2 的 docker 死锁未解）；`UNMOUNTED 1` 加路由（`known_gap=0`）。
+号段 `docs/37` 末号 `§251` ⇒ 下轮 **`§252`**。
