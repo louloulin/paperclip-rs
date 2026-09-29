@@ -18922,3 +18922,74 @@ base = **`c1e37fd4`**；GH **0 open PR**；在飞 **`LUM-2494` 唯一**（正跑
 下轮第一动作：若 `LUM-2494` 交 PR ⇒ 按 **§210.1 预登记的新判据链**（⑦ 八数字 + ⑨ `--db-url` 六数字，
 **弃用 `contracts/golden` 逐 blob 恒等**）当场复核；收尾第一动作 `rm -rf target`。
 `LUM-2111`（M10-9 INT）仍卡 docker/podman/buildah 三件套皆无，**待 owner 裁决，不重复 @**。
+
+## §212 【2026-09-29 08:00 cycle / LUM-2500】收割 PR #151（M11-3 / Tier-2 T1-6-A）—— ⑦ 八数字**第 17 轮逐字不变** ＋ 门 ⑨ database 层 `pass 196→252` 逐字复核 ＋ **两条新的判据链缺口**
+
+起手 base `d3ff3508`（§211）→ 收割合并 `740d3f28`；GH 收尾 **0 open PR**；`df` 25G(48%)；PG 5432 `online`；checkout 用 `--ref` **直接落 feat 线**（第 38 次的结论继续有效）。
+
+### §212.1 收割判据链（`head CI = 0 check-runs` ⇒ **免跑分支不适用，全部自己跑**）
+
+| 步 | 结果 |
+|----|------|
+| ① 预检一 numstat | 120 文件 **+1872/−522**，与 PR API **逐字一致** |
+| ② 形态判定 | base **不是** head 祖先 ⇒ `merge-tree` **rc=1 冲突**；前进段非 docs = **0**（只动 `docs/37`） |
+| ③ 冲突解决 | `docs/37` 单块，机械解（§146.3）：`### §208.6` + PR 的 `## 209.` + `## §210` + `## §211` 按号段排序 |
+| ④ 树读数 | 合并树 vs head 树**只差 `docs/37`**，非 docs = **0** ⇒ 树哈希豁免虽不成立（合并树 ≠ head 树），但**代码面逐字相同** |
+| ⑤ 合入 | `PUT /pulls/151/merge` + `Content-Type: application/json` + 钉 40 位 sha，**一次成功**（squash → `740d3f28`） |
+| ⑥ 落地树 | `9f2ac031…` ≡ 预演树 `9f2ac031…`，`git diff` 空 |
+
+🔴 **承重一：`head CI = 0 check-runs` 是新的「不能免跑」形态。** head `ee7086d3` 上**一个 check-run 都没有** —— CI 从未触发。既有纪律里「等 head CI 3/3 绿再合」在 CI 没跑过时**没有分支可走**，若照抄会读成「还没跑完，等」而无限等下去。**判别式：`total_count == 0` 与 `in_progress` 必须分开判** —— 前者＝从未触发（只能自己跑），后者＝在跑（可等）。
+
+🔴 **承重二：`per_page=300` 被静默截断成 100。** `pulls/151/files?per_page=300` 返回**恰好 100 条**、无任何报错或分页提示，合计 `+635/−270` —— 若拿它当预检一，会得出「本地 120 文件 vs API 100 文件」的不一致，然后误判成「本地多算了 20 个文件」。**GitHub 对 `per_page` 超过 100 不报错，只是给 100。⇒ 一律翻页到 `len < per_page` 为止再比。**（本轮靠「API 文件数恰好等于 100」这个整数特征识破。）
+
+### §212.2 门禁（**自己跑，不继承自述**）
+
+在**合并树**上：`fmt` PASS、`cargo check --workspace --all-targets` PASS(62s)、
+⑦ `456/546/456(455r+1ph)/gap 0/unclaimed 0/regr 0/local_only 8/ok=True`、⑦b tree `541 literals / 0 defect`、⑩ `scanned 1292 / violations 0`、
+⑨ stateless PASS（`report matches crates/mc-conformance/report.json` ⇒ **`report.json` 是真回放产物，不是手改的**）。
+**未跑**全量 `--with-db`：`df` 25G < 实测峰值 26–30G（§2490.1），ENOSPC 已 12 次且曾连带杀 PG ⇒ 交 CI（本轮新 base 上 4 个 job 已触发，`contract` 先绿）。
+
+### §212.3 ⑨ database 层六数字 —— **逐字命中自述**
+
+`cargo run -p mc-conformance -- --db-url <fresh> --json`：`fixtures 365 / pass 252 / mismatch 80 / unmounted 3 / placeholder 0 / unevaluable 30`，
+`by_actor` member `206/73`、daemon `11/7`、anonymous `35/0`、agent `0/0`，
+db tier `{mismatch 80, pass 218, unmounted 3}` —— **与 `## 209.` 记的「后」列逐字相同**。
+
+🔴 **承重三（§210.1 那条新判据链的第一次实战）：`expected.status` 改动 = 0 行。**
+111 个 golden 文件全为 `M`（**0 新增 / 0 删除**），diff 里出现的 JSON 键只有 `path`(110)、`path_params`(110)、`id`(35，`bindings` 映射表内)、`bindings`(14)、`issue_ref`(5)；
+`grep -E '^[+-].*"(expected|status)"'` **零命中**；`migrations/**`、`scripts/gates.sh`、两个 baseline 快照 **0 改动**；baseline md5 仍 `294c2c2a…`。
+⇒ 那 110 个文件的改动**是接线不是改期望值**，§210.1 弃用「blob 恒等」后的替代判据成立。
+
+### §212.4 唯一的红：**独立复现为存量缺陷**，不是本片回归
+
+`database_tier_replays_every_decidable_fixture`（`#[ignore]`，真库）**FAILED**：
+`agents/TestGetAgent_RejectsForgedAgentIDHeader…: actor kind Agent needs a real credential`。
+**两条互相独立的证据**说明它与本片无关：
+
+1. **零成本结构证据**：`requirements.rs`（`supports()` 所在）**本片未改**；`build_request` 的 `ActorKind::Agent` 分支在 base 与 head **逐字相同**（只因 `Bindings` 搬出而行号 496→407）；该 fixture 的 `actor` 块**不在 diff 里**（diff 只动 `path`/`path_params`/`extraction`）。
+2. **热 target 复现**（本片自述用 `git stash`，本轮**独立重做**）：把 `crates/mc-conformance` + `contracts/golden` 检出回 base `b41a6086`、删掉 `seed.rs`/`bindings.rs`，同一套真库重跑 ⇒ **同一用例、同一断言、同一 fixture 同样红**（`golden.rs:397`）。随后 `git checkout HEAD -- .` 完整还原（`dirty 0 行`）。
+
+⇒ **「自述的红是存量的」这句话本身不可信，但可被 30 秒的结构核对 + 一次热 target 复现证实。** 成因仍是 §203 口径：`Tier::Database.supports()` 的前提表没覆盖「actor 凭据」这一维（`supports` 说供得起、`build_request` 说不伪造）。
+**新立 backlog `LUM-2503`**（parent `LUM-1334`）：把 `Agent`/`Token` 两个 actor kind 补进前提表，或让 `supports()` 与 `build_request` 共用同一张凭据表 —— 判据必须是**对称**的（见 §212.6）。
+
+### §212.5 T1 收口判据现状（13 PASS / 5 FAIL，**其中 2 条不是真缺陷**）
+
+`stop_condition.sh`：`T1-1a/1b/1c/1d/1e/1f/2/3/4/5/8/9` **PASS**；`failing_ids = T1-6 T1-7 T1-10 T1-11 T1-12`。
+- **T1-10 FAIL 是我自己喂进去的 artifact**：我传的 `--gates-log` 只含 1 道门（我只跑了 ⑨），于是「10/10」判据数出「only 1 of 11 gates」。**判读纪律：`T1-10` 的输入必须是一份完整 10/10 的门禁日志，否则它的红无意义。**
+- **T1-11 FAIL 是瞬时**：本轮新 base 上 4 个 CI job 已触发（`contract` 已 success），跑完即转绿。
+- 真剩 **`T1-6`**（`unevaluable 30 ∧ mismatch 0`，本片已把 mismatch 136→80）、**`T1-7`**、**`T1-12`**（`no golden-local rows parsed`）。
+
+🔴 **承重四：`T1-7` 的两个 rate 是「层组成」的函数，不是正确性的函数。** `T1-7` 要求 `contract 1.0 ∧ mounted 1.0`，实测 stateless `0.093151 ∧ 1.000000`；而**同一份代码**跑 database 层得 `0.690411 ∧ 0.759036`。同一个指标在两层差 7.4 倍，差异全部来自「stateless 层有 306 条结构性 `unevaluable`」。⇒ §2485 那条警告（「这两个 rate 常被误读成实现完成度」）本轮拿到了**更强的形式**：**它们连「同一份实现的完成度」都不是，而是「这一层能判多少」。** `T1-7` 按现状**在任何正确实现下都不可满足**，与 §202 判定的 `T1-1a/1b` 同族（已由 `LUM-2482`/PR #149 修过一次）。归入 `LUM-2503` 一并处理。
+
+### §212.6 两条新纪律（承重）
+
+1. **「免跑本地全量门」的三个豁免条件要加第四个：CI 真的跑过。** 既有三条是「合并树 ≡ head 树」+「前进段只动 docs」+「head CI 绿」。本轮前两条都成立而第三条**不成立**（`total_count == 0`）⇒ 只能自己跑。**先查 `total_count`，再决定等不等。**
+2. **判「一个红是存量还是回归」有两条互不依赖的路**：结构核对（写集是否碰得到那条代码路径 / 判据函数的输入是否变过）与**同环境复现**（热 target 换回 base 重跑）。本轮两条都做了才下结论。**只做其中一条都可能反号** —— 只做结构核对，会漏掉「切片改了 harness/绑定间接影响判定」；只做复现，会在冷 target 上付出 18–30G。
+
+### §212.7 下一轮起点
+
+base **`740d3f28`**；GH **0 open PR**；在飞 **0**。
+- **可派（新立）**：`LUM-2502` = Tier-2 **bucket C**（§209.4 点名的 **23 条**自引入缺口）—— 把种子符号从「每类一行」改成「**每类每测试**一行」，分组键 `Fixture.source.test`（`lib.rs:162`，本轮已核实现成）。**可行性已预飞**：`build_request` 的 6 个 `bindings.resolve()` 调用点**全部持有 `fx`**（`lib.rs:351/368/378/389/436/…`）⇒ 传分组键是纯加参，不动调用结构。验收 = bucket C 的 23 条转真判定，且 `seeded_symbols_convert_404_into_real_judgements` 的三桶算式**仍恒等于 95**。
+- **backlog**：`LUM-2503`（`supports()` 与 `build_request` 的凭据表对称化 + `T1-7` 口径重定）、`T1-12`（golden-local）、`LUM-2111`（仍卡 docker/podman/buildah 三者皆无，**待 owner 裁决，不重复 @**）。
+- **号段**：`## 209.` = M11-3（PR #151）、`## §212` = 本轮 ⇒ 下一空号 **`## §213`**；`docs/32` 下一空号待 `LUM-2494` 落地段确认。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ 判活序 → 逐片判据链（**先查 CI `total_count` 是 0 还是 in_progress**）。
