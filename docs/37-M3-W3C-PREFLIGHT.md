@@ -21502,3 +21502,103 @@ by_actor  member {mismatch 48, pass 223, unevaluable 11, unmounted 3}
 
 - `LUM-2111` 卡 docker/podman/buildah（本机三者皆无，`T1-10b` `SKIP-NO-ASSET`）。
 - `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
+
+## §236 【2026-09-29 21:30 cycle / LUM-2558】**起手零收割（#162/#163/#164 三条已由并发 cycle 收走）＋ 亲手做完 `merge()` 平局裁决那片（PR #165，合并树 `429227c4`）** ＋ 🔴 承重一：**「本机不可判」是一条会自我复制的假口径 —— 实测 `T1-6` 只要一个包 + 一个迁移过的空库，19G 的全量 `--with-db` 是被不相干的 `mc-http` 集成测试撑起来的** ＋ 🔴 承重二：**合并 API 报 `Head branch was modified`，最常见的解释是「你钉的不是 PR head」，不是「别人动了分支」** ＋ 🔴 承重三：**号段要在「追加之前」查，PR 分支不包含 base 的后续提交** ＋ ⑦ 八数字第 38 轮逐字不变
+
+### §236.1 起手三连 + PG
+
+| 项 | 值 |
+|---|---|
+| 起手 base | `fc56c3e6`（§233.10 记的 `b389bb53` 已过期两轮） |
+| GH open PR | **0** —— #162 / #163 / #164 全是 `closed` + `merged=true`，**收割由并发 cycle `LUM-2557` 完成（见 §235）** |
+| `df` 起手 | 24G/50%，连采两次一致 |
+| PG | 16 main 5432 **`online`** |
+| daemon `running_task_count` | 起手 **2** = cycle 自身 ∥ 并发 cycle `LUM-2557` ⇒ 切片位 1 |
+| 逐 PID `/proc/*/cwd` | 只有 `lum-2558`（我）与 `lum-2557` 两个 `pi`；看板 `LUM-2556` 挂 `in_progress` 却**无进程** ⇒ 看板第 4 次失真，判在飞仍只认 daemon + `/proc` |
+
+### §236.2 上轮三条 PR 的**证据继承等式**（不是「我觉得它绿」）
+
+```
+merge 树 tree(fc56c3e6) = e302017863ea64ef343abcb43dbd7f4593f22767
+head  树 tree(1ac45ade) = e302017863ea64ef343abcb43dbd7f4593f22767   ← 逐字节相同
+```
+
+#162 的分支在提交前**已把 base 并进来**（`b9041b14` 是 head 祖先）⇒ GitHub 走快进式合并，**合并树 ≡ head 树** ⇒ 它自己那轮 `--with-db` 10/10（477s）按构造就是合并树的结果，零重跑。§233.10 预言的 `lib.rs` 冲突因此没有发生。
+
+回读确认业务改动**没被静默丢掉**：`lib.rs` 98 行薄壳、`ActorKind::Token` 分支在 `crates/mc-conformance/src/request_plan.rs:126`、`pat_token.rs` 在位 —— 即 §233.10 说的「搬了家，没丢」。
+
+门 ⑩ 白名单本轮收在 **1 条**（`scripts/extract_upstream_fixtures.py`，tsv 记 1863 / `wc -l` 实测 **1862**）。§235 已指出下一批的真目标是 `scripts/schema_drift.py`（**799 行，距硬上限只剩 1 行**）。
+
+### §236.3 🔴 承重一 = **「本机不可判」是一条会自我复制的假口径**
+
+§213 起多轮把 `T1-6` 标成「需要全量 `--with-db`，本机不可判」。**本轮实测推翻**：
+
+```
+cargo run -p mc-migrate -- run --dir migrations   → applied 566 migration(s)   7.8s
+cargo build -p mc-conformance                     → 1m28s / target 2.3G
+cargo run -p mc-conformance -- --db-url … --json  → 31.9s
+```
+
+**合计 ≈2 分钟、2.3G** 就拿到全部相关证据。全量 `--with-db` 的 ≈19G 是被 `mc-http` 的 `test-util` 集成测试撑起来的，**与只回放 fixture 的读数无关**。
+
+⇒ **判据是「拿到这个读数的最小可行动作是什么」，不是「跑最全的那道门」。** 前者 2 分钟，后者 19G 且会把盘吃到 `ENOSPC`（本仓已因此静默停摆过，见 §146）。
+
+本轮当轮读数：`pass 275 / mismatch 57 / unevaluable 30 / unmounted 3`，`total 365`，tier `database 301 / stateless 64`。
+
+### §236.4 本片 = `merge()` 平局裁决（§233.1 承重一的落地），PR **#165**
+
+新建 `LUM-2561`。**没有派出去，自己做了** —— 派发面体检：devbox4 被并发 cycle 占用、devbox1/devbox2/devbox 近期任务**全是 failed**，没有合规空闲目标；而本片在热 target + 现成库上成本极低。符合 MEMORY 里「同一个 assignee 连续两次因基础设施归零时直接自己做」的纪律。
+
+**缺陷**（`crates/mc-conformance/src/replay.rs` `merge()`）：
+
+```rust
+let (winner, tier) = if d.outcome < s.outcome { … "database" } else { … "stateless" };
+```
+
+强度序 `Pass(0) < Mismatch(1) < Placeholder(2) < Unmounted(3) < Unevaluable(4)`，`a < b` 表示「更强」⇒ 只有 database **严格更强**才判给它；**`Unevaluable == Unevaluable` 是平局 ⇒ 全落进 `else` 取 stateless 侧**。
+
+现场签名（可复用）：`tier=="stateless" ∧ database=="unevaluable" ∧ detail` 含 `rerun with --db-url` = **13/13**，且这 13 条 `offline`/`database` **双双 `unevaluable`**。🔴 **这一条是判别式**：只看 `tier` 会误判成「database 层缺席」，那就会派去修一个不存在的问题；必须是「两层都真判了、只是同强度」。
+
+**改法**：平局归 database（`<=`）；平局时两层理由都留（`[database] … || [stateless] …`）；**唯一例外**是那句「请重跑 `--db-url`」—— database 层既已出结论，它指的路已经走过，留着是自指假线索（`requirements.rs:256-267` 的文档注释自己也把这种自指列为必须避开的坑）；**非平局逐字节不变**（那一支的输出已进已提交快照）。
+
+**证据（库 `multica_c2558`；合并树复跑用当轮新建的 `multica_c2558m`）**：
+
+| 项 | 前 | 后 |
+|---|---|---|
+| `pass/mismatch/unevaluable/unmounted` | 275/57/30/3 | **逐字不变** |
+| `outcome`/`status_observed`/`offline`/`database` 四字段 | — | **365 条里 0 处变化** |
+| `tier` | `database 301 / stateless 64` | `database 364 / stateless 1`（63 处，**全是真平局**） |
+| `detail` | — | 95 处：13 处自指指路牌被真话理由取代 ＋ 4 处并列两句 ＋ 78 处只是「database 层的种子 workspace_id 取代 stateless 层的种子」（两句同样为真，现与胜出的层一致） |
+| 报告里 `rerun with --db-url` 出现次数 | 13 | **0** |
+
+**两条硬无回归证据**：① 门 ⑨ `report.json`（`--no-db` ⇒ `database` 侧恒 `None` ⇒ 走 `merge()` 的 `(Some(s), None)` 分支）**`report matches` 逐字节不变**；② ⑦ 八个数字 `456/546/455r+1ph=456/456/gap 0/unclaimed 0/regr 0/local_only 8` 逐字不变（零路由，`git status` 只有一个文件）。另 `cargo test -p mc-conformance` **28 passed（新增 7）**、clippy `--all-targets -D warnings` rc=0、fmt rc=0、⑦b `541 literals / 0 defect`、⑩ `0 violation`。
+
+**新签名的判别式留给了单测** `pointer_predicate_matches_the_credential_detail_shape`：凭据面理由若改措辞，先红的是它，而不是某条 fixture 的理由悄悄变假。**判据跟着字面量走的坏处就是它自己得被拴住。**
+
+🔴 与 §235 的一条交叉印证：并发 cycle 曾把这条承重**证伪**过一次（只比 stateless 层 detail 与合并后 detail，30/30 相同），差点记成「平局不丢信息」。**本轮的正名方式是比 `tier` 归属与整份报告的字段级 diff，不是比某一列的字符串** —— 只比一列就会被「两层恰好给了同一句话」骗过去。
+
+### §236.5 判据链实录（PR #165）
+
+1. 预检 `merge-base..head` numstat `159 4 crates/mc-conformance/src/replay.rs` **== PR API 逐字**。
+2. 形态：`base` **不是** head 祖先（前进段只动 `docs/37`）⇒ 非 docs 路径 = **0** ⇒ 可零门禁继承；仍在**合并树 + 当轮新建库**上把证据重跑了一遍。
+3. 三哈希等式：`merge-tree --write-tree` = `refs/pull/165/merge^{tree}` = 落地 `^{tree}` = `429227c4`。
+4. 证据两条路都走：head **CI `success`**（`218d16c8`，320s）**且** 合并树上 `fmt/clippy/test/⑨/⑦/⑦b/⑩` 全 rc=0 ＋ 新库回放复现。
+5. 🔴 **承重二 = 第一次合并被拒 `Head branch was modified`。**
+   我在临时验证分支 `tmpverify`（= 合并提交 `52b3804`）上跑完门禁，顺手把 `git rev-parse HEAD` 当成 head 传给 API —— 那是**本地临时分支**，不是 PR head。
+   ⇒ **判别式：这条报错最常见的解释不是「别人动了分支」，而是「你钉的不是 PR head」。合并前从 API 回读 `pulls/N.head.sha`，不要从本地工作树取。** 重取后一次即成。
+6. `merge_method=merge` ＋ 钉 40 位 sha ⇒ `merged=true`，落点 `92320e4e`。
+
+### §236.6 🔴 承重三 = **号段要在「追加之前」查；PR 分支不包含 base 的后续提交**
+
+本轮写 `docs/37` 时按 §233.10 记的「下一空号 §235」追加，push 被拒 `non-fast-forward`。原因是两层叠加：
+
+- **并发 cycle 的 §235 已经落在 `dfe595ef`**，而**我的 PR 分支 `218d16c8` 起自 `fc56c3e6`，不包含 `dfe595ef`** ⇒ 我的工作树里**根本没有那一节**，`grep` 自然查不到「已被占用」。
+- 于是我不仅号段重了，**父提交也错了**（我的 docs 提交挂在 PR head 上，不是合并后的 base 上）。
+
+⇒ **纪律：① 写文档前 `git reset --hard origin/<base>` 再查空号，别在切片分支上查；② 「我 grep 不到这个号」不等于「这个号空着」—— 先确认我读的那棵树是不是最新 base。** 本轮改号为 **§236** 后重新追加、重新推送。
+
+### §236.7 下轮起点
+
+- base **`92320e4e`**（起手仍一律 `git rev-parse` 实测）；GH **0 open PR**；`df` 收尾 **26G/46%**；两个库与角色已 DROP（残留计数 0/0）；`target/` 已删；临时分支 `tmpverify` 与 `refs/pr/165merge` 已清。
+- `LUM-2561` 已 `in_review`；承重项「`merge()` 平局裁决」**本轮结清**。
+- 收尾复采：并发 cycle 已从 `LUM-2557` 换成 **`LUM-2562`**（带 cargo 子进程，正在编译）⇒ 切片位仍被占，**下轮第一动作仍是重取板面 + 逐 PID `/proc`，不沿用本行的 base**。
