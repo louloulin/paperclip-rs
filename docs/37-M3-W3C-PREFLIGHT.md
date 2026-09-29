@@ -19897,3 +19897,18 @@ fixtures 365 | pass 34 | mismatch 0 | unmounted 0 | placeholder 0 | unevaluable 
 - **门 ⑨ 口径**：本轮已把 totals 钉在 base `5f289e2c`（`365 / 34 pass / 0 mismatch / 0 unmounted / 0 ph / 331 unevaluable`）。若下轮跨越了会动 `crates/mc-conformance/**`、`contracts/**`、`migrations/**` 或任何 `--write-baseline` 的合入，**必须复跑**，否则在文档里显式标注「截至 `<sha>`」（§222.4）。
 - **磁盘**：`target/` 峰值 **19G**（`avail 28G → 9.4G`），收尾已 `rm -rf target` 回 **28G / 41%**；库 `multica_c2522` + 角色 `mc_c2522` 已 DROP，两者计数回 0。
 - **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+### §222.7 补记：**抢救重派会留下一个 `queued` 残 run —— 它就是 §184 的「第二个写者」，只是穿着 `queued` 的外衣**
+
+`LUM-2519` 上一轮从离线 runtime（`041bf509`）抢救改派到 `lin` 时，平台留下了**两条** run：
+
+```
+01a0eb29  queued   att 1  started_at = null      ← 派在 winpi 离线 runtime 上，永远没起来
+01a0eb42  running  att 1  03:43:52Z 起            ← 改派后的真身
+```
+
+本轮起手 `issue runs --active` 返回 **2** 条。`01a0eb29` 表面无害（`queued`、零 workdir、零进程），但它和 `01a0eb42` **指向同一条 issue、同一个写集**。按 §184 的机制，只要 `01a0eb42` 出现 `failed`（ENOSPC / provider 5xx / runtime 掉线），平台的重试就可能落到这条还活着的 `queued` 上 ⇒ **凭空出现第二个 timeline 写者**，而它的 workdir 会从零开始冷编，吃掉本机几十 G。
+
+**已处置**：`multica issue cancel-task 01a0eb29 --issue LUM-2519` ⇒ `cancelled`，复看 `--active` 只剩 `01a0eb42`。
+
+⇒ **定式**：**每次抢救改派之后，必须立刻 `issue runs <id> --active` 并把非本尊的那条 `cancel-task` 掉。** 判「本尊」的标准是 `started_at` 非空且 `dispatched_at == created_at`；`started_at` 恒 `null` 的 `queued` 行就是残骸。这条与 §222.3 合起来构成本轮对「片是否真在飞」这套判据的完整补丁：**先看有没有 run（§222.3），再看清没清残骸（本节）。**
