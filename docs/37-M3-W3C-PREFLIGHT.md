@@ -24378,3 +24378,171 @@ bad_total = 365 − 295 = 70          ← 减法交叉核对，不分桶相加�
 - 待 owner（不重复 @）：`LUM-2111` 卡 docker/podman/buildah（`report.json` 刷新死锁，
   而 ⑨ 的 `--no-db` 形态**并不需要** docker ⇒ 「刷新权在 M10-9」与「M10-9 永远开不了工」互锁，
   后果是**此后每个 PR 的 `contract` job 都红**，持续税）；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
+
+## §258 【LUM-2586 05:30 cycle】收割 #177 ＋ #176（**一次 db 回放裁决两片**）＋ 拆掉「分类器覆盖率会被别的片打破」那颗雷
+
+> 本节所有读数都是**当轮在合并树 `1a089330` 上当场取的**（当轮新建库 `multica_c2586`），
+> 不继承任何上一轮的数。起手 base `3fc45a50`（= `36a6b534` ＋ §257 docs-only）。
+
+### §258.0 起手三连
+
+| 项 | 值 |
+|---|---|
+| `df -h /` 连采两次 | **24G avail（50%）** 两次同值（`24529872` → `24491144` KB） |
+| `pg_lsclusters` | 16/main **5432 online**（全量 `--with-db` 的前提） |
+| `git rev-parse HEAD` 对 `git ls-remote` | **`3fc45a50`** == `3fc45a500728379025925147b3d54c950fbd2d05` ✅ |
+| 认证 GH `pulls?state=open` | **3 条**：`#177`（我，上轮分类器自检）、`#176`（`LUM-2567` / T1-6-C，devbox4）、`#168`（§243 已判不合并，head `272acce6` 未动 ⇒ 维持） |
+| daemon | `running_task_count = 1`（= cycle 自己）⇒ **切片位 2/2 空** |
+| `/proc` 逐 PID | 只有本 cycle 的 `pi`（`cmdline` 先读再读 `cwd`，老坑第 N 次） |
+
+### §258.1 收割 #177（零编译片，我自己的）
+
+八步链全过：
+
+1. **预检一**：`git diff --numstat $(merge-base) head` = `15  3  scripts/t1_6_realm_diff_taxonomy/checks.py`
+   == PR API `1 file +15/−3` **逐字** ✅
+2. **形态**：merge-base `36a6b534` ≠ base `3fc45a50`，但前进段 `git diff --name-only` **只有
+   `docs/37-M3-W3C-PREFLIGHT.md`** ⇒ 非 docs 位移 = **0** ✅
+3. **三哈希**：`git merge-tree --write-tree base head` = **单哈希** `03563013e15ed8ce685df6eeed2d654722806b49`
+   （exit 0）＝ rehearsal `HEAD^{tree}` ✅
+4. **证据（零编译片）**：本轮**在合并树 `1a089330` 上**用当轮 db 读数复跑分类器 ⇒
+   `判别式双向验证：正例 3/3，反例 5/5`、**stderr 0 字节** ✅（PR 自述逐项复现）
+5. **API** 钉 40 位 head sha `a724f3c0…` ＋ `merge_method=merge` ⇒ 落地 `781bb177c3d33164c35ad84a7a50457f2c48607e`
+6. **落地树逐字** == 预测树 `03563013…`，`git diff` 空 ✅
+
+### §258.2 收割 #176（`LUM-2567` / T1-6-C，devbox4 的片）—— 判据 ②④ 构造性不可能
+
+PR 自述里有一节诚实地写明：**判据「`mismatch` 不增」与「其它四族逐字不变」不可能与 ① 同时成立**，
+因为 `t1_6_taxonomy.py` 第二刀按 observed 状态码分桶 ⇒ **任何** `unevaluable → mismatch` 必然计进
+`AUTH_401`/`SEED_404`/`REALM_DIFF`。本轮**独立实测复现**（不是引它的数）：
+
+```
+fixtures 365 / pass 295 / mismatch 44 / unmounted 1 / placeholder 0 / unevaluable 25  ⇒ bad_total 70
+族：UNMOUNTED 1 / PRECONDITION 25 / AUTH_401 7 / SEED_404 18 / REALM_DIFF 19
+```
+
+| 判据 | 期望 | 实测 | 判定 |
+|---|---|---|---|
+| ① `PRECONDITION` | 29 → ≤26 | **25** | ✅ |
+| ② `mismatch` 不增 | 40 | **44** | ❌ **构造性不可能**（PR 已论证，本轮采信） |
+| ③ 对账式 | `70 == 70 − (295−295)` | **70 == 70** | ✅ |
+| ④ 其它四族不变 | — | `1/7/18/19`（`AUTH_401 +1`、`SEED_404 +1`、`REALM_DIFF +2`） | ❌ **同上，构造性** |
+| ⑤ 降幅只来自 C 组 | 4 条 | 4 条全是 C 组 | ✅ |
+| ⑦ 八数字 | 逐字不变 | `456/546/546/455r+1ph/gap 0/unclaimed 0/regr 0/local_only 8` | ✅ **逐字** |
+| ⑨ `--no-db` | 存量红 | `line 17` / `committed "unevaluable": 13` vs `fresh: 12`；`report.json` blob 合并前后同为 **`db01d842`** | ✅ 存量 |
+
+族计数自洽核对：`1+25+7+18+19 = 70` ✔；`mismatch 44 = 7+18+19` ✔；`bad = 365 − 295 = 70` ✔。
+**注意 ③ 的落点是「一条都没转 pass」**（`pass` 前后都是 295）—— 也就是说本片把 4 条从
+「没被判定过」变成「被判定过且判为不匹配」，**分母没动**。这与 `LUM-2572` 那次同形：
+**只有 `unevaluable → pass` 才降 `bad_total`**。
+
+### §258.3 🔴 承重一（本轮唯一的新雷）：分类器的「对账平」是一条**会被别的片打破**的不变式
+
+`python3 -m scripts.t1_6_realm_diff_taxonomy <db.json>` 在本轮读数上打出：
+
+```
+族：REALM_DIFF  19   已由 T1-6-B2 / LUM-2572 领走：1 条   对账：候选 18  子族和 16  **不平**
+```
+
+§254 / §257 记的 `REALM_DIFF 17 = 抽取缺陷 5 + 装置面 7 + 行为面 4 + 1 已领走 = 17` 是**平的**。
+**#176 把 4 条 `unevaluable` 变成 `mismatch`，其中 2 条落进 `REALM_DIFF` 且不命中任何 `SUB_RULE`**
+⇒ 对账从平变成**差 2**。逐条点名（本轮用 report 的成员表与候选集做差集，非目测）：
+
+| 未归因的 2 条 | observed ← expected | 来源 |
+|---|---|---|
+| `cloud_runtime/TestCloudRuntimeEmptyResponseKeepsStatus@server/internal/handler/cloud_runtime_test.go:174#4` | `502 ← 204` | #176 的 C 组（上游 204 是 `fakeCloudRuntimeProxy` **录下来的**） |
+| `cloud_subscriptions/TestCloudWorkspaceSubscriptionWritesRequireManagerRole@server/internal/handler/cloud_billing_test.go:610#6` | `400 ← 403` | #176 的 C 组 |
+
+**性质判定**：这是**分类器覆盖缺口**，**不是 #176 的缺陷**（那两条的期望值都来自上游替身，
+PR 自己的分析逐条回核到 `90e0bdf8`）。但它有一个**必须写进每张派工单**的后果：
+
+> 🔴 **凡按族派工，读数必须写成「候选 18 − 子族和 16 = 2 条未归因」，不能只写各族条数。**
+> 只写族数的那张工单会**漏掉 2 条真工作量**，而漏掉的两条恰好是**刚被别的片judged出来的**
+> —— 也就是说**越是有人修，越会出现「派工单看不见的余量」**。
+
+处置（本轮）：**不替分类器猜子族**（那 4 条的形状要人读上游 `cloud_runtime_test.go` / `cloud_billing_test.go`
+的 setup 才能定，机械补规则只会造出 §247 纪律一那种「永远满足不了的断言」）。只**登记 + 在两张开出的
+工单里显式写出这个 2**，并把「补 `SUB_RULES` 覆盖这 2 条形状」登记为 `LUM-2587`（抽取缺陷片）
+交付评论里的一条待办 —— 它本来就是纯 Python、零编译、且与该片写集同面。
+
+### §258.4 🔴 承重二（§257 承重二的延续）：`行为面 4 条` 的 `负责面` 仍是**空串**
+
+本轮逐条再看一遍，4 条**全部**空：
+
+| 子族 | 成员 | `负责面` |
+|---|---|---|
+| `BEHAVIOR_MACHINE_ACTOR_GATE` | `properties/TestPropertyAdminGate@…/property_test.go:230#2` | **空** |
+| `BEHAVIOR_JSON_DECODE_STATUS` | `issues/TestQueryIssues_PostTwinMatchesGet@…/issue_table_filters_test.go:274#81` | **空** |
+| `BEHAVIOR_STAMPING_CHAIN_UNWIRED` | `tokens/TestRenewPAT_RejectsTokenBelongingToDifferentUser@…/personal_access_token_test.go:363#9` | **空** |
+| `BEHAVIOR_ISSUE_PREFIX_UNPORTED` | `workspaces/TestUpdateWorkspace_RejectsInvalidIssuePrefix@…/workspace_test.go:1508#35` | **空** |
+
+而分类器同时给这一族下了 `可并行：是（各域 handler 互不相交）` ⇒ **结论所依赖的证据恰是它自己
+没填的那一列**（§240/§246/§247 三轮同一条）。**本轮仍不替它猜**（落到
+`crates/mc-http/src/routes/**` 的具体文件要人读代码）。
+**本轮的实际增量**：把 4 条的**上游锚点逐条落到可引用的粒度**（上表），
+下轮补 `负责面` 时不必再回查 `report.json`。
+
+### §258.5 新纪律（本轮实测出来的两条）
+
+1. 🔴 **「一次 db 回放可以同时裁决写集零交集的两片」** —— 在**两片的合并树**上跑一次当轮 db 回放，
+   证据按**文件集交集 ∅** 分解给两片。本轮省掉一整轮（`2m08s` ＋ `2.3G`），
+   并且比「各跑各的」**更强**：两片同时在树上时，`PRECONDITION 25` 与分类器 `3/3` 是**同一读数**，
+   不存在「各自 base 不同 ⇒ 数字不可比」。**前提**：写集交集必须**逐字**为空（本轮 =
+   `scripts/**` ＋ `contracts/golden/**` vs `crates/mc-conformance/src/**`）。
+2. 🔴 **「分类器自检的『对账平』与『正例 3/3』是两种不同的不变式」** —— §257 修的是后者
+   （`KNOWN_POSITIVE` 里有一条永远满足不了的断言）；本轮破的是**前者**（覆盖率）。
+   ⇒ **两条都要每轮重算**：正例/反例数在分类器自己跑时打，覆盖率差在**族计数与成员表做差集**时打。
+   只看「自检 3/3 绿」就会漏掉本轮这条。
+
+### §258.6 门读（合并树 `1a089330` = 新 base `d8a73105` 的内容树，当场重跑）
+
+- **门 ⑦ route-parity**：rc=0，`456 / 546 / 546`、`455 real + 1 placeholder`、`gap 0`、`unclaimed 0`、
+  `regression 0`、`local_only 8` —— **第 51 轮逐字不变**
+- **门 ⑦b** `541 literals / 0 defect` rc=0
+- **门 ⑩ file-size** `0 violation` rc=0
+- **门 ⑨ `--no-db --check`** rc=**1（存量红）**，`line 17` / `committed 13` vs `fresh 12`；
+  `report.json` blob **合并前后同为 `db01d842`** ⇒ 两片对 stateless 层**零影响**
+  （**「门输入逐 blob 恒等」第 12 次生效**，本轮据此**主动不冷编**跑 ⑨ 的 db 形态之外的任何东西）
+- **门 ⑨ db 形态**：当轮新建库 `multica_c2586`（`build -p mc-conformance` 1m40s / 2.3G ＋ 回放 2m08s）
+
+### §258.7 派发（2/2 满）
+
+| issue | 族 | 条数 | 写集 | 与另一片交集 |
+|---|---|---:|---|---|
+| **`LUM-2587`** T1-6-D | 抽取缺陷（4 子族） | **5** | `scripts/extract_upstream_fixtures.py`、`scripts/extract_requirements.py`、`contracts/golden/**`（只许动那 5 条） | **∅** |
+| **`LUM-2588`** T1-6-E | 装置面（4 子族） | **7** | `crates/mc-conformance/src/{seed,harness,requirements,request_plan}.rs` | **∅** |
+
+两片**同飞合法**（逐字文件集交集为空）。两张工单都写了：本轮 base `d8a73105`、⑦/⑦b/⑩/⑨ 四组读数、
+**对账式**（不预设目标值）、`PRECONDITION ≤ 25` 不得回退、**不许刷 `report.json`**、**不许跑
+`--write-baseline`**、**不许加路由**、真库当轮新建带 `CREATEDB`。
+号段：**§259 = `LUM-2587`**，**§260 = `LUM-2588`**（`§258` = 本 cycle）——
+按**号段四问**当场查过：base 末号 `§257`、本 cycle 自占 `§258`、无并发 cycle、§257 交接行里那个
+「下一空号」不是预约。
+
+### §258.8 顺位（逐条重验，禁抄）
+
+1. `LUM-2587` / `LUM-2588` 交 PR ⇒ 八步链。**两片的 ⑨ 义务不同**：
+   `LUM-2587` 会动 `contracts/golden/**`（`report.json` 仍不许刷，但**它的 db 回放读数会动**），
+   `LUM-2588` 只动装置面（`report.json` 与 ⑦ 八数字都应**逐字不变**）。
+2. `LUM-2588` 合 ⇒ 同写集**串行**：`AUTH_401 7` → `SEED_404 18` → `UNMOUNTED 1`
+   （`UNMOUNTED 1` 因 `known_gap 0` **不许加路由**，须先裁定「真缺口还是抽取器错认」）。
+3. `行为面 4 条` **先补 `负责面` 字段并双向验证**再派（§258.4）。
+4. `UNMOUNTED 1` 之外**没有第四条零交集候选** ⇒ 槽位空出来时**刻意留空**，
+   不要为了「填满」去派写集相交的两片。
+
+### §258.9 待 owner（**不重复 @**）
+
+- `LUM-2111` 卡 docker/podman/buildah 三者皆无 ⇒ `report.json` 刷新权死锁
+  （⑨ 的 `--no-db` 形态**不需要** docker）⇒ 后果是**此后每个 PR 的 `contract` job 都红**，持续税。
+  本轮再次实测确认该红**与两片都无关**（写集零 rs/Cargo/迁移/路由 ＋ 门输入三 blob 恒等）。
+- `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（清理属破坏性操作，未自行执行）。
+
+### §258.10 观察项
+
+- `LUM-2556` / `LUM-2545` 挂 `in_progress` 但**无活 run**（`/proc` 零命中、daemon 不计）⇒
+  按 §184 它们是**重试磁铁**（有 run 失败就可能被重试挂上去，凭空造出第二个写者）。
+  本轮**只登记不动状态**（与积压 `todo` cycle 单同处置）。
+- `PR #168` 维持 §243 的**不合并**裁定（head `272acce6` 三轮未动）。
+- 磁盘：起手 24G → 本轮自跑 `mc-conformance` 冷建后 **≈20G**；两片各自冷建 7–18G ⇒
+  **下轮起手先 `df` 连采两次再决定是否回收**（死物四判据：PR 已合 ∧ run 终态 ∧
+  `/proc` 逐 PID 零命中 ∧ porcelain 空）。
