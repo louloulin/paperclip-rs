@@ -135,8 +135,11 @@ impl IssueStatusRow {
     }
 
     /// 是否终态。
+    ///
+    /// 上游的终态有两档（`done` / `closed`），只比 `"closed"` 会漏掉 `category =
+    /// 'done'` 的自定义 status（兼容写法 `closed` 仍然算）。
     pub fn is_closed(&self) -> bool {
-        self.category == "closed"
+        crate::issue_status::parse_category(&self.category).is_some_and(StatusCategory::is_terminal)
     }
 
     /// 是否内置（7 个 canonical key）。

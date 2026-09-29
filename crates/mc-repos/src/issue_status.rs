@@ -2,7 +2,12 @@
 //!
 //! 对应上游 `server/internal/handler/issue_status.go` + `server/internal/issuestatus`
 //! 包。内置 7 个 canonical key 在 `mc_core::status::CANONICAL_KEYS`；自定义 status
-//! 按 workspace 存储，`category`（open/closed）决定它是否算终态。
+//! 按 workspace 存储，`category` 决定它是否算终态。
+//!
+//! **category 词汇（上游四值 + 本仓 compat 别名）**：上游 `issuestatus` 的四值
+//! `unstarted` / `started` / `done` / `closed` 才是语义，本仓的 `open` 是 compat 别名
+//! （= `unstarted` ∪ `started`），DB CHECK 早已按并集放宽（539 迁移）。区分具体档的
+//! 判定走 [`category_matches`]。
 //!
 //! 与上游的**有意偏离**（详见 `docs/11-M2-ISSUE.md` §5）：
 //! - 本仓 `0001_init.up.sql` 的 `issue_status` 没有 `description` / `color` /
@@ -66,7 +71,7 @@ pub struct NewIssueStatus {
     pub name: String,
     /// 显式 key；`None` 时从 name 派生
     pub key: Option<String>,
-    /// `open` / `closed`
+    /// `category`：上游四值或 compat 别名 `open`。
     pub category: StatusCategory,
     /// 图标名（可空）
     pub icon: Option<String>,
@@ -83,21 +88,47 @@ pub struct IssueStatusUpdate {
     pub position: Option<f64>,
 }
 
-/// `category` 字符串 → 枚举（`Open` / `Closed` / `open` / `closed`）。
+/// `category` 字符串 → 枚举。
+///
+/// 接受上游四值与本仓 compat 别名 `open`，大小写不敏感。**其它一律拒绝** ——
+/// `category` 是有约束的词汇表（上游 DB CHECK 也只放行这五个拼写）。
 pub fn parse_category(raw: &str) -> Option<StatusCategory> {
     match raw.to_ascii_lowercase().as_str() {
+        // compat 别名：非终态、阶段未细分
         "open" => Some(StatusCategory::Open),
+        // 上游四值生命周期词汇
+        "unstarted" => Some(StatusCategory::Unstarted),
+        "started" => Some(StatusCategory::Started),
+        "done" => Some(StatusCategory::Done),
         "closed" => Some(StatusCategory::Closed),
         _ => None,
     }
 }
 
-/// `category` 枚举 → wire 字符串。
+/// `category` 枚举 → wire 字符串（`parse_category` 的逆，逐值同形）。
 pub fn category_str(category: StatusCategory) -> &'static str {
     match category {
         StatusCategory::Open => "open",
+        StatusCategory::Unstarted => "unstarted",
+        StatusCategory::Started => "started",
+        StatusCategory::Done => "done",
         StatusCategory::Closed => "closed",
     }
+}
+
+/// 分类匹配：查询方 `query` 是否命中存着的 `stored`。
+///
+/// 只有 compat 别名需要特别处理：`open` 是**跨档**的粗粒度值（= `unstarted` ∪
+/// `started`），与这两个具体档双向相容；`done` 与 `closed` 是两个不同的生命周期阶段
+/// （`category = 'done'` ≠ 状态键叫 `done`），其余逐值相等。`parse_category` + `==`
+/// 在本仓是**错的**：`open` 那一档会漏。
+pub fn category_matches(query: StatusCategory, stored: StatusCategory) -> bool {
+    if query == stored {
+        return true;
+    }
+    let coarse = |c| matches!(c, StatusCategory::Open);
+    let fine = |c| matches!(c, StatusCategory::Unstarted | StatusCategory::Started);
+    (coarse(query) && fine(stored)) || (fine(query) && coarse(stored))
 }
 
 /// 显式 key 校验：小写字母开头，只含 `[a-z0-9_]`，≤64；内置 key 保留 → `None`。
@@ -225,12 +256,15 @@ impl IssueStatusRepo {
             .and_then(|row| parse_category(&row.category)))
     }
 
-    /// 某 key 是否仍是终态（`resolve_category == Closed`）。
+    /// 某 key 是否仍是终态（上游：`done` / `closed` 两档都算终态）。
+    ///
+    /// 走 [`StatusCategory::is_terminal`] 而不是 `== Closed`：上游把内置 `done` 的
+    /// 生命周期档记作 `done`，只比 `Closed` 会把一批终态 issue 当成还在进行中。
     pub async fn is_closed_key(&self, workspace_id: Id, key: &str) -> Result<bool> {
-        Ok(matches!(
-            self.resolve_category(workspace_id, key).await?,
-            Some(StatusCategory::Closed)
-        ))
+        Ok(self
+            .resolve_category(workspace_id, key)
+            .await?
+            .is_some_and(StatusCategory::is_terminal))
     }
 
     /// 新建自定义 status。
@@ -439,6 +473,38 @@ mod tests {
         assert_eq!(parse_category("closed"), Some(StatusCategory::Closed));
         assert_eq!(parse_category("archived"), None);
         assert_eq!(category_str(StatusCategory::Closed), "closed");
+    }
+
+    #[test]
+    fn parse_category_accepts_the_upstream_four_value_vocabulary() {
+        for (raw, want) in [
+            ("unstarted", StatusCategory::Unstarted),
+            ("Started", StatusCategory::Started),
+            ("done", StatusCategory::Done),
+        ] {
+            assert_eq!(parse_category(raw), Some(want));
+            assert_eq!(category_str(want), raw.to_ascii_lowercase());
+        }
+        // 仍然是词汇表，不是「什么都收」：上游 CHECK 只放行这五个拼写
+        for bad in ["open2", "in_progress", ""] {
+            assert_eq!(parse_category(bad), None, "{bad} must be rejected");
+        }
+        for raw in ["open", "unstarted", "started", "done", "closed"] {
+            assert_eq!(category_str(parse_category(raw).expect("known")), raw);
+        }
+    }
+
+    #[test]
+    fn category_matches_treats_open_as_a_cross_grade_alias() {
+        use StatusCategory::{Closed, Done, Open, Started, Unstarted};
+        // compat 别名跨 unstarted / started 两档，双向相容
+        for coarse in [Unstarted, Started] {
+            assert!(category_matches(Open, coarse));
+            assert!(category_matches(coarse, Open));
+            assert!(!category_matches(coarse, Done));
+        }
+        assert!(!category_matches(Done, Closed));
+        assert!(!category_matches(Open, Closed));
     }
 
     #[test]

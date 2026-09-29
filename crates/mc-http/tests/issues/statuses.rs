@@ -54,7 +54,11 @@ async fn issue_status_catalog_lifecycle() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = body_json(res.into_body()).await;
     assert_eq!(body["total"], 7);
-    assert_eq!(body["categories"], json!(["open", "closed"]));
+    // 上游 `issuestatus.Categories()` 的四值展示序 + 本仓 compat 别名 `open`
+    assert_eq!(
+        body["categories"],
+        json!(["unstarted", "started", "done", "closed", "open"])
+    );
     assert!(body["statuses"]
         .as_array()
         .unwrap()
@@ -182,6 +186,56 @@ async fn issue_status_catalog_lifecycle() {
     let renamed = body_json(res.into_body()).await;
     assert_eq!(renamed["name"], "QA blocked");
     assert_eq!(renamed["category"], "closed");
+
+    // 上游四值 category 词汇（unstarted/started/done/closed）可写入并原样回显；
+    // 本仓 compat 别名 `open` 同时仍然可读入
+    for (category, want) in [
+        ("started", "started"),
+        ("unstarted", "unstarted"),
+        ("open", "open"),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/api/issue-statuses",
+                ws,
+                user,
+                Some(json!({"name": format!("stage {category}"), "category": category})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED, "category {category}");
+        assert_eq!(body_json(res.into_body()).await["category"], want);
+    }
+    // 词表之外仍拒（`category` 是有约束的词汇，不是自由文本）
+    let res = app
+        .clone()
+        .oneshot(req(
+            "POST",
+            "/api/issue-statuses",
+            ws,
+            user,
+            Some(json!({"name": "bogus", "category": "in_progress"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // `status_category` 过滤接受上游词汇：`started` 不再 400（展开成内置
+    // in_progress/in_review，而不是 compat `open` 的全集）
+    let res = app
+        .clone()
+        .oneshot(req(
+            "GET",
+            "/api/issues?status_category=started&limit=100",
+            ws,
+            user,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 
     // 期望 revision 冲突之外：未知 issue → 404
     let res = app

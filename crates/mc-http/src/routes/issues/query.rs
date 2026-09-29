@@ -7,7 +7,7 @@ use mc_errors::Error;
 use mc_repos::issue::{
     parse_assignee_type, split_comma_param, IssueFilter, IssueOrderBy, LIST_MAX_LIMIT,
 };
-use mc_repos::issue_status::{category_str, parse_category};
+use mc_repos::issue_status::{category_matches, category_str, parse_category};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -169,7 +169,10 @@ pub(crate) fn build_filter(
             let category = parse_category(&raw)
                 .ok_or_else(|| validation(format!("unsupported status_category: {raw}")))?;
             for key in CANONICAL_KEYS {
-                if IssueStatus::from_key(key).map(IssueStatus::category) == Some(category) {
+                // 内置 key 用 `lifecycle_category` 而不是 DB 里的 compat `'open'`：
+                // 否则 `status_category=started` 会把 backlog/todo 一并放进来。
+                let builtin = IssueStatus::from_key(key).map(IssueStatus::lifecycle_category);
+                if builtin.is_some_and(|b| category_matches(category, b)) {
                     expanded.push((*key).to_string());
                 }
             }
