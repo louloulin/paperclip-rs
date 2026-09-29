@@ -66,6 +66,7 @@ pub mod bindings;
 pub mod daemon_token;
 mod fixture;
 pub mod harness;
+pub mod pat_token;
 mod replay;
 pub mod report;
 mod request_plan;

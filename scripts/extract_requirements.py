@@ -98,6 +98,54 @@ REQUIREMENT_EXTERNAL_OAUTH = "external_oauth"
 # literal request, because the injection lives in the helper's body.
 DAEMON_CONTEXT_CALLS = ("WithDaemonContext",)
 
+# --------------------------------------------------------------------------- #
+# Personal-access-token (PAT) authentication
+#
+# `newRenewRequest` *does* put the token on the wire
+# (`req.Header.Set("Authorization", "Bearer "+rawToken)`), but `rawToken` comes from
+# `auth.GeneratePATToken()` — a random secret.  The walk cannot resolve it, so
+# `pairs()` drops the whole header and the fixture records a wire that has no
+# `Authorization` at all.  Replaying that as `member` is what produced eight
+# `400 != 2xx/4xx` mismatches on `POST /api/tokens/current/renew` (docs/37 §233.4):
+# the route's first act is `bearer_token(&headers)`, and a member request carries
+# no `Authorization`.
+#
+# `ActorKind::Token` existed for exactly this shape and no fixture ever used it.
+# The token's *state* — minted live, already expired, revoked, or owned by another
+# user — is what decides 200 vs 401, and the enclosing test states it in its own
+# setup.  So the state is read from the test body (raw, because the discriminating
+# evidence is inside SQL string literals that `mask_go` blanks) and named by one of
+# `PAT_BINDINGS`: the replay mints a real PAT of that shape.
+PAT_MINT_CALLS = ("insertTestPAT(", "auth.GeneratePATToken()")
+PAT_EXPIRED = re.compile(r"insertTestPAT\(\s*t\s*,\s*time\.Now\(\)\.Add\(-")
+PAT_FOREIGN_MARKERS = ("otherUserID",)
+PAT_REVOKED_MARKERS = ("SET revoked = TRUE", "revoked = TRUE")
+PAT_BINDINGS = {
+    "$testPATValid": "pat_token_valid",
+    "$testPATExpired": "pat_token_expired",
+    "$testPATRevoked": "pat_token_revoked",
+    "$testPATForeignUser": "pat_token_foreign_user",
+}
+
+
+def pat_state(raw_body: str) -> Optional[str]:
+    """Name the PAT state the enclosing test assembled, or ``None`` for no PAT.
+
+    Returns the suffix of the symbol in [`PAT_BINDINGS`].  The order is the
+    discriminating one: an expired mint is visible in the call itself, a PAT
+    minted for another user is visible on the `UserID:` argument, and a revoked
+    PAT is only visible as a raw SQL write against the row it just minted.
+    """
+    if not any(marker in raw_body for marker in PAT_MINT_CALLS):
+        return None
+    if PAT_EXPIRED.search(raw_body):
+        return "Expired"
+    if any(marker in raw_body for marker in PAT_FOREIGN_MARKERS):
+        return "ForeignUser"
+    if any(marker in raw_body for marker in PAT_REVOKED_MARKERS):
+        return "Revoked"
+    return "Valid"
+
 
 def requirements_for(
     masked: str,
@@ -176,7 +224,9 @@ def requirements_for(
 
 
 def split_headers(
-    headers: Mapping[str, Decoded], oob: Optional[set[str]] = None
+    headers: Mapping[str, Decoded],
+    oob: Optional[set[str]] = None,
+    raw_body: str = "",
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Separate transport headers from identity, and name the actor.
 
@@ -189,6 +239,13 @@ def split_headers(
     identity header: calling it anonymous is what produced 21 daemon fixtures
     that were replayed with no credential and 401'd one layer above the logic
     under test (docs/37 §201.2 root cause A).
+
+    ``raw_body`` is the enclosing test's source **before** masking.  It is only
+    read by [`pat_state`], whose discriminating evidence (an already-expired
+    expiry in a call argument, a `UserID:` on the insert params) partly lives in
+    code and partly in SQL string literals that ``mask_go`` blanks.  Every other
+    rule in this module reads the masked text on purpose, so the masked body is
+    still what `requirements_for` sees.
     """
     plain: dict[str, str] = {}
     ident: dict[str, str] = {}
@@ -201,10 +258,16 @@ def split_headers(
             plain[key] = val.value if isinstance(val.value, str) else json.dumps(val.value)
     lower = {k.lower() for k in ident}
     oob = oob or set()
+    pat = pat_state(raw_body)
     if REQUIREMENT_DAEMON_TOKEN in oob:
         # Daemon identity wins over a literal header: it is the one upstream
         # actually authenticated with (`newDaemonTokenRequest` sets no X-User-ID).
         kind = "daemon"
+    elif pat is not None:
+        # Put the header the walk had to drop back into the contract, and name the
+        # PAT's state in the symbol so the replay can mint one of that shape.
+        ident["Authorization"] = "$testPAT" + pat
+        kind = "token"
     elif lower & set(AGENT_HEADERS):
         kind = "agent"
     elif "authorization" in lower:
@@ -218,5 +281,11 @@ def split_headers(
         actor["upstream_identity"] = ident
     if kind == "daemon":
         actor["identity_source"] = "middleware.WithDaemonContext"
+    elif kind == "token" and pat is not None:
+        actor["identity_source"] = (
+            "req.Header.Set(\"Authorization\", \"Bearer \"+raw), where raw comes from "
+            "auth.GeneratePATToken(); the value is not statically resolvable, so the "
+            "credential is named by state and minted by the replay"
+        )
     return plain, actor
 

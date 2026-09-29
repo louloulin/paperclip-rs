@@ -9,11 +9,13 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "member",
+    "kind": "token",
     "upstream_identity": {
       "X-User-ID": "$testUserID",
-      "X-Workspace-ID": "$testWorkspaceID"
-    }
+      "X-Workspace-ID": "$testWorkspaceID",
+      "Authorization": "$testPATValid"
+    },
+    "identity_source": "req.Header.Set(\"Authorization\", \"Bearer \"+raw), where raw comes from auth.GeneratePATToken(); the value is not statically resolvable, so the credential is named by state and minted by the replay"
   },
   "body": null,
   "expect": {
@@ -35,6 +37,7 @@
       "status read from the `w.Code` comparison that follows the call"
     ],
     "bindings": {
+      "$testPATValid": "pat_token_valid",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }
