@@ -57,7 +57,7 @@ T1-1b 还必须**打印键名**，否则「还剩多少」这个问题就没有�
 | **T1-4** (`:257`) | ⑦b 形态：`slash_alias_audit.py` exit 0 且 defect 0 | `exit 0 ∧ defect 0 ∧ stale_allowlist 0` | `scripts/slash_alias_audit.py:findings[].allowlisted` | `python3 scripts/slash_alias_audit.py --json` | 名单外的 `MISSING_ALIAS` / `MISSING_EXACT` / `EXTRA_ALIAS` 直接判红 ⇒ 归该键的波次；名单内条目修好后**必须删行**（残留行会被当缺陷） |
 | **T1-5** (`:274`) | ⑨ `--no-db`：`mismatch == 0 ∧ unmounted == 0` | `0 ∧ 0`，且 `--check report.json` 逐字一致 | `mc-conformance` 的 `totals`（`crates/mc-conformance/src/lib.rs:703-711`） | `bash scripts/stop_condition.sh`（或 `target/debug/mc-conformance --golden contracts/golden --no-db --json`） | 🔴 **本片只观测**：差额要靠实现路由收敛，**或**由 M10-9 刷快照。刷新权不在本片 |
 | **T1-6** (`:346`) | ⑨ `--db-url`：`unevaluable == 0 ∧ mismatch == 0` | `0 ∧ 0` | 同上（带 database 层的回放） | `target/debug/mc-conformance --golden contracts/golden --db-url 'postgres://…' --json` | 未挂载 / 不可判定的 fixture 需要真实现或真 actor ⇒ 归各波次；**缺库时本条 `SKIP-NO-DB` 且整体 exit 2** |
-| **T1-7** (`:365`) | ⑨ **判词自带凭据**（两档各自举证）：`pass` 有相符观测 ∧ `unevaluable` 无观测且理由点名前提/凭据 ∧ 声明=观测 ∧ 两个 rate **从原始终数导出** | 五项全真（**不再**要求 rate `== 1.0`） | `report.json` 逐行 `outcome` / `status_observed` / `status_expected` / `requires` / `detail` / `actor` ＋ `totals` ＋ 两个 rate（`crates/mc-conformance/src/report.rs`） | 同 T1-5（读同一份 JSON） | 「让 rate 变好」的实现族：假 `pass`、静默 `unevaluable`、放宽 `supports`、手写 rate ⇒ **均红**。旧口径不可满足：`contract` 的分母是全部 365 条，是「这一层能判多少」的函数（`docs/37` §216.5） |
+| **T1-7** (`:365`) | ⑨ **判词自带凭据**（两档各自举证）：`pass` 有相符观测 ∧ `unevaluable` 无观测且理由点名前提/凭据 ∧ 声明=观测 ∧ 两个 rate **从原始终数导出** | 五项全真（**不再**要求 rate `== 1.0`） | `report.json` 逐行 `outcome` / `status_observed` / `status_expected` / `requires` / `detail` / `actor` ＋ `totals` ＋ 两个 rate（`crates/mc-conformance/src/report.rs`） | 同 T1-5（读同一份 JSON） | 「让 rate 变好」的实现族：假 `pass`、静默 `unevaluable`、放宽 `supports`、手写 rate ⇒ **均红**。旧口径不可满足：`contract` 的分母是全部 365 条，是「这一层能判多少」的函数（`docs/37` §218.5） |
 | **T1-8** (`:380`) | ⑧ `schema_drift`：`missing == 0`（且 exit 0） | `counts.missing == 0 ∧ ok == true` | `scripts/schema_drift.py --json` 的 `counts` / `ok` | `MULTICA_TEST_DATABASE_URL='postgres://…' python3 scripts/schema_drift.py --json` | 未登记的漂移 ⇒ 登记进 `contracts/upstream-schema-deviations.tsv`（该文件**既有**，归 schema 面各波次）。**需库；缺库 `SKIP-NO-DB` + exit 2** |
 | **T1-9** (`:419`) | ⑩ `file_size_check`：`violations == 0` | `0` | `scripts/file_size_check.py` 首行 | `python3 scripts/file_size_check.py \| head -1` | 新文件超 800 行 ⇒ 拆；清单内条目只允许变短。**`scripts/file_size_baseline.tsv` 的刷新权归 M10-9**（本片不动它） |
 | **T1-10** (`:457`) | 门禁 `gates.sh --with-db` **10/10** | 10 道门全 `GATE_*_EXIT=0` | `scripts/gates.sh` 的 10 行 `GATE_<NAME>_EXIT=` | `bash scripts/gates.sh --with-db --db-url 'postgres://…'`（或 `--gates-log <已有的日志>`） | 逐门 `bash scripts/gates.sh --only <name>` 复现；红的门归对应面 |
@@ -78,7 +78,7 @@ T1-1b 还必须**打印键名**，否则「还剩多少」这个问题就没有�
 `SKIP-NO-*` 三类**都不算绿** —— 「没法判定」被当成「绿」是本仓反复踩过的坑（见 `docs/64` §9.8）。
 优先级 `2 > 1 > 0`：有 `SKIP-NO-DB` 时即便别的格全绿也报 2，因为「没法开跑」是最强的信号。
 
-### 2.2 `T1-7` 的口径变更（`docs/37` §216 / `LUM-2503`）
+### 2.2 `T1-7` 的口径变更（`docs/37` §218 / `LUM-2503`，原写 §216，合并时顺延）
 
 **旧口径**：`contract_equivalence_rate == 1.0 ∧ mounted_equivalence_rate == 1.0`。这条在**任何正确实现**下都不可满足：`contract` 的分母是**全部 365 条**（含 331 条需要真库/真凭据才能判定的结构性 `unevaluable`），所以它是「**这一层能判多少**」的函数，不是实现完成度，也不是正确性。当轮两层实测：stateless `0.093151` / `1.000000`（365/34/0/0/0/331）vs database `0.734247` / `0.807229`（365/268/64/3/0/30）—— 同一指标差 **7.9 倍**。
 

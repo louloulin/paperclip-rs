@@ -362,7 +362,7 @@ print('T1_5_BAD=%d' % (t['mismatch'] + t['unmounted']))
             add T1-5 "⑨ --no-db mismatch/unmounted" "mismatch 0 ∧ unmounted 0" "$T1_5_MEAS" FAIL \
                 "mismatch+unmounted=$T1_5_BAD；--check 与快照一致 ⇒ 快照本身记着差额（刷新权归 M10-9）"
         fi
-        # 🔴 口径重定（§216）：T1-7 不再问「两个 rate 是否都 == 1.0」——
+        # 🔴 口径重定（docs/37 §218，原写 §216，合并时顺延）：T1-7 不再问「两个 rate 是否都 == 1.0」——
         # `contract_equivalence_rate` 的分母是**全部 fixture**，它是「这一层能判多少」的函数
         # （stateless 层 331/365 条结构性 unevaluable 是诚实标注，不是缺陷），
         # 在任何正确实现下都到不了 1.0。现在问的是**判词有没有自带凭据**：
