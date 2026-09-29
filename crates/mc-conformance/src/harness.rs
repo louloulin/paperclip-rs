@@ -162,9 +162,15 @@ pub async fn database_routers(url: &str, fixtures: &[Fixture]) -> Result<(TierRo
     let user_id = Uuid::parse_str(&user.id.to_string()).context("user id is not a uuid")?;
 
     // 每个分组各一套：workspace + 一枚 `mdt_` + 四行实体，**用 router 自己的路由**建。
-    let seed = crate::seed::seed(&router, &db, user_id, &crate::seed::groups_for(fixtures))
-        .await
-        .context("seed the per-group entity rows the fixtures address by id")?;
+    let seed = crate::seed::seed(
+        &router,
+        &db,
+        user_id,
+        &crate::seed::groups_for(fixtures),
+        fixtures,
+    )
+    .await
+    .context("seed the per-group entity rows the fixtures address by id")?;
     // `Bindings` 的默认值取兜底分组那一份：不引用种子符号的 fixture 只会用到它。
     let workspace_id = seed
         .workspace(crate::seed::DEFAULT_GROUP)
