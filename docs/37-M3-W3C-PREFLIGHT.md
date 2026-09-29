@@ -25117,3 +25117,149 @@ target/debug/deps/   无扩展名 222 个 / 18.4G
 - `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（破坏性操作，未自行执行）。
 - **本轮升级**：§266.2 已把「派工上限 = 磁盘/18G」量化 ⇒ 请裁决**共享 `CARGO_TARGET_DIR`**
   （或把 `target/` 挂到独立卷）。在此之前每轮都要靠 §266.1 急救，而 ENOSPC 会连带杀掉 PG 5432。
+
+## §267 【LUM-2591 / T1-6-F1】装置面 25 条 —— **5 条真的修好，20 条按 by-design 逐条登记**；工单前提「25 条全是装置面」**实测只对 5 条成立**
+
+base **`4e5b51e2`**（工单写的 `6a4245b3` 已前进 3 个 docs commit：§262 / §265 / §266）。
+**号段取 §267**：工单派的是 §263，而 §266.5 第 3 条已把 **§263 / §264 记为「仍被占号」**
+⇒ 这是**号段的第六个方向**（前五个见 §259–§266）：不是「派给我的号段被别人先用了」，
+而是**派发描述写下的号段本身仍处于「预留未落盘」状态**，cycle 已把下一空号让到 §267。
+
+### §267.1 承重一：工单的族定义把**三种根因**混成一个数字，而它们的负责面完全不同
+
+工单写「`AUTH_401` 7 + `SEED_404` 18 = 25 条装置面缺口，**0 handler**」。逐条取响应体
+（临时在 `verdict.rs` 加 `MC_DEBUG_BODY` 打印 body，取完即删）之后，这 25 条分属**三类**：
+
+| 根因 | 条数 | 证据（逐条实测的响应体） | 真正负责面 |
+|---|---:|---|---|
+| **装置面**（真缺一行） | **5** | `404 {"code":"not_found","message":"not found: workspace"}` —— `routes/agents.rs::workspace_role` 查不到 `(workspace_id, user_id)` | `mc-conformance` 装置 ✔ **本片已修** |
+| **装置面也给不了的形状** | 9 | ① `401 plugin_bearer_required`（6 条 `/v1/**`）② `401 invalid X-Multica-User-Id header (not a uuid)` ③ `404 not_found: attachment`（要一行**指定 id** 的附件） | 见 §267.4 逐条 |
+| **行为面（`mc-http`）** | 11 | 5 条 `not-a-uuid ⇒ 404`（上游给 400）、2 条 unsubscribe 幂等（上游 200）、2 条 private-agent 该 403、2 条 `STILL_404` 已点名 | 各域 handler，**不是装置面** |
+
+（5 + 9 + 11 = 25 ✔）
+
+🔴 **「`SEED_404` = 装置缺一行种子」这个判据本身是错的**：它按 `status_observed == 404`
+分族，而 404 在本仓至少有**三种**来源 —— ① handler 主动 404（`not_found("agent")` 等）、
+② **鉴权面**的 404（`workspace_role` 的 `not_found("workspace")`）、
+③ axum fallback 的 404（空 body，判 `unmounted`）。把 ② 归成「实体缺失」，
+就会把 13 条行为面缺口派给装置面的人 —— 那正是 §261 记的「负责面那一列」的同一个病。
+⇒ **建议（已请 owner 裁决，不自行改）**：`scripts/t1_6_taxonomy.py` 的 `SEED_404`
+判据应读 `detail` 里的 `not_found: workspace` / `not_found: <资源>`，而不是只看 404。
+
+### §267.2 承重二（本片唯一的代码改动）：`X-User-ID` 字面量面 = 上游 workspace 里**还有第二个成员**
+
+`AUTH_401` 与 `SEED_404` 里最大的一块症状逐字相同：请求带**字面量**
+`X-User-ID: cccccccc-cccc-cccc-cccc-cccccccccccc` 打过来，本仓答
+`404 not_found: workspace`。**那个 404 不是 handler 判的**，是
+`routes/agents.rs::workspace_role:204-218` 在 `member` 表里查不到之后自己
+`not_found("workspace")` 的。上游那几条测试里这个成员**真的存在**（`dbfx.Member(...)`），
+抽取器只抽 HTTP 调用 ⇒ 装配从契约里消失。
+
+语料侧实测（`contracts/golden/**` 全扫）：**265 条 member fixture 里只有 9 条**带字面量
+`X-User-ID`（251 条是 `$testUserID`、26 条没有），其中 **7 条是同一个**
+`cccccccc-…`、分布在 **5 个分组**。⇒ 缺口是「**7 条 fixture 少 1 行**」，不是 7 个独立缺口。
+
+写集 4 个文件里只有 `harness.rs` 有余量（`seed.rs` 起手 795 行、门 ⑩ 上限 800 ⇒ 只剩 5 行），
+所以：`harness::FOREIGN_MEMBERS`（4 个分组的声明）＋ `harness::seed_foreign_member`
+（第二个非路由种子）＋ `seed.rs` 里 **+5 行**的调用。门 ⑩ 事后 `seed.rs` = **800**（压线）。
+
+**为什么这是第二个非路由种子**（与 `seed_runtime` 同款处置，理由写进代码文档）：
+`member` 有 `REFERENCES "user"(id) ON DELETE CASCADE`，而 `"user"` 与 `member` 的主键
+**都没有指定 id 的面**（`UserRepo::create` / `upsert_by_email` / `MemberRepo::create`
+都不 INSERT `id`，由 `DEFAULT gen_random_uuid()` 生成）⇒ 装置**无法**让某行的主键
+等于 fixture 里那个字面量。两条 `INSERT` 的**列清单不是猜的**：`"user"` 那三列逐字抄自
+`mc-repos/src/user.rs:100`，`member` 那几列逐字抄自 `migrations/upstream/001`。
+
+### §267.3 🔴 承重三（本片最贵的一条）：`member.id` 是**全局**主键，第一版钉法让 4 个分组**静默**塌成一行
+
+第一版把「`member.id` 与 `user_id` 一起钉成同一个字面量」当成省事写法。实测：
+四次 `INSERT` 落成**同一行**（后三次被 `ON CONFLICT (id) DO NOTHING` 吃掉），
+回放期 `SELECT count(*) FROM member WHERE id = $1` = **1**，而那 4 个分组里各有 0 个成员。
+更糟的是**全程无红**：`seed()` 不报错、门 ⑥ 不报错、门 ⑨ 只是「pass 少了 5 条」。
+
+真正把它放大成数据损坏的是 `routes/workspaces.rs::delete_member` 走
+`MemberRepo::delete(&member_id)` —— **只按 `member.id` 删、不带 workspace**
+⇒ `TestDeleteMember_…` 那条 fixture 的收尾把另外三个分组的成员一并删掉。
+**症状是「种子里明明有、跑完就没了」**，与「handler 写错了」在报告里长得一样。
+
+⇒ 修法是**按 fixture 逐条决定要不要钉 `member.id`**（`ForeignMember::member_row_id: Option`），
+并由 `no_two_groups_pin_the_same_member_row` 钉住「钉死的字面量全局唯一」+
+「钉死的那条必须在路径段里逐字出现过」。**教训**：装置面新增「能指定主键」的种子能力时，
+先问「这个主键在本仓是**全局**唯一还是**分组内**唯一」—— 本仓 `member.id` 是前者，
+而 `$testIssueID` 那一类符号是按分组的（§213），两者的隔离边界不一样。
+
+### §267.4 by-design 登记表（20 条，逐条写明「什么装置形态下它才可判定」）
+
+| # | 条数 | fixture | 为什么本片修不了 | 什么形态下可判定 |
+|---|---:|---|---|---|
+| 1 | 5 | `not-a-uuid ⇒ 400`（agents / invitations / tokens / workspaces ×2） | 本仓把 id 解析失败映射成 `not_found("<资源>")`，上游给 400。是 **5 处独立的 handler 判定**，`mc-http` 写集 | handler 侧把 `Id::parse` 失败映射成 400（`load_agent:351` 等 5 处） |
+| 2 | 2 | `TestGetAgent_PrivateAgentForbidsPlainMember` / `TestListAgentTasks_PrivateAgentForbidsPlainMember` | 已具备装置能力，但 `tests/golden.rs` 把它们**逐条点名**钉在 `STILL_404` 桶（`STILL_404 = 6` 是常量），建出成员会让它们从 404 变 403（= 期望值）⇒ 那条承重断言红。改它要动**本片写集之外**的 `tests/golden.rs` | 装置能力已在本片具备；一次「2 行声明 + `STILL_404` 常量更新」即可做完（同组的 `TestGetAgent_RejectsForgedAgentIDHeader` 已由本片修好，剩这 2 条） |
+| 3 | 2 | `cloud_subscriptions` 付款人两条 | 本仓把付款人绑在 **`AuthUser`** 上（`cloud/subscriptions.rs::payer_email`），而上游绑在请求 context 的 `X-User-ID` 上 ⇒ 要让「payer 解析不出来」就必须**以一个不存在的用户通过认证**，装置在架构上表达不出 | 装置能「以不存在的用户认证」**或** handler 改从 `X-User-ID` 读 payer |
+| 4 | 2 | `issues/TestUnsubscribeEndpoints_*` | 路径里的 `parent-uuid` 是上游测试里的**占位串**；上游的 unsubscribe 幂等（无行也 200），本仓先查 issue 行再答 404 | handler 侧把 unsubscribe 改成幂等（**行为面**） |
+| 5 | 2 | `TestCancelTask_SameIssue_Succeeds` / `TestComment_SquadPrivateLeader_…` | 已在 `STILL_404_IDS` 里逐条点名（§213 当时就归因过） | 同 #2 |
+| 6 | 1 | `attachments/…/download` | 要一个 **`id` 逐字为 `aaaaaaaa-…` 的 attachment 行**；`POST /api/attachments` 让存储面生成 id，装置给不出指定 id 的附件行（且同组前一条 fixture 刚 DELETE 掉一行，正是 §213 的跨测试摧毁形态） | 装置能建**指定 id** 的附件行 ＋ 能真的落字节 |
+| 7 | 5 | `/v1/issues/**` 的 5 条（4 条工作流 + 1 条 scope） | `/v1` 的 9 条注册键在合并点套 `require_plugin_bearer`（`routes/v1/policy.rs:266`）⇒ 没有 `mpi_`/`mpc_` 令牌就是 401。装置**没有签发安装令牌的面** | 装置能「建 `plugin_package` + `plugin_package_version` + manifest → `POST /api/workspaces/:id/plugins` → `POST …/token`」并把 `mpi_` 绑到分组（**≈250 行，含 2 份 manifest**：全 scope 与窄 scope 各一） |
+| 8 | 1 | `context/TestPluginActionRequiresTheFeatureFlag`（期望 **403**） | 403 来自 `plugins_v1` 开关**显式登记 false**，而形态选择表 `TierRouters::for_fixture` 在 **`replay.rs`（本片写集外）** ⇒ 加不出第三个部署形态 | `TierRouters` 加一个「`plugins_v1=false`」形态（**3 行**），或把形态选择改成按 fixture id 查表 |
+
+⚠️ #7 的 `TestPluginInstallTokenEnforcesGrantedScope` 还要**第二份 manifest**：
+`install.rs:455` 的 `require_exact_scopes` 要求 granted **恰好等于** manifest 的 scopes
+⇒ 「只授 `issues:read`」这种形态只能靠一份更窄的 manifest 造出来，不能靠少传参数。
+
+### §267.5 门（base `4e5b51e2`，真库 `multica_c2591final` 当轮新建）
+
+- **9/10**：①②③④⑤⑥⑦⑧⑩ 全 **rc=0**（⑥ `migrate=0,e2e=0`）；⑨ **rc=1 = 存量红**，
+  签名**逐字不变**：`line 17` / `committed "unevaluable": 13` vs `fresh: 12`
+  ⇒ 根因仍是 PR #167 从未同步 `report.json`（§246 §6.2 已归因），**非本片引入**。
+- **⑨ `--check` 的 blob 未动**：`git hash-object crates/mc-conformance/report.json`
+  = **`db01d842`**，与工单给的基线逐字相同；`git status` 里该文件无条目。
+- **⑦ 八数字第 55 轮逐字不变**：`upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、
+  `implemented 455 real + 1 placeholder = 456`、`known_gap 0`、`unclaimed 0`、
+  `regression 0`、`local_only 8`，rc=0。**⑦b** `slash_alias_audit.py --quiet` rc=0
+  （口径按 §266.3：以 `--quiet` 的 rc 为准，**不**把 `--declared` 的 rc 当缺陷数）。
+- **⑩** `seed.rs` = **800**（压线）、`harness.rs` = **578**，四文件均在 800 以下，rc=0。
+- **⑨ db 回放（`multica_c2591final`）**：
+
+  ```
+  fixtures 365 / pass 304 / mismatch 35 / unmounted 1 / placeholder 0 / unevaluable 25
+  ⇒ 待清 61
+  t1_6_taxonomy：UNMOUNTED 1 / PRECONDITION 25 / AUTH_401 7 / SEED_404 13 / REALM_DIFF 15
+  ```
+
+  **对账**：`61 == 66 − (304 − 299)` ✔（工单给的式子 `待清_after == 66 − (pass_after − 299)`）。
+  ① AUTH_401 `7 → 7`（**未达标**，7 条按 §267.4 #3/#7/#8 登记）；
+  ② SEED_404 `18 → 13`（**未达标**，13 条按 §267.4 登记）；
+  ④ 其它族 `UNMOUNTED 1 / PRECONDITION 25 / REALM_DIFF 15` **逐字不变**、`fixtures 365` 不变 ✔。
+
+### §267.6 证据链声明（按 §266.5 第 2 条：本片是在**被外科过的 target** 上过门的）
+
+- 起手 `df -h /` 只有 **6.4G**，而唯一可用的构建缓存是 `LUM-2590`（已完成、已合并、
+  工作树 0 未提交、无 cargo/rustc 进程）的 `target/` 19G ⇒ 本片**把它 `mv` 进自己的
+  workdir 当暖缓存**（**移动，不是删除**；该片若复活会自行重建，零证据损失）。
+- 暖缓存 + 19G 增量把盘打满到 **0 avail**，`cargo run` 直接 `Errno 28`
+  ⇒ 按 §265.1/§266.1 的纪律**只删纯缓存** `target/debug/incremental/`（4.2G，
+  正确性中性、可重建），并全程 `CARGO_INCREMENTAL=0` 防它长回来。**没有删过任何
+  `rlib` / `rmeta` / `.d` / 测试二进制**，⑥ 的 e2e 与 ⑧ 的 schema 对比都是在**完整
+  依赖**上跑的。
+- ⚠️ 因此本片门禁的证据链要写明：**冷建 448s 那一档不可复现**（用的是暖缓存），
+  但**门的判据与冷建完全同款**（`gates.sh` 是唯一实现，CI 调的是同一条命令）。
+
+### §267.7 顺位（本片之后）
+
+1. **`/v1` 安装令牌装置**（§267.4 #7，5 条）是本片**最大**的一块可回收量，且**完全在本仓**：
+   写集 `mc-conformance/**`（`harness.rs` 还有余量）＋ `request_plan.rs` 的
+   `ActorKind::Member` 分支要能按路径前缀注入 `Authorization: Bearer mpi_…`。
+   ⚠️ 它的前置是「先有一份可安装的 manifest + package version」，
+   而 `POST /api/workspaces/:id/plugins` 要求 `workspace_admin` ＋ `version_id`
+   指向本 workspace 的已发布版本 ⇒ **要先确认那一面在无 docker 环境下可走通**。
+2. `TestPluginActionRequiresTheFeatureFlag` 需要 `replay.rs` 的第三个部署形态（**3 行**）。
+3. `t1_6_taxonomy.py` 的 `SEED_404` 判据（§267.1 建议）—— **分类器不在本片写集**，
+   且 §257 承重三刚在旁踩雷 ⇒ 已请 owner 裁决，不自行改。
+4. `STILL_404` 那 5 条（§267.4 #2/#5）：装置能力已具备，只差 3 行声明 +
+   `tests/golden.rs` 的 `STILL_404` 常量（6 → 1）＋ `RESOLVED`（68 → 73）—— **同写集，必须一片**。
+
+### §267.8 待 owner（**不重复 @**）
+
+- `LUM-2111` 卡 docker 三件套 ⇒ `report.json` 刷新权死锁（承接 §266.6，不重复 @）。
+- `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（破坏性操作，未自行执行）。
+- 承接 §266.6：共享 `CARGO_TARGET_DIR` 的裁决。本片实测**再次确认**该结论 ——
+  一片 19G `target/` 就把 49G 的盘吃到 0，且**暖缓存复用是本片能跑完门禁的唯一原因**。
