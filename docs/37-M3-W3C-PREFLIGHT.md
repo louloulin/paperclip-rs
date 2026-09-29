@@ -19174,3 +19174,69 @@ run `01a0ea85`：`created == dispatched == started` 均为 `00:16:24Z`，起手�
 - **⑨ 新基线**（下一轮直接用）：`report.json` blob `0509ea6c…`；stateless `365/34/0/0/0/331`；database `365/252/80/3/0/30`。
 - **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
 - **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ 判活序 → 逐片判据链（**先查 CI `total_count` 是 0 还是 in_progress**）→ 回收第 4 条用 **代码路径 diff** 而非祖先关系。
+
+## §215 【2026-09-29 09:00 cycle / LUM-2506】收割 PR #152（`LUM-2502` / Tier-2 桶 C）—— **隔离修好但未达工单目标**（`268/64` vs `≥275/≤57`，差 7 逐条归因）＋ ⑦ 八数字**第 19 轮逐字不变** ＋ **写集漏项的合法形态**（`harness.rs`/`main.rs` 是签名级必要改动，不是越界）
+
+起手 base **`57fef38c`** → 并发 cycle（`LUM-2504`）直推 §214 → **`088a2fcb`**（本轮起手实测）。`df` 连采两次均 **28G/41–42%**、PG 5432 `online`、本 workdir 起手**无 `target/`**。checkout 带 `--ref` 第 40 次仍直接落 feat 线。
+
+### §215.1 收割判据链（PR #152，`LUM-2502` / devbox4）
+
+| # | 判据 | 结果 |
+|---|------|------|
+| ① | 预检 `merge-base..head` numstat == PR API 逐字 | **7 文件 `+733/−169`，逐字一致**（page1 = 7 < 100 ⇒ 无 §212 承重二的静默截断） |
+| ② | 形态判定：前进段（`merge-base..base`） | **只有 `docs/37`（+130）** ⇒ **形式 ③**（`merge-base = 740d3f28 ≠ base`），但前进段**零非 docs 路径** |
+| ③ | `merge-tree --write-tree` | **`rc=1`（冲突）** —— 唯一冲突文件 `docs/37-M3-W3C-PREFLIGHT.md`，**代码面零冲突** |
+| ④ | 证据 | head **check-runs `total_count == 0`** ⇒ **CI 从未触发**（§212 承重一）⇒ **无豁免可用，本机自跑**（当轮新建库 `multica_c2506`） |
+| ⑤ | 钉 40 位 sha + `merge_method=merge` | 钉 `a43467723750b3c8e6d0fd728f7ff3fc0d9e3fd8` ⇒ **merge commit `492ddff0`** |
+| ⑥ | 落地树 ≡ 预演树 | **落地 `88b37bc6f03a5232e721d8e10e0b792be5d56174` ≡ 预演树逐字相同**，`git diff` 空 |
+
+④ 的实测（**合并树 + 当轮新建库**，`cargo test -p mc-conformance --test golden -- --include-ignored`）= **6 passed / 1 failed / 79.7s**；`cargo test --no-run` `rc=0`。
+
+🔴 **那 1 条红是存量，不是回归 —— 两条互不依赖的路都走了（§212 承重三）**：
+① **零成本结构核对**：`ActorKind::Agent` 分支 base `lib.rs:407` 与合并树 `lib.rs:412` **6 行逐字相同**（只是被 `Bindings` 的搬移顶了 5 行）；该 fixture 的 `actor` 块**不在 diff 里**（`git diff -- contracts/golden | grep -c` = **0**）。
+② **热 target 复现（本轮独立重做，未采信自述）**：`git checkout 740d3f28 -- crates/mc-conformance contracts/golden` 后同库重跑 ⇒ **同用例、同断言、同红**（行号 590→514，纯因 `golden.rs` 位移），随后 `git checkout HEAD -- .` 还原（`dirty 0`、树哈希回到 `88b37bc6`）。
+
+⚠️ **本轮自踩并当场识破**：第一次做「`ActorKind::Agent` 分支逐字相同」时用了错的 `sed` 范围，**抽出两个空文件**，`diff` 报「相同」——**那是空洞通过**。改用 `grep -n` 定位真实行号后重抽 6 行才成立。**判据纪律：任何「逐字相同」必须同时报出比对的行数，行数 0 = 没比。**
+
+**冲突是 §146.3 的机械形态**：HEAD 侧 = `§212 + §214`，分支侧 = `§213`，三段同锚点 append。解法 = **两段都保留、按号段排序**（`§212 → §213 → §214`），**不改任何代码**。已预演：解后 `## §21x` 顺序为 `211/212/213/214`、冲突标记 **0**、预演树 = `88b37bc6f03a5232e721d8e10e0b792be5d56174`。
+
+### §215.2 独立复核：**刻意不采信自述**（四条，全部零成本）
+
+1. **禁改面 0 改动**（`contracts/golden` / `migrations` / `scripts/gates.sh` / `docs/fixtures` 各 **0 文件**）—— 与自述一致。
+2. **注册面 0 触碰**：`git diff --name-only … | grep -E 'routes/|mount\.rs|state\.rs|Cargo\.(toml|lock)|migrations'` ⇒ **无命中**，0 路由成立。
+3. **`expected.status` 改写 0 行**（`git diff … -- contracts/` = 0 行）⇒ 不是「把缺口藏进期望值」。
+4. **护栏是真代码不是散文**：`STILL_404_IDS: [&str; 6]` / `LEFT_404_FOR: [&str; 3]` / `LOST_RESOLVED: [&str; 3]` 三个具名数组，且断言是**双向**的（既钉「清单外不得有新条目」，也钉「清单内不得消失」）⇒ 「把一条 404 换成 400 再补一条进来」骗不过。`LEFT_404_FOR` 另有一条**否定断言**：这 3 条必须落在 `other` 里**且不是 400/401** —— 正是工单第 2 条护栏要防的平移。
+
+### §215.2b 两条护栏测试在**合并树 + 真库**上实测为绿（本轮自跑，非引用自述）
+
+- `seeded_symbols_convert_404_into_real_judgements` **ok** ⇒ 三桶算式 `68 + 6 + 21 ≡ 95` **成立**，且是**点名式**护栏。
+- `every_seeded_symbol_is_provided_by_the_seeder` **ok** ⇒ 没有符号漏种（漏一个的症状是整批静默变 `unevaluable`，在总数里不显眼）。
+
+**这两条才是工单第 2/3 条判据的落点**；第 1 条（`≥275/≤57`）未达，故本轮**不记「bucket C 收口」**。
+
+### §215.3 ⑦ 八数字**第 19 轮逐字不变**（base / 合并树 / **合并后新 base** 各跑一次，三次逐字相同）
+
+`upstream 456 (f41fae6b08fb) | local 546 registered | baseline 546` / `implemented 455 real + 1 placeholder = 456/456` / `known_gap 0` / `unclaimed 0` / `regression 0` / `local_only 8`；⑦b `rc=0`、⑩ `rc=0`（0 violation）。baseline md5 `294c2c2a7f76517b4f4013b1be779220` 与 slash allowlist `f4b20cc25ad60bb7972839f79d23869d` **零位移**。⑨ 门输入三 blob（`0509ea6c…` / `033bdd7d…` / `ecc314dc…`）与 §214 逐字相同 ⇒ stateless 读数**继承、不冷编**：`365/34/0/0/0/331`。
+
+### §215.4 交付**未达工单目标**，但缺口是**逐条归因的第二缺口**，不是隐藏
+
+工单写死 `pass 252→≥275`、`mismatch 80→≤57`；实测 **268 / 64**，**差 7 条**。切片自己把 7 条逐条点名（`§213.4`），结论是**每一条都需要本片写集之外的新装配**（第二个身份 / runtime-不可用的 agent / 队列或版本状态 / 抽取侧欠拟合），并明确写「**不许**把它们算成本片的成绩」。
+
+⇒ **本轮不把它记成「bucket C 已收口」**，只记「**隔离机制修好、护栏加强、7 条第二缺口已归因**」。三条原本的 `pass` 被**拆穿**（`net +16` 而非 `+23`）是**诚实披露**，不是倒退。
+
+🔴 **口径**：`mismatch` 从 80 降到 64 **本身不是成功信号**。判据是「23 条 404 是否**全部消失**且**三桶算式恒等于 95**」—— 两者本轮都成立（`68 + 6 + 21 ≡ 95`）。
+
+### §215.5 两条新登记
+
+**① 写集漏项的**合法形态**（与既往「漏项」不同类）**：本片描述的正典写集是 `seed.rs`/`bindings.rs`/`lib.rs`/`tests/golden.rs`/`docs/37`，实际多出 `harness.rs`（187→**157**，变短）与 `main.rs`（+1/−1）。**这两个是签名级必要改动，不是越界**：「要种哪些分组」只有拿到 fixture 列表才算得出，而 `seed()` 在工单设计里拿不到 ⇒ `database_router(url)` 必须变成 `database_router(url, fixtures)`，调用点必须补 `&fixtures`。⇒ **预飞第 2 类漏项要区分「漏了要改的文件」与「越界改了不该改的文件」**：前者是设计不完备（补进写集即可），后者才是 scope 违规。既往判据只问「有没有碰写集外的文件」，本轮细化。
+
+**② `seed.rs` 385 → 709 行，距门 ⑩ 的 800 上限只剩 91 行**：下一片若还要往 `seed.rs` 加分组逻辑，**先拆 `tests/` 子模块**（先例 D10），不要压到 800 再返工。
+
+### §215.6 下一轮起点
+
+- **base**：**`492ddff0`**（merge commit #152）；**GH**：**0 open PR**；**在飞**：本轮新派 1 片（见下）。
+- **槽位**：`LUM-2503`（凭据表对称化 + `T1-7` 口径重定）的**同函数冲突随本片合入而解除**（`lib.rs:407` 的 `ActorKind::Agent` 分支本片只加参数、未改判定语义）⇒ **下一轮可派**。
+- **§213.4 的 7 条**分三族值得开片：`#4` 与 §209.4 B 桶同族（**第二个身份**）可合并成一片；`#2/#5` 同族（**runtime 不可用的 agent**）；`#6/#7` 是**抽取侧欠拟合**，应回 `scripts/extract_upstream_fixtures.py` 而非在 conformance 侧打补丁。
+- **号段**：下一空号 **`## §216`**（`§213` 由 `LUM-2502` 预约并已占用、`§214` 由 `LUM-2504` 占用）。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
+- **未清理（待 owner，本轮不自行执行）**：`mc_t2492` 名下的 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作）。
