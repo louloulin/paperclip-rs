@@ -20880,3 +20880,44 @@ run `01a0ec66` **单一 running**（起手按 §227 承重三先验 `issue runs`
 
 第一动作仍为：查 `e8369de9` 之后 base 是否前进 → GH open PR（**翻页取全**）→ 判活 `LUM-2536`/`LUM-2544` 两个 run
 （`01a0ec66` 的写集是否与派单逐项吻合）⇒ 若 `#160` 已合，**白名单基线变 6 条**，`LUM-2544` 即 6 → 5（描述里已双情形写明）。
+
+## §226 【2026-09-29】派发面缺口：**未指派创建的 issue 绕过了 runtime 在线前置筛**，投进 offline runtime 后 `queued_expired`
+
+一条 `LUM-2536` 的**重复派发** run `01a0ebfa` 终态失败：`queued_expired`，
+`error = "runtime unavailable while task was queued"`，`started_at` **为空**、`lum-2536-*` workdir **不存在**
+⇒ **从未开跑，无半成品可抢救**。该 issue 的正主工作已由 lin 的 run `01a0ec21` 交付（PR **#160**，白名单 7 → 6）。
+处置：**skip**（不重派、不补救）；重派给 devbox1 会以同样方式再失败（其 runtime `041bf509` 复查仍 `offline`）。
+
+### §226.1 🔴 承重：§224.2 的「派发前三连」只覆盖**显式 `--assignee-id` 指派**这条路
+
+§224.2 立的规矩是「派发前三连：① `agent get` 取 `runtime_id` ② `runtime list` 确认 `online` ③ `agent tasks` 确认无在飞」。
+本轮暴露的是**这条规矩的覆盖面有个洞**：
+
+- `LUM-2536` 是本 cycle 以 **`--priority high` 但不指定 `--assignee-id`** 的方式创建的；
+- 因此**我自己的前三连从未对它执行过**（无 assignee 可筛）；
+- 但平台**仍然给它路由出了一个 run**，且落到了绑在 **offline** runtime 上的 devbox1 ⇒ 静默排队直至 `queued_expired`。
+
+⇒ **不是「idle 会被误当有运力」（§224.2 已覆盖），而是「没走我这条派发路径的 issue 完全没有在线校验」。**
+派发前三连是**派发者的自律**，它对**不经过派发者的路由路径**无效。
+
+⇒ **定式（三条）**：
+1. **凡创建 issue，一律显式 `--assignee-id` 或明确置 `backlog` 待派**；
+   「不指定 assignee 看看谁接」这种写法在本项目里会静默命中 offline runtime。
+2. **下轮起手把「`queued_expired` / `runtime unavailable` 归因」当作既定分支处理**：
+   先查 `issue runs <id>` 里该 run 的 `started_at` 是否为空 —— **为空即「从未开跑」⇒ 直接 skip，不要去抢救或重派**；
+   非空才需要按「跑到一半挂了」处理（查 workdir / 未提交写集 / 分支）。
+3. **看到某 issue 已有别的 run 交付**，就别再补派同一片；
+   lin 在 `LUM-2536` 起手核对「`runs` 里只有我这一条 `running`，devbox1 那条仍是 `queued`、无并发写者」——
+   **这个核对是本轮没有出现双写者的唯一原因**，应固化为接单方的起手动作。
+
+### §226.2 当前真实状态（供下轮收割）
+
+- base **`4637c0e5`**；**PR #157**（`comment.rs` 1403 → 9，本 cycle 自做）**已 merged**。
+- **PR #160**（lin，`inbox.rs` 1185 → 7，白名单 7 → 6）**仍 open 未合** ← 当前待收割的活。
+- **PR #161**（lin，第 7 批 `mc-http tests/inbox.rs`）亦 open。
+- ⚠️ **收割 #160 时不可直接采信「③④⑤⑥ 四道红都在写集外」**：lin 自报本机两次全量 `--with-db` 分别只有
+  **5/10 与 6/10**，归因 ③/④ = `mc-config` 的 `doc_markdown`（本机 clippy 版本更严）、
+  ⑤ = `mc-channel` 出网用例受本机 `HTTP_PROXY=http://127.0.0.1:4780` 抖动、
+  ⑥ = 四个包并行共用一库的跨测试污染（隔离 `--ignored` 复跑 15/15 全过）。
+  这些归因看起来成立，但**必须在本机独立复核**，不能因为「写集外」就免检 ——
+  这与 §223.3「git 级判据链全绿 ≠ 收割」是同一族：**归因也是需要证据的结论**。
