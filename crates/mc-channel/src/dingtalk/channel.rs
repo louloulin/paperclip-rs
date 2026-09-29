@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    async_trait, outbound, AppSecret, Arc, AtomicBool, Capability, Channel, ChannelError,
+    ChannelKind, ChannelResult, ConnectionOpener, Connector, DispatchSink, DispatchSlotRegistry,
+    Dispatcher, Ordering, OutboundMessage, RelinquishGuard, SendResult, SessionOutcome,
+    SharedInboundHandler, StopHandle, StreamKnobs, WsDialer, DISCONNECT_DRAIN_BUDGET,
+    TYPE_DINGTALK,
+};
 
 /// **一个安装的** Stream 连接（上游 `dingtalkChannel`）。
 ///

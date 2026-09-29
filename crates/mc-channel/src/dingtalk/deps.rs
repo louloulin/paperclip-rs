@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    outbound, Arc, BotNameSource, ChannelError, ChannelResult, ConnectionOpener, Deserialize,
+    DispatchLimits, NoBotName, ReqwestOpener, StreamKnobs, TungsteniteDialer, WsDialer,
+    TYPE_DINGTALK,
+};
 
 /// 安装配置里的**本片所需字段**（上游 `installConfig` 的收窄形态）。
 ///

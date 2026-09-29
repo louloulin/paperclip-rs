@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    classify_edit, classify_send, first_non_empty, format_html, is_not_modified, AnswerProgress,
+    DeliveryLease, DeliveryOutcome, Duration, EditMessageText, EditVerdict, Outbound, ReplyTarget,
+    SendMessage, Step, StreamStep, MAX_AMBIGUOUS_EDIT_ATTEMPTS, MAX_MESSAGE_UNITS,
+    MAX_NOTICE_EDIT_ATTEMPTS, STREAM_PLACEHOLDER, TERMINAL_EDIT_RETRY_DELAY,
+};
 
 impl Outbound {
     /// 处理一帧 **partial**（上游 `pushPartial`）：首次发占位消息，之后编辑它。

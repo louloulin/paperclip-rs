@@ -1,4 +1,4 @@
-use super::*;
+use super::{ChannelError, ChannelIssue, Id};
 
 /// 流水线的**产品性**判决（上游那批哨兵错误）。
 ///

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    chunk_message, utf16_units, Arc, DeliveryLedger, Duration, Outbound, Sender, TelegramApi,
+    EDIT_INTERVAL, MAX_MESSAGE_UNITS,
+};
 
 impl Outbound {
     /// 装配（生产节流）。
