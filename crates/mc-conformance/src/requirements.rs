@@ -11,7 +11,7 @@
 //! 2. `lib.rs` 已在 R7 的 800 行存量白名单里（`scripts/file_size_baseline.tsv` 记 1024 行，
 //!    且**只减不增**）。加机制就得同时把文件拆回基线以下，否则门 ⑩ 直接红。
 
-use crate::{Fixture, Tier};
+use crate::{ActorKind, Fixture, Tier};
 
 // ---------------------------------------------------------------------------
 // 前提（`requires`）
@@ -132,6 +132,147 @@ pub struct Requirement {
 
 pub fn requirement(id: &str) -> Option<&'static Requirement> {
     REQUIREMENTS.iter().find(|r| r.id == id)
+}
+
+// ---------------------------------------------------------------------------
+// actor 凭据表（`Tier::supports` 与 `plan` 的唯一共同依据）
+// ---------------------------------------------------------------------------
+
+/// 一枚 actor 凭据的**供给登记**：这一档身份在哪些层有签发 / 解析面。
+///
+/// 🔴 这张表存在的唯一理由，是让「这一层判不判」与「请求发不发得出来」读**同一张表**。
+/// 两边各说各的那一次留下了 `database_tier_replays_every_decidable_fixture` 恒红的存量
+/// 缺陷：`Tier::supports(Tier::Database, Agent)` 答「供得起」，而 `plan` 的
+/// `ActorKind::Agent` 分支答「不伪造」—— 两条断言在任何实现下互斥，该用例不可能全绿。
+///
+/// `satisfied_by` 为空 ⇒ **没有任何层**有签发面 ⇒ 这一档恒 `unevaluable`，且
+/// [`actor_credential_detail`] 与 `crate::plan` 必须给出**同一个** `detail`
+/// （不是「`supports` 松口、由 `plan` 的 `Err` 兜底」）。
+///
+/// 🔴 修法不许是「把 `satisfied_by` 放宽」：给 `ActorKind::Agent` 补上 `Tier::Database`
+/// 会把 13 条 `agent` 的 `unevaluable` 变成**假 `mismatch`** —— 这一档没有签发面，
+/// 回放只能拿到 401/500，而那与「实现写错了」在报告里长得一样。
+pub const ACTOR_CREDENTIALS: &[ActorCredential] = &[
+    ActorCredential {
+        kind: ActorKind::Anonymous,
+        satisfied_by: &[Tier::Stateless, Tier::Database],
+        detail: "",
+    },
+    ActorCredential {
+        kind: ActorKind::Member,
+        satisfied_by: &[Tier::Database],
+        detail: "member identity is a seeded user row; the stateless tier has no user table, \
+                 so there is nothing to resolve X-User-ID against",
+    },
+    ActorCredential {
+        kind: ActorKind::Agent,
+        satisfied_by: &[],
+        detail: "actor kind Agent needs a real credential; this runner does not fabricate one — \
+                 the database tier does not mint one either",
+    },
+    ActorCredential {
+        kind: ActorKind::Token,
+        satisfied_by: &[],
+        detail: "actor kind Token needs a real credential; this runner does not fabricate one — \
+                 the database tier does not mint one either",
+    },
+    ActorCredential {
+        kind: ActorKind::Daemon,
+        satisfied_by: &[Tier::Database],
+        detail: "daemon identity is resolved from the daemon_token table; the stateless tier \
+                 cannot mint one and has none to look up",
+    },
+    ActorCredential {
+        kind: ActorKind::System,
+        satisfied_by: &[],
+        detail: "actor kind system is internal-only",
+    },
+];
+
+/// 一条凭据登记项。见 [`ACTOR_CREDENTIALS`]。
+#[derive(Debug, Clone, Copy)]
+pub struct ActorCredential {
+    /// fixture 里的 `actor.kind`。
+    pub kind: ActorKind,
+    /// 哪些层有签发 / 解析面；空 = 没有任何层有。
+    pub satisfied_by: &'static [Tier],
+    /// 供不起时报告里写的那句话（`satisfied_by` 覆盖全部层时可以为空）。
+    pub detail: &'static str,
+}
+
+/// 按 actor kind 取登记项。查不到 = 凭据表漏了这一档（第二道；加载期由
+/// [`credential_table_covers_every_kind`] 的同形断言先拦一次）。
+pub fn actor_credential(kind: ActorKind) -> Result<&'static ActorCredential, String> {
+    ACTOR_CREDENTIALS
+        .iter()
+        .find(|c| c.kind == kind)
+        .ok_or_else(|| format!("actor kind {} has no credential entry", kind.as_str()))
+}
+
+/// 这一层供得起这一档身份吗 —— [`crate::Tier::supports`] 的**唯一**依据。
+pub fn credential_satisfied_by(kind: ActorKind, tier: Tier) -> Result<bool, String> {
+    Ok(actor_credential(kind)?.satisfied_by.contains(&tier))
+}
+
+/// 这一层判不了这一档身份时的**报告理由** —— `crate::plan` 拒绝「无签发面」的档时
+/// 给的是同一句（`satisfied_by.is_empty()` 那半支）。
+///
+/// 两种情形必须分开说，否则读者会顺着一条假线索去 rerun `--db-url`：
+/// * 别的层有签发面 ⇒ 指路（换到那层去）；
+/// * **没有任何层**有 ⇒ 说清「没有签发面」，因为换层也判不了。
+pub fn actor_credential_detail(kind: ActorKind, tier: Tier) -> Result<String, String> {
+    let c = actor_credential(kind)?;
+    if c.satisfied_by.is_empty() {
+        return Ok(c.detail.to_string());
+    }
+    let elsewhere: Vec<&str> = c.satisfied_by.iter().copied().map(Tier::as_str).collect();
+    Ok(format!(
+        "{} actor needs the {} tier (rerun with --db-url); {} tier cannot decide it",
+        kind.as_str(),
+        elsewhere.join(" or "),
+        tier.as_str()
+    ))
+}
+
+/// **请求面**的判定闸门（与凭据面、前提面并列的第三条）：这一条 fixture 的请求本身
+/// 发不发得出来。
+///
+/// `plan()` 只对 `path_params` / `query` 的**取值**做 percent-encode（`query` 的 key 也编），
+/// 路径里的字面量原样进 URI ⇒ 字面量带空格这类字节会被 axum 在 `RequestPlan::to_http`
+/// 拒掉（`cannot build request: invalid uri character`）。
+///
+/// 这一问答否 ⇒ [`crate::Tier::supports`] 必须也答否。否则「这一层供得起」与「请求发得
+/// 出来」又各说一套 —— 与凭据面那个缺陷同族，只是闸门不在凭据面而在请求面。
+/// 实证：`agents/TestUpdateAgent_KeepsMcpConfigForMemberActor@…:1423#23` 就是一条
+/// （上游那条测试 PUT 了一个字面带空格的路径）；它**不是本仓实现写错**，
+/// 所以只能被声明为「两层都判不了」，不能反过来变成假 `mismatch`。
+#[must_use]
+pub fn request_target_is_encodable(fx: &Fixture) -> bool {
+    // 与 `plan` 同一条拼法：先按 `path_params` 把占位符换掉（取值由 `plan` percent-encode，
+    // 这里只需把占位符本身去掉），剩下的字面量必须自己就是合法 URI 字节。
+    let mut literal = fx.path.clone();
+    for name in fx.path_params.keys() {
+        literal = literal.replace(&format!("{{{name}}}"), "");
+    }
+    // 未填充的占位符同样是「发不出来」（`plan` 会以 `still has an unfilled placeholder` 拒）。
+    if literal.contains('{') || literal.contains('}') {
+        return false;
+    }
+    axum::http::Uri::try_from(literal.as_str()).is_ok()
+}
+
+/// 请求面没过时的报告理由。与 [`request_target_is_encodable`] 成对。
+///
+/// 措辞要与「缺身份 / 缺前提」分开：这条红是**fixture 自己**的（抽取器把一个字面带
+/// 空格的路径原样写进了 `path`），换层、换凭据都没用。
+#[must_use]
+pub fn unplannable_request_detail(fx: &Fixture) -> String {
+    format!(
+        "this fixture's request cannot be built on any tier: `{}` carries bytes axum refuses \
+         in a URI (plan fails with `invalid uri character`), or still has an unfilled \
+         placeholder — the gap is in the fixture, not in a precondition or a credential",
+        fx.path
+    )
 }
 
 /// 一条 fixture 在某一层**凑不齐**的前提；全齐则 `None`。
@@ -259,6 +400,182 @@ mod tests {
         // （`main.rs` 有一条 `unevaluable with no reason recorded` 的兜底断言）。
         for r in REQUIREMENTS {
             assert!(r.detail.len() > 40, "{}: detail 太短", r.id);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 凭据表（§216）
+    // -----------------------------------------------------------------------
+
+    /// `ActorKind` 的全部档。枚举一变（增档）这里就红 —— 这是故意的：
+    /// 凭据表漏一档 = 那个档在两层都不被任何判据管，且报告里没有理由。
+    const ALL_KINDS: [ActorKind; 6] = [
+        ActorKind::Anonymous,
+        ActorKind::Member,
+        ActorKind::Agent,
+        ActorKind::Token,
+        ActorKind::Daemon,
+        ActorKind::System,
+    ];
+
+    /// 一档身份的探针 fixture：不引任何种子符号，只为问 `plan` 一句「发得出来吗」。
+    fn probe(kind: ActorKind) -> Fixture {
+        use std::collections::BTreeMap;
+        Fixture {
+            schema_version: crate::SCHEMA_VERSION,
+            id: format!("probe/{}", kind.as_str()),
+            method: "GET".into(),
+            path: "/probe".into(),
+            path_params: BTreeMap::new(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            actor: crate::Actor {
+                kind,
+                upstream_identity: BTreeMap::new(),
+                identity_source: None,
+            },
+            body: None,
+            expect: crate::Expect {
+                status: 200,
+                json_subset: serde_json::Value::Null,
+                headers: BTreeMap::new(),
+            },
+            source: crate::Source {
+                file: "requirements.rs".into(),
+                line: 1,
+                test: "probe::symmetry".into(),
+                site: "probe".into(),
+                via: String::new(),
+                commit: String::new(),
+            },
+            extraction: crate::Extraction::default(),
+        }
+    }
+
+    #[test]
+    fn credential_table_covers_every_kind() {
+        assert_eq!(
+            ACTOR_CREDENTIALS.len(),
+            ALL_KINDS.len(),
+            "凭据表与 ActorKind 的档数不一致（重复项或漏项）"
+        );
+        for kind in ALL_KINDS {
+            let c = actor_credential(kind).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+            assert_eq!(c.kind, kind, "凭据表里 {kind:?} 的条目对不上自己");
+        }
+    }
+
+    #[test]
+    fn credential_detail_explains_every_gap() {
+        for c in ACTOR_CREDENTIALS {
+            for tier in [Tier::Stateless, Tier::Database] {
+                if c.detail.is_empty() {
+                    // 空理由 ⇔ **每一层**都供得起（空理由不可能出现在报告里）。
+                    assert!(
+                        credential_satisfied_by(c.kind, tier).expect("登记项在手"),
+                        "{:?}/{tier:?}: 供不起却没有理由",
+                        c.kind
+                    );
+                } else {
+                    assert!(
+                        c.detail.trim().len() > 25,
+                        "{:?}: 有供不起的层，却写不出能独立读懂的理由",
+                        c.kind
+                    );
+                }
+            }
+        }
+    }
+
+    /// 🔴 本片的核心判据（**双向**）：`Tier::supports`（判不判）与 `crate::plan`
+    /// （请求发不发得出来）必须读**同一张**凭据表 —— 任何一边自己另说一套，这条就红。
+    ///
+    /// 反向演示：给表里任意一档写上它 `plan` 分支并不支持的层（例如给 `Agent` 补上
+    /// `Tier::Database`，或新增一个只有表项、`plan` 里只会拒绝的档）⇒ 第 ① 条直接红。
+    #[test]
+    fn credential_table_is_symmetric_with_the_replay_planner() {
+        let stateless = crate::Bindings::stateless();
+        let database = crate::Bindings::with_daemon_token(
+            stateless.user_id,
+            stateless.workspace_id,
+            "mdt_probe".into(),
+        );
+        for c in ACTOR_CREDENTIALS {
+            let fx = probe(c.kind);
+            for (tier, bindings) in [(Tier::Stateless, &stateless), (Tier::Database, &database)] {
+                let declared = credential_satisfied_by(c.kind, tier).expect("登记项在手");
+                match (declared, crate::plan(&fx, bindings)) {
+                    // ① 表说供得起 ⇒ `plan` 必须发得出来。不对称的那一次就是在这里红的。
+                    (true, Ok(_)) => {}
+                    (true, Err(e)) => panic!(
+                        "{:?}/{tier:?}: 表说供得起，plan 却拒绝（判据不对称）：{e}",
+                        c.kind
+                    ),
+                    // ② 表说供不起、`plan` 却发得出请求 ⇒ 只有当**别的层**有签发面时才成立
+                    //    （层闸门由 `Tier::supports` 把守）；一个签发面都没有的档这样就是表漏了。
+                    (false, Ok(_)) => assert!(
+                        !c.satisfied_by.is_empty(),
+                        "{:?}/{tier:?}: 表说没有任何层供得起，plan 却发得出请求",
+                        c.kind
+                    ),
+                    // ③ 「一个签发面都没有」的档必须拒绝，且理由与报告理由逐字相同。
+                    (false, Err(e)) => {
+                        if c.satisfied_by.is_empty() {
+                            assert_eq!(
+                                e, c.detail,
+                                "{:?}: plan 的拒绝理由不是凭据表那一句",
+                                c.kind
+                            );
+                            assert_eq!(
+                                actor_credential_detail(c.kind, tier).expect("登记项在手"),
+                                c.detail,
+                                "{:?}/{tier:?}: 报告理由与凭据表那一句不一致",
+                                c.kind
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 有签发面的档：报告理由必须**指路**（换到有签发面的那层），而不是说「没有签发面」。
+    #[test]
+    fn credential_detail_points_at_the_tier_that_can_supply_it() {
+        let d = actor_credential_detail(ActorKind::Member, Tier::Stateless).expect("登记项在手");
+        assert_eq!(
+            d,
+            "member actor needs the database tier (rerun with --db-url); stateless tier cannot \
+             decide it",
+            "stateless 层对 member 的理由变了 —— 这条会顺带给快照报告换字"
+        );
+    }
+
+    /// §216 同族第二条（**请求面**）：请求拼不出合法 URI 的 fixture，两层都必须答否 ——
+    /// 不许「`supports` 说供得起、`plan` 说拼不出 URI」。用**真 golden 面**判，不现编一条。
+    #[test]
+    fn an_unencodable_request_is_declared_undecidable() {
+        let spacey: Vec<Fixture> = golden()
+            .into_iter()
+            .filter(|fx| !request_target_is_encodable(fx))
+            .collect();
+        assert!(
+            !spacey.is_empty(),
+            "golden 面里找不到请求拼不出 URI 的那条（路径字面带空格）—— 本判据会变成空的"
+        );
+        for fx in &spacey {
+            assert!(
+                !unplannable_request_detail(fx).trim().is_empty(),
+                "{}: 请求面没过却写不出理由",
+                fx.id
+            );
+            for tier in [Tier::Stateless, Tier::Database] {
+                assert!(
+                    !tier.supports(fx).expect("前提 id 都在登记表里"),
+                    "{}: {tier:?} 声明供得起，但请求拼不出合法 URI（判据不对称）",
+                    fx.id
+                );
+            }
         }
     }
 }

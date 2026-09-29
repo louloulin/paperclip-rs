@@ -72,8 +72,9 @@ pub mod seed;
 pub use bindings::Bindings;
 pub use report::{OfflineSplit, Report, Row, Totals};
 pub use requirements::{
-    missing_requirements, requirement, requirements_detail, Requirement, REPO_SIDE_PRECONDITIONS,
-    REQUIREMENTS,
+    actor_credential, actor_credential_detail, credential_satisfied_by, missing_requirements,
+    request_target_is_encodable, requirement, requirements_detail, unplannable_request_detail,
+    ActorCredential, Requirement, ACTOR_CREDENTIALS, REPO_SIDE_PRECONDITIONS, REQUIREMENTS,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -345,6 +346,9 @@ const DEV_USER_HEADER: &str = "x-multica-user-id";
 ///
 /// 🔴 每个符号都按**这条 fixture 的分组**解析（`Fixture.source.test`，§213）：同一个
 /// `$testIssueID` 在两条测试里指两行，分组键因此不是可省的默认参数。
+// 本片（§216）把凭据面的拒绝理由改成取凭据表那一句，函数因此跨过 clippy 的 100 行线；
+// 这是**允许清单**而不是删掉检查 —— `LUM-2482` 的 `supports()` 同例。
+#[allow(clippy::too_many_lines)] // 见上一行：本仓把 `build_request` 拆出去会动 R7 基线
 pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
     let group = seed::group_of(fx);
     let mut notes = Vec::new();
@@ -409,11 +413,17 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         }
         // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入），
         // 令牌（`mul_` / `mcn_`）需要另一条签发面 —— 两者都仍然**不伪造**。
-        ActorKind::Agent | ActorKind::Token => {
-            return Err(format!(
-                "actor kind {:?} needs a real credential; this runner does not fabricate one",
-                fx.actor.kind
-            ));
+        // 没有任何层有签发面的档：`supports` 已在它那一侧答了否。
+        ActorKind::Agent | ActorKind::Token | ActorKind::System => {
+            let c = actor_credential(fx.actor.kind)?;
+            return Err(if c.satisfied_by.is_empty() {
+                c.detail.to_string()
+            } else {
+                format!(
+                    "actor kind {:?} needs a real credential; this runner does not fabricate one",
+                    fx.actor.kind
+                )
+            });
         }
         // §201.2 子根因 A 的正主：上游把 daemon 身份放在**请求 context** 里，而本仓
         // 把它放在 `Authorization: Bearer mdt_…` 里，解析面要查 `daemon_token` 表。
@@ -434,7 +444,6 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
                 "actor daemon: 以 Authorization: Bearer mdt_… 注入本次回放现场登记的身份".into(),
             );
         }
-        ActorKind::System => return Err("actor kind system is internal-only".into()),
     }
     // 剩下的身份 header（X-Workspace-ID 等）按上游原样转发。
     for (k, raw) in identity {
@@ -761,11 +770,12 @@ impl Tier {
     ///
     /// `Result` 只在前提表不同名时是 `Err`（加载期已拦过一次，这里是第二道）。
     pub fn supports(self, fx: &Fixture) -> Result<bool, String> {
-        let identity_ok = match self {
-            Self::Stateless => fx.actor.kind == ActorKind::Anonymous,
-            Self::Database => true,
-        };
-        Ok(identity_ok && missing_requirements(fx, self)?.is_empty())
+        // 三问答都必须来自**声明表**（凭据表 / 前提表 / 请求面闸门），而不是 `plan` 的 `Err`
+        // 兜底 —— 否则「这一层判不判」与「请求发不发得出来」又各说一套（§216）。
+        let identity_ok = credential_satisfied_by(fx.actor.kind, self)?;
+        Ok(identity_ok
+            && missing_requirements(fx, self)?.is_empty()
+            && request_target_is_encodable(fx))
     }
 }
 
@@ -838,14 +848,21 @@ pub async fn run_tier(
                 database: None,
             },
             Ok(false) => {
-                let detail = match fx.actor.kind {
-                    // 身份这一关就没过：沿用旧口径，说清缺的是哪一层。
-                    ActorKind::Anonymous => requirements_detail(fx, tier),
-                    other => format!(
-                        "{} actor needs the database tier (rerun with --db-url); \
-                         stateless tier cannot decide it",
-                        other.as_str()
-                    ),
+                // 理由必须点名**真正没过的那一关**（身份 → 前提 → 请求面）。
+                let identity_ok = credential_satisfied_by(fx.actor.kind, tier).unwrap_or(true);
+                let detail = if !identity_ok {
+                    // 凭据面：「别的层有签发面」指路；一个都没有 ⇒ 说清「没有签发面」。
+                    match actor_credential_detail(fx.actor.kind, tier) {
+                        Ok(s) | Err(s) => s,
+                    }
+                } else if !missing_requirements(fx, tier)
+                    .unwrap_or_default()
+                    .is_empty()
+                {
+                    requirements_detail(fx, tier)
+                } else {
+                    // 请求面：路径拼不出合法 URI / 还有未填充的占位符。
+                    unplannable_request_detail(fx)
                 };
                 FixtureOutcome {
                     outcome: Outcome::Unevaluable,

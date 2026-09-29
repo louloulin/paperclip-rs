@@ -329,7 +329,7 @@ fi
 if [ "$HAVE_CONFORMANCE" -eq 0 ]; then
     add T1-5 "⑨ --no-db mismatch/unmounted" "mismatch 0 ∧ unmounted 0" "no $CONFORMANCE_BIN" SKIP-NO-ASSET \
         "先跑 cargo build -p mc-conformance"
-    add T1-7 "⑨ 两个 rate" "1.0 ∧ 1.0" "no report" SKIP-NO-ASSET
+    add T1-7 "⑨ 判词自带凭据（两档举证）" "两档各自举证 ∧ 声明=观测 ∧ rate 导出" "no report" SKIP-NO-ASSET
 else
     NO_DB_RC=0
     env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL \
@@ -362,22 +362,79 @@ print('T1_5_BAD=%d' % (t['mismatch'] + t['unmounted']))
             add T1-5 "⑨ --no-db mismatch/unmounted" "mismatch 0 ∧ unmounted 0" "$T1_5_MEAS" FAIL \
                 "mismatch+unmounted=$T1_5_BAD；--check 与快照一致 ⇒ 快照本身记着差额（刷新权归 M10-9）"
         fi
-        eval "$(python3 -c "
-import json
-r = json.load(open('$NO_DB_JSON'))
-m = r.get('mounted_equivalence_rate')
-print('R_CONTRACT=%r' % ('%.6f' % r['contract_equivalence_rate']))
-print('R_MOUNTED=%r' % ('none' if m is None else '%.6f' % m))
-")"
-        if [ "$R_CONTRACT" = "1.000000" ] && [ "$R_MOUNTED" = "1.000000" ]; then
-            add T1-7 "⑨ 两个 rate" "1.0 ∧ 1.0" "contract $R_CONTRACT ∧ mounted $R_MOUNTED" PASS
-        else
-            add T1-7 "⑨ 两个 rate" "1.0 ∧ 1.0" "contract $R_CONTRACT ∧ mounted $R_MOUNTED" FAIL
-        fi
+        # 🔴 口径重定（§216）：T1-7 不再问「两个 rate 是否都 == 1.0」——
+        # `contract_equivalence_rate` 的分母是**全部 fixture**，它是「这一层能判多少」的函数
+        # （stateless 层 331/365 条结构性 unevaluable 是诚实标注，不是缺陷），
+        # 在任何正确实现下都到不了 1.0。现在问的是**判词有没有自带凭据**：
+        #   ① pass 必须有与期望相符的真实观测
+        #   ② unevaluable 必须没有观测、理由非空
+        #   ③ unevaluable 的理由必须点名自己的前提 id 或 actor 档
+        #   ④ 声明与观测逐条一致（stateless 只供得起匿名档；匿名且无声明前提 ⇒ 必须判）
+        #   ⑤ 两个 rate 必须是从原始终数**导出的**，不是写死的常数
+        # 反过来问「这条判据在什么实现下会 FAIL」：任何让 pass 拿不到观测、让未判定说不出
+        # 理由、让「声明能判」≠「真的判了」、或让 rate 脱离原始终数的实现，都红。
+        eval "$(python3 - "$NO_DB_JSON" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+rows = r.get('fixtures') or []
+tot = r.get('totals') or {}
+def n(o):
+    return sum(1 for x in rows if x.get('outcome') == o)
+fail = []
+# ① pass 是拿证据换来的：必须有一条与期望相符的真实观测。
+bad_pass = [x for x in rows if x.get('outcome') == 'pass' and (x.get('status_observed') is None or x.get('status_observed') != x.get('status_expected'))]
+if bad_pass:
+    fail.append('pass 无观测/观测不符 n=%d' % len(bad_pass))
+# ② 未判定者不许带观测，且必须写得出理由。
+bad_un = [x for x in rows if x.get('outcome') == 'unevaluable' and (x.get('status_observed') is not None or not (x.get('detail') or '').strip())]
+if bad_un:
+    fail.append('unevaluable 带观测/理由空 n=%d' % len(bad_un))
+# ③ 未判定的理由必须点名自己的前提 id 或 actor 档（不许是放之四海皆准的套话）。
+def named(x):
+    d = (x.get('detail') or '').lower()
+    if any(str(i).lower() in d for i in (x.get('requires') or [])):
+        return True
+    return (x.get('actor') or '').lower() in d
+unnamed = [x for x in rows if x.get('outcome') == 'unevaluable' and not named(x)]
+if unnamed:
+    fail.append('unevaluable 理由没点名前提/凭据 n=%d' % len(unnamed))
+# ④ 声明与观测逐条一致（stateless 层的**两向**）。
+cross = [x for x in rows if x.get('actor') != 'anonymous' and x.get('outcome') != 'unevaluable']
+if cross:
+    fail.append('stateless 越权判定了非匿名档 n=%d' % len(cross))
+silent = [x for x in rows if x.get('actor') == 'anonymous' and not (x.get('requires') or []) and x.get('outcome') == 'unevaluable']
+if silent:
+    fail.append('匿名且无声明前提却未判定 n=%d' % len(silent))
+# ⑤ 账目 + 两个 rate 必须是导出量。
+accounted = sum(n(o) for o in ('pass', 'mismatch', 'unmounted', 'placeholder', 'unevaluable'))
+if accounted != len(rows) or tot.get('fixtures') != len(rows):
+    fail.append('账目不平 %d/%s/%d' % (accounted, tot.get('fixtures'), len(rows)))
+def near(a, b):
+    return a is not None and b is not None and abs(a - b) < 1e-9
+exp_c = 0.0 if not rows else tot.get('pass', 0) / len(rows)
+den = tot.get('pass', 0) + tot.get('mismatch', 0)
+exp_m = None if den == 0 else tot.get('pass', 0) / den
+got_c = r.get('contract_equivalence_rate')
+got_m = r.get('mounted_equivalence_rate')
+if not near(got_c, exp_c):
+    fail.append('contract rate 非导出')
+if (got_m is None) != (exp_m is None) or not (exp_m is None or near(got_m, exp_m)):
+    fail.append('mounted rate 非导出')
+fmt = lambda v: 'none' if v is None else '%.6f' % v
+meas = 'pass %d/%d · decided %d · unevaluable %d · contract %s · mounted %s' % (
+    tot.get('pass', 0), len(rows), n('pass') + n('mismatch') + n('unmounted') + n('placeholder'),
+    n('unevaluable'), fmt(got_c), fmt(got_m))
+print('R_T1_7_VERDICT=%s' % ('PASS' if not fail else 'FAIL'))
+print("R_T1_7_MEAS='%s'" % meas)
+print("R_T1_7_WHY='%s'" % '; '.join(fail))
+PY
+)"
+        add T1-7 "⑨ 判词自带凭据（两档举证）" "两档各自举证 ∧ 声明=观测 ∧ rate 导出" \
+            "$R_T1_7_MEAS" "$R_T1_7_VERDICT" "$R_T1_7_WHY"
     else
         add T1-5 "⑨ --no-db mismatch/unmounted" "mismatch 0 ∧ unmounted 0" "mc-conformance exit $NO_DB_RC" SKIP-NO-ASSET \
             "$(head -3 "$WORK/nodb.err" | tr '\n' ' ')"
-        add T1-7 "⑨ 两个 rate" "1.0 ∧ 1.0" "no report" SKIP-NO-ASSET
+        add T1-7 "⑨ 判词自带凭据（两档举证）" "两档各自举证 ∧ 声明=观测 ∧ rate 导出" "no report" SKIP-NO-ASSET
     fi
 fi
 
