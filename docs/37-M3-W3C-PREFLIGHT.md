@@ -22074,3 +22074,147 @@ req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+issueID+"/gc-check", n
    → `AUTH_401` 6（同上）→ `REALM_DIFF` 36（**唯一真零交集的族**，前两族合入后可与它们并飞）
    → `UNMOUNTED` 1（先按 §238 compat 折叠先例裁定；`known_gap=0` ⇒ **不许加路由**）。
 5. **号段**：`docs/37` 下一空号 `## §241`（并发 cycle 会抢号，**追加前先 `git fetch` + grep**）。
+
+## §241
+
+**2026-09-30 00:00 cycle（`LUM-2568`）。零收割 + 派 `LUM-2569` + 一次磁盘止血。**
+
+### §241.1 起手读数
+
+| 项 | 读数 |
+| --- | --- |
+| base | `9df46b70`（`git rev-parse` 实测；checkout 落 `main` 线**第 30 次**） |
+| GH open PR | **0**（认证 API）⇒ 零判据链 |
+| daemon | 起手 `running_task_count = 2` = cycle ∥ `LUM-2565`（run `01a0edbb`，15:14:59Z 起） |
+| PG 5432 | `online` |
+| `df` 连采 | 20G/59% → 20G/59%（起手平稳，**见 §241.4 的轮内塌方**） |
+| 看板 | `backlog` **0**；`todo` 29（全是积压 autopilot cycle 单）；`in_progress` 4（我 + 2565 + 两条陈旧 cycle）；`blocked` 1（`LUM-2567`） |
+
+`LUM-2567`（T1-6-C）自上一轮起 **`blocked`**，原因是磁盘：它的验证要全量 `--with-db`（≈18–30G），
+而起手只有 13–14G。**本轮不动它** —— 见 §241.5 的算式。
+
+### §241.2 门禁（base `9df46b70` 当场重跑，三门全零编译 <2s）
+
+| 门 | 读数 |
+| --- | --- |
+| ⑦ `route_parity.py` | rc=0，**八数字第 43 轮逐字不变**：`456 / 546 / 546 / 455r+1ph / gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b `slash_alias_audit.py` | rc=0，`541 literals / 0 defect` |
+| ⑩ `file_size_check.py` | rc=0，`0 violation`（`extract_upstream_fixtures.py` 1862/800 仍是基线内白名单条目） |
+
+**②③④⑤⑥⑧⑧ 未跑**：cycle 本轮写集 = `docs/37` 一个文件，零 Rust / 零 manifest / 零 migrations。
+**⑨ 主动不冷编（第 9 次 blob 恒等法）**：`9df46b70` 相对上一轮验证树的非 docs 位移为 0 ⇒
+沿用 `365/34/0/0/331`（`--no-db`）。
+
+### §241.3 派 `LUM-2569`（T1-6-D）：**订正 `LUM-2567` 的一处计数**
+
+`LUM-2567` 把 PRECONDITION 族的 A 组记成「13 条抽取缺陷」。**实测是 1 条。**
+判别式（纯 JSON 扫描，0 编译）：
+
+```
+actor.kind == "agent"  且  actor.upstream_identity 里没有 x-task-id
+```
+
+起手实测（365 个 fixture）：`by kind = {member 285, anonymous 39, agent 13, token 8, daemon 20}`，
+命中 **1** 条 —— `contracts/golden/agents/013-TestGetAgent-RejectsForgedAgentIDHeader-L520.json`
+（身份 `['x-agent-id','x-user-id','x-workspace-id']`）。
+
+根因定位到行：`scripts/extract_requirements.py:65` 的 `AGENT_HEADERS = ("x-agent-id","x-task-id")`
+在 `:271` 被写成 **OR**（`lower & set(AGENT_HEADERS)`），于是 `X-Agent-ID` 单独出现就定成 `agent`；
+上游 `resolveActor` 在没有 `X-Task-ID` 时**回退到 member**。该 fixture 自带 `X-User-ID`，
+分类与自身身份**互相矛盾** —— 这是一个不需要跑任何东西就能判定的抽取缺陷。
+其余 12 条 agent fixture 都带 `x-task-id`（11 条 chat 带 `X-Actor-Source: task_token`，1 条
+`TestCreateIssue-AgentCreate` 带 `X-Agent-ID` + `X-Task-ID`），分类是对的。
+
+⇒ **A 组的真实构成** = 1 条抽取缺陷（本片）+ 11 条断言的是替身（`fakeChatHistoryReader`，抽取器
+看不见也修不了，**另立**）+ 其余计入别族。**§241 的可推广点**：上一轮 §240 更正的是「负责面列写的
+是组织归属不是文件集合」；本轮补一条 —— **分族计数同样不能靠转述，每个族都该有一条零编译的
+机械判别式**，否则一个「13 条」的估计会在 issue 之间传播好几轮。
+
+`LUM-2569` 写集（逐字）：`scripts/extract_requirements.py`、`contracts/golden/agents/013-…-L520.json`、
+`contracts/golden/stats.json`（`by_actor_kind`：`agent 13→12`、`member 285→286`）、
+新建一个 `split_headers` 的纯 Python 回归测试。**0 Rust / 0 cargo / 0 真库 / 0 磁盘增长**，
+与在飞 `LUM-2565`（`mc-core`/`mc-http`/`mc-repos`）和 `LUM-2567`（`mc-conformance/**`）**写集零交集**。
+
+**诚实边界（已写进该片描述）**：本机**没有上游 Go checkout**（`extract_upstream_fixtures.py --upstream`
+跑不了，`--check` 的字节级比对无法复现）⇒ fixture 的两行改动是按规则手算的，**规则正确性由单测
+背书，生成一致性本机无法背书**。该片交付评论必须原样带上这句限定。
+
+### §241.4 🔴 磁盘：起手 20G → 轮内 **7.4G（85%）**，14.3G 止血
+
+起手连采两次都是 20G/59%，**看起来很稳**；但 15 分钟内 `LUM-2565` 的 `target/` 从 7.5G 涨到 **20G**，
+`df` 塌到 **7.4G / 85%** —— 已低于自订红线 8G，且**历史证明 ENOSPC 会顺手把 PG 5432 一起杀掉**
+（§? 那次 29 小时停摆的根因）。
+
+**本轮的新观测，承重**：`incremental` 外科这次**几乎无用** —— 该片 31 个桶、684M、`-mmin +5` 命中 **0**
+（正在冷建，桶全是新的）。**「体量小」不等于「可回收」，正在冷建的片会把自己的陈旧缓存变成新缓存。**
+真正的大块在别处：
+
+| 杠杆 | 本轮实测 | 判定 |
+| --- | --- | --- |
+| `incremental`（`-mmin +5`） | 684M / 命中 0 | ❌ 几乎无用 |
+| **`deps/` 里的派生测试二进制（无扩展名）** | **145 个 / 19G** | ✅ **本轮实际用的杠杆** |
+| `deps/` 的 `rlib`/`rmeta`/`.fingerprint` | 4.2G 留存 | 🚫 永不可动 |
+
+**回收量权威读数 = `df` 前后差**：`7,208,532 → 21,543,228` 字节 ⇒ **放掉 14.3G**，`deps` 19G→4.2G。
+**零中断实测**：`LUM-2565` 的工作树仍 10 项未提交、HEAD 未变、run 仍 `running`。
+
+**时点纪律再次生效（§79 的老规矩）**：下手前从 `/` 逐 PID 扫 `/proc/*/cwd`，
+确认那片的 workdir 下**只剩 `pi`、没有 cargo/rustc 子进程**（它刚跑完一轮 `gates.sh --with-db`，
+`overall: FAIL — 7/10`，正处于「想下一步做什么」的间隙）。这才是能动手的窗口 ——
+**「门禁刚跑完」不等于「片跑完了」**，判据是**进程表**，不是日志最后一行。
+
+### §241.5 为什么**不** rerun `LUM-2567`
+
+它 `blocked` 的理由只有一个：磁盘。算式（§162 起的派发不等式）：
+
+```
+可用 − 同机在飞片增长  <  本片冷建下限  ⇒  ENOSPC 必然  ⇒  留空
+```
+
+起手 `20G − 在飞 2565 的增长（实测 1.2–1.5G/min，最终 20G） < 全量 --with-db 峰值 ≈18–30G`
+⇒ 不满足。**§241.4 的塌方正好证明这个增长量是真的**（15 分钟吃掉 12.5G）。
+`LUM-2567` 的 rerun 条件因此是：**`LUM-2565` 交付并按四判据整删其 `target/` 之后**，
+且 `df` 回到 **≥ 35G**。在那之前不动它 —— 上一次「明知道不够还派」的后果是 29 小时全停。
+
+### §241.6 在飞 `LUM-2565` 的中途读数
+
+- 工作树 10 项未提交、HEAD 仍在 `7b91304c`、**分支未推、无 PR**。
+- 第一轮全量 `gates.sh --with-db` = **`overall: FAIL — 7/10`（789s）**，正在按 `--only` 重跑红门。
+- **「0 提交 / 未推 / 无 PR」不是死的判据**（§239.4 第四次生效）：`pi` pid 32595 健在、
+  `/proc/*/cwd` 有命中、`porcelain` 持续变化 ⇒ 活物，**不介入**。
+
+### §241.7 下一轮起手（照抄会被打脸，逐条实测）
+
+1. `df -h /` **连采两次** + `pg_lsclusters`（5432 须 `online`）。
+2. `git rev-parse` 对 `git ls-remote origin feat/multica-rs-initial`（**checkout 落 `main` 线第 30 次**）。
+3. 认证 GH `pulls?state=open` ⇒ 有则走六步判据链；**预检一必须用 `merge-base..head`**。
+4. 从 `/` 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）拆槽位。
+5. 🔴 **派发动作本身要先验证它真的起了 run**：见 §241.8。
+6. 磁盘：任一片交付即按四判据整删其 `target/`；**在飞片只在进程表空闲时**切派生测试二进制。
+
+**顺位**：`LUM-2565` 交 PR ⇒ 六步判据链（0 路由 ⇒ ⑦ 八个数字必须逐字不变，证据只能来自
+⑨ 族计数 `REALM_DIFF 36→29` + 门禁 10/10）；`LUM-2569` 交 PR ⇒ 0 路由 ⇒ 同样 ⑦ 逐字不变，
+证据 = 判别式归零 + `stats.json` 读数 + 纯 Python 单测。
+`LUM-2565` 交付并回收 ⇒ **`df ≥ 35G` 时**才 `rerun LUM-2567`（PRECONDITION 30）。
+`LUM-2567` 合入后 ⇒ `SEED_404` 16 → `AUTH_401` 6（两族同写 `mc-conformance/{harness,seed}.rs`，
+**必须串行**）→ `REALM_DIFF` 36 → `UNMOUNTED` 1。
+
+### §241.8 🔴 新口径：状态流转**不保证**起 run，`multica issue rerun` 才是可靠派发器
+
+派 `LUM-2569` 时连续 **5 次**状态流转**没有产生任何 task 行**（不是 `queued`，是**根本没有**）：
+
+| 尝试 | 动作 | 结果 |
+| --- | --- | --- |
+| 1 | `issue create …`（默认落到 `todo`） | 无 run |
+| 2 | `assign --to-id … --no-start` | 无 run |
+| 3 | `status todo` | 无 run（`todo→todo` 空转） |
+| 4 | `status in_progress --no-start` → `status todo` | 无 run |
+| 5 | `status in_progress`（不带 `--no-start`） | **仍无 run** |
+| 6 | **`multica issue rerun LUM-2569`** | ✅ `queued` → `running`，run `01a0edf4` |
+
+判据：`multica agent tasks <agent-id> --output json` 里**查不到对应 run 行**（`dispatched_at` 根本没有这个键）。
+⇒ **新纪律：每次派发后必须回读 task 表确认 run 存在，不能凭状态变化推断「已派出」。**
+这条与 §184 的「状态变更 ≠ 交付」同源，但方向相反：**这次是「以为派出去了，其实连 run 都没有」。**
+若不做这步回读，本片会静默地以「已派发」收尾，实际什么也没跑 —— 而磁盘照旧紧张、下轮照旧以为有位。
+
+**下一空号**：`## §242`。
