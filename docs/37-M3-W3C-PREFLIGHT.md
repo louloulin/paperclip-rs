@@ -19245,3 +19245,77 @@ run `01a0ea85`：`created == dispatched == started` 均为 `00:16:24Z`，起手�
 - **号段**：下一空号 **`## §216`**（`§213` = `LUM-2502`、`§214` = `LUM-2504`、`§215` = 本 cycle）。
 - **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
 - **未清理（待 owner，本轮不自行执行）**：`mc_t2492` 名下的 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作）。
+
+## §216 【2026-09-29 09:30 cycle / LUM-2509】零收割监控轮 —— ⑦ 八数字**第 21 轮逐字不变** ＋ **跨设备派发使既有判活序失效**（本轮最要紧的一条）＋ **门 ⑩ 的 8 个「差 ≤14 行」地雷**（下空槽的预登记候选）
+
+起手 base **`a5213f45`**（`492ddff0` 合并树 + §215 + §215.6，**与 `git ls-remote` 逐字相同**）。`df` **`28G` / 41%**、PG 5432 `online`、**全盘 38 个 workdir 无一个 `target/`** ⇒ **可回收量 = 0**（不是「有 target 但没算」，是**真的一个都没有**）。checkout 带 `--ref` 第 41 次仍直接落 feat 线。
+
+### §216.1 GH：**0 open PR**（`per_page=100` + 翻页，page1 = 0 ⇒ 无 §212 承重二的静默截断）
+
+### §216.2 ⑦ 八数字**第 21 轮逐字不变**（base 上跑，`dirty 0`）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   regression 0   local_only 8
+```
+
+⑦b `slash_alias_audit.py` **`rc=0`**；⑩ `file_size_check.py` **`rc=0`**（0 violation）；deps `audit_workspace_deps.py` **`rc=0`**、`FINDINGS: A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（与 §210 逐字相同）。
+
+两个快照**零位移**：`route-parity-baseline.json` md5 `294c2c2a7f76517b4f4013b1be779220`、`slash-alias-allowlist.tsv` md5 `f4b20cc25ad60bb7972839f79d23869d`；⑨ 门输入 `report.json` blob 仍 **`0509ea6cc21be997eb45fdea312d95c87d1cea18`** ⇒ stateless 读数**继承、不冷编**（`365/34/0/0/0/331`）。
+
+🔴 **一处读数口径的再次澄清**（**第 2 次**，值得固定成纪律）：`294c2c2a…` 是 **`route-parity-baseline.json`** 的 md5，**不是** `scripts/file_size_baseline.tsv`。本轮第一次把 `md5sum scripts/file_size_baseline.tsv` 的结果（`eeff7a81…`）当成「常量位移」而**误报了一次回归**。两个文件都叫「baseline」，只有一个进 ⑦ 的对照。⇒ **纪律：凡引用「baseline md5 常量」，必须同时写出文件全路径**；只写「baseline md5」会在两个同名文件间静默串台。
+
+### §216.3 🔴 承重一：**跨设备派发让既有判活序整体失效**
+
+`LUM-2503` 于 `01:11:53Z` 派给 **devbox4（`3df1a3e8`）**（run `01a0eab7`，`created == dispatched == started` 同一秒，§189.6 的第 N 次生效）。到本轮 `01:3xZ`：**19–20 分钟，0 评论、状态仍 `todo`、`updated_at` 停在 `01:11:53`（rev 4 = 我自己追加描述那次）**。
+
+**既有判活序（同机四查）在这里一条都用不上**：workdir 目录、磁盘占用、`rustc` 进程、写集文件 —— **devbox4 是另一台机器**，本机 `ls ~/multica_workspaces/…/lum-2503-*` **零命中**（不是「空目录」，是**通配符无匹配**）。⇒ **本轮不对它判活，也不判死。**
+
+**跨设备唯一可用的远程三信号**（本轮实测全为「尚未出现」）：
+
+| # | 信号 | 本轮读数 | 判读 |
+|---|------|----------|------|
+| ① | run 收据 `created == dispatched == started` | `01:11:53Z` 同一秒 | 已拿到任务 |
+| ② | issue `last_activity_at` / 状态翻转 / 首条评论 | 停在 `01:11:53Z`、`todo` | **无**（19 min 属正常早期） |
+| ③ | origin 上新增 `agent/devbox4/*` 分支 | 只有 `c75ca614ea91`（= 已合的 PR #152 head），**无 2503 新分支** | **无** |
+
+🔴 **纪律（覆盖既往「19 分钟无信号 = 静默死亡」的默认读法）**：**同机无信号 20 分钟是可疑；跨机无信号 20 分钟什么都不是。** 判死一个跨机 in-flight 片的**唯一**正当理由是「远程三信号全部为无 **且** 超过一个完整片的历史时长下界（devbox4 既往 30–60 min 到首推）」，而不是本机 `ls` 空。**否则会把「正常早期」误杀成「黑洞」，代价是丢一整片。** 本轮 19 min ⇒ 不满足判死条件，登记为「在飞，无矛盾」。
+
+⚠️ 顺带记一次工具事实：`branches?per_page=100` 返回**恰好 100 条**（第 N 次撞上 §212 承重二的整数特征）⇒ 判读分支列表时**必须翻页**，否则「只有 1 个 devbox4 分支」这个结论本身可能是截断产物。
+
+### §216.4 门 ⑩ 的地雷图：**8 个文件距 800 行硬上限 ≤ 14 行**（清单外 ⇒ 一次小编辑就红）
+
+`file_size_baseline.tsv` 只有 **9 个白名单条目**（其余 17 行是注释头），**基线只减不增**。清单外的硬上限是 **800**。实测最贴顶的：
+
+| 行数 | 余量 | 文件 |
+|------|------|------|
+| 798 | **2** | `crates/mc-channel/src/telegram/outbound.rs` |
+| 798 | **2** | `crates/mc-http/tests/chat.rs` |
+| 796 | 4 | `crates/mc-channel/src/engine/resolvers.rs` |
+| 793 | 7 | `crates/mc-channel/src/dingtalk/mod.rs` |
+| 793 | 7 | `crates/mc-http/src/routes/skills/helpers.rs` |
+| 790 | 10 | `crates/mc-vcs/src/gitlab.rs` |
+| 790 | 10 | `crates/mc-http/tests/vcs/connections.rs` |
+| 786 | 14 | `crates/mc-runtime/src/adapters/cursor/stream.rs` |
+
+另：`crates/mc-conformance/src/seed.rs` = **709**（距 800 **91 行**，§215.5 已登记的预算）；`crates/mc-conformance/src/lib.rs` = **934**（清单内记 **1024** ⇒ 已缩短 90 行，但**离 800 还差 134**，达标后必须从基线删除）。
+
+⇒ **本轮不派它，但把它预登记成下个空槽的第一候选**（理由见 §216.5）。
+
+### §216.5 派发：**0 新片**（在飞 1/3），留空理由**不是磁盘**
+
+- **磁盘不是约束**：`avail 28G`、可回收量 0、全盘零 `target/` ⇒ 足以下一片编译片（既往单片 `target/` 约 5.0G）。**任何「等磁盘」的理由本轮都不成立。**
+- **真正的约束是 devbox4 上的并发已满**：devbox4 名下 `LUM-2481`（lumosbase 第52/45项）`in_progress` ＋ `LUM-2503`（本 track）run 已启动 = **已有 2 条在飞**，再叠第 3 条会让两条都变慢。**在飞总数 1/3 看着空，但那是「本 track 视角」的假象 —— 算式必须按「目标 agent 名下并发」而不是「本 track 在飞数」。**
+- **§215.6 的三族互斥仍然成立**（本轮**重验**而非继承）：`#4` 第二个身份 / `#2#5` runtime 不可用的 agent 都要动 `build_request` 的 actor 凭据装配 —— 那正是 `LUM-2503` 正在与 `supports()` 共用的同一张表；`#6#7` 抽取侧要改 `extract_upstream_fixtures.py` 并**重生成 `contracts/golden/**`**，那是 `LUM-2503` 的**禁改面**。
+- **§216.4 的地雷片本轮也不派**（虽然它与 `2503` **写集零重叠**、判据 crisp：④ 4 个文件各 ≤ 600 + ⑧ 路由面八数字逐字不变 + ⑥ 构建与测试全绿）：它要**冷编译 `mc-channel`/`mc-http`/`mc-vcs`**，而这两片是未来 30+ 分钟内**最可能被 `2503` 的收口轮次抢走全部运力**的；且它是**latent 而非 imminent** 的风险（排期的 Tier-2 / T1 收尾**都不碰这 8 个文件**）。⇒ 留在登记册里等空槽，不抢占。
+  **预登记的工单口径（下轮直接派，不用重新推导）**：拆 `telegram/outbound.rs`(798) / `engine/resolvers.rs`(796) / `dingtalk/mod.rs`(793) / `skills/helpers.rs`(793) 四个文件为 `mod.rs` + 子模块，**0 路由、0 行为变更**；禁改面 = `routes/` 注册面 / `mount.rs` / `state.rs` / `migrations` / `contracts/**`；验收 = ⑩ 仍 `rc=0` 且四文件各 ≤ 600 ＋ ⑦ 八数字**逐字不变** ＋ `cargo build -p mc-channel -p mc-http` 与既有测试全绿。**先例 D10**（`tests/` 子模块拆分）已有。
+
+### §216.6 收尾与下一轮起点
+
+- **GH 0 open PR**；**本轮未合并任何 PR**（零收割轮）。
+- **新派 0 片**；在飞 = `LUM-2503`（devbox4，跨机，**按 §216.3 三信号跟踪**）。
+- **base = `a5213f45`**（本节直推后为新 base）。
+- **号段**：下一空号 **`## §217`**（`§216` = 本 cycle）。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
+- **未清理（待 owner）**：`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作，不自行执行）。
+- **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ **跨机三信号**判 `LUM-2503` → ⑦ 第 22 轮。
