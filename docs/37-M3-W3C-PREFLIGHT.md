@@ -21251,6 +21251,7 @@ base **`0902aa2e`**（本节直推后前进一个 docs-only 提交）；**0 open
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
 
+
 ### §233.8 🔴 抢救：上一轮派发的 `LUM-2550` **代码全部丢失**，本轮重做 ⇒ PR #163
 
 起手时把 `LUM-2550` 判为「活」（run `01a0ecc6` 在 lin 名下 running）。**11:02Z 它转 `blocked`，
@@ -21318,3 +21319,76 @@ run 正常 completed —— 而交付物不存在。** 两条原因都不是需�
 **顺带**：本片原本计划「等 `LUM-2550` 落地后派 `merge()` 平局裁决那一片（§233.3）」——
 现在 `LUM-2550` 的拆分由本片以 #163 承接，**#162 落地后就是派它的最好时机**（`merge()` 在 `lib.rs`，
 必须在任何一次 `lib.rs` 拆分定稿之后，否则第三次撞同一个文件）。
+
+## §234 【2026-09-29 19:30 cycle / LUM-2553】**`LUM-2550` 的写集丢了，本轮登记抢救前置条件并改派第 8b 批（0 编译 / 0 磁盘）** ＋ 🔴 承重：**同名 `.py` 与同名包并存时，包会静默盖掉模块 —— 「薄壳转发对不对」这个问题永远测不到**
+
+起手 base **`d7400dc2`**（= `0902aa2e` + 并发 cycle `LUM-2551` 推的 §233，**一小时内被推了两次**）、GH **0 open PR**、在飞切片 **1**（`LUM-2552`）、起手 `df` **20G/59%**（本机近几轮最低）、PG online、**GitHub 本 runtime 可达**（`git ls-remote` 实测通 —— 与 `LUM-2550` 报「不可达」相反，见 §234.2）。
+
+⑦ 八数字**第 38 轮逐字不变**：`546 / 546 / 455real+1ph=456 / 0 / 0 / 0 / 8`（upstream `f41fae6b08fb`，`local 456 / baseline 546`）；⑦b rc=0；⑩ rc=0。白名单 **5 条**（`mc-conformance/src/lib.rs` 952 记 1024 / `mc-http/src/routes/inbox.rs` 981 / `mc-repos/src/invitation.rs` 828 / `extract_upstream_fixtures.py` 1862 记 1863 / `schema_snapshot.py` 1093）。
+
+### §234.1 零收割：`LUM-2550`（门 ⑩ 第 8 批，Rust 三件套）的写集随 workdir 一起消失
+
+`LUM-2550` 转 `blocked`，两条原因都不是需求或实现问题：
+
+1. **它那个 runtime 上 GitHub 不可达** —— `git push` 两次 `LibreSSL SSL_connect: SSL_ERROR_SYSCALL` ⇒ 它贴的 `pull/new/agent/lin/30bb0f2bde45` 背后**没有分支**。
+2. **跑完 clippy 之后 workdir 被从外部整个删除**（连 `.git` 一起），本地 commit `526911f3` 随之消失。`multica repo checkout` 回 `repo checkout workdir is not owned by the active task`。
+
+它做完的部分是真实且已实测的（`cargo check` 三个包 0 error 0 warning、clippy rc=0、⑦ 八数字与 base 逐字相同、tsv 5→2），但**没有一行落到 GitHub**。切分点、每个文件的 `use` 清单、`pub(super)` 需要放宽的符号、`resolve_workspace_id` 的重导出点，它都写在那条 blocked 评论里，**重做不必从零开始**。
+
+**本轮实测两条阻塞，其中一条已解除：**
+
+- ✅ **GitHub 可达性是 per-runtime 的，不是仓库属性。** 本 workdir `git ls-remote origin feat/multica-rs-initial` 一次通过，checkout + fetch 全通。**⇒ 「GitHub 不可达」不能写进 issue 的「本仓库推不上去」结论里，只能写成「我这个 runtime 推不上去」。** 承重一。
+- ❌ **磁盘仍是硬阻塞，且比它记的更紧。** §167 算式复算：`avail 20G − 可回收 7.8G`（`lum-2551` 的 7.0G + `lum-2541` 的 831M）= **有效 12G** < 全量 `--with-db` 峰值 **18–27G** ⇒ **期望收益为负，不排**。
+- ❌ **新增一条它那轮还不知道的冲突**：§233 派出的 `LUM-2552`（T1-6-B，**在飞**）把 `mc-conformance/src/lib.rs` 与 `scripts/file_size_baseline.tsv` 写进了**禁改面**，理由逐字是「`LUM-2550` 的」。而 §233 记明「`merge()` 在 `lib.rs:952`，本轮刻意不派含 `lib.rs` 的片，把它留给 `LUM-2550` 落地之后的第一片」。
+  ⇒ **`LUM-2550` 的抢救片与 `LUM-2552` 现在共享两个文件：拆分落点 `mc-conformance/src/lib.rs`、门禁产物 `crates/mc-conformance/report.json`。** 两者都写 `mc-conformance` crate，`report.json` 会被任一方的 `--with-db` 重刷。**⇒ 抢救片必须在 `LUM-2552` 落地之后飞，不能并行。**
+  这也意味着 §233.3 的「`merge()` 平局裁决」修片，**现在被夹在 `LUM-2552`（前）和 `LUM-2550` 抢救片（后）中间**，是第三个要排队的写集。**三片共享 `mc-conformance` crate ⇒ 这三片必须严格串行，不能两片同时飞。** 承重二。
+
+### §234.2 🔴 承重一：「GitHub 不可达」是 **runtime 属性**，写进 issue 前必须在本 workdir 实测
+
+`LUM-2550` 的结论原文是「GitHub 从本 runtime 不可达」——**限定词它写了，但传播到下一棒时很容易被读成「这个仓库推不上去」**，而本轮实测同一仓库、同一时刻、同一台机器，另开 workdir 就是通的。
+
+**可复用判据：网络类阻塞必须写成「<runtime 标识> 上不可达」，并且由收割侧在自己的 workdir 里复核一次再采信。** 推论：**任何以「网络不通」为由 `blocked` 的片，收割轮的默认动作是「先在自己这里试一把 `git ls-remote`」，而不是直接转派。** 否则会白白丢掉已经做完的工作（本片就是）。
+
+### §234.3 🔴 承重二：三个写集共享 `mc-conformance` crate ⇒ 串行三片，**不是**「三个空位都能填」
+
+`LUM-2552`（在飞）/`LUM-2550` 抢救片 / `merge()` 平局裁决修片 三者的写集分别是：
+
+| 片 | 碰 `mc-conformance` 的什么 |
+| --- | --- |
+| `LUM-2552`（T1-6-B） | `requirements.rs`、`bindings.rs`、`report.json`、`contracts/golden/tokens/**`、`extract_upstream_fixtures.py` |
+| `LUM-2550` 抢救片 | `lib.rs`（拆成薄壳 + 4 子模块）、`file_size_baseline.tsv` |
+| `merge()` 修片 | `lib.rs`（`merge()` 在 952 行） |
+
+`requirements.rs` / `bindings.rs` 的 `use super::…` 与 `report.json` 的重刷是**跨片的耦合点**：
+拆 `lib.rs` 会改 `requirements.rs` 里 `[crate::plan]` 这类文档链接的解析面，而 `LUM-2552` 正在改 `requirements.rs` 本体。
+
+⇒ **纪律：判「能不能并行」不能只看两个写集的文件名交集，要看「门禁产物的重刷面」和「crate 内的符号解析面」。** 名字零交集 ≠ 可并行 —— §233 登记 `LUM-2550` 禁改面时用的正是「文件零交集」判据，而它**漏掉了 `report.json`**（因为 `report.json` 当时不在 `LUM-2550` 的写集里 —— 那一轮它只改了源码没跑门禁 ⇒ 写集登记漏项）。**这与 §2503 的「写集漏项有合法形态」是同一族问题的另一面：漏项在跑完门禁之后才暴露。**
+
+### §234.4 改派第 8b 批：`scripts/schema_snapshot.py` 1093 → 包（白名单 5→4，**0 编译 0 磁盘**）
+
+前几批拆的都是 Rust，验收要 `--with-db` 10/10（18–27G）。本批是**纯 Python**：门 ⑩ 离线秒级、门 ⑧ 要库但**不编译任何东西**。**⇒ 这是本机 20G 磁盘下唯一能完整交付的 ⑩ 批次**，第 2 槽位因此不是「等磁盘空出来」，而是「换一个不烧磁盘的写集」。
+
+预飞（19:45Z）逐条核过：
+
+- `schema_snapshot.py` **纯库模块、无 `__main__`**（`grep __main__` 零命中）⇒ 拆成包不丢入口。
+- **两个 in-repo 消费者**：`schema_drift.py:73`（10 个名字）、`build_upstream_schema.py:71`（15 个名字），都靠 `sys.path.insert(0, scripts/)` + `from schema_snapshot import (...)`。
+- **门 ⑧ 的执行体就是 `schema_drift.py`**（`gates.sh::run_schema_drift_gate`）⇒ 本片**有真实验证信号**，不是无门禁盲改。
+- 门 ⑩ 的扫描是 `git ls-files` + 前缀/后缀、**深度无限**，源码注释明写「nesting a script does not exempt it」⇒ **子模块一样被计**，嵌套逃逸不了上限。
+- 建议切 5 份（`contract` 85–130 / `dburl` 131–212 / `sqlsplit` 213–449 / `scratch` 450–693 / `objects` 694–1093）＋ `__init__.py` 纯重导出壳。
+
+🔴 **本批唯一的坑，也是最容易静默翻车的**：
+
+**不要留下 `scripts/schema_snapshot.py` 与 `scripts/schema_snapshot/` 并存。** Python 的 `FileFinder` 在同一目录里**先查子目录、后查文件模块**；同名时**包静默盖掉 `.py` 模块** —— 不报错、不告警，你以为在 import 薄壳，实际 import 的是包。**后果：「薄壳转发有没有写对」这个问题永远测不到**；而薄壳一旦漏转名字，两个消费者当场 `ImportError`（或者更糟：不报错但拿到另一个模块）。
+
+⇒ **正确形状是 `git rm` 掉 `.py`、只留包**，`__init__.py` 就是薄壳 ⇒ **两个消费者一个字都不用改**。留下的 `.py` 薄壳是**反模式**：改动量没减少，还多一个静默分叉。
+
+⇒ **纪律：把一个「被 `sys.path.insert` 直接 import 的模块」拆成包时，不要在同一目录留同名 `.py`。** 先查有没有别的文件 `from <name> import …`（`grep -rn 'from schema_snapshot' scripts/`），再决定是留壳还是删壳。
+
+### §234.5 第 2/3 槽位按算式留空（**不是**磁盘单理由，逐槽写明）
+
+- **第 2 槽**：⑩ 白名单剩下的四条里，`extract_upstream_fixtures.py` 是 `LUM-2552` 的**在飞**写集；另三条 Rust 是 `LUM-2550` 的丢失写集（**有效磁盘 12G < 18G**，且与 `LUM-2552` 共享 `lib.rs` + `report.json`）。⇒ **无候选，不是「等磁盘」。**
+- **第 3 槽**：M3 那一族（§233.5，`2xx != 4xx/5xx` 12 条，正确性族）跨 `issues`/`chat`/`tokens`/`workspaces` 多域，需逐条看上游断言才知道该拒在哪一层，**不是机械活，不能按模板派**。
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库；`LUM-2550` 的 workdir 已被外部删除且 CLI 拒绝复用，**需要重新分配 workdir 才能重做**。
+
+号段：`§233` = 19:00 cycle（`LUM-2551`）、`§234` = 本 cycle ⇒ 下一空号 **`## §235`**。
