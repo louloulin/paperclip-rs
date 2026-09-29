@@ -21970,3 +21970,107 @@ req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+issueID+"/gc-check", n
 本轮**没有**把这第 2 个空位派出去 —— 唯一合适的候选是 `SEED_404` 族，而那正是 `LUM-2560`
 的写集（`mc-conformance/src/{seed,harness}.rs`），在它的归属未澄清前派同面切片会撞车
 （§184「同 device 限一个写盘 run」的精神）。**刻意留空，并把理由记在这里。**
+
+---
+
+## §240 【2026-09-29 23:30 cycle / LUM-2566】零收割 ＋ 派 `T1-6-C`（PRECONDITION 30）＋ 🔴 承重：**§239 那句「PRECONDITION 与其它族零写集交集」是错的，而且错在**方向上**（它会让人把两片派到同一个文件上）**
+
+> 本轮性质：**非只读**（派 1 片 + 更正一条承重）。GH `0 open PR` ⇒ 零收割。
+> 起手 base **`9943902a`**（= `7b91304c` → `ed1adf28`(§239) → `9943902a`(§239.9)）。
+
+### 1. 起手读数
+
+| 项 | 值 |
+|---|---|
+| base | `9943902a`（起手一律 `git rev-parse` 实测；`multica repo checkout` **落 `main` 线第 29 次**）|
+| GH open PR | **0** ⇒ 无判据链可走 |
+| daemon `running_task_count` | 起手 **2** = cycle ∥ `LUM-2565`（run `01a0edbb`，15:15:00Z 起，pid 32595，7 个 cargo 子进程在跑）|
+| 空位 | `3 − 1(cycle) − 1 = 1` ⇒ 派 `LUM-2567` |
+| PG 5432 | `online`（`PostgreSQL 16.15`）|
+| 磁盘 | 起手 **12G/77%**（被 `LUM-2565` 冷建吃掉）|
+
+### 2. 🔴 承重一：**§239 §6 的「PRECONDITION 30 与其它族零写集交集」是错的 —— 错在方向上**
+
+§239 的下一轮顺位把 `PRECONDITION`（30 条）排第一，理由写的是
+「体量最大、与其它族**零写集交集**，最适合并行」。**后半句不成立**，实测各族的负责面：
+
+| 族 | 条数 | §239 写的负责面 | 实际要动的文件 |
+|---|---|---|---|
+| `PRECONDITION` | 30 | conformance 装置（TierRouters / daemon_token / 故障注入档位）| `crates/mc-conformance/src/{harness,seed}.rs` 等 |
+| `AUTH_401` | 6 | harness 身份注入 + 鉴权中间件 | **同上**（`mc-conformance` 侧）+ 鉴权中间件 |
+| `SEED_404` | 16 | `mc-conformance::seed` 按 fixture 种实体 | **同上** |
+| `REALM_DIFF` | 36 | 各域 handler 判定顺序与副作用 | `mc-http/src/routes/**` / `mc-repos/**` |
+| `UNMOUNTED` | 1 | 先裁定 | 无（`known_gap=0` ⇒ **不许加路由**）|
+
+⇒ **三个族（30 + 6 + 16 = 52 条，占 89 的 58%）写集高度重叠，全在 `mc-conformance`；
+真正零交集的只有 `REALM_DIFF`。** §239 那句「零交集」会把人引到**「三片可以并行」——
+而它们会同时改 `harness.rs` / `seed.rs`，后合者 rebase + 重跑全量门禁。
+
+🔴 **教训（可推广）**：分族表里「负责面」那一列写的是**组织归属**（「谁该干」），
+不是**文件集合**（「会动哪些文件」）。**只有后者能用来判并行。**
+本轮把 §239 的错更正进 `LUM-2567` 的描述第 §5 节（独占声明），
+并写死规则：**`mc-conformance/**` 同一时刻只允许一个写者**。
+
+### 3. 派发：`T1-6-C`（`LUM-2567`，run `01a0edcd`，15:34Z 起）
+
+`PRECONDITION` 30 条 = `outcome=unevaluable` ⇒ **这条根本没进判定**（前置没满足）
+⇒ 活在 conformance 装置，不在任何 handler。描述里钉了：
+
+- **清单给不出是有意的**：`contracts/golden/**` 的 366 个 fixture **实测全部不带 `requires`**
+  （全是 `()`）—— `requires` 是回放时算出来的，只存在于真库报告里。
+  ⇒ 工单给的是**取清单的两条命令**（`mc-conformance --db-url --json` → `t1_6_taxonomy.py --json`），
+  不是清单本身。这比抄一份会过期的清单强。
+- **两条承重原样继承**（`outcome` 优先于 `requires`；症状分族 ≠ 根因，
+  「期望值靠装置构造还是 handler 逻辑」第 8 类预飞检查），
+  并把 `daemon_test.go:1159` 那个反枚举簇作为**具名反例**写进去 ——
+  那是「按症状派工会把活派给一段正确代码」的最贵样本。
+- **禁写面**逐字列出（`routes/**`、`mc-repos/**`、`migrations/**`、
+  基线三件套、`docs/32` / `docs/37` 本节），**0 路由 ⇒ ⑦ 八数字须逐字不变**。
+- **让位规则**：`LUM-2560`（`SEED_404` 原执行者，devbox4）转终态但零交付、归属未澄清，
+  若被重派且写集相交 ⇒ **让位的是本片**。
+
+### 4. 本轮实测门禁（base `9943902a` 当场重跑，三个零编译门）
+
+| 门 | rc | 结果 |
+|---|---|---|
+| ⑦ route-parity | **0** | **八数字第 42 轮逐字不变**：`upstream 456 / local 546 / baseline 546 / implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b slash_alias | **0** | `541 literals / 0 defect` |
+| ⑩ file_size | **0** | `0 violation`（上限 800；最大的 `scripts/extract_upstream_fixtures.py` 1862 行已在白名单）|
+
+**⑨ 主动不冷编（第 8 次靠 blob 恒等省掉一次 14G 冷建）**：
+`git diff --name-only 7b91304c HEAD -- . ':(exclude)docs'` 只有
+**`scripts/t1_6_taxonomy.py`** 一个文件 —— 纯报告器，不是任何一道门的输入。
+三个门输入 blob 与 §239 那轮**逐一恒等**：
+`report.json db01d842` / `crates/mc-conformance fdb89a75` / `contracts/golden b419d762`
+⇒ 继承 `365 / pass 34 / mismatch 0 / unmounted 0 / unevaluable 331`（`--no-db`）
+与 `365 / pass 276 / mismatch 58 / unevaluable 30 / unmounted 1`（`--db-url`）。
+
+**②③④⑤⑥⑧ 未跑，写明理由**：本 cycle 自身写集 = `docs/37` 一个文件（+ `desc.md` 未入库），
+零 Rust / 零 `Cargo.toml` / 零 `migrations` ⇒ 这些门的输入未变（§236 承重一）。
+
+### 5. 磁盘：起手 12G，先外科再派片
+
+| 动作 | 释放 | 说明 |
+|---|---|---|
+| 在飞 `LUM-2565` 的 `incremental` 外科（`-mmin +5` 的 138 个桶）| **≈3G** | cargo 冷建不读 incremental ⇒ 零风险；实测 `df` 12G→15G 且该片**零中断**（pid 未变、编译继续）|
+| 死物 `target/` 整删（`lum-2541` 797M + `lum-2551` 793M + `lum-2558` 374M）| **≈2G** | 四判据全过：issue `in_review` + run 终态 + 从 `/` 逐 PID 扫 `/proc/*/cwd` **零命中** + 交付已在 base |
+
+⇒ `df` **12G → 17G**，再派 `LUM-2567`（在飞 3/3）。
+**顺序纪律 = 先回收再派发**：派完再回收，回收量会被新片的冷建吃掉。
+
+### 6. 下一 cycle 第一动作
+
+1. `df -h /` **连采两次** + `pg_lsclusters` → `git rev-parse` 对 `ls-remote`
+   → 认证 GH `pulls?state=open` → 从 `/` 逐 PID 扫 `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）
+   → `multica issue runs` 逐片 status/error（**PR 开出 ≠ run 终态**）。
+2. `LUM-2565`（T1-6-B）交 PR ⇒ 六步判据链。**0 路由 ⇒ ⑦ 八数字必须逐字不变**，
+   验收证据只能来自 **⑨ 族计数 `REALM_DIFF 36 → 29`** + 门禁 10/10，**不能来自 ⑦**。
+   它改了 `mc-repos/src/issue_status.rs` + `routes/issues/{statuses,dto}.rs`
+   + `issue_table/{mod,repo}.rs` ⇒ 与 `LUM-2567`（`mc-conformance/**`）**零文件交集**，可合。
+3. `LUM-2567`（T1-6-C）交 PR ⇒ 同链；预期 `PRECONDITION 30 → 0`、`bad_total 89 → ≈59`、
+   `mismatch` **不增**。若 `mismatch` 增了 ⇒ 装置改动**暴露了新的行为面缺口**，
+   那是**信息不是回归**，但要在 PR 里逐条列出。
+4. **顺位**：`SEED_404` 16（**等 `LUM-2560` 归属澄清**；与 `LUM-2567` 同写集 ⇒ 必须等它合入）
+   → `AUTH_401` 6（同上）→ `REALM_DIFF` 36（**唯一真零交集的族**，前两族合入后可与它们并飞）
+   → `UNMOUNTED` 1（先按 §238 compat 折叠先例裁定；`known_gap=0` ⇒ **不许加路由**）。
+5. **号段**：`docs/37` 下一空号 `## §241`（并发 cycle 会抢号，**追加前先 `git fetch` + grep**）。
