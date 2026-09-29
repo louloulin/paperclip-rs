@@ -116,10 +116,36 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
             ));
             notes.push("actor member: 以 X-Multica-Session + X-Multica-User-Id 注入身份".into());
         }
-        // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入），
-        // 令牌（`mul_` / `mcn_`）需要另一条签发面 —— 两者都仍然**不伪造**。
+        // 令牌（`mk_pat_`）与 daemon 是**同一个形态**：上游确实把它放上了线
+        // （`newRenewRequest` 的 `Header.Set("Authorization", "Bearer "+raw)`），但明文是
+        // `auth.GeneratePATToken()` 的随机值 —— 走查解不出、整个 header 被丢掉，于是契约
+        // 里只剩 `actor.kind = token` 与 `$testPAT<State>` 这个符号（§233.4）。
+        // 所以「补一个 header」也只有在 **database 层现场签发了那一档** 时才成立
+        // （`harness::database_router` → [`crate::pat_token::register`]）；stateless 层拿不到明文，
+        // `resolve` 直接报 `unbound symbol`，照旧是 unevaluable，而不是发一个注定 401 的假头。
+        ActorKind::Token => {
+            let raw = identity
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                .map(|(_, v)| v.clone())
+                .ok_or_else(|| {
+                    "actor kind Token needs an `Authorization: Bearer mk_pat_…` binding, and this \
+                     fixture declares none"
+                        .to_string()
+                })?;
+            identity.retain(|k, _| !k.eq_ignore_ascii_case("authorization"));
+            let secret = bindings.resolve(group, &raw)?;
+            headers.push((
+                HeaderName::from_static("authorization"),
+                format!("Bearer {secret}"),
+            ));
+            notes.push(
+                "actor token: 以 Authorization: Bearer mk_pat_… 注入本次回放现场签发的身份".into(),
+            );
+        }
+        // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入）。
         // 没有任何层有签发面的档：`supports` 已在它那一侧答了否。
-        ActorKind::Agent | ActorKind::Token | ActorKind::System => {
+        ActorKind::Agent | ActorKind::System => {
             let c = actor_credential(fx.actor.kind)?;
             return Err(if c.satisfied_by.is_empty() {
                 c.detail.to_string()

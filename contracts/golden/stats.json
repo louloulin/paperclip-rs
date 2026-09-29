@@ -19,7 +19,8 @@
       "agent": 13,
       "anonymous": 39,
       "daemon": 20,
-      "member": 293
+      "member": 285,
+      "token": 8
     },
     "by_domain": {
       "agent_task_snapshot": 1,

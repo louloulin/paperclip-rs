@@ -24,7 +24,10 @@
         "unevaluable": 20
       },
       "member": {
-        "unevaluable": 293
+        "unevaluable": 285
+      },
+      "token": {
+        "unevaluable": 8
       }
     },
     "by_via": {
@@ -5495,7 +5498,7 @@
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/personal_access_token_test.go:207",
@@ -5505,14 +5508,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_ConcurrentRenewIsIdempotent@server/internal/handler/personal_access_token_test.go:217#8",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/personal_access_token_test.go:217",
@@ -5522,14 +5525,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_ExtendsWhenInsideRenewalWindow@server/internal/handler/personal_access_token_test.go:74#2",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/personal_access_token_test.go:74",
@@ -5539,14 +5542,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_HandlesNullExpiresAt@server/internal/handler/personal_access_token_test.go:186#6",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/personal_access_token_test.go:186",
@@ -5556,14 +5559,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_NoOpWhenOutsideRenewalWindow@server/internal/handler/personal_access_token_test.go:107#3",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/personal_access_token_test.go:107",
@@ -5573,14 +5576,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_RejectsExpiredToken@server/internal/handler/personal_access_token_test.go:131#4",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 401,
       "source": "server/internal/handler/personal_access_token_test.go:131",
@@ -5590,14 +5593,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_RejectsRevokedToken@server/internal/handler/personal_access_token_test.go:149#5",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 401,
       "source": "server/internal/handler/personal_access_token_test.go:149",
@@ -5607,14 +5610,14 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRenewPAT_RejectsTokenBelongingToDifferentUser@server/internal/handler/personal_access_token_test.go:363#9",
       "domain": "tokens",
       "method": "POST",
       "path": "/api/tokens/current/renew",
-      "actor": "member",
+      "actor": "token",
       "via": "handler",
       "status_expected": 401,
       "source": "server/internal/handler/personal_access_token_test.go:363",
@@ -5624,7 +5627,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+      "detail": "token actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "tokens/TestRevokePersonalAccessTokenRejectsMalformedID@server/internal/handler/handler_test.go:1765#1",

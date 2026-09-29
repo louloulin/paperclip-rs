@@ -485,7 +485,9 @@ def extract_site(
             )
         return skip("path_not_registered", detail)
 
-    headers, actor = host["split_headers"](req.headers, req.oob)
+    headers, actor = host["split_headers"](
+        req.headers, req.oob, interp.src(rel)[0][fn.body[0] : fn.body[1]]
+    )
     requires = host["requirements_for"](
         masked, fn.body, interp.text(rel, args[1]), req.oob, path, status
     )

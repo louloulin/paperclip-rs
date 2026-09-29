@@ -142,9 +142,16 @@ pub async fn database_router(url: &str, fixtures: &[Fixture]) -> Result<(Router,
         .context("the seeder did not register its fallback daemon token")?
         .to_string();
 
+    // 四档 `mk_pat_`：`$testPAT<State>` 符号的凭据（§233.4 那条死变体在这里活过来）。
+    // 只签一套而不是按分组：`personal_access_token` 挂在**用户**上（没有 workspace 外键），
+    // 而符号表里 `$testPAT*` 与 `$testUserID` 一样是整个回放共享的一份。
+    let pat_tokens = crate::pat_token::register(&db, user.id)
+        .await
+        .context("mint the four `mk_pat_` credentials the token fixtures name")?;
+
     Ok((
         router,
-        Bindings::with_seeded(user_id, workspace_id, daemon, seed),
+        Bindings::with_seeded(user_id, workspace_id, daemon, seed).with_pat_tokens(pat_tokens),
     ))
 }
 

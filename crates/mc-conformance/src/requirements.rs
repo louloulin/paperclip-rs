@@ -185,6 +185,14 @@ pub fn requirement(id: &str) -> Option<&'static Requirement> {
 /// 🔴 修法不许是「把 `satisfied_by` 放宽」：给 `ActorKind::Agent` 补上 `Tier::Database`
 /// 会把 13 条 `agent` 的 `unevaluable` 变成**假 `mismatch`** —— 这一档没有签发面，
 /// 回放只能拿到 401/500，而那与「实现写错了」在报告里长得一样。
+///
+/// 🔴 同一句话对 [`ActorKind::Token`] **只成立到 `LUM-2552` 为止**：那一档当时是「枚举
+/// 里有、注释写明了语义、凭据表也有条目」的**死变体**（366 条 golden 里 0 条用它），
+/// 于是看起来也该留在 `&[]`。区别在于它不是「本仓没这个能力」，而是「回放器没去调那
+/// 个能力」—— `pats.rs:212-228` 早就有现成的签发代码路径。所以放宽它的前提是**同时**
+/// 把签发面接上（`crate::pat_token::register` + `plan` 的 `ActorKind::Token` 分支）：
+/// 凭据表松口而签发面不接，就是上面那条假 `mismatch`（`credential_table_is_symmetric_`
+/// `with_the_replay_planner` 单测会在 `(true, Err)` 那一支直接红）。
 pub const ACTOR_CREDENTIALS: &[ActorCredential] = &[
     ActorCredential {
         kind: ActorKind::Anonymous,
@@ -205,9 +213,13 @@ pub const ACTOR_CREDENTIALS: &[ActorCredential] = &[
     },
     ActorCredential {
         kind: ActorKind::Token,
-        satisfied_by: &[],
-        detail: "actor kind Token needs a real credential; this runner does not fabricate one — \
-                 the database tier does not mint one either",
+        // `LUM-2552`：这一档不再是「没有签发面」。database 层在 `database_router` 里按
+        // **状态**各签一枚 `mk_pat_`（`crate::pat_token::register`），`plan` 把
+        // `$testPAT<State>` 装配成 `Authorization: Bearer …`。
+        satisfied_by: &[Tier::Database],
+        detail:
+            "token identity is resolved from the `personal_access_token` row the `Authorization` \
+                 header hashes to; the stateless tier has no token table and mints none",
     },
     ActorCredential {
         kind: ActorKind::Daemon,
@@ -503,8 +515,21 @@ mod tests {
     ];
 
     /// 一档身份的探针 fixture：不引任何种子符号，只为问 `plan` 一句「发得出来吗」。
+    ///
+    /// `Token` 档是唯一一个非空 `upstream_identity` 的探针：那一档的凭据**就是**
+    /// `Authorization` 上那枚 PAT（`$testPAT<State>` 符号 → [`crate::pat_token::Credentials`]），
+    /// 而 `plan` 的 token 分支只有看到这个 header 才装得出来。给一条空身份的探针，等于
+    /// 拿一个本仓根本不会发的请求去问「表与 `plan` 对不对称」—— 那会在 `(true, Err)` 那支
+    /// 报一条与真实不对称毫无关系的红。
     fn probe(kind: ActorKind) -> Fixture {
         use std::collections::BTreeMap;
+        let identity = match kind {
+            ActorKind::Token => BTreeMap::from([(
+                "Authorization".to_string(),
+                crate::pat_token::VALID_SYMBOL.to_string(),
+            )]),
+            _ => BTreeMap::new(),
+        };
         Fixture {
             schema_version: crate::SCHEMA_VERSION,
             id: format!("probe/{}", kind.as_str()),
@@ -515,7 +540,7 @@ mod tests {
             headers: BTreeMap::new(),
             actor: crate::Actor {
                 kind,
-                upstream_identity: BTreeMap::new(),
+                upstream_identity: identity,
                 identity_source: None,
             },
             body: None,
@@ -583,7 +608,10 @@ mod tests {
             stateless.user_id,
             stateless.workspace_id,
             "mdt_probe".into(),
-        );
+        )
+        // `Token` 档的凭据（`$testPAT<State>`）也要挂上：`with_daemon_token` 只给 `mdt_`，
+        // 少了这一件，探针就变成「缺凭据的那一条」，问出来的红与真实的不对称无关。
+        .with_pat_tokens(crate::pat_token::Credentials::probe());
         for c in ACTOR_CREDENTIALS {
             let fx = probe(c.kind);
             for (tier, bindings) in [(Tier::Stateless, &stateless), (Tier::Database, &database)] {
