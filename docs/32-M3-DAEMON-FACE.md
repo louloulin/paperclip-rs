@@ -8961,6 +8961,90 @@ D-14 `truncate` 按**字符**而非字节切（永不切坏 UTF-8）。
 `String` 就**必须**在读面转文本，写面转不转是另一回事（D-11 只覆盖了写面）。
 
 
+## 57. T1-6-I（`LUM-2580`）：行为面「入参校验族」2 子族 —— 修 handler 的入参判定，不是修抽取器（0 路由 / 0 迁移 / 2 文件）
+
+本片 = `docs/37` §245 的 `BEHAVIOR_*` 一族里两个**互不相交**的入参校验子族，共 **2 条** fixture。
+两条的分类前提都是「抽取器已记对、根因在 handler」⇒ **只改 handler，一行抽取器都没动**。
+
+### 1. 子族 A —— `BEHAVIOR_NUL_PAYLOAD`（`200←500`）
+
+* 装置：`daemon/TestReportTaskMessagesCallbackWithNULSucceeds@server/internal/handler/task_payload_nul_test.go:161#23`。
+* 上游落点：`sanitize` 就是本仓已有的 `daemon/dto.rs::sanitize`（upstream `util.SanitizeTextForPostgres`，
+  GH #7098）——`task_use\u0000` / `Bash\u0000` / `content` / `output`，**以及嵌到
+  `input.result.stdout` 深处的 `ELF\u0000\u0000binary`**。
+* 根因：`report_messages` 把这些字段**原样**绑进 PG。PG 的 `TEXT` 与 `jsonb` 都拒 `U+0000`
+  ⇒ 整条 insert 失败 ⇒ `internal()` ⇒ **500**。注意 `input` 是 `jsonb`，**对象键也是 text**，
+  只洗值是漏的。
+* 修法：`report_messages` 落库前逐字段 `sanitize`，`input` 走新的递归 `sanitize_json`
+  （键与值都洗，非字符串原样保留）。
+* 同族的兄弟条目**本来就是绿的**，本片没碰：`…CompleteTaskCallbackWithNULSucceeds`
+  （`tasks.rs`，`#22`）与 `issues/TestCreateComment_StripsNullBytesInsteadOf500`（`#11`）。
+
+### 2. 子族 B —— `BEHAVIOR_METADATA_FILTER_PARSE`（`400←200`）
+
+* 装置：`issues/TestListIssuesMetadataFilter@server/internal/handler/issue_metadata_test.go:220#61`
+  （`GET /api/issues?metadata={not-json}` 断言 **400**）。
+* 根因：`ListIssuesQuery` **根本没有 `metadata` 字段** ⇒ serde 对 `Query<…>` 的未知 query 参数
+  **静默忽略**，畸形串与良构串一样被丢掉、一样 200。
+* 修法：把 `metadata` 变成**已知 key**（`from_pairs` 也补上），并按上游
+  `parseMetadataFilterParam`（`issue_metadata.go:114`）在 `build_filter` 里校验：
+  必须是**扁平对象**、key 匹配 `^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`、值只能是基本类型
+  （string / number / bool）。空串 = 不过滤（上游 `raw == ""` 短路）。
+
+### 3. 🔴 本片**只做校验，没做过滤语义** —— 登记缺口，**不得**据此声称该族已关闭
+
+上游在 SQL 里落的是 `i.metadata @> $n::jsonb`（`issue.go:1509` / `:1943`）。本仓
+`IssueFilter` 与 `LIST_WHERE`（`mc-repos/src/issue/mod.rs:92`）**没有 JSONB 过滤位**；
+该 WHERE 的占位符还被 `issue/tests.rs:87` 的护栏钉死在 `$1..$13`
+（`assert!(!LIST_WHERE.contains("$14"))`）。
+
+⇒ **良构的 `?metadata=…` 现在仍然被静默忽略**（返 200、结果集不被过滤）。
+装置侧 `060-TestListIssuesMetadataFilter-L192` 目前是 **pass(200)**，但它 pass 的理由
+**不是**「过滤生效」，而是「过滤根本没发生」——这正是 §3 说的**假通过**。
+
+要真正闭环需要扩写集到 `crates/mc-repos/src/issue/**`（`input.rs` 加过滤字段、
+`mod.rs` 的 `LIST_WHERE` 加 `$14` 并把 `LIMIT/OFFSET` 挪到 `$15/$16`、`query.rs` 两处 bind、
+`tests.rs:87` 的护栏同步放宽）—— 那是一次**跨 crate 的共享 SQL 改动**
+（`LIST_WHERE` 同时服务 `/api/issues`、`/api/issues/grouped` 与 `list_with_total` 的 COUNT），
+本片按工单「先在评论里报扩大后的写集再动手」的约束**没有静默扩**，留给后续切片。
+
+### 4. 门禁（当轮实测）
+
+| 门 | 命令 | 结果 |
+|---|---|---|
+| ① fmt | `cargo fmt --all --check` | rc=0 |
+| ③ clippy | `cargo clippy -p mc-http --all-targets -- -D warnings` | rc=0 |
+| ⑤ test | `env -u MULTICA_TEST_DATABASE_URL cargo test -p mc-http` | `713 passed / 0 failed / 105 ignored` |
+| ⑥ db | `mc-migrate run --dir migrations` ＋ `cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util -- --ignored`（当轮新建库 `multica_c2580_g6`，角色带 `CREATEDB`） | migrate `566 applied`；**44 个二进制全 ok，`829 passed / 0 failed`**，`GATE_DB_EXIT=0` |
+| ⑦ route-parity | `python3 scripts/route_parity.py --quiet` ＋ `slash_alias_audit.py --quiet` | rc=0；八数字**逐字不变** `456 / 546 / 546 / 455 real + 1 placeholder / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑧ schema-drift | `python3 scripts/schema_drift.py --quiet` | rc=0 |
+| ⑩ file-size | `python3 scripts/file_size_check.py --quiet` | rc=0 |
+| ⑨ conformance | `cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` | **rc=1，base 存量红**（`first difference at line 17: committed "unevaluable": 13 vs fresh 12`，与 §250 §6.2 / §251 逐字同签名）⇒ 不计入本片成败；本片证据是 ⑨ 的**真库回放族计数** |
+
+### 5. 判据链（真库回放，起手/收尾各一次，base 与 head 同机）
+
+| 项 | 起手实测 | 收尾实测 | 判据 |
+|---|---:|---:|---|
+| `fixtures` | 365 | **365** | 不许动 ✅ |
+| `pass` | 293 | **295** | +2 ✅ |
+| `mismatch` | 42 | **40** | ≤40 ✅ |
+| `unevaluable` | 29 | **29** | 逐字不变 ✅ |
+| `unmounted` / `placeholder` | 1 / 0 | **1 / 0** | 不变 ✅ |
+| `UNMOUNTED` | 1 | **1** | 不变 ✅ |
+| `PRECONDITION` | 29 | **29** | 不变 ✅ |
+| `AUTH_401` | 6 | **6** | 不变 ✅ |
+| `SEED_404` | 17 | **17** | 不变 ✅ |
+| `REALM_DIFF` | 19 | **17** | 不增 ✅（本片 2 条都属此族，修好即 −2）|
+| `bad_total` | 72 | **70** | 对账式：`72 − (295 − 293) = 70` ✅ |
+
+逐条 outcome 变化**恰好 2 行**，全部 `mismatch → pass`：
+
+1. `daemon/TestReportTaskMessagesCallbackWithNULSucceeds@…task_payload_nul_test.go:161#23`（500 → 200）
+2. `issues/TestListIssuesMetadataFilter@…issue_metadata_test.go:220#61`（200 → 400）
+
+双向跑通（防过度收紧）：畸形 `{not-json}` → **400**（`#61` 转绿）；良构
+`{"pipeline_status":"waiting_review"}` → **非 400**（`#60` 仍是 200，不新增红）。
+
 ## 60. M9-6（`LUM-1821`）：stripe webhook 1 条（per-IP 限流 + 缺签名 401 + 原始体逐字转发）的落点与偏离登记
 
 本片 = `docs/62-M9-PLAN.md` §4.1 的 **M9-6**，**1 条**路由 / 上游 **117 行**

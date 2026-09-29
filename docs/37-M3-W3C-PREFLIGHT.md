@@ -23736,3 +23736,92 @@ head `272acce6` 未动 ⇒ 维持不合并、不重判）。daemon **3/3** = 本
 6. `UNMOUNTED 1`：`known_gap = 0` ⇒ **不许加路由**。
 7. **下一空号 `## §253`**（并发 cycle 会抢号，**追加前先 `git fetch` + 在远端最新 base 上 grep**）。
 8. 待 owner（不重复 @）：`LUM-2111` 卡 docker/podman/buildah；`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**。
+
+
+## §253 【LUM-2580 / T1-6-I】行为面「入参校验族」2 子族 —— 修 handler 的入参判定，不是修抽取器（0 路由 / 0 迁移 / 2 文件）
+
+`docs/32` 的 `## 57.` 是同一片的落点登记，这里只记**判据链与踩到的坑**。
+
+### 1. 起手实测（不是抄 §251）
+
+`df -h /` 连采两次（`30G used / 17G avail`，两次逐字相同）＋ `pg_lsclusters` 5432 `online`；
+base `git rev-parse` 实测 `70c3506a`；GH 认证查询 `pulls?state=open` = **1**（`#168`，维持 §243
+不合并裁定，head `272acce6` 未动）⇒ 与在飞写集零交集。
+⑨ 的门禁在 base 上本来就是红：`line 17 / committed "unevaluable": 13 vs fresh 12` —— 与 §250 §6.2、
+§251 逐字同签名，**本片不追、更没跑 `--write`**。
+
+### 2. 🔴 承重一：`metadata` 不是「未知 query 参数」，是**被 serde 吞掉的已知 key**
+
+`ListIssuesQuery` 里**没有** `metadata` 字段，而 GET 面走的是 `Query<ListIssuesQuery>`（serde derive）
+⇒ serde 对未知 query 参数**静默忽略**。于是 `?metadata={not-json}` 与
+`?metadata={"pipeline_status":"waiting_review"}` **走的是同一条路**：丢掉、返 200。
+装置侧 `#60`（良构，断言 200）因此在 base 上就是 **pass**，但它 pass 的理由是
+**「过滤根本没发生」**，不是「过滤生效」—— 这就是工单 §3 说的**假通过**。
+
+### 3. 🔴 承重二：本片**只做校验，没做过滤语义** ⇒ 该族**不得**判为已关闭
+
+上游在 SQL 里落的是 `i.metadata @> $n::jsonb`（`issue.go:1509` / `:1943`）。
+本仓 `IssueFilter` / `LIST_WHERE`（`mc-repos/src/issue/mod.rs:92`）**没有 JSONB 过滤位**，而且
+`mc-repos/src/issue/tests.rs:87` 有一条**护栏单测**把占位符钉死在 `$1..$13`：
+
+```rust
+for n in 1..=13 { assert!(LIST_WHERE.contains(&format!("${n}"))); }
+assert!(!LIST_WHERE.contains("$14"));   // 留给 LIMIT/OFFSET
+```
+
+⇒ 要真正闭环，写集必须扩到 `crates/mc-repos/src/issue/**`（`input.rs` 加过滤字段、`mod.rs` 的
+`LIST_WHERE` 加 `$14` 并把 `LIMIT/OFFSET` 挪到 `$15/$16`、`query.rs` **两处** bind 同步、
+`tests.rs:87` 护栏放宽）。这不是「加一个字段」：`LIST_WHERE` 同时服务 `/api/issues`、
+`/api/issues/grouped` 与 `list_with_total` 的 COUNT，是一次**跨 crate 的共享 SQL 改动**。
+工单的约束是「先在评论里报扩大后的写集再动手，不要静默扩」⇒ 本片**没扩**，把这条缺口
+**显式登记**在 `ListIssuesQuery::metadata` 的文档注释与 `docs/32 ## 57.` §3，交给后续切片。
+
+**判别式（双向）**因此必须两条都跑，缺一条就会造出新的假阳性/假通过：
+
+* 畸形 `{not-json}` → **400**（`#61` 转绿）；
+* 良构 `{"pipeline_status":"waiting_review"}` → **非 400**（`#60` 仍 200，不因收紧而新增红）；
+* 另外两条边界按上游 `parseMetadataFilterParam` 对齐：空串 = 不过滤（上游 `raw == ""` 短路）；
+  `null` **不收紧成 400**（上游把 `metadata=null` 反序列化成 nil map 也不报错）。
+
+### 4. NUL 那一条的真根因：`jsonb` 的**键**也是 text
+
+`report_messages` 的载荷里 NUL 出现在 `type` / `tool` / `content` / `output`，**还有嵌在
+`input.result.stdout` 深处的 `ELF\u0000\u0000binary`**（`input` 是 `jsonb` 列）。
+PG 的 `jsonb` 与 `TEXT` 一样拒 `U+0000` ⇒ 只洗顶层字符串字段会**仍然 500**。
+本仓 `daemon/dto.rs::sanitize` 早就在（`tasks.rs` 的 `pr_url` 在用），缺的是
+「对 `input` 递归洗、且**键**也洗」。同族的另外两条（`tasks.rs` 的 `#22`、comments 的 `#11`）
+base 上本来是绿的，本片**没碰**。
+
+### 5. 判据链（真库回放，base 与 head 同机、各自当轮新建库）
+
+| 项 | 起手 `70c3506a` | 收尾 `245bfc81` | 判据 |
+|---|---:|---:|---|
+| `fixtures` | 365 | **365** | 不许动 ✅ |
+| `pass` | 293 | **295** | +2 ✅ |
+| `mismatch` | 42 | **40** | ≤40 ✅ |
+| `unevaluable` | 29 | **29** | 逐字不变 ✅ |
+| `unmounted` / `placeholder` | 1 / 0 | **1 / 0** | 不变 ✅ |
+| `UNMOUNTED` / `PRECONDITION` / `AUTH_401` / `SEED_404` | 1 / 29 / 6 / 17 | **1 / 29 / 6 / 17** | 全部不变 ✅ |
+| `REALM_DIFF` | 19 | **17** | 不增 ✅（本片 2 条都属此族）|
+| `bad_total` | 72 | **70** | 对账式 `72 − (295 − 293) = 70` ✅ |
+
+逐条 outcome 变化**恰好 2 行**、全部 `mismatch → pass`：
+`daemon/…WithNULSucceeds@…task_payload_nul_test.go:161#23`（500→200）与
+`issues/…MetadataFilter@…issue_metadata_test.go:220#61`（200→400）。
+
+其余门：① fmt rc=0；③ `clippy -p mc-http --all-targets -D warnings` rc=0；
+⑤ `env -u MULTICA_TEST_DATABASE_URL cargo test -p mc-http` = `713 passed / 0 failed / 105 ignored`；
+⑥ 真库 `multica_c2580_g6`（当轮新建、角色带 `CREATEDB`，`566 applied`）+
+`--features mc-http/test-util -- --ignored` = **44 个二进制全 ok、`829 passed / 0 failed`、exit 0**；
+⑦ 八数字**逐字不变**（`456 / 546 / 546 / 455 real + 1 placeholder / known_gap 0 / unclaimed 0 /
+regression 0 / local_only 8`）；⑦b rc=0；⑧ rc=0；⑩ rc=0。
+
+### 6. 下一 cycle 起手
+
+base 一律 `git rev-parse` 实测（本片 push 前在远端最新 base `b895f8ca` 上重查号段：`docs/37`
+末号已是 `§252`（`LUM-2581` 03:30 cycle 占）⇒ 本片顺延取 `§253`；`docs/32` 的 `## 57.` 仍空）。
+GH 1 open PR = `#168`（维持不合并裁定）。**行为面 `BEHAVIOR_*` 余 4 条**（写集同为
+`mc-http/src/routes/**`）**可与本片串行继续**；装置面 7 条仍须等 `LUM-2567`（同写集 `mc-conformance/**`）。
+**禁**：普通片刷 `crates/mc-conformance/report.json`（§250 §6.2 docker 死锁待 owner）；
+`UNMOUNTED 1` 加路由（`known_gap = 0`）。
+**下一空号 `## §254`**（并发 cycle 会抢号，**追加前先 `git fetch` + 在远端最新 base 上 grep**）。
