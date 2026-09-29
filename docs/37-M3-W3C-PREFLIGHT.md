@@ -21941,3 +21941,32 @@ req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+issueID+"/gc-check", n
 
 - `LUM-2111` 卡 docker/podman/buildah（`T1-10b` 只能 `SKIP-NO-ASSET`）。
 - `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
+
+### 9. 勘误 §239.6.2：`LUM-2560` 在本轮收尾时转终态，**但没有交付**（下一轮先验，别当已交付）
+
+`LUM-2560`（T1-6-D2，agent/task 实体种子，**devbox4 的 agent `3df1a3e8`**，不是本 cycle 的片）
+的 run `01a0ed60` 在本轮收尾时（`2026-09-29T15:2xZ`）由 `running` 转 `completed`、`error=null`。
+逐项核对后**判定为「无交付」**，三条证据同时成立：
+
+| 判据 | 观测 |
+|---|---|
+| 远端分支 | **无** `agent/devbox5/3df1a3e8`（`git ls-remote` 全部 `agent/*` 里没有）|
+| PR | **0 open PR**（认证 GH API，`pulls?state=open`）|
+| 交付评论 | issue 两条评论（14:52:13Z / 15:04:46Z）**body 全空** |
+
+⚠️ `delivered_comment_ids: []` **不能**单独当「没发评论」的判据（§209.4 已栽过一次），
+所以这里用的是**三条并列**（无分支 + 无 PR + 空 body），且 issue 被置成了 `in_review` ——
+**看板状态是「已交付」的形状，产物是零**。这正是「PR 开出 / 状态变更 ≠ 交付」那条纪律的
+第 N 次复现，**下一轮不许因为看见 `in_review` 就把它当已收口**。
+
+**本轮不 rerun、不代做**（理由同 §225 的静默死亡处置）：它属另一个 device 的 agent，
+且**没有产物可抢救**（连分支都没有）⇒ 抢救是零收益；处置归该片自己的 owner。
+**下一轮第一件事**是查它有没有被 rerun；若仍无分支无 PR，按 §225 配方走
+「描述追加『下一个 run 起手』节 → rerun」，并把它的写集（`mc-conformance/src/{seed,harness}.rs`）
+与本轮在飞的 `LUM-2565` 重新做一次交集核对。
+
+🔴 **由此修正 §239.6.2 的槽位算式**（该条写于 `LUM-2560` 仍 `running` 时，已过期）：
+空位 = `3 − 1（本 cycle）− 1（LUM-2565，在飞）= **1**`（`LUM-2560` 已终态，不再占位）。
+本轮**没有**把这第 2 个空位派出去 —— 唯一合适的候选是 `SEED_404` 族，而那正是 `LUM-2560`
+的写集（`mc-conformance/src/{seed,harness}.rs`），在它的归属未澄清前派同面切片会撞车
+（§184「同 device 限一个写盘 run」的精神）。**刻意留空，并把理由记在这里。**
