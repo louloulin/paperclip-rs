@@ -23634,3 +23634,105 @@ head `272acce6` 未动）。**T1-6 剩余量已收敛到 18 条 / 14 子族**，
 
 **禁**：普通片刷 `report.json`（§250 §6.2 的 docker 死锁未解）；`UNMOUNTED 1` 加路由（`known_gap=0`）。
 号段 `docs/37` 末号 `§251` ⇒ 下轮 **`§252`**。
+
+## §252 【LUM-2581 03:30 cycle】**零收割零派发轮** —— 独立复算证明 §250/§251 的换基正确，另拆一颗**派发面**的地雷
+
+起手 base `70c3506a`（`git rev-parse` 实测；`85dd84cb` 之后并发 cycle `LUM-2579` 已把
+**PR #172 / #173 两条**收割并直推 §250/§251）。GH open PR **1** = `#168`（§243 判不合并，
+head `272acce6` 未动 ⇒ 维持不合并、不重判）。daemon **3/3** = 本 cycle ∥ `LUM-2579`（pid 57802）
+∥ `LUM-2580`（run `01a0eea3-3b2f`，devbox4，19:27:50Z 起）⇒ **切片位 0，零派发**。
+`df` 起手 **22G/53%**、PG `online`。本轮**零 `target/` 起手**、收尾已删。
+
+### 8.1 独立复算：§250 §10.2 那张换基表，**逐格命中**
+
+本轮**不接受任何自报读数**，在 base `70c3506a` 上从零建库真跑（角色 `mc_c2581` 建库即带
+`CREATEDB`；`mc-migrate run` **566 迁移 2.9s** ＋ `cargo build -p mc-conformance --bin` **1m31s / 2.4G**
+＋ 回放 **34.4s** ⇒ **≈2.5 分钟 / 2.4G**，与 §236「最小可行动作」口径一致）：
+
+```
+365 / pass 293 / mismatch 42 / unmounted 1 / placeholder 0 / unevaluable 29   ⇒  bad = 365 − pass = 72
+```
+
+**减法交叉核对**（§237 承重二：分桶汇总出来的数永远用 `fixtures − pass` 核对，**不要分桶相加**）：
+`365 − 293 = 72`，而分桶 `42 + 1 + 0 + 29 = 72` ✔。`scripts/t1_6_taxonomy.py` 族计数
+**`UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 19`**，
+`1+29+6+17+19 = 72` ✔、`mismatch 42 = 6+17+19` ✔。
+
+⇒ 与 `LUM-2567` rev 11 §10.2 那张表（`pass 293 / mismatch 42 / REALM_DIFF 19 / bad_total 72`，
+四族 `1/29/6/17` 逐字不变）**逐格相同**。**两条互不相干的测量路径**（不同 workdir、不同数据库、
+不同人／不同 cycle）**同数** ⇒ §250/§251 的换基**可以采信**，`LUM-2567` 的新起点值成立。
+
+🔴 **本轮因此没有产出「新的 T1-6 读数」，只有「已发布读数的第二份独立确认」** —— 这两件事
+在交接里必须分开写。**一个数被第二个人验证过，不等于它被改进了。**
+
+### 8.2 🔴🔴 承重一（本轮唯一实质产出）：**「解除阻塞并派出」可以被无声执行，且派出对象是死 runtime**
+
+`LUM-2567`（**PRECONDITION 29 = 当前 `bad 72` 的最大族，40%**）在 §250 里被判「阻塞已解除，可以开工」，
+§10.1 写「本片可以开工」——**而它此刻的 run 是幽灵**：
+
+| 证据 | 读数 |
+|---|---|
+| run | `01a0eea3-cf88`，`status=queued`，**`started_at=None`**，issue = `LUM-2567`（`01a0edcc-ff8a`） |
+| 派出时刻 | `created == dispatched == 2026-09-30T03:27:50+08:00`，与 `LUM-2580` 的真 run **同一秒** |
+| assignee | `22e8b20d` = **编程助手-devbox1** |
+| 该 agent 的 runtime | `041bf509` = **`offline`，`last_seen_at = 2026-09-28T10:24:30Z`（33 小时前）** |
+| 该 agent 最近 4 条 run | `queued`(本次) / `failed: runtime unavailable while task was queued` / `failed: runtime did not reconnect…` / `failed: runtime went offline` |
+
+⇒ **issue 侧与「已派出且在跑」完全同形**：状态 `todo`、零评论、`last_activity_at` 就是派出那一刻。
+**§221.5 承重只写了「回读 `STARTED`」，本轮补上它的另一半**：
+
+> **`STARTED=None` 不是「早期」，要立刻查 runtime 是不是 `offline`。**
+> 死 runtime 上的 `queued` 行**永远不会自己变**，等它等于零进展；而它同时是 §184 的
+> **重试磁铁**（一 failed 就可能落到同 agent 名下别的没关 issue 上，凭空造出第二个写者）。
+
+🔴 **可推广：`agent list` 完全不能用来判活**。实测 **24 个 agent 的 `last_seen_at` 全部是 `None`**
+（连 `online` 的 `4a7f29e1`、`69637c57` 也一样）⇒ 按 `agent list` 判活会得到「全员从未上线」的假结论。
+**runtime 存活的唯一权威读数在 `multica runtime list` 的 `status` / `last_seen_at` 两列。**
+§219 承重的正确形态是：**派发前**查 `runtime list`，**派出后**查 run 的 `started_at`，
+**两者都过**才算真的派出去了。
+
+⚠️ **本轮不动那个幽灵 run**：`LUM-2579` 是**先到者**且**仍在飞**（并发 cycle 让位定式），
+`cancel-task` 属**不可重复动作**且会改他人派发 ⇒ 只登记。**下轮起手第一件事**：
+`LUM-2579` 终态后，确认 `01a0eea3-cf88` 是否还在，再决定 cancel 或改派到 online runtime
+（`4a7f29e1` devbox4 / `69637c57` lin，二者 `online`）。
+
+### 8.3 🔴 承重二：「stdout 必须纯 JSON」这条隐含契约，**量到了它的确切边界**
+
+§2541 修过一次的那个契约（`scripts/mc_golden_local_check.sh:66` 是 `2>&1` 后直接 `json.load`）
+在本轮被**逐条实测**，结果是**危险确实存在、但今天两边碰不到**：
+
+| 调用形态 | stderr 字节 |
+|---|---:|
+| `mc-conformance --golden contracts/golden --no-db --json`（**脚本唯一使用的那一种**） | **0** |
+| `mc-conformance --db-url … --json` | **130**（`database 层：365 条（种子身份 user=… workspace=…）`） |
+
+⇒ **会炸的那个组合今天不存在**，因为**唯一做 `2>&1` 的消费者只跑 `--no-db`，而唯一往 stderr 写
+信息的那条路径只在 `--db-url` 下触发**。**这是一个「latent 而非 imminent」的地雷，登记它的价值在于
+把引爆条件写死**：给那个脚本加一次 db 模式回放、或把那条 stderr 挪进 `--no-db` 路径 ⇒ 立刻
+`json.decoder.JSONDecodeError: Extra data`，**而报出来的错与真因毫无关系**（§2541 原样复现）。
+**处置：不改**（写集在 `mc-conformance` 报告层，收益为零、风险是动判据），只把边界钉住。
+
+### 8.4 门读（base `70c3506a` 当场重跑，三门全零编译）
+
+* ⑦ `upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、`455 real + 1 placeholder`、
+  `known_gap 0 / unclaimed 0 / regression 0 / local_only 8` **rc=0** —— **第 48 轮逐字不变**。
+* ⑦b `541 literals / 0 defect` **rc=0**。
+* ⑩ `limit=800 scanned=1391 baseline=1 violations=0` **rc=0**。白名单只剩
+  `extract_upstream_fixtures.py`（tsv 记 **1863** / `wc -l` 实测 **1858**，**只许变短** —— 天花板≠实测，§230 承重）。
+  ⚠️ 清单外逼近上限的两颗雷仍在：`t1_6_realm_diff_taxonomy.py` **800（余量 0）**、
+  `schema_drift.py` **799（余量 1）** —— §248 承重一已登记，本轮**复核未恶化**。
+* ⑨ `--no-db` 静态读 `report.json`：`365 / 34 / 0 / 0 / 0 / 331`（base 存量，**未刷新**）。
+* ②③④⑤⑥⑧ **未跑**：本 cycle 写集 = `docs/37` **一个文件** ⇒ 门禁输入未变（§236 承重一）。
+
+### 8.5 下轮顺位（**逐条重验，禁抄**）
+
+1. **零位判定先做 runtime 层**：`runtime list` → `3df1a3e8`(devbox4) / `700c7941`(lin) 谁 online 且名下零未终态。
+2. `LUM-2580` 交 PR ⇒ 八步链，验收 ＝ 它工单的族计数（行为面 2 子族，**0 路由 ⇒ ⑦ 逐字不变**）。
+3. `LUM-2567` **改派到 online runtime** 再起（当前 assignee 的 runtime offline 33h），
+   起点读数 **就是本节 §8.1 那张**（`bad 72 / pass 293 / mismatch 42 / REALM_DIFF 19 / PRECONDITION 29`），
+   对账式 `bad_total_after == 72 − (pass_after − 293)`。
+4. `LUM-2567` 交付后 ⇒ **装置面 7 条**（§245 表 `DEVICE_*`，同写集 `mc-conformance/src/**` ⇒ **必须串行**）。
+5. `AUTH_401 6` / `SEED_404 17` 与 `LUM-2567` **同写集 ⇒ 串行**。
+6. `UNMOUNTED 1`：`known_gap = 0` ⇒ **不许加路由**。
+7. **下一空号 `## §253`**（并发 cycle 会抢号，**追加前先 `git fetch` + 在远端最新 base 上 grep**）。
+8. 待 owner（不重复 @）：`LUM-2111` 卡 docker/podman/buildah；`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**。
