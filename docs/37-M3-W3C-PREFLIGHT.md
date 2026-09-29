@@ -21296,7 +21296,7 @@ run 正常 completed —— 而交付物不存在。** 两条原因都不是需�
 
 ### §233.9 🔴 承重六：`LUM-2552`（PR #162）与 #163 **两个方向都必冲突**，且冲突面是「整文件重写」这一类
 
-`LUM-2552`（devbox4，41 分钟）交付 **PR #162**：`T1-6` 的 `mismatch 64 → 57`、`BAD 94 → 87`，
+`LUM-2552`（devbox4，41 分钟）交付 **PR #162**：`T1-6` 的 `mismatch 64 → 57`、`BAD 97 → 90`（🔴 原写 `94 → 87`，两处都把 `unmounted` 的 3 漏在求和之外，更正见 §237 承重；**差值 7 不变**），
 `unevaluable 30` 逐字不变，一次 `--with-db` 10/10（477s）。**两条偏差它如实报了**（动了禁改面 `lib.rs` +30/−3，且给出**负向对照**；
 `mismatch` 落 57 而非 56，并说明那一行是「盖章链未接线」而非可修的令牌问题）—— 这种披露质量值得记一笔。
 
@@ -21450,15 +21450,15 @@ run 正常 completed —— 而交付物不存在。** 两条原因都不是需�
 ### 2. `T1-6` 现状（合并树 `fc56c3e6` 上实测，`--db-url`）
 
 ```
-totals  365 / pass 275 / mismatch 57 / unmounted 3 / placeholder 0 / unevaluable 30     ⇒ BAD = 87
+totals  365 / pass 275 / mismatch 57 / unmounted 3 / placeholder 0 / unevaluable 30     ⇒ BAD = 90（🔴 原写 87，漏加 `unmounted`，见 §237 承重）
 by_actor  member {mismatch 48, pass 223, unevaluable 11, unmounted 3}
           agent  {unevaluable 13}      daemon {mismatch 8, pass 10, unevaluable 2}
           token  {mismatch 1, pass 7}  anonymous {pass 35, unevaluable 4}
 ```
 
-与 §213 逐字对照：`365/268/64/3/0/30`（BAD 94）⇒ **本片把 7 条从 `mismatch` 挪进 `pass`，`unevaluable` 一条没动** —— 这是 §203 要求的**唯一**进步方向。`T1-6` 仍 FAIL（需 `mismatch 0 ∧ unevaluable 0`），它是 Tier-1 唯一剩下的红。
+与 §213 逐字对照：`365/268/64/3/0/30`（BAD **97**；🔴 原写 94，漏加 `unmounted` 的 3，见 §237 承重）⇒ **本片把 7 条从 `mismatch` 挪进 `pass`，`unevaluable` 一条没动** —— 这是 §203 要求的**唯一**进步方向。`T1-6` 仍 FAIL（需 `mismatch 0 ∧ unevaluable 0`），它是 Tier-1 唯一剩下的红。
 
-**87 条的族分解（本轮第一次把「mismatch」拆到能派工的粒度）**：
+**90 条的族分解（本轮第一次把「mismatch」拆到能派工的粒度）**：
 
 | 族 | 条数 | 签名 |
 |---|---|---|
@@ -21602,3 +21602,91 @@ let (winner, tier) = if d.outcome < s.outcome { … "database" } else { … "sta
 - base **`92320e4e`**（起手仍一律 `git rev-parse` 实测）；GH **0 open PR**；`df` 收尾 **26G/46%**；两个库与角色已 DROP（残留计数 0/0）；`target/` 已删；临时分支 `tmpverify` 与 `refs/pr/165merge` 已清。
 - `LUM-2561` 已 `in_review`；承重项「`merge()` 平局裁决」**本轮结清**。
 - 收尾复采：并发 cycle 已从 `LUM-2557` 换成 **`LUM-2562`**（带 cargo 子进程，正在编译）⇒ 切片位仍被占，**下轮第一动作仍是重取板面 + 逐 PID `/proc`，不沿用本行的 base**。
+## §237 【2026-09-29 22:00 cycle / LUM-2562】**收割 PR #165** ＋ 🔴 承重：**`BAD` 这个数从来没人加对过 —— `unmounted` 被漏掉了整整两轮**
+
+起手 base `92320e4e`（= `dfe595ef` 合并树 + PR #165）。GH open PR **0**。在飞 **3/3**（本 cycle ∥ `LUM-2558` ∥ `LUM-2560`）⇒ **切片位 0，本轮 0 派发**。
+
+### 1. 收割 PR #165（`LUM-2561` = 上一 cycle 的 `T1-6-D1`）
+
+`LUM-2561` 由并发 cycle `LUM-2558` 直接实现并已合并，落地树 `92320e4e`（父 `dfe595ef` + `218d16c8`，写集只有 `replay.rs` +159/−4）。本轮**只做独立复核，不重跑它的实现**。
+
+复核用库 `multica_c2562`（566 条迁移 2.9s 跑完）。三条签名逐条命中 PR 自述：
+
+| 判据 | PR 自述 | 本轮实测 |
+|---|---|---|
+| 假指路牌（`tier=stateless ∧ database=unevaluable ∧ detail` 含 `rerun with --db-url`） | 13 → 0 | **0** |
+| 报告里 `rerun with --db-url` 出现次数 | 13 → 0 | **0** |
+| 真平局（`offline==database==unevaluable`）里 `tier` 归属 | 全归 database | **30/30 归 database**，`tier=stateless` **0** |
+| 平局两层都没判出来 ⇒ 两句理由都留（`||`） | 4 | **4** |
+
+⇒ 修复**逐条成立**，不是「看起来好了」。
+
+### 2. 🔴 承重：**`BAD = 87` 这个数是错的，正确值是 `90`；而且它已经错了两轮**
+
+§235 与 §213 都写了 `BAD`，两处都把 `unmounted` 漏掉了：
+
+```
+§213：365 / pass 268 / mismatch 64 / unmounted 3 / placeholder 0 / unevaluable 30  ⇒  记作 "BAD 94"
+§235：365 / pass 275 / mismatch 57 / unmounted 3 / placeholder 0 / unevaluable 30  ⇒  记作 "BAD 87"
+
+64 + 30 = 94   ← §213 的 94 正好等于「mismatch + unevaluable」，unmounted 的 3 不在里面
+57 + 30 = 87   ← §235 的 87 同理
+57 + 3 + 0 + 30 = 90   ← 正确值（也 = 365 − pass 275）
+```
+
+**这不是抄错数字，是加法时漏了一项**，而且**两轮都漏的是同一项、同一处**（`unmounted` 恰好排在 `mismatch` 与 `placeholder` 之间，最容易被跳读）。两个数各自「内部自洽」—— 用它们算差值 `94 → 87`（进步 7 条）**结论仍然正确**，所以错误一路没被发现。
+
+🔴 **定式**：`BAD` 这类**由分桶汇总出来的数**，永远用 `fixtures − pass` 交叉核对，不要用分桶逐项相加。前者与「分桶」是两套独立算路，后者和被抄的那一行是**同一次抄写**，抄错一次就永远自洽。**能自洽 ≠ 对。**
+
+⇒ 两处都改：`§213` 的 `94 → 97`、§235 的 `87 → 90`，并注明原值错在哪。**差值 7 与 `T1-6` 的 FAIL 判定（需 `mismatch 0 ∧ unevaluable 0`）均不受影响** —— 后者用的是分项而不是 `BAD`。
+
+### 3. `T1-6` 现状（合并树 `92320e4e`，`--db-url` 实测）
+
+```
+totals  365 / pass 275 / mismatch 57 / unmounted 3 / placeholder 0 / unevaluable 30     ⇒ BAD = 90
+by_actor  member {mismatch 48, pass 223, unevaluable 11, unmounted 3}
+          agent  {unevaluable 13}      daemon {mismatch 8, pass 10, unevaluable 2}
+          token  {mismatch 1, pass 7}  anonymous {pass 35, unevaluable 4}
+```
+
+与 §235 的六个分项**逐字相同**（PR #165 只改 `tier`/`detail`，不动 `outcome`/`status_observed`，与它的自述一致）—— 但 `BAD` 由 87 更正为 **90**。
+
+`mismatch 57` 的族分解与 §235 逐字吻合：`2xx←4xx` **26**（`200←404` 7、`200←400` 5、`201←400` 5、`200←401` 3、`204←400` 2、其余 4；`/api/issues` 占 7）、`4xx←2xx` **18**、`4xx←4xx` **10**、其余 3。**头部路径仍是 `/api/issues`（7）与 `/api/agents`（3）**。
+
+`unevaluable 30` 的 `requires` 构成（首次逐条列出）：**15 条 `requires` 为空**（其中 agent 13 = `LUM-2560` 的目标），另 15 条有前提：`cloud_runtime_stub` 5、`cloud_runtime_configured` 5、`daemon_token` 2、`db_fault_injection` 2、`bare_handler_no_wiring` 2、`external_oauth` 1、`browser_session_cookie` 1、`webhook_rate_limiter_denying` 1。
+
+### 4. 门读（合并树 `92320e4e`，**10/10**，全部当场实测）
+
+| 门 | 结果 | 墙钟 |
+|---|---|---|
+| ① fmt | rc=0 | — |
+| ② build `--workspace --all-targets --locked` | rc=0 | 2m43s |
+| ③ clippy `--all-targets -D warnings` | rc=0 | 1m31s |
+| ⑤ test `--workspace`（剥 `MULTICA_TEST_DATABASE_URL`） | rc=0，**4289 passed / 0 failed** | 2m42s |
+| ⑥ db e2e 真库 | rc=0，**829 passed / 0 failed** | 3m15s |
+| ⑦ route-parity | rc=0 | — |
+| ⑦b slash_alias_audit | rc=0 | — |
+| ⑧ schema_drift | rc=0 | — |
+| ⑨ conformance `--no-db --check` | rc=0，`report matches` | — |
+| ⑨ conformance `--db-url`（本轮证据源） | `pass 275 / mismatch 57 / unevaluable 30 / unmounted 3` | 30.5s |
+| ⑩ file_size | rc=0 | — |
+
+- ⑦ 八个数字**第 39 轮逐字不变**：`upstream 456 (f41fae6b08fb) | local 546 | baseline 546 | implemented 455 real + 1 placeholder = 456/456 | known_gap 0 | unclaimed 0 | regression 0 | local_only 8`。
+- 快照零位移：`route-parity-baseline.json` md5 `294c2c2a…`（与 §235 同）、`report.json` md5 `5412d32c…`（与 §235 同）。
+- 门 ⑩ 白名单仍**只剩 1 条**（`extract_upstream_fixtures.py`，tsv 记 1863 / 实测 1862，§230 承重）；最大文件 `scripts/schema_drift.py` **799**，距硬上限 800 只剩 **1 行**。
+
+⏱ **「门禁不幂等」第 3 次付账，且这次撞了硬墙**：② 跑完 `avail` 掉到 **11G**；⑥ 又在同一 `target/` 上叠一遍 ⇒ **`avail 0 / 100%`**。**第一次跑 ⑥ 时进程被磁盘写满打断、输出为空**，若只看 `grep` 的退出码会误读成「绿」（`grep` 无匹配时也返回 0）。`rm -rf target`（25G）后回 25G，改用**只 `--no-run` 编 4 个包**（约 14G，avail 余 12G）再跑 ⑥，才拿到真绿。
+
+🔴 **两条新定式**：
+1. **门禁的退出码必须取自被测命令本身**（`cmd > log 2>&1; echo $?`），**不能取自管道末端的 `grep`/`tail`** —— 空输出 + `grep` rc=0 = 假绿，与「真绿」在日志上长得一模一样。
+2. **⑥ 不要在 ② 的全量 `--all-targets` 产物上叠**。② 编的是整个 workspace 的所有 target，⑥ 只需要 4 个包；分开编省下的十几 G 正是「跑得完」和「跑到一半磁盘写满」的分界。
+
+### 5. 派发：**0 片**（在飞 3/3）
+
+`空位 = 3 − 在跑的 cycle 数 − 在飞片数 = 3 − 2（LUM-2558 + 本 cycle）− 1（LUM-2560，devbox4 `01a0ed60` running）= 0`。
+`LUM-2559`（`T1-6-D1` 报告面）**已被 PR #165 实质完成**，本轮把它关掉而不是派工 —— 它与 #165 写集零相交，但目标已达成。下一空号 **`## §237`**。
+
+### 6. 待 owner（不重复 @）
+
+- `LUM-2111` 卡 docker/podman/buildah（`T1-10b` `SKIP-NO-ASSET`）。
+- `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
