@@ -848,11 +848,7 @@ class Interpreter:
                 sub.bindings[pname] = Binding(file, arg, ctx)
             got = self.interpret(fn.file, fn.body, sub, depth + 1)
             if got is not None:
-                # `newDaemonTokenRequest` ends in `req.WithContext(WithDaemonContext(...))`:
-                # the identity never appears as a header, so record it on the state the
-                # helper hands back and let `split_headers` stop calling it anonymous.
-                if any(call in self.text(fn.file, fn.body) for call in DAEMON_CONTEXT_CALLS):
-                    got.oob.add(REQUIREMENT_DAEMON_TOKEN)
+                rq.apply_helper_identity(self.text(fn.file, fn.body), got, sym)
             return got
         return None
 

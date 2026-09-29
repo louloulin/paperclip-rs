@@ -106,6 +106,35 @@ REQUIREMENT_EXTERNAL_OAUTH = "external_oauth"
 # literal request, because the injection lives in the helper's body.
 DAEMON_CONTEXT_CALLS = ("WithDaemonContext",)
 
+# The same shape one level up, and the reason subfamily 1 of `docs/37` §249 exists.
+# `withChatTestWorkspaceCtx` (`server/internal/handler/chat_test.go:24`) binds the
+# workspace through `middleware.SetMemberContext` and hands back
+# `req.WithContext(…)`.  Upstream tests only carry an `X-Workspace-ID` header where
+# `newRequest(...)` set one; a request built with a bare `httptest.NewRequest` +
+# this helper carries **none**, and the router — which resolves the workspace from
+# header or query — answers `400 invalid workspace id` on a contract that is
+# 200/204.  The injection is out-of-band, so it has to be read off the helper body
+# (like `WithDaemonContext`), not off the wire.
+WORKSPACE_CONTEXT_CALLS = ("SetMemberContext",)
+WORKSPACE_ID_HEADER = "X-Workspace-ID"
+#: The Go variable the helper binds; `mc-conformance` seeds one workspace per group.
+WORKSPACE_ID_SYMBOL = "testWorkspaceID"
+
+
+def apply_helper_identity(body: str, got: Any, sym: Any) -> None:
+    """Record the identity a followed helper injects **out of band**.
+
+    ``sym`` is the host's symbol constructor, passed in because the host imports
+    *this* module (see [`Decoded`] for the same one-way rule).  A header the host
+    already collected from `Header.Set` keeps its own value: `newRequest` sets the
+    same `$testWorkspaceID`, so re-recording is a no-op rather than a rewrite.
+    """
+    if any(call in body for call in DAEMON_CONTEXT_CALLS):
+        got.oob.add(REQUIREMENT_DAEMON_TOKEN)
+    if any(call in body for call in WORKSPACE_CONTEXT_CALLS):
+        got.headers.setdefault(WORKSPACE_ID_HEADER, sym(WORKSPACE_ID_SYMBOL))
+
+
 # --------------------------------------------------------------------------- #
 # Personal-access-token (PAT) authentication
 #

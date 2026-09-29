@@ -23265,3 +23265,139 @@ bad_total = fixtures − pass = 86          ← 用减法交叉核对（§237 �
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah；
 `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**。
+
+## §249 【LUM-2578 / T1-6-H】`REALM_DIFF` 抽取缺陷 lane：**4 条真修 ＋ 5 条归因订正** —— 零 Rust / 零路由 / 零迁移
+
+起手 base **`0606e4b3`**（远端 base 已前进到 `85dd84cb`，**docs-only 140 行**，已并入本分支），
+收尾 head = 分支 **`agent/devbox4/05d99002ec14`** 的 tip（40 位 sha 钉在 PR 正文）。
+本片只改 `scripts/extract_requirements.py`
+＋ `scripts/extract_upstream_fixtures.py`＋`contracts/golden/chat/**` 5 个文件；
+`docs/37` 这一节按 §248 的纪律在**远端最新 base `85dd84cb`** 的全文本上接到 EOF）。
+写集与在飞 `LUM-2572`（`crates/mc-conformance/src/{seed,harness}.rs`）**零交集**；
+`known_gap = 0` ⇒ **0 路由**（门 ⑦ 八个数字逐字不变，见下）。
+
+### 1. 起手读数（当场复算，不是转述）
+
+同一台机、同一份代码、当轮新建库 `mc_c2578` / `multica_c2578`（566 迁移 / 6.8s）、
+`cargo build -p mc-conformance -p mc-migrate` 2m15s、回放 34.6s：
+
+| 读数 | base `0606e4b3` | 本片收尾 | 判据 |
+|---|---|---|---|
+| `fixtures` | 365 | **365** | 不许动（`bad_total = fixtures − pass`） |
+| `pass` | 279 | **283** | +4 |
+| `mismatch` | 56 | **52** | ✅ 未增加（−4） |
+| `unmounted` | 1 | **1** | ✅ |
+| `placeholder` | 0 | **0** | ✅ |
+| `unevaluable` | 29 | **29** | ✅ 逐字不变 |
+| `bad_total`（减法） | 86 | **82** | ✅ `82 == 86 − (283 − 279)` |
+
+`t1_6_taxonomy.py`：`UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17`
+**四族逐字不变**，`REALM_DIFF 33 → 29`（−4）。
+`t1_6_realm_diff_taxonomy.py --json`：`balanced / family_reconciled /
+claimed_matches_expected / equals_mismatch_minus_401_404` **四条全绿**，
+`claimed_elsewhere == 11`（未抢 `LUM-2572`），`stderr` **0 字节**。
+
+### 2. 本片改了什么（就一处）
+
+`withChatTestWorkspaceCtx`（`server/internal/handler/chat_test.go:24`）用
+`middleware.SetMemberContext` 把工作区塞进 **Go context**，再 `req.WithContext(…)` 返回 ⇒
+**线上一个 header 都没有**。上游只有 `newRequest(...)` 会补 `X-Workspace-ID`；用裸
+`httptest.NewRequest` + 这个 helper 建出来的请求**没有**它，而本仓
+`resolve_workspace_id`（header 与 query 都缺）返 `400 invalid workspace id` ⇒ 契约是
+200/204 的四条 `chat/…` 记成 `400`。
+
+修法与既有 `WithDaemonContext` 完全同形（**读 helper 体，不读线上**）：
+新增 `extract_requirements.apply_helper_identity()`（把原来 `DAEMON_CONTEXT_CALLS` 那段
+就地泛化），`extract_upstream_fixtures.py:851` 一行调用 ⇒ 4 条 fixture 的
+`actor.upstream_identity` 补上 `X-Workspace-ID: $testWorkspaceID`、
+`bindings` 补上 `$testWorkspaceID → workspace_id`。
+`newRequest(...)` 的站点本来就是同值 ⇒ `setdefault` 语义 ⇒ **零副作用**。
+
+连带**只有 5 个 golden 文件变**（`chat/002,003,025,026,027`），
+`stats.json` / `extraction-report.tsv` / `PIN` **逐字节不变**（没有任何增删站点）；
+`--check`：`ok: 365 fixtures reproduce byte-identically`（rc=0，stderr 0 字节）。
+其中 `chat/026`（`RejectsInvalidLimit`）本就是 `pass`，但它**过去是因为「没有 workspace ⇒ 400」
+才绿的** —— 现在带上了 workspace header，绿的**理由**才对。
+
+### 3. 🔴 5 条修不动：逐条实测归因（这一节是本片真正的产出）
+
+`LUM-2575` 的归因对**子族 1** 成立，对子族 2/4 只说到症状、对子族 3/5 只说到一半。
+**下面每条都跑过对照回放，不是推演**：
+
+| 子族 | fixture | 修完抽取器之后 | 真正的负责面（实测证据） |
+|---|---|---|---|
+| 2 | `issues/…issue_sort_test.go:19#71` `200←400` | `query.status` 已由 `workspaces/` 改成 `sort_custom_started`，**仍 400** | **行为面**：`crates/mc-http/src/routes/issues/query.rs:140` 的 `parse_order` 白名单没有 `status`（对照：`sort=created_at`→200，`sort=status`→400，`sort=title`→400，`status=…` 单发→200 ⇒ 400 的成因是 **sort 键**，不是「不存在的 status key」） |
+| 3 | `projects/…:430#12` `400←201`、`:530#14` `200←201` | 修「闭包取外层请求」会把两条**变成 skip**：`530`→`value_unresolved: $project.ID`、`430`→`body_unresolved`（`tc.ref`） | **装置面**：本仓**没有 project 行符号**（`BINDABLE` 无、`SEEDED_COLLECTIONS` 无、365 条 golden 里 **0 条** 走 `/api/projects/{id}`；同一文件已有 20 条 `$project.ID` 的 skip，是既成事实）。实测：下潜后 `fixtures 365 → 388`、删除 146 条、新增 169 条 ⇒ **不可交** |
+| 4 | `workspaces/…integration_test.go:977#8` `404←200` | 路径已由 `{testWorkspaceID}` 改成硬编码的 `d1474000-…-0001`，**仍 200** | **装置面**：`crates/mc-http/src/routes/channels/dingtalk.rs:303` 的 `if !configured(&state) { 200 + 空清单 }` 排在 `DingTalkScope::resolve`（`:306`，非成员 404 就在那里）**之前** ⇒ 未配置时**任何** workspace id 都 200。对照：同一个外部 id 打 `DELETE /api/workspaces/<id>` → **404**（路由层 `require_role` 认这个 id） |
+| 5 | `workspaces/…workspace_test.go:141#29` `403←204` | 上游是「**新建**一个 workspace ＋ 插一条 `role='admin'` 的 member 再断言 403」；绑成 `$testWorkspaceID` ⇒ 删的是种子 workspace、身份是 owner ⇒ 204；改成字面量 ⇒ 观测 **404**（`SEED_404 17→18`，且不是 403） | **装置面**：要「第二个 workspace ＋ 非 owner 成员」，`bind` 层面**无解**（§248 自己也已把这条列进装置面交接） |
+
+### 4. 🔴 因此验收表里的 `mismatch ≤47` / `REALM_DIFF ≤24` **不可达**（如实记）
+
+那两条（以及它们推出的「9 条全绿 ⇒ `bad_total 77`」）都假设**9 条都能被抽取器翻绿**。
+但 §248 自己就已经写下「`LUM-2578` 的子族 5 交接给**装置面**」——子族 5 在本片**注定留红**。
+实测上只有 **4 条**能被抽取器单独翻绿，其余 5 条的残留红分别属于
+**行为面 1（子族 2）/ 装置面 3（子族 3、4、5）/ 抽取器 0**。
+按「不许照抄一个永远达不到的数」的纪律，本条只报**减法对账**：
+`bad_total 86 → 82`，且 `82 == 86 − (283 − 279)`；`mismatch 56 → 52`；`REALM_DIFF 33 → 29`。
+
+**`discriminant_checks` 的降级是预期的、也是本片的机器证据**：
+`all_positive_pass` 由 `true` 变 `false`，唯一失败项是
+`chat/TestDeleteChatSession_PrunesChannelRows@chat_test.go:772#27`
+（它的 `want=EXTRACT_IDENTITY_WORKSPACE_HEADER_ABSENT`、`got=None` —— 因为**它已经被修绿了**，
+族里再没有这条）。`all_negative_pass` 仍 `true`。脚本是 **800 行硬上限、本片禁改** ⇒
+正/反例的重新钉选属于下一轮（连同子族 2/4 的规则一起）。
+
+### 5. 被**故意压住**的那一处改动（下一轮连同装置面/行为面一起交）
+
+本片另外实现并**实测**了「函数内 `const NAME = "…"` 压过全仓 bare-name 表」这一处
+（子族 2 的 `query.status` 与子族 4 的 `$testWorkspaceID` 绑定都由它修对），patch 如下：
+
+```diff
+--- a/scripts/extract_upstream_fixtures.py
++++ b/scripts/extract_upstream_fixtures.py
+@@
+         if args:
+             ctx.marshal[m.group(1)] = args[0]
++    # A `const NAME = "…"` in this body is *this* file's value; the repo-wide
++    # `package_literals` table is bare-name keyed, so a same-named local const
++    # elsewhere in the repo otherwise wins the lookup (docs/37 §249).
++    for m in re.finditer(r"(?m)^[ \t]*(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*(\"[^\"]*\")", raw):
++        ctx.defs[m.group(1)] = (span[0] + m.start(2), span[0] + m.end(2))
+```
+
+**实测后果**：只动 7 个 golden 文件（多出子族 2/4 两条 + `chat/026`），无增删站点，
+`fixtures` 仍 365；但 `t1_6_realm_diff_taxonomy.py` 的 `balanced` 由 `true` 变 **`false`** ——
+`EXTRACT_QUERY_LITERAL_MISBOUND` / `EXTRACT_PATH_BOUND_TO_SEEDED_WORKSPACE` 两族的判别式
+钉的是**缺陷形状**（`query` 里有 `/`；路径里有 `{testWorkspaceID}`），缺陷被修对之后
+两条 fixture 仍是红、却不再命中任何族 ⇒ 落进 `unmatched_candidates`。
+那正是 §243 判 **PR #168 不合并**的同一种形状（「把守家族修空了」）。
+所以本片**不单独交它**：它要和「子族 2 的 `sort=status`（行为面）」＋「子族 4 的
+dingtalk 配置（装置面）」**同一轮**落，那时两条 fixture 会**翻绿离场**、两族是*被修好*而空，
+`balanced` 保持 `true`。patch 已实测可用，落下来 ≈ 60s 重抽 ＋ 35s 回放。
+
+### 6. 门 ⑦ / 门 ⑩
+
+* 门 ⑦：`route_parity.py --quiet` rc=0 ⇒ `upstream 456 / local 546 / baseline 546 /
+  implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 /
+  local_only 8` —— **八个数字逐字不变**；`slash_alias_audit.py --quiet` rc=0。
+* 门 ⑩：`file_size_check.py --quiet` rc=0、`violations=0`；
+  `scripts/extract_upstream_fixtures.py` **1862 → 1858 行**（基线记 1863 ⇒ **只缩不长**），
+  `extract_requirements.py` 302 → 331 行（不在清单内，上限 800）。
+* ⚠️ **环境地雷（非本片引入，已挡住门 ⑩）**：共享库
+  `~/multica_workspaces/.repos/…/paperclip-rs.git/config` 现在是 `core.bare = true`
+  （18:50 一次并发 `repo checkout` 之后），于是**所有 worktree** 里裸 `git status` 报
+  `fatal: this operation must be run in a work tree`，`file_size_check.py` 内部的
+  `git rev-parse --show-toplevel` 也一起挂 ⇒ 门 ⑩ 在**没改任何东西**的情况下报 `rc=1`。
+  本轮用 `GIT_DIR=<worktree gitdir> GIT_WORK_TREE=$PWD` 绕过后 rc=0；
+  **没有**去改共享 config（那是平台工具的状态）。
+
+### 7. 本片**没做**的事（如实记）
+
+* 没动任何 `crates/**` / 路由 / 迁移 / `Cargo.toml`；没动 `LUM-2572` 的写集。
+* 没改 `scripts/t1_6_realm_diff_taxonomy.py`（800 行硬上限，余量 0）、
+  `file_size_baseline.tsv`、`docs/fixtures/route-parity-baseline.json`。
+* 没跑全量 `--with-db`（19G 与回放读数无关）；没刷 `crates/mc-conformance/report.json`
+  （刷新权归 M10-9）。
+* 没基于仍在开的 **PR #168** 改任何东西（它改抽取器 ＋ golden，§243 已判不合并）。
+* 私有库 `mc_c2578` + 角色 `mc_c2578` 与 `target/` 收尾清理（先 `pg_terminate_backend`
+  → `dropdb` → `DROP ROLE`）；**未碰**别人的 workdir / `target/` / `mc_lum2572`。
