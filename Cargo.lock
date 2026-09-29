@@ -2654,6 +2654,7 @@ dependencies = [
  "mc-cloud",
  "mc-core",
  "mc-db",
+ "mc-feature-flags",
  "mc-http",
  "mc-realtime",
  "mc-repos",

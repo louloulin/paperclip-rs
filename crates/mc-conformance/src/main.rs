@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use mc_conformance::{
     harness, load_dir, merge, run_tier, to_row, Bindings, Fixture, Outcome, Report, Tier,
-    TierRouters,
 };
 
 /// 回放 `contracts/golden/**` 里的上游 golden fixture。
@@ -103,9 +102,8 @@ async fn run(args: Args) -> Result<ExitCode> {
         args.db_url.clone()
     };
     if let Some(url) = db_url {
-        match harness::database_router(&url, &fixtures).await {
-            Ok((router, db_bindings)) => {
-                let routers = TierRouters::single(router);
+        match harness::database_routers(&url, &fixtures).await {
+            Ok((routers, db_bindings)) => {
                 let observed = run_tier(&routers, &fixtures, &db_bindings, Tier::Database).await;
                 eprintln!(
                     "database 层：{} 条（种子身份 user={} workspace={}）",

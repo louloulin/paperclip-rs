@@ -22,6 +22,7 @@ uuid = { workspace = true }
 mc-core = { path = "../mc-core" }
 mc-cloud = { path = "../mc-cloud" }
 mc-db = { path = "../mc-db" }
+mc-feature-flags = { path = "../mc-feature-flags" }
 mc-http = { path = "../mc-http" }
 mc-realtime = { path = "../mc-realtime" }
 mc-repos = { path = "../mc-repos" }
