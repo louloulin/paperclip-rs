@@ -402,6 +402,11 @@ async fn seed_group(
     crate::device_shape::apply(router, user, workspace_id, agent, runtime_id, group)
         .await
         .with_context(|| format!("apply the device shape for seed group {group:?}"))?;
+    // 上游那条测试里**还有一个成员**（`X-User-ID` 字面量面，`LUM-2591`）：没有他，
+    // `workspace_role` 会先答 404。声明与理由见 `harness::FOREIGN_MEMBERS`。
+    if let Some(decl) = crate::harness::foreign_member_for(group) {
+        crate::harness::seed_foreign_member(db, workspace_id, decl).await?;
+    }
     // 🔴 令牌在 workspace 建好**之后**才签发：`daemon_token.workspace_id` 有指向
     // `workspace(id)` 的外键，而这条外键正是「daemon 身份被限定在某个 workspace 内」
     // 的地基（§209.2 的同一段纪律，现在按分组各签一枚）。
