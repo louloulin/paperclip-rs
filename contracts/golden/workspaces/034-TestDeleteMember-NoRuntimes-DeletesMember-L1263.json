@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "workspaces/TestDeleteMember_NoRuntimes_DeletesMember@server/internal/handler/workspace_test.go:1263#34",
   "method": "DELETE",
-  "path": "/api/workspaces/a05b0e10-ee7a-4603-a72d-a548b2390cb2/members/cccccccc-cccc-cccc-cccc-cccccccccccc",
-  "path_params": {},
+  "path": "/api/workspaces/{testWorkspaceID}/members/cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "path_params": {
+    "testWorkspaceID": "$testWorkspaceID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,7 +36,8 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
-      "$testUserID": "user_id"
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
     }
   }
 }

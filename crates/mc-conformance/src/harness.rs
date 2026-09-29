@@ -91,7 +91,8 @@ pub fn stateless_routers() -> Result<TierRouters> {
     Ok(TierRouters::with_cloud_configured(base, cloud))
 }
 
-/// database 层：真库 + 迁移 + 一个种子身份 + 一枚现场签发的 `mdt_` 身份。
+/// database 层：真库 + 迁移 + 一个种子身份 + 一枚现场签发的 `mdt_` 身份
+/// **+ 几行用真实路由种下的实体**。
 ///
 /// 返回 `(router, bindings)`；`bindings.workspace_id` 是**用 router 自己**新建的
 /// workspace（仓库层没有 workspace create API），所以种子身份一定是 owner 成员。
@@ -100,6 +101,10 @@ pub fn stateless_routers() -> Result<TierRouters> {
 /// `daemon_token.workspace_id` 有指向 `workspace(id)` 的外键，而「daemon 身份被限定在
 /// 某个 workspace 内」正是上游 `TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace`
 /// 断言的那件事 —— 挂在一个现编的 UUID 上，那个断言就恒为真（而恒为真的断言不是断言）。
+///
+/// 🔴 实体种子（[`crate::seed`]）也在这之后：它依赖 agent ⇒ runtime ⇒ workspace 这条
+/// 链，每一环都得先存在。顺序在这里是**语义**而不是风格 —— 种子建在 workspace 之前
+/// 会整批失败，而失败信息（`404`）与「种子没建」在报告里长得一模一样。
 pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
     let db = mc_db::pool::Db::connect(url, 4, 0)
         .await
@@ -161,9 +166,15 @@ pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
     let daemon = crate::daemon_token::register(&daemon_repo, mc_core::Id::from(workspace_id))
         .await
         .context("mint + register daemon token")?;
+
+    // 实体种子：agent / issue / chat session / task，**用 router 自己的路由**建。
+    let seed = crate::seed::seed(&router, &db, user_id, workspace_id)
+        .await
+        .context("seed the entity rows the fixtures address by id")?;
+
     Ok((
         router,
-        Bindings::with_daemon_token(user_id, workspace_id, daemon.raw),
+        Bindings::with_seeded(user_id, workspace_id, daemon.raw, seed),
     ))
 }
 

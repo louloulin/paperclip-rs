@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "chat_sessions/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#2",
   "method": "POST",
-  "path": "/api/chat-sessions/d1473000-0000-4000-8000-000000000031/messages",
-  "path_params": {},
+  "path": "/api/chat-sessions/{sessionId}/messages",
+  "path_params": {
+    "sessionId": "$testChatSessionID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -38,9 +40,11 @@
     "notes": [
       "upstream drove the handler directly (SendChatMessage); replayed here against the router, which also applies its middleware",
       "status read from the `w.Code` comparison that follows the call",
-      "path normalised from upstream's historical /api/chat-sessions/d1473000-0000-4000-8000-000000000031/messages to /api/chat/sessions/d1473000-0000-4000-8000-000000000031/messages"
+      "path normalised from upstream's historical /api/chat-sessions/{testChatSessionID}/messages to /api/chat/sessions/{testChatSessionID}/messages",
+      "path parameters renamed to the registered route template /api/chat/sessions/{sessionId}/messages ({testChatSessionID}→{sessionId})"
     ],
     "bindings": {
+      "$testChatSessionID": "chat_session_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

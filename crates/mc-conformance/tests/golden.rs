@@ -373,6 +373,123 @@ async fn json_subset_is_checked_against_a_live_route() {
     .is_err());
 }
 
+#[test]
+fn every_seeded_symbol_is_provided_by_the_seeder() {
+    // 离线判据：抽取器发出的每个 `$test…ID` 符号，seeder 都得供得起。
+    // 承重：供不起的症状是那批 fixture 全部变成 `unbound symbol` → `unevaluable`，
+    // 而 unevaluable 在总数里**不显眼**（不可判定与判定为过在报告里长得一样）。
+    // 漏一个的代价是静默的，所以这条不依赖数据库，每次 `cargo test` 都跑。
+    let fixtures = load_dir(&golden_dir()).expect("golden fixtures must load");
+    let mut used: Vec<String> = fixtures
+        .iter()
+        .flat_map(|fx| fx.path_params.values().chain(fx.query.values()))
+        .filter_map(|v| v.strip_prefix('$').map(str::to_owned))
+        .filter(|v| v.starts_with("test") && v.ends_with("ID"))
+        .collect();
+    used.sort();
+    used.dedup();
+    assert!(
+        used.iter().any(|s| s == "testAgentID") && used.iter().any(|s| s == "testIssueID"),
+        "fixture 集里没出现本片引入的符号（抽取器可能没重跑）：{used:?}"
+    );
+    for sym in &used {
+        // `$testUserID` / `$testWorkspaceID` 由 `Bindings` 自己持有，其余查 seeder。
+        let provided = if sym == "testUserID" || sym == "testWorkspaceID" {
+            true
+        } else {
+            let symbol = format!("${sym}");
+            mc_conformance::seed::Seed::SYMBOLS.contains(&symbol.as_str())
+        };
+        assert!(
+            provided,
+            "抽取器发出了 ${sym}，但 seeder 没有对应字段（unknown symbol ⇒ 整批 unevaluable）"
+        );
+    }
+}
+
+/// 🔴 本片的算式（§209.3）。
+///
+/// 门 ⑨ 实测：100 条 `→404` 里 **60 条**变成真判定、**40 条**仍 404、0 条滑到 400。
+/// 这条测试按**自己的口径**（只数带种子符号的 95 条 fixture）把同一件事拆成三桶：
+///
+/// | 桶 | 条数 | 含义 |
+/// |----|------|------|
+/// | `RESOLVED` | 56 | 判成 `pass`，且观测状态码**等于**各自期望值 |
+/// | `STILL_404` | 24 | 仍观测到 404 —— 归因见 docs/37 §209.4 |
+/// | `OTHER`    | 15 | 既不是 pass 也不是 404：**本仓更严**的方向（`200→400` 等），本片刻意不碰 |
+///
+/// 三个常数加起来恒等于带种子符号的 fixture 总数，所以任何一个桶被「平移」走
+/// （404 变 400、404 变 401、pass 变 mismatch）都会让某条断言失败。
+///
+/// 🔴 单独说 `OTHER`：那一桶是**本仓比上游更严**造成的差异（§203 纪律：方向相反，
+/// 不是同一个问题）。本片把它和 `STILL_404` 一起钉住，是为了防止有人把 404 挪进
+/// 这一桶 —— 那会让 `STILL_404` 变小而看起来像进展。
+#[tokio::test]
+#[ignore = "需要 MULTICA_TEST_DATABASE_URL（真库 + 迁移 + 种子 + 实体行）"]
+async fn seeded_symbols_convert_404_into_real_judgements() {
+    const RESOLVED: usize = 56;
+    const STILL_404: usize = 24;
+    const OTHER: usize = 15;
+
+    let Some(url) = harness::database_url_from_env() else {
+        eprintln!("seeded_symbols_convert_404_into_real_judgements: 未设置 URL，跳过");
+        return;
+    };
+    let fixtures = load_dir(&golden_dir()).expect("golden fixtures must load");
+    let (router, bindings) = harness::database_router(&url)
+        .await
+        .expect("database tier bootstrap");
+    let routers = mc_conformance::TierRouters::single(router);
+    let observed = run_tier(&routers, &fixtures, &bindings, Tier::Database).await;
+
+    let mut resolved = 0usize;
+    let mut still_404: Vec<&str> = Vec::new();
+    let mut other: Vec<&str> = Vec::new();
+    for (fx, got) in fixtures.iter().zip(&observed) {
+        let seeded = fx.path_params.values().any(|v| {
+            matches!(
+                v.as_str(),
+                "$testAgentID" | "$testIssueID" | "$testChatSessionID" | "$testTaskID"
+            )
+        });
+        if !seeded {
+            continue;
+        }
+        if got.outcome == Outcome::Pass {
+            assert_eq!(
+                got.status_observed,
+                Some(fx.expect.status),
+                "{}: 判成 pass 但状态码不等于期望值",
+                fx.id
+            );
+            resolved += 1;
+        } else if got.status_observed == Some(404) {
+            still_404.push(&fx.id);
+        } else {
+            other.push(&fx.id);
+        }
+    }
+    assert_eq!(
+        resolved, RESOLVED,
+        "真判定条数变了：docs/37 §209 的前后读数与归因表要跟着改"
+    );
+    assert_eq!(
+        still_404.len(),
+        STILL_404,
+        "仍观测到 404 的条数变了（这正是 404→400/401 平移的信号）：docs/37 §209 归因表要跟着改"
+    );
+    assert_eq!(
+        other.len(),
+        OTHER,
+        "「本仓更严」那一桶的条数变了：docs/37 §209 归因表要跟着改"
+    );
+    eprintln!(
+        "§209 算式：带种子符号的 {} 条 fixture = {resolved} 真判定 / {} 仍 404 / {OTHER} 本仓更严",
+        resolved + still_404.len() + other.len(),
+        still_404.len(),
+    );
+}
+
 #[tokio::test]
 #[ignore = "需要 MULTICA_TEST_DATABASE_URL（真库 + 迁移 + 种子身份）"]
 async fn database_tier_replays_every_decidable_fixture() {

@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "agents/TestListAgentTasksReturnsErrorWhenUsageLoadFails@server/internal/handler/agent_task_usage_response_test.go:186#19",
   "method": "GET",
-  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1/tasks",
-  "path_params": {},
+  "path": "/api/agents/{testAgentID}/tasks",
+  "path_params": {
+    "testAgentID": "$testAgentID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,6 +36,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testAgentID": "agent_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

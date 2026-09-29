@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "daemon/TestAckTaskCancelled@server/internal/handler/daemon_test.go:4495#17",
   "method": "POST",
-  "path": "/api/daemon/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/cancel-ack",
-  "path_params": {},
+  "path": "/api/daemon/tasks/{testTaskID}/cancel-ack",
+  "path_params": {
+    "testTaskID": "$testTaskID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -30,7 +32,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {},
+    "bindings": {
+      "$testTaskID": "task_id"
+    },
     "requires": [
       "daemon_token"
     ]

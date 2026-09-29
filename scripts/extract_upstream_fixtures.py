@@ -63,6 +63,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import extract_borrowed_ids as borrowed
 import extract_i4_direct_handler as i4
 import extract_requirements as rq
 
@@ -130,10 +131,15 @@ SITE_PATTERNS = (
 )
 
 # The runner has to invent a value for every symbol a fixture still carries, and
-# an invented value can change the expected status.  Only these two are promised
-# by the runner (to a seeded identity, or to a fresh UUID with no database), so
-# anything else makes the case skipped instead of quietly wrong.
-BINDABLE = {"$testUserID": "user_id", "$testWorkspaceID": "workspace_id"}
+# an invented value can change the expected status.  Only these are promised by
+# the runner, so anything else makes the case skipped instead of quietly wrong.
+# The four domain symbols exist because a UUID in a request path is a *database
+# row*, not a compiled-in value — see scripts/extract_borrowed_ids.py.
+BINDABLE = {
+    "$testUserID": "user_id", "$testWorkspaceID": "workspace_id",
+    "$testAgentID": "agent_id", "$testIssueID": "issue_id",
+    "$testChatSessionID": "chat_session_id", "$testTaskID": "task_id",
+}
 
 # `for _, path := range []string{...}` tables: upstream's auth matrices are written
 # this way, and each element is a separate oracle case.
@@ -421,22 +427,6 @@ def param_names(span_text: str) -> list[str]:
     return names
 
 
-def package_literals(files: dict[str, tuple[str, str, dict[int, str]]]) -> dict[str, str]:
-    """``name = "<literal>"`` definitions, first one wins.
-
-    These are the only upstream values a fixture may carry verbatim: they are
-    compiled in, not database rows.  ``var testUserID string`` has no literal and
-    therefore stays a symbol.
-    """
-    values: dict[str, str] = {}
-    for _rel, (_src, masked, literals) in files.items():
-        for m in re.finditer(r"(?m)^\s*(?:var|const)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*", masked):
-            start = m.end()
-            if masked[start : start + 1] == '"' and start in literals:
-                values.setdefault(m.group(1), literals[start])
-    return values
-
-
 # --------------------------------------------------------------------------- #
 # Literal / body decoding
 # --------------------------------------------------------------------------- #
@@ -689,7 +679,7 @@ class Interpreter:
                 if got is not None:
                     return got
             if text in self.pkg_literals:
-                return Value("literal", self.pkg_literals[text], "package const")
+                return Value("literal", self.pkg_literals[text], borrowed.BORROWED_NOTE)
             # A value the test computed (an id read out of an earlier response)
             # stays symbolic.  Returning None here would silently drop it and
             # shorten the URL into a *different* route.
@@ -744,6 +734,15 @@ class Interpreter:
             if val is None:
                 return None
             if val.kind == "literal" and isinstance(val.value, str):
+                # 🔴 A UUID borrowed from `pkg_literals` is not a compiled-in
+                # value (see scripts/extract_borrowed_ids.py).  When the route says
+                # which row it addresses, bind the row instead of inlining it.
+                symbol = borrowed.seeded_symbol_for(pieces, val.value, val.note)
+                if symbol is not None:
+                    mark = f"{MARK}{len(markers)}{MARK}"
+                    markers[mark] = Value("symbol", symbol, "seeded row")
+                    pieces.append(mark)
+                    continue
                 pieces.append(val.value)  # a named constant inlines like a literal
                 continue
             if val.kind != "symbol":
@@ -1247,7 +1246,7 @@ class Extractor:
         for rel, (_src, masked, _lits) in self.sources.items():
             for fn in find_functions(masked, rel):
                 self.funcs.setdefault(fn.name, fn)
-        self.pkg_literals = package_literals(self.sources)
+        self.pkg_literals = borrowed.package_literals(self.sources)
         self.recorder_sites = sum(
             masked.count("httptest.NewRecorder()") for _src, masked, _lits in self.sources.values()
         )

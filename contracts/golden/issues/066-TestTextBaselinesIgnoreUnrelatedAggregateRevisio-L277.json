@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:277#66",
   "method": "PUT",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913",
-  "path_params": {},
+  "path": "/api/issues/{id}",
+  "path_params": {
+    "id": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -35,9 +37,11 @@
   "extraction": {
     "notes": [
       "upstream drove the handler directly (UpdateIssue); replayed here against the router, which also applies its middleware",
-      "status read from the `staleTitle.Code` comparison that follows the call"
+      "status read from the `staleTitle.Code` comparison that follows the call",
+      "path parameters renamed to the registered route template /api/issues/{id}/ ({testIssueID}→{id})"
     ],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

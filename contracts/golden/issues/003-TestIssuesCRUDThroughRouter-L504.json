@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestIssuesCRUDThroughRouter@server/cmd/server/integration_test.go:504#3",
   "method": "GET",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913",
-  "path_params": {},
+  "path": "/api/issues/{testIssueID}",
+  "path_params": {
+    "testIssueID": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -31,6 +33,7 @@
   "extraction": {
     "notes": [],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testWorkspaceID": "workspace_id"
     }
   }

@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#23",
   "method": "GET",
-  "path": "/api/chat/sessions/d1473000-0000-4000-8000-000000000031/messages",
-  "path_params": {},
+  "path": "/api/chat/sessions/{sessionId}/messages",
+  "path_params": {
+    "sessionId": "$testChatSessionID"
+  },
   "query": {},
   "headers": {},
   "actor": {
@@ -29,9 +31,11 @@
   "extraction": {
     "notes": [
       "upstream drove the handler directly (ListChatMessages); replayed here against the router, which also applies its middleware",
-      "status read from the `legacyW.Code` comparison that follows the call"
+      "status read from the `legacyW.Code` comparison that follows the call",
+      "path parameters renamed to the registered route template /api/chat/sessions/{sessionId}/messages ({testChatSessionID}→{sessionId})"
     ],
     "bindings": {
+      "$testChatSessionID": "chat_session_id",
       "$testUserID": "user_id"
     }
   }

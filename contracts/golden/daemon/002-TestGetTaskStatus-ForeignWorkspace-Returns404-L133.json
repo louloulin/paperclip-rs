@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "daemon/TestGetTaskStatus_ForeignWorkspace_Returns404@server/internal/handler/daemon_task_lookup_test.go:133#2",
   "method": "GET",
-  "path": "/api/daemon/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/status",
-  "path_params": {},
+  "path": "/api/daemon/tasks/{testTaskID}/status",
+  "path_params": {
+    "testTaskID": "$testTaskID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -30,7 +32,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {},
+    "bindings": {
+      "$testTaskID": "task_id"
+    },
     "requires": [
       "daemon_token"
     ]

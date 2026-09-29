@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestComment_SquadPrivateLeader_PlainMemberNoEnqueue@server/internal/handler/squad_private_leader_test.go:185#101",
   "method": "POST",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/comments",
-  "path_params": {},
+  "path": "/api/issues/{id}/comments",
+  "path_params": {
+    "id": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,9 +36,11 @@
   "extraction": {
     "notes": [
       "upstream drove the handler directly (CreateComment); replayed here against the router, which also applies its middleware",
-      "status read from the `w.Code` comparison that follows the call"
+      "status read from the `w.Code` comparison that follows the call",
+      "path parameters renamed to the registered route template /api/issues/{id}/comments ({testIssueID}→{id})"
     ],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testWorkspaceID": "workspace_id"
     }
   }

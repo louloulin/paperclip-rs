@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "agents/TestGetAgent_RejectsForgedAgentIDHeader@server/internal/handler/agent_access_test.go:520#13",
   "method": "GET",
-  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1",
-  "path_params": {},
+  "path": "/api/agents/{id}",
+  "path_params": {
+    "id": "$testAgentID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -33,9 +35,11 @@
   "extraction": {
     "notes": [
       "upstream drove the handler directly (GetAgent); replayed here against the router, which also applies its middleware",
-      "status read from the `w.Code` comparison that follows the call"
+      "status read from the `w.Code` comparison that follows the call",
+      "path parameters renamed to the registered route template /api/agents/{id}/ ({testAgentID}→{id})"
     ],
     "bindings": {
+      "$testAgentID": "agent_id",
       "$testWorkspaceID": "workspace_id"
     }
   }
