@@ -11,4 +11,3 @@
 #   * 清单内文件 <= 上限         -> 失败（请从基线删除，它已达标）
 #   * 清单内文件已不在 git 里    -> 失败（请从基线删除）
 scripts/extract_upstream_fixtures.py	1863
-scripts/schema_snapshot.py	1093
