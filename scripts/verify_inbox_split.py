@@ -13,8 +13,9 @@
 （token 序列一致）。两类**分开计数上报**。
 
 用法:
-    python3 scripts/verify_inbox_split.py                 # 读 git HEAD 的原文件
-    python3 scripts/verify_inbox_split.py --orig <path>   # 指定原文件
+    python3 scripts/verify_inbox_split.py                 # 自动回溯到原文件所在的提交
+    python3 scripts/verify_inbox_split.py --ref <sha>     # 指定 git ref
+    python3 scripts/verify_inbox_split.py --orig <path>   # 直接读一个原文件副本
 退出码: 0 = 未登记缺失 = 0 且 impl 自洽且无 item 外的可执行行丢失且全部文件 <= 800 行
 """
 
@@ -162,16 +163,39 @@ def normalize(text: str) -> str:
     return text
 
 
+def default_ref() -> str:
+    """原文件所在的 ref —— **最近一次还存在 `tests/inbox.rs` 的提交**。
+
+    提交之后 `HEAD:tests/inbox.rs` 已经不存在，所以不能写死 `HEAD`；这里从 `HEAD`
+    往回找最后一个还含该路径的提交，合并前后都能直接跑。
+    """
+    out = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--diff-filter=AM", "--", ORIG],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    if not out:
+        raise SystemExit(
+            f"FAIL: git 历史里找不到仍含 {ORIG} 的提交（用 --ref <sha> 或 --orig <path> 指定）"
+        )
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--orig", default=None, help=f"原文件路径（默认取 git HEAD 的 {ORIG}）")
+    ap.add_argument("--orig", default=None, help="直接读一个原文件副本，跳过 git")
+    ap.add_argument("--ref", default=None, help="原文件所在的 git ref（默认自动回溯）")
     args = ap.parse_args()
 
     if args.orig:
+        ref = "(--orig)"
         src = Path(args.orig).read_text()
     else:
+        ref = args.ref or default_ref()
         src = subprocess.run(
-            ["git", "show", f"HEAD:{ORIG}"], cwd=REPO, capture_output=True, text=True, check=True
+            ["git", "show", f"{ref}:{ORIG}"], cwd=REPO, capture_output=True, text=True, check=True
         ).stdout
 
     new_files = sorted(TEST_DIR.glob("*.rs"))
@@ -185,9 +209,10 @@ def main() -> int:
 
     print("=" * 78)
     print(
-        "LUM-2544 纯搬家自证 —— %s (%d 行) -> %s/ (%d 文件, %d 行)"
+        "LUM-2544 纯搬家自证 —— %s @ %s (%d 行) -> %s/ (%d 文件, %d 行)"
         % (
             ORIG,
+            ref[:12],
             src.count("\n"),
             TEST_DIR.name,
             len(new_files),
