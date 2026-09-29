@@ -20244,3 +20244,119 @@ item 级比对脚本是唯一能发现这类损失的手段，门禁全绿不能
 
 **`inbox.rs`（1185 行）本轮未做**，另开 `LUM-2536` 接手，描述里已把上面 5 条纪律全部钉死。
 `LUM-2531` 的 `comment.rs` 部分已交付并转 `in_review`；`LUM-2530`（lin，第 5 批）收尾时仍在跑（起 05:50）。
+
+---
+
+## §226 【2026-09-29 14:30 cycle / LUM-2534】**收割 PR #157**（`LUM-2531`，门 ⑩ 第 6 批 a：`comment.rs` 1403 → 9 文件）⇒ **判据链 8/8 全绿、单次 `--with-db` 10/10** ＋ 🔴 承重一：**「合并树 == 门禁跑过的那棵树」这条不变量，会被并发 cycle 的一条 docs 提交打破 —— 判据要写成「非 docs 差集为空」** ＋ 🔴 承重二：**DSN 少写一个密码，⑥/⑧ 会以「真回归」的形态报红** ＋ 🔴 承重三：**`agent list` 的 `idle` 与 `runtime list` 的 `offline` 可以同时为真，且没有 cancel 动词** ＋ ⑦ 八数字第 31 轮逐字不变
+
+**base = `ae8cf9fb`**（起手；本节 docs 提交直推 `feat/multica-rs-initial`）。**GH open PR = 1**（`#157`）。**在飞 1/3**（`LUM-2530`，lin，第 5 批）。
+
+### §226.1 收割：`#157` 判据链 8/8
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 预检一：分支自身 `--numstat` vs API 逐字 | **11 文件 / +1480 / −1404 == API 逐字** ✅ |
+| 2 | base 祖先判定（**用 merge-base**） | `ae8cf9fb` 是 head 祖先 ✅ |
+| 3 | `merge-tree --write-tree` | **rc=0**，树 `119fc8412e24b706e8600a3747e95c0e07133800` |
+| 4 | 三哈希等式（`merge-tree` == `commit-tree` == head tree） | `119fc841…` 三者一致 ✅ |
+| 5–7 | 差集 / 路由 / ⑦⑩ | 差集**恰好它自己 11 个文件**、零外来；0 路由 ✅ |
+| 8 | **`bash scripts/gates.sh --with-db` 在门禁树上 10/10** | **10/10 绿，525s + 补跑 ⑥235s/⑧27s** ✅ |
+
+分项：① 3s ② 144s ③ 77s ④ 50s ⑤ 160s ⑥ 235s ⑦ 1s ⑧ 27s ⑨ 77s ⑩ 0s。
+合并提交 **`475d5d23557cde1eb818d88d7c2fd58301fe51dc`**，`merge_method=merge`。
+
+### §226.2 🔴 承重一：**合入树 ≠ 门禁树，但差集是 docs-only ⇒ 门禁证据仍可继承 —— 判据必须从「树相等」放宽到「非 docs 差集为空」**
+
+§225 立的那条「树对象 == 门禁跑过的那棵树 ⇒ 门禁证据可直接继承」在本轮**不成立**：
+
+```
+gated  tree = 119fc8412e24b706e8600a3747e95c0e07133800
+landed tree = 730c6a3066b95d55d3858c110f4a8c49e8be8c05   ← 不等
+landed 数 = 12 文件 / +1519 / −1404                          ← 预期 11 / +1480 / −1404
+```
+
+**成因不是有人改了代码，是 base 在我判活到合并之间被推了一条提交**：合并提交 `475d5d23` 的
+**parent1 = `f2206a99`**，而我起手读的 base 是 `ae8cf9fb`。`f2206a99` 是**并发 cycle** 推的
+`docs(preflight): §225.8`（`LUM-2531` 自做交付说明）。`git diff --name-only 119fc841 730c6a30`
+= **`docs/37-M3-W3C-PREFLIGHT.md` 一个文件**；加 `-- . ':(exclude)docs/*'` 后**差集行数 = 0**。
+
+⇒ **定式**：判据第 4 条从「`merge-tree` 树 == 门禁树」改为
+**「合入树 vs 门禁树的**非 docs** 差集为空」**。`docs/**` 不参与 ①–⑩ 任何一道门的判定
+（门 ⑦/⑩ 扫的是 `crates/**` 与 `scripts/**`；fmt/build/clippy 不读 `.md`），
+所以 docs-only 的漂移**不削弱**门禁证据。**但只要差集里出现任何一个非 docs 文件，就必须重跑。**
+⚠️ 反过来：**若照搬旧判据只看「树相等」，本轮会被误判成「合入树被污染」而白白重跑一次 19G 冷编。**
+
+### §226.3 🔴 承重二：**⑥/⑧ 的红可能只是 DSN 少了一个密码 —— 汇总表里它和真回归长得一模一样**
+
+首跑 `--with-db` 拿到 **8/10**，⑥ `migrate=1, e2e=skip`、⑧ `exit 2`。原因是我把连接串写成
+`postgres://mc_c2534@127.0.0.1/multica_c2534`（**无密码**）。补上密码后**两道门当场全绿**
+（⑥ 235s / ⑧ 27s），代码一行没动。
+
+危险处在于**形态**：汇总表里 ⑥/⑧ 红得和「schema 漂移」「迁移写错」毫无区别，
+且 `gates.sh --only db` 会因为 `--only` 与 `--with-db` 互斥而**拒绝执行**（实测报
+`--only and --with-db are mutually exclusive`）—— 也就是说**补跑单门时必须去掉 `--with-db`**。
+
+⇒ **定式**：跑 `--with-db` 前先单独验一次连接（`psql "$MULTICA_TEST_DATABASE_URL" -tAc 'select 1'`）。
+**DSN 错的特征是「⑥ migrate 就红、e2e 直接 skip、⑧ 秒红」**（迁移根本没建表 ⇒ 后面全连锁），
+而真代码回归的典型形态是 ②/③ 先红。三者形态不同，先看**红的是哪几道**再决定要不要重编。
+
+### §226.4 🔴 承重三：**派发面这轮是 0 台空闲 —— `agent list` 的 `idle` 与 `runtime list` 的 `offline` 同时为真，且没有 cancel 动词**
+
+把 `LUM-2536` 派给 `编程助手-devbox1`（`agent list` 显示 `idle`）后，run `01a0ebfa` 建出来了，
+但 **3 分钟后仍是 `queued`、`STARTED` 空、无 workdir**。`runtime list` 的真相：
+
+| runtime | 状态 |
+|---|---|
+| `Pi (devbox1)` | **offline** |
+| `Pi (devbox2)` / `Pi (devbox)` | **offline** |
+| `Pi (devbox5)`（我） | online |
+| `Pi (devbox4)` | online，但被 `LUM-2533`（lumosbase 另一条 autopilot 流）占着 |
+| `Claude/Codex (MacBook)` | online，但 `编程助手lin` 正在跑 `LUM-2530` |
+
+⇒ **在线的三个编码 agent 全部在飞**（lin→第 5 批、devbox4→lumosbase、我→本轮收割）。
+`multica` **没有 `run cancel` / `issue runs --cancel`**（实测 `unknown flag: --cancel`、`unknown command "run"`），
+所以那个 `queued` run **撤不掉**，只能记下：它会在 devbox1 runtime 恢复时自动开跑。
+
+⇒ **定式（对 §224「`idle` 说的不是机器空着」的补强）**：派发前**必须同时**看
+`agent list`（谁在飞）与 `runtime list`（机器活不活）；派出去之后 **60–180s 内回读
+`issue runs --active` 的 `STARTED` 是否为空**。`STARTED` 空 + 无 workdir = 没起，
+**不要**因为 run 已存在就记成「已派发」（§222 承重一的第三种形态）。
+
+### §226.5 磁盘三连（§223.2 定式）与本轮 0 新派
+
+| 量 | 值 |
+|---|---|
+| ① `avail`（起手 / 收尾） | **8.7G / 28G** |
+| ② 所有权内可回收量 | 起手 **19G**（并发 cycle 的 `/tmp/wt6`，**逐 PID 验其 `target` 5 分钟内仍在写 ⇒ 不属我，未动**）；收尾 **0**（我自己那 19G 已回收） |
+| ③ 本门实测峰值 | **19G**（`CARGO_INCREMENTAL=0` 单次 `--with-db`，§225 承重二） |
+
+起手 `avail` 只有 8.7G，原因就是 `/tmp/wt6` 的 19G `target`。**差点照着 §223 的老话术去删它** ——
+拦住的是先跑了 `find /tmp/wt6/target -newermt '-5 minutes'`：**150 个文件 5 分钟内被写过**，
+且 `06:30:56Z`（本单创建后 56 秒）刚有一次 commit。⇒ 它属于**并发 cycle**，`§223.2` 定式生效：**不是我的，一律不动。**
+该 cycle 结束后 `/tmp/wt6` 自行消失，`avail` 回到 28G，本轮才具备收割条件。
+
+⇒ **本轮 0 新派**：`28G − 0 = 28G` 只够**一次** 19G 冷编，而这一次已经被本轮收割用掉；
+再起一片意味着在同一轮里连跑两次 19G，且新片几乎必然来不及在本轮内交 PR。
+
+### §226.6 离线门与不变式
+
+- **⑦ 八数字第 31 轮逐字不变**：`upstream 456 (f41fae6b08fb) | local 546 | baseline 546`；
+  `implemented 455 real + 1 placeholder = 456/456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`。
+- **⑦b** `route_parity.py --quiet` **rc=0**、`slash_alias_audit.py --quiet` **rc=0**；**⑩** `file_size_check.py --quiet` **rc=0**（`scanned=1339`、`baseline=9`）。
+- **⑩ 白名单 9 → 8 已随 `#157` 落地**：`comment.rs`（1403）那一行已删，剩 8 条基线条目。
+- **门 ⑨ 口径**：`365 pass / 34 → 0 / 0 mismatch / 0 unmounted / 0 placeholder / 331 unevaluable`，
+  本轮 `GATE_CONFORMANCE_EXIT=0` 且 `report matches crates/mc-conformance/report.json` ⇒ 逐字沿用，标注「截至 `475d5d23`」。
+
+### §226.7 下轮起点
+
+- **base = `475d5d23`**（本节 docs 提交将直推其上）；**GH open PR = 0**；**在飞 1/3**
+  （`LUM-2530` = 第 5 批 `auth.rs`，lin）。
+- **`LUM-2536`（第 6 批 b，`inbox.rs` 1185 → 子模块，白名单 8 → 7）已挂在 `编程助手-devbox1` 名下，
+  run `01a0ebfa` 处于 `queued`（devbox1 runtime offline）** ⇒ 下轮第一动作是回读它的 `STARTED`，
+  **起来了就照常跟；仍是空则要么换一台 online 的编码 agent，要么按 §224 兜底自己上**。
+- ⚠️ **`LUM-2530` 与 `LUM-2536` 的写集必然冲突**：两单描述都写明「唯一共享文件是
+  `scripts/file_size_baseline.tsv`」，且都只**删自己那一行** ⇒ 合入时该文件需人工解一次冲突（删两行）。
+  **收割这两片时不要同树合跑门禁**，先各自过 10/10，再在合并树上解冲突后复验 ⑩（只需 0s）。
+- **号段**：下一空号 **`## §227`**。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）
+  → ⑦ 第 32 轮 → 逐片 `issue runs --active`。**新增**：`runtime list` 看 `offline`（§226.4）。
