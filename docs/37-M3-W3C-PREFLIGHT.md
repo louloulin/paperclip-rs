@@ -23265,3 +23265,141 @@ bad_total = fixtures − pass = 86          ← 用减法交叉核对（§237 �
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah；
 `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**。
+
+## §249 【LUM-2579 03:00 cycle】收割 PR #172（T1-6-B2，判据链 6/6）＋ **⑨ 那条红已被证明是 base 存量** ＋ 解 `LUM-2567` 阻塞 ＋ 派行为面入参校验族
+
+起手 base `85dd84cb`（`git rev-parse` 与 `git ls-remote` 逐字相同；`multica repo checkout --ref
+feat/multica-rs-initial` 这次**直接落目标分支**，不再需要事后 `reset --hard`）。
+`df -h /` 连采两次 = **24G / 50%**；`pg_lsclusters` 5432 = `online`；daemon `running_task_count = 1`
+（只有 cycle 自己）⇒ **切片位 2 个空位**（`LUM-2572`/`LUM-2575` 双双 `in_review`、`LUM-2578` 在
+devbox4 在飞）。
+
+### 6.1 判据链（PR #172，head `ce66a976`）
+
+| # | 判据 | 结果 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API `files` | **逐字相同**：7 文件 `85/0 · 2/0 · 14/4 · 56/3 · 119/0 · 293/0 · 103/2` |
+| ② | 形态判定 | **形态③**：`merge-base = df2b0a01 ≠ base 85dd84cb`（base 非 head 祖先） |
+| ②' | base 前进段取证 | `df2b0a01..85dd84cb` 只有 `docs/37-M3-W3C-PREFLIGHT.md` ＋ 新增 `scripts/t1_6_realm_diff_taxonomy.py`；**`git diff --name-only df2b0a01 85dd84cb -- crates/` 为空**；`report.json` blob 在 `df2b0a01` / `85dd84cb` / `ce66a976` 三处**同为 `db01d842`** ⇒ 前进段对 Rust 惰性 |
+| ③ | 四读数 | `git merge-tree --write-tree` == `refs/pull/172/merge^{tree}` == 预演提交 `80d155cf^{tree}` == 落地 `5e0ca50b^{tree}` = **`c629be87`**（四者同哈希） |
+| ④ | 红归因 | 见 §6.2 —— **base 上逐字复现，本片零影响** |
+| ⑤ | API 钉 sha | 40 位 `ce66a97675610703cef4af0d0affa8405a63e2d5` ＋ `merge_method=merge` → `merged: true` |
+| ⑥ | 落地树 | `5e0ca50b^{tree} == c629be87`；`git diff c629be87 5e0ca50b` **空**；parents = `85dd84cb` ＋ `ce66a976` |
+
+`merge-tree` 与合并树在**全部 Rust 路径上与 head 树恒等**（合并树 − head 树 = `docs/37` ＋ 一个
+800 行静态 `.py`）⇒ 合并树上的 Rust 门禁读数就是 head 的读数。
+
+### 6.2 🔴 本轮唯一实质产出：**`contract` job 的红与本片无关，已证明**
+
+head `ce66a976` 的 CI 是 **3 绿 1 红**（`db` / `fast` / `image` 绿，`contract` 红）。`contract` =
+`route-parity` ＋ `conformance`，而同一 job 里 **⑦ 是 `GATE_ROUTE_PARITY_EXIT=0`** ⇒ 红点只在 ⑨：
+
+```
+conformance report drifted from crates/mc-conformance/report.json
+  first difference at line 17:
+    committed:  "unevaluable": 13
+    fresh:      "unevaluable": 12
+GATE_CONFORMANCE_EXIT=1
+```
+
+`line 17` = `totals.by_actor.agent.unevaluable`（`report.json:14` 的总 `unevaluable` 两侧都是 331，
+所以「first difference」只是**第一个**差异点，不代表只有一处）。
+
+**取证（在本机 base 树上真跑，不是转述）**：把 `mc-conformance` 在两棵树上各跑一次 stateless
+回放并把 fresh 报告写到 `/tmp`（`--write` 接受任意路径，**不碰仓内 `report.json`**）：
+
+| 树 | `--check` rc | first difference | fresh 报告 md5 |
+|---|---|---|---|
+| base `85dd84cb` | **1** | `line 17` / `13 → 12` | `3ba98e20971a2f0de3e2f6f565de232b` |
+| 合并树 `c629be87` | **1** | `line 17` / `13 → 12` | `3ba98e20971a2f0de3e2f6f565de232b` |
+
+⇒ **两侧 fresh 输出逐字节相同** ⇒ PR #172 对 stateless 层**零影响**；这条红是 **base 存量**，
+由 **PR #167 未同步 `report.json`** 带入（`docs/37` §213 早已独立记录同一现象）。
+
+**为什么这条红必须现在钉死**：它让**此后每一个 PR 的 `contract` job 都红**，是持续税；
+而 `report.json` 的刷新权按不变式归 **M10-9 / `LUM-2111`**，普通片禁刷。
+🔴 **但 `LUM-2111` 卡在 docker/podman/buildah 三者皆无**，而 ⑨ 的 `--no-db` 形态**根本不需要
+docker** ⇒ 「刷新权在 M10-9」与「M10-9 永远开不了工」构成死锁。**已登记为 follow-up，需 owner
+裁决**：要么允许单独一次 stateless `--write` 刷新（纯 `cargo run`，无 docker），
+要么把刷新权从 `LUM-2111` 移交给一个不依赖 docker 的片。**本 cycle 不自行刷新。**
+
+### 6.3 验收核对：数字逐条对账，**残差 1 条是 by-design**
+
+⑨ 族计数（新库实测，566 迁移）：`pass 279→289`（+10）、`mismatch 56→46`（−10）、
+`unmounted 1→1`、`placeholder 0→0`、`unevaluable 29→29`（**不变**）、
+`UNMOUNTED 1→1` / `PRECONDITION 29→29` / `AUTH_401 6→6` / `SEED_404 17→17`（**四族逐字不变**）、
+`REALM_DIFF 33→23`、`bad_total 86→76`。
+
+**对账式**（§246 定式，本片首次用上）：`bad_total_after == 86 − (pass_after − 279)`
+⇒ `86 − (289 − 279) = 76` **命中**。四族求和 `1+29+6+17+23 = 76 == bad_total` **自洽**。
+逐条 outcome 变化**恰好 10 行**、全部 `mismatch→pass`，其余 355 行逐字相同 ⇒ **零回归**。
+
+🔴 **工单目标订正（第二次，承重）**：工单写 `mismatch 56→≤45`、`REALM_DIFF 33→≤22`，
+本片交 `46` / `23`，**各差 1**，那 1 条是
+`daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3840#13`：
+
+* 上游 `daemon_test.go:3836` 先 `DELETE FROM chat_session WHERE id = $1`（**裸 SQL，不是 HTTP
+  调用**），再用**本空间**令牌访问同一 id（`:3837-3840`）；
+* 抽取器只抽 HTTP 调用 ⇒ **那次删除从未被记下** ⇒ 本仓装置**无论绑定哪个身份**都表达不出
+  「行已被删掉」这个前置。`docs/37` §213.4 第 6/7 行独立得出过同一结论。
+
+三条「凑数」路子都被本片明确拒绝并给了理由：① 编造 uuid 让 `$testChatSessionID` 落在不存在的
+行上 —— 正是 `bindings.rs` 明文警告的反模式（404 与「本来就不该过」在报告里长得一样）；
+② 改成「先 DELETE 再请求」的有状态脚本 —— 让**组内回放顺序**成为 pass/fail 承重条件，顺序一变
+`#11/#12/#13` 同时 404、`#12` 转红，与 §213「把共享粒度从回放降到测试」方向相反；
+③ 放宽 `daemon/gc.rs` 的 404 —— 破坏反枚举设计，且 `mc-http/src/routes/**` 是本片**禁改面**。
+
+⇒ **判 `46 / 23` 为达标的真实落点**（同 §246/§247 的处置：工单数字不可达时以取证为准并订正，
+**禁止把不可达写成达标**）。`handler` 一行未动。
+
+**两处设计判断（片方主动上报，cycle 认可）**：① 工单原话「seed 阶段扫本组 fixture 的
+`body.status` 就建目录项」会**弄红 4 条现有绿 fixture**（`in_use_a` / `not_a_status` / `active`×2
+都期望 400）⇒ 判据改成「上游那条测试**建过**这个 key」，落在新增的
+`crates/mc-conformance/src/upstream_facts.rs`，按 `(source.test, source.line)` 登记带 `file:line`
+证据，**不读 `expect`**（读 `expect` 挑令牌会让 fixture 变成永远无法失败的恒真式）；
+② 新增两个 `src/` 兄弟文件是**必要**的：`seed.rs` 已 709 行，门 ⑩ 的 800 行硬上限 + 基线只减不增。
+
+### 6.4 合并后读数（落地树 `5e0ca50b` 当场重跑，三个零编译门）
+
+| 门 | 结果 |
+|---|---|
+| ⑦ route-parity | **rc=0**，八数字**第 47 轮逐字不变**：`456 / 546 / 546 / 455 real + 1 placeholder / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b slash_alias_audit | **rc=0** |
+| ⑩ file-size | **rc=0**，`0 violation`（legacy 白名单 1 条 `extract_upstream_fixtures.py 1862`，只许变短） |
+| ⑨ conformance | **rc=1，base 存量红**（§6.2 已归因，与本片无关） |
+
+### 6.5 派发：`LUM-2567` 解阻塞 ＋ 新开行为面入参校验族
+
+`LUM-2567`（`PRECONDITION 29`，rev 6）的阻塞理由是**「等 `LUM-2572` 合入」**（它写
+`mc-conformance/**`，与 `LUM-2572` 同写集）⇒ 本片合入后**理由解除**，按 rev 6 派。
+与在飞 `LUM-2578`（`scripts/extract_*.py` ＋ `contracts/golden/**`）**逐字文件交集为空**。
+
+新开 `LUM-2580` = **行为面入参校验族 2 子族**（`§245` 15 子族表里的 `BEHAVIOR_*`，写集
+`mc-http/src/routes/**`，与 `LUM-2578` / `LUM-2567` 交集为空）：
+
+* `BEHAVIOR_NUL_PAYLOAD`（1 条，`200←500`）→ `crates/mc-http/src/routes/daemon/messages.rs`
+  （`report_messages`，上游 `TestReportTaskMessagesCallbackWithNULSucceeds`，body 带 `\u0000`）；
+* `BEHAVIOR_METADATA_FILTER_PARSE`（1 条，`400←200`）→ `crates/mc-http/src/routes/issues/query.rs`。
+
+🔴 **预飞实测抓到的真问题（写进工单当承重）**：`ListIssuesQuery`（`query.rs:27`）**根本没有
+`metadata` 字段**，serde 默认**静默忽略**未知 query 参数 ⇒ 只补「畸形值返 400」的校验**不够**：
+**良构的 `?metadata=…` 仍会被静默忽略并返 200**，那是**假通过**。工单要求该片显式回答
+「本片实现的是校验还是过滤语义」，**未回答即视为该族未关闭**。
+
+**其余 4 个 `BEHAVIOR_*` 子族本轮刻意不派，各有具体阻塞**（不是忘了）：
+`BEHAVIOR_MACHINE_ACTOR_GATE` 依赖 `X-Actor-Source` 盖章链，而该链在 `M9-10`/`W1` 未接线清单上
+（`actor_guard.rs:39-49` 自述「客户端伪造的值会被剥掉」「当前实现不校验」）⇒ 闸加了可能
+**在回放期不可观测**；`BEHAVIOR_JSON_DECODE_STATUS` 与 `BEHAVIOR_METADATA_FILTER_PARSE`
+**同写 `issues/query.rs`** ⇒ 不得同飞；`BEHAVIOR_STAMPING_CHAIN_UNWIRED` 同属盖章链；
+`BEHAVIOR_ISSUE_PREFIX_UNPORTED` 要**加列 + 迁移**（`migrations/**` 是共享面，且该族 confidence
+仅 `medium`）⇒ 单独排一轮。
+
+### 6.6 下一 cycle 起手
+
+base 起手一律 `git rev-parse` 实测（现 `5e0ca50b`）；GH 0 open PR（`#168` 维持 §243 的不合并裁定，
+head `272acce6` 未动）；daemon 3/3 = cycle ∥ `LUM-2578` ∥ `LUM-2567`（＋ 新派 `LUM-2580` 时为 4/3
+需重算）。**槽位一空即派**：`LUM-2567` 终 ⇒ 判据链（预期 `PRECONDITION 29→≤26`、`bad_total` 走
+§6.3 对账式、`mismatch 56→46` 不增）⇒ 之后才轮到**装置面 7 条**（`mc-conformance/src/**`，与
+`LUM-2567` 同写集 ⇒ 串行）；`LUM-2580` 终 ⇒ 判据链 ⇒ `mismatch 46→≤44`、四族仍 `1/29/6/17` 不变。
+**禁**：普通片刷 `report.json`（§6.2 死锁待 owner 裁决）；`UNMOUNTED 1` 加路由（`known_gap=0`）。
+号段 `docs/37` 末号 `§249` ⇒ 下轮 **`§250`**。
