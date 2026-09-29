@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use mc_repos::daemon::{DaemonRepo, NewTaskMessage};
 
-use super::dto::{decode_body, opt, TaskMessageBatchRequest};
+use super::dto::{decode_body, opt, sanitize, TaskMessageBatchRequest};
 use super::scope::{internal, require_task_access, validation, DaemonAuth};
 use crate::error::ApiResult;
 use crate::state::AppState;
@@ -103,6 +103,11 @@ fn task_message_payload(
 ///
 /// 上游先解码再鉴权（空批直接 200、**不做**鉴权查询）—— 这是最热的写路径，
 /// 每 500ms 每个在飞任务打一次；空批短路省掉的正是这次查询。
+///
+/// 入参里的 NUL（`\u0000`）在**落库前逐字段洗净**（upstream `SanitizeTextForPostgres`，
+/// GH #7098）：PG 的 `TEXT` **与** `jsonb` 都不接受 `U+0000`，不洗净整条 insert 会失败，
+/// 500ms 一次的实时上报会直接变成 500 —— 上游对这批载荷的判据是 **200**
+/// （`task_payload_nul_test.go:161`）。
 pub(crate) async fn report_messages(
     State(state): State<Arc<AppState>>,
     auth: DaemonAuth,
@@ -123,14 +128,16 @@ pub(crate) async fn report_messages(
         rows.push(NewTaskMessage {
             task_id: task.id(),
             seq: i32::try_from(m.seq).unwrap_or(i32::MAX),
-            kind: m.kind.clone(),
-            tool: opt(m.tool.clone()),
-            content: opt(m.content.clone()),
+            // 逐字段洗 NUL：`kind` / 工具名 / 正文 / 输出 / call_id 都直接进 TEXT 列。
+            kind: sanitize(&m.kind),
+            tool: opt(m.tool.clone()).map(|v| sanitize(&v)),
+            content: opt(m.content.clone()).map(|v| sanitize(&v)),
             // `input` 缺省是 `null`（Go 的 `map[string]any` 零值），不是 `{}`。
-            input: (!m.input.is_null()).then(|| m.input.clone()),
-            output: opt(m.output.clone()),
+            // `input` 是 JSONB：嵌套结构（键**与**值）里的 NUL 一样会被 PG 拒。
+            input: (!m.input.is_null()).then(|| sanitize_json(&m.input)),
+            output: opt(m.output.clone()).map(|v| sanitize(&v)),
             output_truncated: m.output_truncated,
-            call_id: opt(m.call_id.clone()),
+            call_id: opt(m.call_id.clone()).map(|v| sanitize(&v)),
             created_at: created_ats[i],
         });
     }
@@ -138,6 +145,24 @@ pub(crate) async fn report_messages(
         .await
         .map_err(|e| internal(format!("failed to insert task messages: {e}")))?;
     Ok(Json(json!({ "status": "ok" })))
+}
+
+/// 递归洗净 JSON 里的 NUL（upstream `SanitizeTextForPostgres` 也覆盖 `input` 这类
+/// 嵌套结构）：PG 的 `jsonb` 与 `TEXT` 一样拒绝 `U+0000`，`{"stdout":"ELF\u0000"}`
+/// 会让整条 insert 报 `unsupported Unicode escape sequence`。
+///
+/// 键**与**值都要洗：jsonb 的对象键同样是 text。
+fn sanitize_json(value: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(sanitize(s)),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_json).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (sanitize(k), sanitize_json(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// upstream `taskMessageCreatedAt` + `taskMessageCreatedAts`：整批同一个时钟。
@@ -170,6 +195,39 @@ fn batch_created_ats(
 mod tests {
     use super::*;
     use chrono::TimeZone as _;
+
+    /// 上游 `TestReportTaskMessagesCallbackWithNULSucceeds`：载荷里嵌到 `input.result`
+    /// 深处的 NUL 也必须洗干净（jsonb 拒 U+0000），且**只**洗 NUL。
+    #[test]
+    fn nul_bytes_are_stripped_from_nested_input() {
+        let raw = serde_json::json!({
+            "command": "cat",
+            "args": ["-n", "build/app.bin"],
+            "result": { "stdout": "ELF\u{0}\u{0}binary" },
+            "bad\u{0}key": 1,
+            "nested": [{ "deep": "a\u{0}b" }],
+            "count": 7,
+            "flag": true,
+            "nothing": null,
+        });
+        let cleaned = sanitize_json(&raw);
+        assert_eq!(
+            cleaned,
+            serde_json::json!({
+                "command": "cat",
+                "args": ["-n", "build/app.bin"],
+                "result": { "stdout": "ELFbinary" },
+                "badkey": 1,
+                "nested": [{ "deep": "ab" }],
+                "count": 7,
+                "flag": true,
+                "nothing": null,
+            })
+        );
+        // 非字符串原样保留（不是把数字/布尔弄丢）。
+        assert_eq!(cleaned["count"].as_i64(), Some(7));
+        assert_eq!(cleaned["flag"].as_bool(), Some(true));
+    }
 
     #[test]
     fn batch_timestamps_are_all_or_nothing() {

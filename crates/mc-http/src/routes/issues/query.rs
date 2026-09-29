@@ -58,6 +58,19 @@ pub struct ListIssuesQuery {
     pub direction: Option<String>,
     /// `/api/issues/grouped` 专用
     pub group_by: Option<String>,
+    /// `?metadata=<JSON>` —— 上游 `parseMetadataFilterParam`（`issue_metadata.go:114`）的过滤串。
+    ///
+    /// 🔴 **本片只做入参校验，过滤语义未实现（登记过的缺口）**：上游把这串原样交给
+    /// `i.metadata @> $n::jsonb`（`issue.go:1509` / `:1943`），而本仓 `IssueFilter`
+    /// 与 `LIST_WHERE`（`mc-repos/src/issue/mod.rs:92`，占位符被 `issue/tests.rs:87`
+    /// 的护栏钉在 `$1..$13`）**没有 JSONB 过滤位** ⇒ 良构的 `?metadata=…` 仍被
+    /// **静默忽略**（返 200、结果集不被过滤），即上游 `TestListIssuesMetadataFilter`
+    /// 的「filter leaked」断言在本仓**尚无对应实现**。
+    ///
+    /// 补全需要扩写集到 `crates/mc-repos/src/issue/**`：`input.rs` 加过滤字段、
+    /// `mod.rs` 的 `LIST_WHERE` 加 `$14` 并挪 `LIMIT/OFFSET` 到 `$15/$16`、
+    /// `query.rs` 两处 bind、`tests.rs:87` 的占位符护栏同步放宽 —— 见 `docs/37` §252。
+    pub metadata: Option<String>,
 }
 
 impl ListIssuesQuery {
@@ -100,6 +113,8 @@ impl ListIssuesQuery {
                     query.only_parentless = Some(parse_bool("only_parentless", &text)?);
                 }
                 // 上游 `QueryIssues` 直接透传给 `ListIssues`，未知 key 被忽略
+                // （但 `metadata` 是**已知** key 的遗漏，不是未知 key —— 见字段上的注册缺口）。
+                "metadata" => query.metadata = Some(text),
                 _ => {}
             }
         }
@@ -148,6 +163,59 @@ pub(crate) fn parse_order(sort: Option<&str>) -> Result<IssueOrderBy, Error> {
     }
 }
 
+/// 上游 `parseMetadataFilterParam`（`issue_metadata.go:114`）：`?metadata=` 必须是
+/// **扁平对象**、key 匹配 `^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`、值是基本类型
+/// （string / number / bool）—— 与写入侧同一条约束（嵌套值永远匹配不上）。
+///
+/// 空串 = 不过滤（上游 `raw == ""` 短路，返 `Ok(None)`）。
+///
+/// ⚠️ 本函数**只校验**，不回传可用的过滤条件：调用点刻意丢弃返回值，
+/// 见 [`ListIssuesQuery::metadata`] 上登记的缺口。
+pub(crate) fn parse_metadata_filter(field: &str, raw: &str) -> Result<Option<JsonValue>, Error> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let parsed: JsonValue = serde_json::from_str(raw)
+        .map_err(|_| validation(format!("{field} filter must be a JSON object")))?;
+    if parsed.is_null() {
+        // 上游把 `metadata=null` 反序列化成 nil map 而**不报错**（仍然 200）
+        // ⇒ 这里不把它收紧成 400，只当「不过滤」。
+        return Ok(None);
+    }
+    let Some(object) = parsed.as_object() else {
+        return Err(validation(format!("{field} filter must be a JSON object")));
+    };
+    for (key, value) in object {
+        if !is_valid_metadata_key(key) {
+            return Err(validation(format!(
+                "{field} filter key must match ^[a-zA-Z_][a-zA-Z0-9_.-]{{0,63}}$"
+            )));
+        }
+        if !(value.is_string() || value.is_boolean() || value.is_number()) {
+            return Err(validation(format!(
+                "{field} filter values must be primitives (string, number, bool)"
+            )));
+        }
+    }
+    Ok(Some(parsed))
+}
+
+/// 上游 `issueMetadataKeyRE = ^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`。
+fn is_valid_metadata_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    let rest = chars.as_str();
+    rest.chars().count() <= 63
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
 /// 过滤参数 → `IssueFilter`（`status_categories` 在这里展开成具体 key）。
 pub(crate) fn build_filter(
     workspace_id: Id,
@@ -155,6 +223,12 @@ pub(crate) fn build_filter(
     terminal_statuses: &[String],
 ) -> Result<IssueFilter, Error> {
     let mut filter = IssueFilter::new(workspace_id);
+
+    // 上游先在 handler 里判 `?metadata=`（`issue.go:1180`）再进 SQL 构造 ⇒ 畸形串必须 400。
+    // 🔴 返回值**刻意丢弃**：过滤语义未实现，见 [`ListIssuesQuery::metadata`] 的注册缺口。
+    if let Some(raw) = query.metadata.as_deref() {
+        let _unapplied_filter = parse_metadata_filter("metadata", raw)?;
+    }
 
     let mut statuses = split_comma_param(query.statuses.as_deref().unwrap_or(""))
         .or_else(|| split_comma_param(query.status.as_deref().unwrap_or("")));
@@ -274,4 +348,102 @@ pub(crate) fn expand_custom_categories(
     filter.statuses = Some(keys);
     let _ = category_str;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WELL_FORMED: &str = r#"{"pipeline_status":"waiting_review"}"#;
+
+    fn query_with_metadata(raw: &str) -> ListIssuesQuery {
+        ListIssuesQuery {
+            metadata: Some(raw.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// 双向①：畸形 / 非对象 / 嵌套值 / 非法 key ⇒ 拒（上游 `parseMetadataFilterParam`）。
+    #[test]
+    fn metadata_filter_rejects_malformed_shapes() {
+        // 装置里那一条：`GET /api/issues?metadata={not-json}` 断言 400。
+        for raw in [
+            "{not-json}",
+            "{",
+            "[1,2]",
+            "\"waiting\"",
+            "{\"ok\":1}\"",
+            "{\"nested\":{\"a\":1}}",
+            "{\"arr\":[1]}",
+            "{\"nul\":null}",
+            "{\"1bad\":1}",
+            "{\"\":1}",
+            "{\"-bad\":1}",
+        ] {
+            assert!(
+                parse_metadata_filter("metadata", raw).is_err(),
+                "expected rejection for {raw}"
+            );
+        }
+        // 上游 `{0,63}` 是**尾部**长度 ⇒ 整键最多 64 个字符。
+        assert!(is_valid_metadata_key(&"a".repeat(64)));
+        assert!(!is_valid_metadata_key(&"a".repeat(65)));
+    }
+
+    /// 双向②：良构 / 空串不得被过度收紧（上游断言 200）。
+    #[test]
+    fn metadata_filter_accepts_well_formed_and_empty() {
+        for raw in [
+            WELL_FORMED,
+            "{}",
+            r#"{"a_b.c-d":1,"flag":true,"pi":3.14}"#,
+            "  {\"p\":1}  ",
+            "{\"pipeline_status\":\"waiting_review\",\"pipeline_status\":\"x\"}",
+        ] {
+            assert!(
+                parse_metadata_filter("metadata", raw).is_ok(),
+                "expected acceptance for {raw}"
+            );
+        }
+        // 空串是上游的「不过滤」短路；`null` 同样不收紧（上游也不报错）。
+        assert_eq!(parse_metadata_filter("metadata", "").expect("empty"), None);
+        assert_eq!(
+            parse_metadata_filter("metadata", "null").expect("null"),
+            None
+        );
+    }
+
+    /// 两个方向的入口都在 `build_filter`：畸形 → `Err`，良构 → `Ok`。
+    #[test]
+    fn build_filter_judges_metadata_param_by_validation() {
+        let malformed = query_with_metadata("{not-json}");
+        assert!(build_filter(Id::nil(), &malformed, &[]).is_err());
+
+        let well_formed = query_with_metadata(WELL_FORMED);
+        assert!(build_filter(Id::nil(), &well_formed, &[]).is_ok());
+
+        let absent = ListIssuesQuery::default();
+        assert!(build_filter(Id::nil(), &absent, &[]).is_ok());
+    }
+
+    /// `POST /api/issues/query` 的 body 走同一条路（`from_pairs`）。
+    #[test]
+    fn from_pairs_picks_up_metadata_key() {
+        let mut pairs = HashMap::new();
+        pairs.insert(
+            "metadata".to_string(),
+            JsonValue::String(WELL_FORMED.into()),
+        );
+        let query = ListIssuesQuery::from_pairs(&pairs).expect("pairs");
+        assert_eq!(query.metadata.as_deref(), Some(WELL_FORMED));
+        assert!(build_filter(Id::nil(), &query, &[]).is_ok());
+
+        let mut bad = HashMap::new();
+        bad.insert(
+            "metadata".to_string(),
+            JsonValue::String("{not-json}".into()),
+        );
+        let query = ListIssuesQuery::from_pairs(&bad).expect("pairs");
+        assert!(build_filter(Id::nil(), &query, &[]).is_err());
+    }
 }
