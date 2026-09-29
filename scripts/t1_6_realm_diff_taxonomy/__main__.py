@@ -123,10 +123,14 @@ def render_human(out: dict) -> None:
             print("      - {}".format(fid))
         print()
     print("并行结论：")
+    label = {"serial": "否", "parallel": "是", "undetermined": "**未定**"}
     for lane in out["parallel_lanes"]:
         print("  · {:<8} {} 条 —— 可并行：{}".format(
             lane["attribution"], lane["count"],
-            "否" if lane["serial_with"] else "是（各域 handler 互不相交）"))
+            "{}（{}）".format(label[lane["parallel"]], lane["parallel_why"])
+            if lane["parallel"] == "parallel" else label[lane["parallel"]]))
+        if lane["parallel"] != "parallel":
+            print("      理由：{}".format(lane["parallel_why"]))
         for other in lane["serial_with"]:
             print("      串行于：{}".format(other))
     print()
