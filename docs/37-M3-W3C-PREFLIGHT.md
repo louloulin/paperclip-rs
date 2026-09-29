@@ -24650,3 +24650,109 @@ origin 已经是 `48e5bfa4`，**§258 已被并发 cycle（`LUM-2586`）落号�
 4. **`Seed` 加一行 project**（`seed.rs` + `BINDABLE` 加 `$testProjectID`）
    ⇒ 解锁 `projects/012/014`；**必须同时**让 I4 能穿过闭包（否则仍绑外层 `req`），
    这两件事**同写集，必须一片**。
+
+## §260 T1-6-E：装置面 7 条 —— 4 条真的修好，3 条按 by-design 诚实登记（`LUM-2588`）
+
+base `48e5bfa4`（`d8a73105` + docs §258）。写集零路由 / 零 handler / 零迁移 /
+零 `contracts/golden/**`，`report.json` blob 合并前后同为 `db01d842`。
+
+### §260.1 结论一句话
+
+新增 `mc-conformance/src/device_shape.rs`：**按上游 provenance 声明「某个测试当时处于
+什么形态」，由 `seed.rs` 在通用世界之上应用**。4 个子族里 3 个归 0，第 4 个（逐测试内
+顺序）2 条修好 1 条登记 by-design。db 回放 `365 / pass 295→299 / mismatch 44→40 /
+unmounted 1 / unevaluable 25`，**对账式** `bad 70 → 66 == 70 − (299 − 295)`。
+
+### §260.2 为什么是「形态表」而不是「再补几行种子」
+
+`seed.rs` 造的是**每个上游测试都成立**的通用世界。另一类 fixture 断言的是**特定形态**
+——「这个 agent 当时没有 runtime」「这个 workspace 当时已经有同名 property 定义」。
+通用世界给不出这些形态，handler 就照通用世界作答（`201` 而不是 `409`）。
+
+🔴 判据**不是**「这条 fixture 期望什么码」：本仓不变式是「`expect` 只出现在
+`verdict.rs` 的比对侧」，形态表同样**一个字节都不读** `expect`。判据是
+`Fixture.source.test` + 上游源码证据，与 `upstream_facts.rs` 的自定义 status 表同款纪律。
+
+🔴 形态一律由**真实路由**造出，**无一条 `INSERT`**：归档走
+`POST /api/agents/:id/archive`，解绑走 `POST /api/runtimes/:id/unbind-agents-and-delete`
+（本仓**唯一**能把 `agent.runtime_id` 置空的入口 —— `create_agent` 恒写
+`runtime_id: Some(..)`，`update_agent` 在该字段缺省时直接 `Ok(())`），
+property 定义走 `POST /api/properties`。手写 SQL 摆一个 `agent.archived_at`
+就是**造个假货去迎合断言**。
+
+### §260.3 逐族交代（4 子族 / 7 条）
+
+| 子族 | 前 | 后 | 处置 |
+|---|---:|---:|---|
+| `DEVICE_CHAT_AGENT_RUNTIME_STATE` | 3 | **0** | 三种形态各一条声明（未绑定 / 已归档 / runtime 不可达） |
+| `DEVICE_INTRA_TEST_SEQUENCING` | 2 | **1** | property 定义那条修好；issues 逐字段基线那条 by-design |
+| `DEVICE_QUEUED_TASK_ROW` | 1 | 1 | by-design |
+| `DEVICE_DB_FAULT_INJECTION` | 1 | 1 | by-design |
+
+**`RuntimeAccessDenied` 的诚实降级**：上游是「runtime 存在但调用方用不了」，
+而本仓发送面**没有** runtime ACL 判定。唯一可达的同义形态是「agent 绑不到任何
+runtime」，落 [`AgentRuntimeState::Unbound`] —— 两者在本仓是**同一条** 409
+（`ErrChatTaskAgentNoRuntime`）。断言是真的（handler 判了 409），**被折叠的是前置**，
+不是码。
+
+### §260.4 by-design 登记表（3 条，**不造替身**）
+
+| fixture | 缺的是什么 | 什么装置形态下它才可判定 |
+|---|---|---|
+| `chat/…PrioritizeQueuedChatTask…:586#19` | 路径里 `taskId` 是**字面 UUID** `5c57b65b-…`，而**没有任何路由允许装置指定入队行的 id**（`agent_task_queue.id` 由聊天发送面自生成） | 抽取器把它绑成 `$testTaskID`，且装置保证那一行是该会话里 **`queued` 且有可见活跃回复**的 head（`PriorityOutcome::Prioritized` 的两个前提） |
+| `issues/…TextBaselines…:277#66` | `title_base` / `description_base` 的**逐字段 CAS** 本仓**根本没实现**（`grep title_base crates/` 在 `mc-http` 零命中）。本仓只有**聚合** `expected_revision` | handler 补逐字段基线 CAS。🔴 用聚合 revision 凑 409 **等于断言该测试的反面**（它要证明的正是「无关字段的改动**不**使基线失效」）—— 所以拒绝 |
+| `autopilots/…SubscriberReadFailureFailsClosed:293#5` | 缺一档**可按 fixture 注入的 DB 故障**。当前唯一能让读失败的手段是打死共享连接池 | harness 加一档 fault-injection 连接池（按 fixture 标记失败下一次读）。打共享池会污染同一次回放的其余 fixture ⇒ 不做 |
+
+### §260.5 承重：分类器自检从 3/3 掉到 2/3（**不是**分类器坏了）
+
+消灭 `DEVICE_CHAT_AGENT_RUNTIME_STATE` 会让 `checks.py` 里它的**正例**变成一条
+**永远满足不了**的断言（`classify` 返 `None`，`ok` 恒 `False`）—— 分类器自检永远红，
+下一个接的人只会以为分类器坏了。
+
+处置按 `checks.py` **自己在模块头写下的纪律**：不是删断言，而是**移进
+`KNOWN_NEGATIVE`** 并注明该族已消灭 ⇒ 断言**变强**（从「必须命中 X」升级成
+「必须一条都不命中」，防修复回退）。`rules.py` 里那条规则**保留不动**（它判的是
+**形状**，将来有新成员仍应归族）。结果：**正例 3 → 2**（少的是被消灭的那族），
+**反例 5 → 6**，两条都全绿（2/2、6/6）。
+
+🔴 **一般化的教训**：「分类器覆盖率会被别的片打破」这颗雷（§258 已记）在本片
+**又响了一次**，方向不同：上次是**别的片**打破，这次是**自己修好了**。
+两种都会把自检变红，而两种的处置不同（前者要重抽覆盖表，后者要降级正例）。
+
+### §260.6 门读（base 当场取）
+
+- ⑦ **八数字逐字不变**：`upstream 456 (f41fae6b08fb) | local 546 | baseline 546`、
+  `455 real + 1 placeholder`、`gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+  ⑦b `slash_alias_audit --quiet` rc=0；⑩ rc=0。
+- ⑨ db-mode（当轮新建库 `multica_c2588`，角色带 `CREATEDB`）：
+  `365 / pass 299 / mismatch 40 / unmounted 1 / placeholder 0 / unevaluable 25`。
+  族：`UNMOUNTED 1 / PRECONDITION 25 / AUTH_401 7 / SEED_404 18 / REALM_DIFF 15`。
+  **`PRECONDITION` 仍 25（PR #176 的成果未回退）**，另三族与 `unevaluable 25` 不增。
+- ⑨ `--no-db --check`：**存量红，签名与预测逐字相同** —— `line 17`、
+  `committed "unevaluable": 13` vs `fresh: 12`；`report.json` blob `db01d842` 未动。
+  该红归 `LUM-2111`（docker 三者皆无），**不是本片的门**。
+- ①②③④⑤⑥⑧⑩ 全 rc=0。
+
+### §260.7 雷：全量 `--with-db` 会把盘打满，而**失败长得像真失败**
+
+本片第一次跑 `bash scripts/gates.sh --with-db` 拿到 `⑥ db FAIL(101)` +
+`⑧ schema-drift FAIL(exit 2)`。**两条都是磁盘耗尽**，不是代码：
+`df` 事后是 `0 avail (100%)`，`schema_drift` 的 stderr 逐字是
+`could not create directory "base/…": No space left on device`。
+
+处置：`rm -rf target/debug/incremental`（11G，可再生）后**当场重跑**，两条**转绿**
+（`⑥ db PASS migrate=0,e2e=0` / `⑧ schema-drift rc=0`）。
+
+🔴 **判据纪律**：`⑥` 的 `exit 101` 与 `⑧` 的 `exit 2` 在 `gates.sh` 的语义里分别是
+「测试 panic」与「前置缺失」，**都不是**「磁盘满」。**门红先看 `df`**，否则会把
+一次容量事故写成一次代码回归（或反之）。
+
+### §260.8 顺位（逐条重验，禁抄）
+
+1. `AUTH_401 7` → `SEED_404 18` → `UNMOUNTED 1`，同写集**串行**（都动
+   `mc-conformance/**` 的共享面）。`UNMOUNTED 1` 因 `known_gap 0` **不许加路由**。
+2. §260.4 的 3 条 by-design 分属**别的写集**（抽取器 / handler / harness 新能力），
+   不可与上面三族同飞。
+3. `行为面 4 条` **先补 `负责面` 字段并双向验证**再派（§258.4 的承重二：那张表的
+   `负责面（文件集合）` 全是空串 ⇒ 并行性结论没有证据）。
+4. 全量 `--with-db` 的磁盘预算：`avail − 可回收量` 两项都要算（§167 算式第三次派场）。

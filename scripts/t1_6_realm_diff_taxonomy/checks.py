@@ -20,9 +20,6 @@ KNOWN_POSITIVE = [
     ("issues/TestListIssuesStatusSortCountsCustomStatuses"
      "@server/internal/handler/issue_sort_test.go:19#71",
      "EXTRACT_QUERY_LITERAL_MISBOUND"),
-    ("chat/TestSendChatMessage_ArchivedAgent"
-     "@server/internal/handler/chat_test.go:249#21",
-     "DEVICE_CHAT_AGENT_RUNTIME_STATE"),
     ("tokens/TestRenewPAT_RejectsTokenBelongingToDifferentUser"
      "@server/internal/handler/personal_access_token_test.go:363#9",
      "BEHAVIOR_STAMPING_CHAIN_UNWIRED"),
@@ -46,6 +43,14 @@ KNOWN_NEGATIVE = [
      "@server/internal/handler/daemon_task_lookup_test.go:133#2", None),
     ("issues/TestPluginInstallTokenEnforcesGrantedScope"
      "@server/internal/handler/plugin_action_test.go:160#98", None),
+    # 该族（`DEVICE_CHAT_AGENT_RUNTIME_STATE`）的 3 条成员已被 PR（本片，LUM-2588）
+    # **真的修好**：装置按上游 provenance 造出「agent 未绑定 / 已归档 / runtime 不可达」
+    # 三种形态后它们全部转 `pass`（observed 409），且该族名在 `report.json` 里 **0 命中**
+    # ⇒ 规则已无残余成员。所以它从正例降级为反例：**必须一条子族都不命中** ——
+    # 锁定「已消灭的族不会复活」（`rules.py` 里那条 `DEVICE_CHAT_AGENT_RUNTIME_STATE`
+    # 规则保留不动：它判的是**形状**，将来若有新 fixture 命中同一形状，仍应归到这一族）。
+    ("chat/TestSendChatMessage_ArchivedAgent"
+     "@server/internal/handler/chat_test.go:249#21", None),
 ]
 
 #: by-design 审计：逐条回答「这条判据在什么实现下会 FAIL」。
@@ -58,8 +63,15 @@ BY_DESIGN_AUDIT = {
     "answered": [
         {"subfamily": "EXTRACT_*（5 族 9 条）",
          "would_fail_under": "抽取器把身份/查询值/请求形状/路径绑定记对之后（重抽 golden）。"},
-        {"subfamily": "DEVICE_*（4 族 7 条）",
-         "would_fail_under": "装置能造前置（直接 INSERT 行 / 重放同一测试里的先行请求 / 故障注入档位）。"},
+        {"subfamily": "DEVICE_*（3 族 3 条：queued-task 行 / 逐字段基线 / DB 故障注入）",
+         "would_fail_under": (
+             "**新增装置能力**而不是新增种子行：① 抽取器把 queued-task 的字面 UUID 绑成 "
+             "`$testTaskID`（现路径里那个 id 是常量，没有任何路由允许装置指定入队行的 id）；"
+             "② handler 补上 `title_base`/`description_base` 的**逐字段** CAS（本仓只有聚合 "
+             "`expected_revision`；用它凑 409 等于断言该测试的反面）；③ harness 加一档"
+             "**可按 fixture 注入的 DB 故障**（现在唯一能让读失败的手段是打死共享连接池，"
+             "那会污染同一次回放的其余 fixture）。"
+         )},
         {"subfamily": "BEHAVIOR_*（6 族 6 条）",
          "would_fail_under": "对应 handler 的判定顺序与状态码词汇对齐上游。"},
     ],
