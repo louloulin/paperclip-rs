@@ -22473,3 +22473,313 @@ base 那 2 条，**同一个根因**：
    ⇒ 366 条里 364 条误判（假阳性率 99.5%）。**判别式必须先在"已知正例 + 已知反例"上双向跑通**
    （本轮正例 = base 那 2 条、反例 = 任意普通 `/api/...` 路径），再拿去数全量。
    这是 §240「分族计数不能靠转述」的同一条，但这次栽在**判别式本身**而不是转述上。
+
+## §244 【LUM-2571 / T1-6-F】把 `PRECONDITION` 27 条拆成**可逐条派工**的 9 个子族 —— 零 Rust / 零 cargo / 零真库 / 零磁盘
+
+起手 base **`0982d786`**（= `git fetch origin feat/multica-rs-initial` 实测，非抄写）。
+`df` 起手 **6.4G / 87%**；本片**从头到尾没有 `target/`**，收尾 `df` 仍 6.4G（workdir 97M）。
+
+### §244.1 交付面
+
+| 项 | 值 |
+| --- | --- |
+| 新脚本 | `scripts/t1_6_precondition_taxonomy.py`（339 行，纯 Python，退出码恒 0，报告器不是门） |
+| 文档 | 本节（`docs/37`，`## §244`；`## §243` 留给并发 cycle，起手已 `git fetch` 确认远端无此号） |
+| 写集 | 上表两处，**零** `crates/**` / **零** `contracts/**` / **零** `migrations/**` / **零** manifest / **零** 路由登记面 |
+| 分族判据 | 只用 fixture 自带字段（`requires` 键集合 + `source` 文件 + `actor.kind`），**零**「跑一遍才有」的输入 |
+
+复算命令（一条，零编译）：
+
+```
+python3 scripts/t1_6_precondition_taxonomy.py <db-mode.json>            # 人读，族计数权威
+python3 scripts/t1_6_precondition_taxonomy.py <db-mode.json> --json     # 机器读
+python3 scripts/t1_6_precondition_taxonomy.py --golden contracts/golden  # 纯静态，零真库
+```
+
+### §244.2 分族判据：为什么是 `requires` 而不是 `detail`
+
+**先纠正本片工单 §3 的一个前提**：`requires` 键与 `detail` 里的条目键**不是同一套**，
+且**最大的一族在 `requires` 上是空的**（12 条 `agent` fixture 的 `detail` 是一整句散文
+`actor kind Agent needs a real credential; …`，`requires == []`）⇒
+**「按 `requires` 键 + `detail` 归并」这句话对最大的那族不成立**。
+
+选 `requires` 键集合作分组键的理由只有一条但很硬：**`contracts/golden/**` 里有 `requires`，
+没有 `detail`** —— `detail` 是 `mc-conformance` 回放时在 Rust 侧按机读键现拼的说明文字
+（`crates/mc-conformance/src/requirements.rs` / `report.rs`），**不在契约里**。
+所以 `requires` 是**唯一在两种输入下都存在**的判据。
+
+**三个坑（已写进脚本 docstring，改脚本前先读）**：
+
+1. **最大的一族没有可用的 `requires`** ⇒ 对 `NO_REQUIRES` 组**再加一刀机械判据**：
+   按 **上游 `source` 文件**分桶。实测得 `chat_history_test.go = 11` /
+   `issue_agent_create_origin_test.go = 1` —— 这两组装置需求确实不同（§244.4 的 A / B 两单）。
+2. **`detail` 里 `||` 之后是同一段文本的 tier 重复**。按「出现次数」计键频次会把
+   `external_oauth` 记成 2、`bare_handler_no_wiring` 记成 3、`webhook_rate_limiter_denying`
+   记成 2 —— **三个都虚高**（工单 §3 说的 `external_oauth / browser_session_cookie` 各 2
+   就是这么来的）。脚本按「**每 fixture 每键只计一次**」出频次表。
+3. **不折叠重叠键**。`{bare_handler_no_wiring, daemon_token, db_fault_injection}` 自成一组 ——
+   优先级取首是判断，不是判别式。
+
+### §244.3 实测：9 个子族，条数之和 == 27（对账贴在输出里）
+
+```
+$ python3 scripts/t1_6_precondition_taxonomy.py /tmp/c2570_fix2.json
+T1-6 PRECONDITION 子族  input=conformance_db_json  候选 27  子族 9
+  对账：子族条数之和 27 == unevaluable 27  ⇒ 平
+  机制键频次（按 fixture 计，已去重）：NO_BULLET=12  cloud_runtime_configured=5
+    cloud_runtime_stub=5  bare_handler_no_wiring=2  db_fault_injection=2
+    external_oauth=1  browser_session_cookie=1  webhook_rate_limiter_denying=1
+```
+
+| # | 子族（= `requires` 键集合） | 条数 | 域分布 | `detail` 逐字统一 |
+| :-: | --- | :-: | --- | :-: |
+| 1 | `NO_REQUIRES`（散文：`AGENT_CREDENTIAL`） | 12 | chat 11 + issues 1 | 是 |
+| 2 | `cloud_runtime_stub` | 5 | cloud_runtime 2 + cloud_subscriptions 3 | 是 |
+| 3 | `cloud_runtime_configured` | 4 | cloud_runtime 1 + cloud_subscriptions 3 | 是 |
+| 4 | `bare_handler_no_wiring` | 1 | daemon 1 | 是 |
+| 5 | `bare_handler_no_wiring+daemon_token+db_fault_injection` | 1 | daemon 1 | 是 |
+| 6 | `daemon_token+db_fault_injection` | 1 | daemon 1 | 是 |
+| 7 | `external_oauth` | 1 | auth 1 | 是 |
+| 8 | `browser_session_cookie` | 1 | users 1 | 是 |
+| 9 | `cloud_runtime_configured+webhook_rate_limiter_denying` | 1 | webhooks 1 | 是 |
+| | **合计** | **27** | 9 个域 | 9/9 统一 |
+
+### §244.4 🔴 对工单 §3 那张手工构成表的逐条裁定：**2 条坐实、4 条订正**
+
+工单 §3 的表把 27 条归成 4 个子族 + 1 个 0。逐条裁定（判别式 = §244.3 的输出 + 上游 setup 逐字读过）：
+
+| §3 的断言 | 裁定 | 依据 |
+| --- | :-: | --- |
+| agent 凭据 12（chat 11 + issues 1），`detail` 统一 | ✅ **坐实**（条数、域分布、统一文本全对） | 脚本第 [1] 组 |
+| 云面 10（`stub` 6 / `configured` 5） | ⚠️ **半订正**：`stub` 是 **5 不是 6**（第 6 个是 §244.5 的 webhook 条，它按 `requires` 落在第 9 组）；域分布 3+6+1 → 其实是 **5+5**，其中 1 条同时要限流器替身 ⇒ **云面自身只有 9 条** | 脚本第 [2][3] 组 |
+| daemon 3，`bare_handler_no_wiring` 3 / `db_fault_injection` 2 / `daemon_token` 2 | ⚠️ **订正**：`requires` 里 `bare_handler_no_wiring` 只出现在 **2 条**（不是 3）；`daemon_token` 2 / `db_fault_injection` 2 ✅。且**这 3 条不是一个派工单** —— 键集合两两不同，脚本给的是 **3 个子族** | 脚本第 [4][5][6] 组 |
+| 外部身份 2（auth 1 + users 1，`external_oauth` / `browser_session_cookie`） | ⚠️ **订正条数、坐实归并**：两条各 **1**，不是各 2。虚高来自坑 ② 的 `\|\|` 重复 | 脚本第 [7][8] 组 |
+| 请求建不出来 **0**（PR #168 已修） | ✅ **坐实** | 本轮 27 条里无此类 |
+
+**另加一条 §3 没提的订正**：`webhooks/TestStripeWebhookRateLimited` 在 §3 里被并进「云面 10」，
+但它按 `requires` 自成一组（`cloud_runtime_configured+webhook_rate_limiter_denying`），
+且**它的期望值是限流器替身的判词，不是云面**（§244.5-G）。
+
+### §244.5 派工单：**每个子族一段**，判据 = 「这条期望值靠的是装置构造还是 handler 逻辑」
+
+🔴 **本节每一段都打开上游那棵树逐字读过 setup**（`lum-2477-ac326c83b1ed/workdir/multica`
+@ `90e0bdf83043` = goldens 记录的 `source.commit`）。上游 `multica` Go 树**在本机**，
+上一片写「本机没有上游 checkout」是错的（判据 `find / -maxdepth 4` 漏了第 5 层）。
+
+---
+
+#### A. chat 11 条（`chat_history_test.go`，**不与任何其它子族相交**）
+
+- **上游 setup（逐字）**：11 条全部走 `taskActorReq()`（`X-Actor-Source: task_token`
+  ＋ 一枚**字面量** `X-Task-ID` UUID，`extraction.bindings` 里**没有**这个符号）
+  ＋ `withSlackHistory(t, …)` **换掉 handler 的 `SlackHistory` 字段**。
+  按换进去的东西分三类：**非 nil 假阅读器 5 条**（`page.ChannelType="slack"` + Messages
+  + NextCursor **就是期望的 200 体**）／**报错假阅读器 2 条**（`slack.ErrNoSlackSession`
+  ⇒ 期望**回落到本会话转录**）／**nil 阅读器 4 条**。
+- **期望值靠什么**：
+  - **5 + 2 = 7 条靠装置构造**（那个假阅读器就是被断言的对象）⇒ 本仓要它们绿，
+    前提是本仓**有一个可注入的渠道阅读器**。而
+    `crates/mc-http/src/routes/chat/task/history.rs:15-16` **逐字写着**「本仓**没有**
+    slack/lark 阅读器 ⇒ 恒走上游 `h.SlackHistory == nil` 那一支」。
+    ⇒ 这 7 条要么等 M7 落地，要么在 `mc-conformance` 里加一枚**等价的阅读器替身**（新装置，非改 handler）。
+  - **4 条靠 handler 逻辑**，且本仓**已经逐字对齐**（就是上面那条恒真分支）⇒
+    **只要身份一到位就该转绿，不需要改任何 handler**。🔴 把这 4 条派给 chat handler 的人
+    就是 §239.3 那个错误的翻版。
+- **另 1 条矛盾（候选「第 2 条抽取缺陷」）**：`TestGetChatHistory_RejectsForgedTaskID`
+  上游是 **member 伪造** `X-Task-ID`（**没有** `X-Actor-Source`，注释逐字：
+  "a normal request (no server-set X-Actor-Source) that forges X-Task-ID" ⇒ 期望 **403**
+  且「reader 不得被调用」），而抽取器按 `x-task-id` 头存在把它记成 `actor.kind = agent`
+  （`scripts/extract_requirements.py` 的 `AGENT_CREDENTIAL_HEADER`）。
+  ⇒ 记下来的 actor 与上游前提**互相矛盾**：按 agent 回放就构造不出「伪造」这个前提。
+  **本片只登记，不改**（`scripts/extract_*.py` 是本片禁改面）。
+- **负责面（逐字）**：`crates/mc-conformance/src/{request_plan.rs,requirements.rs,bindings.rs,seed.rs}`
+  ＋（仅当 7 条要绿时）`crates/mc-http/src/routes/chat/task/history.rs` 的**阅读器注入点**。
+- **写集与其它子族是否相交**：**与 D / E 相交**（都在 `mc-conformance` 的装置层），
+  **与 C / F / G 零相交**。
+- **验证成本档位**：`需要 mc-conformance 冷建`（动 `mc-conformance` ⇒ 必须编译）＋
+  `需要全量 --with-db` 才能看 `unevaluable` 计数。**不是 0 编译片。**
+- **串行 / 并行**：与 **B** 同一族（`NO_REQUIRES`）⇒ **必须与 B 串行**（同写
+  `request_plan.rs` + `bindings.rs`）。与 **D** 争同一个装置层 ⇒ 建议排在 D 之后。
+- **归属提醒**：`LUM-2560` 是这 12 条的原始写集（devbox4 的 agent），§239.9 记它
+  「状态终态但零交付」。**本片不 rerun、不代做**（工单 §8），只把上面这段当交接写清。
+
+---
+
+#### B. issues 1 条（`issue_agent_create_origin_test.go`）—— **与 A 拆开，装置需求不同**
+
+- **上游 setup（逐字）**：`SELECT id, runtime_id FROM agent WHERE …` 拿 agent 行，
+  再 `INSERT INTO agent_task_queue (agent_id, runtime_id, status='running', priority=0,
+  originator_user_id, accountable_user_id)` 造一枚**带人类 originator** 的任务，
+  然后发 `POST /api/issues?workspace_id=…`，头是 `X-Agent-ID` ＋ `X-Task-ID`（**两个都要**），
+  最后回查 `issue.origin_type == 'agent_create'` 且 `origin_id == 那个 taskID`。
+- **期望值靠什么**：**装置构造**（agent 行 + runtime 行 + task 行）＋ **handler 的一处盖章逻辑**。
+  本仓 `seed.rs` **已经有** `seed_agent`（`:421`）与 `seed_task`（`:483`）⇒ 装置只差
+  「把 fixture 里那枚字面量 `X-Task-ID` 绑到种出来的那一行」这一步。
+- **负责面**：`crates/mc-conformance/src/{seed.rs,bindings.rs,request_plan.rs}`。
+- **写集与其它子族是否相交**：**与 A 完全同文件** ⇒ **必须与 A 串行或合并**。
+  这是把它从 A 里拆出来的唯一理由。
+- **验证成本档位**：`需要 mc-conformance 冷建` ＋ `需要全量 --with-db`。
+- **注意（`requirements.rs:185-190` 的原话纪律）**：修法**不许**是「把
+  `ActorKind::Agent` 的 `satisfied_by` 放宽成 `&[Tier::Database]`」—— 那会把 12 条
+  `unevaluable` 变成**假 `mismatch`**（回放只能拿到 401/500，与「实现写错了」在报告里长得一样）。
+  正解是**先接签发面再松口**，照 `pat_token::register`（`LUM-2552`）与
+  `daemon_token::register` 的既有形状：现场签发一枚**任务作用域凭据**并登记，
+  由鉴权层把它解析成 agent actor。
+
+---
+
+#### C. 云面「替身」6 条（`stub` 5 ＋ `healthz` 1）—— **需要一条新的传输缝**
+
+- **上游 setup（逐字）**：`useCloudRuntimeProxy(t, &fakeCloudRuntimeProxy{enabled:true,
+  resp:&cloudruntime.Response{StatusCode: 201/200/204, Body: …}})` ——
+  `fakeCloudRuntimeProxy.Do()` **直接返回**记下来的状态码与体。
+  ⇒ **这 6 条断言的就是那个假代理的返回值**（期望 201/200/202/200/201/204 全部来自 `resp`）。
+- **本仓现状（逐字读过）**：`crates/mc-http/src/routes/cloud_runtime.rs` 走
+  `mc_cloud::transport::Client` 这个**具体结构体**（`AppState.cloud: cloud::CloudConfig`，
+  `crates/mc-http/src/state.rs:457`）⇒ **没有可注入的缝**。
+- **期望值靠什么**：**装置构造**（传输替身）。handler 侧「原样写回云侧状态码」已经实现
+  （`cloud_runtime.rs` 头注「云侧的 4xx/5xx 不是错误」）。
+- **负责面**：`crates/mc-cloud/src/transport.rs`（抽 trait）＋
+  `crates/mc-http/src/state/{cloud.rs,../state.rs}`（`AppState` 持 `Arc<dyn …>`）
+  ＋ `mc-conformance` 的替身注册。⚠️ `state.rs` 属**路由登记面**，是**别人**的写集 ⇒
+  **本单必须与任何动 `state.rs` 的片串行**。
+- **写集相交**：与 **D** 不相交（不同文件）⇒ **可与 D 并行**；与 A / B **争 `mc-conformance` 装配处** ⇒ 串行。
+- **验证成本档位**：`需要 mc-cloud + mc-http + mc-conformance 冷建` ＋ `需要全量 --with-db`。
+
+---
+
+#### D. cloud_subscriptions 3 条（`cloud_runtime_configured` 里的 3 条）—— **最便宜的一单：0 新机制**
+
+- **上游 setup（逐字）**：这 3 条（`…RejectsInvalidPayerID` 400 /
+  `…WritesRequireManagerRole` 403 / `…FailsWhenPayerCannotBeResolved` 500）
+  都 `useCloudRuntimeProxy(t, &fakeCloudRuntimeProxy{enabled: true})`（**空 resp**），
+  然后断言 **`proxy.called == false`**（`t.Fatal("upstream must not be called …")`）。
+  ⇒ **假代理只是背景板**：期望值是**本地**的入参校验 / 角色闸 / 授权判定，
+  「云面已配置」的唯一作用是**别让步 0 抢先给 403 `cloud_runtime_not_configured`**。
+- **本仓已有两个现成缝（逐字）**：`AppState::with_cloud_config`（`state.rs:517`，
+  注释逐字就是「在构造之后换掉云面部署事实」）＋
+  `SUBSCRIPTIONS_FLAG = "billing_workspace_subscriptions"`（`routes/cloud/subscriptions.rs:104`）。
+  ⇒ **这 3 条不需要任何新机制**，只需要 `mc-conformance` 在 database 层用
+  「已配置 cloud + flag 开」再装配第二个 router。
+- **负责面**：`crates/mc-conformance/src/harness.rs`（`database_router` 旁边加一个
+  `cloud_configured_router`）。**零 handler 改动。**
+- **写集相交**：**与 A / B 同写 `mc-conformance`** ⇒ **必须与 A / B 串行**；
+  **与 C 零相交**（C 动 `mc-cloud` + `state.rs`）。
+- **验证成本档位**：`需要 mc-conformance 冷建` ＋ `需要全量 --with-db`。
+- **收益**：`unevaluable 27 → 24`，且**不碰一行 handler**。
+
+---
+
+#### E. daemon 3 条 —— **装置面，且**已有**具名反例**（§239.3）
+
+- **上游 setup（逐字）**：
+  - `daemon_ws_test.go:17`：`h := &Handler{}`（**裸** handler，`DaemonWebSocket` 期望 **500
+    `daemon_websocket_misconfigured`**，即「hub 从没被构造过」这个状态本身就是期望值）。
+  - `daemon_test.go:1135`：`h := &Handler{}; h.Queries = db.New(&mockDB{getUserErr:
+    errors.New("connection reset by peer")})` ⇒ 期望 **500** 且体**不含** `"task not found"`。
+  - `daemon_test.go:1151`：同一个 `mockDB{getUserErr: pgx.ErrNoRows}` ⇒ 期望 **404** + 体含
+    `"task not found"`。
+- **期望值靠什么**：三条**全是装置构造**（裸 handler + 注入的 mock 查询层）。
+  ⇒ §239.3 的纪律在这里**第三次生效**：`crates/mc-http/src/routes/daemon/gc.rs:15-17`
+  明写的「反枚举：行不存在与 workspace 不匹配返回**同一个 404**」**恰恰是设计目标**，
+  不要派人去「修」它。
+- **负责面**：`crates/mc-repos`（把 daemon 读路径抽成可注入的查询层）＋
+  `crates/mc-conformance/src/harness.rs`（注入会失败的档位）。
+  ⚠️ `daemon_token` 那一维**本轮不是缺口**（`daemon_token.rs` 已能现场签发；
+  `daemon_test.go` 那两条的 `daemon_token` 出现在 `requires` 里只是**抽取器把场景登记全了**）。
+- **写集相交**：与 A / B / D 同写 `mc-conformance` ⇒ 串行；与 C 零相交。
+- **验证成本档位**：`需要 mc-repos + mc-conformance 冷建` ＋ `需要全量 --with-db`。
+- **注意**：这 3 条键集合两两不同（§244.3 表 #4 #5 #6）⇒ **要么合成一单**（同一个 mockDB 缝），
+  **要么明确只做其中一条**。别按症状派成「3 个 daemon handler bug」。
+
+---
+
+#### F. auth 1 条 + users 1 条 —— **users 那条是抽取器切出来的半个测试，不是可独立复现的场景**
+
+- **上游 setup（逐字）**：`auth_google_error_code_test.go` 里
+  **`TestGoogleLoginSuccessfulExistingUser` 一个 Go 函数（257–322 行）里有两个
+  `httptest` 调用点**，抽取器把它们切成了**两条 fixture**：
+  - `:289`（auth 子族）`POST /auth/google`：把整个 OAuth 往返**换成一个
+    `RoundTripper` 替身**（token 端点回 `test-token`、userinfo 端点回
+    `{"email":" GOOGLE-LOGIN-SUCCESS@EXAMPLE.COM "}`），并种好 user 行 ⇒ 期望 **200** ＋
+    auth/CSRF 两枚 cookie。**期望值靠装置构造**（OAuth 替身 ＋ 一行 user）。
+  - `:311`（users 子族）`GET /users/me`：**没有独立输入** —— 它把 `:289` 刚发出的
+    `authCookie` 塞进请求，再用 `middleware.Auth(...)` 包一层。
+    ⇒ **它的输入是同一条 fixture 的上一步产物**。**结构上不可独立复现。**
+- **本仓现状**：`GET /users/me` 走 `X-Multica-Session`（本仓会话中间件），
+  `detail` 逐字已经写明「伪造一枚 cookie 对本仓什么都断言不了」。
+- **裁定**：
+  - `:289`（`external_oauth`）⇒ **可派**：`mc-conformance` 侧注册一个 OAuth 传输替身。
+    负责面 `mc-conformance` ＋ `mc-http/src/routes/auth`；验证 `需要 mc-conformance 冷建` ＋ `--with-db`。
+    与 A / B / D **同写 `mc-conformance`** ⇒ 串行。
+  - `:311`（`browser_session_cookie`）⇒ **不派工**。正确动作是**先裁定契约**：
+    它要么并进 `:289` 那条（同测试的续步），要么明确登记为「依赖前一步产物、
+    不可独立回放」。🔴 **不许**派人去给本仓加 cookie 支持（那是把 §239.3 的错误换个域再犯）。
+
+---
+
+#### G. webhooks 1 条 —— **本仓已裁定「结构上不可复现」，不要重开**
+
+- **上游 setup（逐字）**：`cloud_billing_test.go:890` 装
+  `enabled:true` ＋ `denyingWebhookIPRateLimiter`（**一律拒绝**的 double）⇒ 期望 **429**。
+- **本仓现状**：`crates/mc-http/src/routes/cloud/webhook.rs` 的模块头注**已经把这张表写在
+  文件里了**（`:53` 那一行逐字列着 `TestStripeWebhookRateLimited` ⇒ `❌ 403 ≠ 429`），
+  并逐条给出了两条修法**都不可接受**的理由（① 把 403 挪到步 3 之后 = 违背上游；
+  ② 把无归属流量的配额调到 ≤2/60s = 为测试改生产语义）。
+- **裁定**：**不派工**。它是 `PRECONDITION` 计数里的一条，但**不是缺口**，
+  是**已裁定的不可复现**。⇒ 停止条件里应当把它从「待清」里**移出**，
+  而**不是**派人去修。这条要从 27 里减掉，需要的是**一次口径裁定**（owner 决定），
+  不是一次实现。
+
+---
+
+### §244.6 汇总：27 条去了哪里
+
+| 处置 | 条数 | 子族 |
+| --- | :-: | --- |
+| **可派，且 0 新机制**（只动 `mc-conformance` 装配） | 3 | D |
+| **可派，需新装置**（`mc-conformance` + 一条缝） | 6 + 1 + 3 = 10 | A(4 条 nil 阅读器) / F(`:289`) / C |
+| **可派，但要先有「渠道阅读器替身」或等 M7** | 7 | A(5 非 nil + 2 报错) |
+| **可派，需 `mc-repos` 查询层缝** | 3 | E |
+| **有 1 条是候选抽取缺陷**（先裁定，不先实现） | 1 | A(`RejectsForgedTaskID`) |
+| **不派工：不可独立复现** | 1 | F(`:311`) |
+| **不派工：已裁定不可复现** | 1 | G |
+| 合计 | **27** | 9 个子族 |
+
+**推荐派发顺位**（按「峰值磁盘占用」而不是「体量」，§242.5）：
+**D（3 条，最便宜）→ F 的裁定（0 条，零编译）→ A 的 4 条 + B（5 条）→ F(`:289`) → C → E → A 的 7 条。**
+
+### §244.7 本片的门禁（全部 0 编译，逐条实测）
+
+| 门 | 命令 | rc | 读数 |
+| --- | --- | :-: | --- |
+| ⑦ | `python3 scripts/route_parity.py` | **0** | 八个数字**逐字不变**：`456 / 546 / 546 / 455r+1ph / gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b | `python3 scripts/slash_alias_audit.py` | **0** | `registered upstream-key literals: 541` ＋ `0 defect(s) from findings, 0 warning(s)` |
+| ⑩ | `python3 scripts/file_size_check.py` | **0** | `limit=800 scanned=1387 violations=0`（新脚本 **339 行**，`extract_upstream_fixtures.py` 那条是 baseline 里的历史条目，本片未动） |
+
+**②③④⑤⑥⑧⑨ 不跑的理由**（工单 §5.5）：本片写集 = **1 个新 `.py` ＋ 1 段 `docs/`**，
+**零 Rust / 零 `Cargo.toml` / 零 `Cargo.lock` / 零 migrations / 零路由登记面 /
+零 `contracts/golden/**`** ⇒ 那几门的**输入一个字都没变**，跑了也只会复述当前读数。
+门 ⑨ 的 `unevaluable` 计数本片**不声称**任何变化（本片不改那 27 条的任何行为，工单 §8）——
+族划分变化 ≠ 计数变化。
+
+### §244.8 可推广：本片真正学到的三件事
+
+1. **「分族」和「分类」是两件事，只有前者能零编译自证。** 族 = `requires` 键集合这种
+   **机械判别式**；而「这条期望值靠装置还是靠 handler」是**判断**，判别式给不出来 ——
+   必须打开上游 setup 逐字看。工单 §3 那张表错在**把判断的产物当成分族**，
+   于是 `stub 6` / `external_oauth 2` / `bare_handler 3` 三个数都虚高。
+2. **「最大的一族没有可用的判据键」是可以发生的，而且不会报错。** 12 条 `agent` 的
+   `requires` 是空的，`detail` 是散文 —— 一个只读 `requires` 的脚本会**静默**把它们
+   归成一组然后**看起来是对的**（条数确实 12）。第二刀（`source` 文件）才把它们分开，
+   而那 11/1 的切分**恰好**对应两套不同的装置需求。
+3. **「已裁定不可复现」是结论，不是缺口。** `webhooks` 那 1 条在计数里是红的，
+   但本仓的模块头注**逐字**给出了裁定和两条被否决的修法。把它当成缺口派出去，
+   就会有人去「修」一段**已经写清楚为什么不能改**的代码。**派工前先搜仓内有没有
+   已裁定的记录**（本片是 `webhook.rs:53` 那一行表格）。
+
+**下一空号**：`## §245`。
+
+> 合并订正（本轮 `LUM-2571` 重跑时补）：并发 cycle 的 `## §243` 已先落在 base（`cae5b2b3`），
+> 故 `## §244` 改为**接在 §243 之后**，两节均完整保留；上文 §244.1 那句「起手已确认远端无此号」
+> 只对本片开工那一刻成立。
