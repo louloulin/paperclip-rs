@@ -9,12 +9,13 @@ description = "上游 golden fixture 的本地回放器：把 contracts/golden/*
 workspace = true
 
 [dependencies]
+axum = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
-axum = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 uuid = { workspace = true }
 

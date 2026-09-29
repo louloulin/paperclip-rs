@@ -135,7 +135,7 @@ SITE_PATTERNS = (
 # the runner, so anything else makes the case skipped instead of quietly wrong.
 # The four domain symbols exist because a UUID in a request path is a *database
 # row*, not a compiled-in value — see scripts/extract_borrowed_ids.py.
-BINDABLE = {
+BINDABLE = {**rq.PAT_BINDINGS,  # `$testPAT*`: the PAT state the replay must mint
     "$testUserID": "user_id", "$testWorkspaceID": "workspace_id",
     "$testAgentID": "agent_id", "$testIssueID": "issue_id",
     "$testChatSessionID": "chat_session_id", "$testTaskID": "task_id",
@@ -1420,7 +1420,7 @@ class Extractor:
         path, path_params, query = canonicalise(req)
         if MARK in path or any(MARK in v for v in query.values()):
             return skip("path_not_literal", "unsubstituted symbol marker in the URL")
-        headers, actor = split_headers(req.headers, req.oob)
+        headers, actor = split_headers(req.headers, req.oob, interp.src(rel)[0][fn.body[0] : fn.body[1]])
         requires = requirements_for(masked, fn.body, req_text, req.oob, path, status)
         needed = symbols_in(path_params, query, actor, headers)
         unknown = sorted(needed - set(BINDABLE))

@@ -33,6 +33,9 @@ pub struct Bindings {
     daemon_token: Option<String>,
     /// database 层用**真实路由**种出来的那几行（见 [`seed`]）。`None` = stateless 层。
     seed: Option<seed::Seed>,
+    /// database 层现场签发并登记的四档 `mk_pat_` 明文（见 [`crate::pat_token`]）。
+    /// `None` = 这一层没有 PAT 面；stateless 层就是这种。
+    pat_tokens: Option<crate::pat_token::Credentials>,
 }
 
 impl std::fmt::Debug for Bindings {
@@ -50,6 +53,8 @@ impl std::fmt::Debug for Bindings {
             // 种子行不是凭据，Debug 里逐字打出来：排查「这条 fixture 拿到的是哪一行」
             // 时能直接看见，而不必先把 report 跑一遍。（`report.json` 不走 Debug。）
             .field("seed", &self.seed)
+            // `Credentials` 自己的 `Debug` 已经脱敏，这里直接落字段即可。
+            .field("pat_tokens", &self.pat_tokens)
             .finish()
     }
 }
@@ -62,6 +67,7 @@ impl Bindings {
             workspace_id: Uuid::from_u128(STATELESS_WORKSPACE_ID),
             daemon_token: None,
             seed: None,
+            pat_tokens: None,
         }
     }
 
@@ -72,6 +78,7 @@ impl Bindings {
             workspace_id,
             daemon_token: None,
             seed: None,
+            pat_tokens: None,
         }
     }
 
@@ -83,6 +90,7 @@ impl Bindings {
             workspace_id,
             daemon_token: Some(token),
             seed: None,
+            pat_tokens: None,
         }
     }
 
@@ -98,7 +106,24 @@ impl Bindings {
             workspace_id,
             daemon_token: Some(token),
             seed: Some(seed),
+            pat_tokens: None,
         }
+    }
+
+    /// 把 database 层刚签出来的四档 PAT 挂上去（见 [`crate::pat_token::register`]）。
+    ///
+    /// 单独一个构造器而不是改 [`Self::with_seeded`] 的签名：[`crate::seed`] 的四行实体
+    /// 是「哪些行存在」，PAT 是「哪一枚凭据」，两件事的测试各自要一个不带另一件的绑定表。
+    #[must_use]
+    pub fn with_pat_tokens(mut self, tokens: crate::pat_token::Credentials) -> Self {
+        self.pat_tokens = Some(tokens);
+        self
+    }
+
+    /// 该符号指向的那枚 PAT 明文（`None` = 这个符号不是 PAT，或这一层没签）。
+    #[must_use]
+    pub fn pat_secret(&self, sym: &str) -> Option<&str> {
+        self.pat_tokens.as_ref().and_then(|c| c.secret_for(sym))
     }
 
     /// 这次回放能不能施加 daemon 身份（兜底分组那一枚）。
@@ -132,12 +157,18 @@ impl Bindings {
             .or(self.daemon_token.as_deref())
     }
 
-    /// 符号 → 真值。**唯一**的汇合点：身份两类，实体行四类。
+    /// 符号 → 真值。**唯一**的汇合点：身份两类，实体行四类，外加一枚明文凭据
+    /// （`$testPAT*`，见 [`crate::pat_token`]）。
     ///
     /// 🔴 未知符号返回 `None`（由 `resolve` 变成 `unbound symbol` 错误）而不是
     /// 猜一个值：猜出来的 UUID 会让请求落在一个不存在的行上，症状是 `404`，
     /// 而 `404` 与「这条 fixture 本来就不该过」在报告里**长得一样**。
     fn lookup(&self, group: &str, sym: &str) -> Option<String> {
+        // `$testPAT*` 不是任何一行**行 id**（`Id`），而是一枚明文凭据：在这里就返回，
+        // 不走下面那条「符号 → 行」的路。
+        if let Some(secret) = self.pat_secret(sym) {
+            return Some(secret.to_string());
+        }
         let id = match sym {
             // 身份两类是**全回放共享**的：上游的 `$testUserID` 就是「跑这次测试的用户」，
             // 把它也分组化会把「同一个用户拥有两个 workspace」这条语义编错。
