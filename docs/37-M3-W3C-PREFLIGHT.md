@@ -21392,3 +21392,33 @@ run 正常 completed —— 而交付物不存在。** 两条原因都不是需�
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库；`LUM-2550` 的 workdir 已被外部删除且 CLI 拒绝复用，**需要重新分配 workdir 才能重做**。
 
 号段：`§233` = 19:00 cycle（`LUM-2551`）、`§234` = 本 cycle ⇒ 下一空号 **`## §235`**。
+
+
+### §233.10 ⚠️ 订正 §233.9：顺序**已经反过来**了 —— #163 已落地，#162 现在才是需要重做的那一片
+
+§233.9 给的顺序是「先合 #162，#163 的 mc-conformance 那块重做」。**实际落地的是反过来的**：
+本轮收尾时 GitHub 报 **PR #163 `state=closed / merged=true / merged_at=2026-09-29T12:15:49Z`** ——
+**不是本 cycle 合并的**，是并发 cycle（`LUM-2553` / §234）收割的。
+它的落地形态值得单记：**没有 merge commit**，GitHub 是因为 **#163 的 head `68f5af56` 成了 base 的祖先**而把 PR 标成 merged
+（base 上那条 `8978939b` 的 parent1 = `76ddc0d5`，而 `76ddc0d5` 的父链是 `68f5af56 → f3b173a0 → f79b40de → 17899746 → d7400dc2`）。
+⚠️ **「PR 显示 merged」在这里不等于「有人按顺序合了它」** —— 也可能是**别人把包含它的分支直接推上了 base**。
+**核验仍然只有那一条：合并后回读 base 的树，逐个确认本片的产物在不在**（本轮已做：12 个子模块全部 `ls-tree` 到）。
+
+**核对结果：#163 的产物完整在 base 里**（`d7400dc2..base` = 17 文件 +2796/−2481，12 个子模块逐个 `ls-tree` 到，`file_size_baseline.tsv` −3 行）。
+**#163 的合并树就是本轮跑出 10/10 的那棵树**（本片的 4 个提交是 base 的祖先），所以**它的门禁证据按构造继承，不需要重跑**。
+
+**代价：#162 现在是陈旧 base 的那一片。** 实测 `git merge-tree --write-tree <base> pr162` ⇒ **rc=1**，
+冲突文件**仍然只有** `crates/mc-conformance/src/lib.rs`（三方冲突，base 侧是 98 行薄壳）。
+**但 #162 的业务改动没有丢，只是搬了家**：它那 +30/−3 改的是 `plan()` 里
+`ActorKind::Agent | ActorKind::Token | ActorKind::System` 那个分支，**该分支现在在 `crates/mc-conformance/src/request_plan.rs:122`**。
+
+**⇒ 给收割 #162 的人（下一 cycle）的具体处置**：
+1. **#162 的其余部分（`pat_token.rs` 新文件 / `harness.rs` / `requirements.rs` / `contracts/golden/tokens/**` / `report.json` / `extract_requirements.py`）写集与 #163 零相交，可原样保留**；
+2. **只有 `lib.rs` 那一处要搬家**：把那 +30/−3 手工重放到 `request_plan.rs` 的 `plan()` 里（`lib.rs` 现在只是薄壳，`plan` 已不在其中）；
+3. **⚠️ 不要机械解冲突后取任一侧** —— 取 base 侧 = 静默丢掉 #162 的 PAT 签发面；取 #162 侧 = 静默丢掉整个拆分（且 base 的 12 个子模块会与薄壳不一致）。
+   **判别式仍是 §232 承重二那条：冲突文件里若有一方是「整文件重写」，先问「这一侧删掉的 900 行里有没有别人的新代码」。**
+4. 搬完之后**必须重跑一次 `--with-db` 10/10**（本片改的是回放器的凭据面，`report.json` 逐字节比对是它的判据）。
+
+**⇒ 本节与 §233.9 合起来是一条完整教训：两条并发片撞同一个文件时，「谁先合」不是执行细节，而是决定另一片要不要重做的开关；
+而当收割由第三个执行体（并发 cycle）代劳时，**下轮第一动作必须是重取板面 + 逐个 PR 回读 `state`/`merged_at`/head 是否已成 base 祖先**，
+不能沿用自己写下的顺序。**
