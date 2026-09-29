@@ -19623,3 +19623,63 @@ implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   r
 - **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**（本轮 `T1-10b` 再次 `SKIP-NO-ASSET` 实测确认），**不重复 @**。
 - **未清理（待 owner）**：`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，不自行执行）。本轮自建的 `multica_c2514` + 角色 `mc_c2514` 已自行 DROP。
 - **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ **`multica agent tasks` 判跨机死活**（`LUM-2513` / `LUM-2516` 两条）→ ⑦ 第 24 轮 → 若任一交分支，按 §210.1 判据链走（**不信 blob 恒等**）。
+
+## §220 【2026-09-29 11:00 cycle / LUM-2517】收割 `LUM-2513`（PR #153）**未通过** ＋ 🔴 承重：**门 ⑩ 的拆分惯用法系统性踩 `clippy::wildcard_imports` ⇒ 「自报绿」的验收清单少一条就等于没验** ＋ ⑦ 八数字第 25 轮逐字不变
+
+起手 base **`98386d0c`**（`rev-parse` 与 `origin/feat/multica-rs-initial` 逐字相同）；`df` **28G / 41%**、PG 5432 `online`；GH **1 open PR**（`#153`，`agent/devbox4/4b5d8b7700b0` → `5e6dad3e`）。checkout 带 `--ref` 第 43 次直接落 feat 线。
+
+### §220.1 CI 是唯一权威，且**必须拿同 base 的那一次做对照**
+
+| run | head | 结果 |
+|---|---|---|
+| `36514679494`（02:53） | **`98386d0c` = 当时的 base** | **四 job 全绿** |
+| `36513736231`（02:40） | `5e6dad3e` = PR #153 | `fast` **红**、`db` **红**、`contract` 绿、`image` 绿 |
+
+⇒ **PR 的红是本片引入的真回归，不是基线噪声。** 这条对照成本近乎为零（两次 `actions/runs` 列表），却能把「CI 红 = 环境问题」这个默认借口当场挡掉。**读法固定：任何收割判据里，CI 红了先去找 base 那一次的 run 逐 job 比。**
+
+⚠️ **本仓 token 无 admin 权限 ⇒ CI 日志读不出来**：`check-runs/{id}/logs` 404、`actions/jobs/{id}/logs` 403（`Must have admin rights`）。**「看一眼 CI 为什么红」这条路在本仓是断的** ⇒ 红因**只能本机复现**，这就把「本机复现」从「可选的尽职调查」抬成了**收割的必需步骤**。
+
+### §220.2 独立复核 `5e6dad3e`（本机冷跑，不接受自报）
+
+| 门 | 结果 |
+|---|---|
+| ① fmt | **PASS** |
+| ③ clippy | **FAIL `GATE_CLIPPY_EXIT=101`** |
+| ⑤ test（不带库变量） | **PASS** — 4272 passed / 0 failed / 394 ignored |
+| ⑥ db（自建 `multica_c2517`，**566 条迁移**） | **PASS** — 829 passed / 0 failed |
+| ⑩ file-size | **PASS** |
+| ⑦ route parity | **PASS** — `456 / 546 / 455 real + 1 placeholder / gap 0 / unclaimed 0 / regression 0 / local_only 8`（**第 25 轮逐字不变**） |
+
+**红因**：`use super::*;` 撞 `clippy::wildcard_imports`（deny 级）。clippy 在 `mc-channel` 就停住，报 8 条 `error: usage of wildcard import`（`resolvers/{dto,errors,set,traits}.rs`、`outbound/{construct,reply}.rs`），末行 `could not compile mc-channel (lib) due to 8 previous errors`。**另有 7 个同样以 `use super::*;` 开头的文件是同一颗雷**（`dingtalk/{channel,deps}.rs`、`skills/helpers/{clawhub,dto,escape,scope,validate}.rs`）—— `mc-channel` 编不过就不会暴露，**所以「clippy 只报了 8 条」绝不能读成「只有 8 处要改」**。
+
+🔴 **承重（就写在这一轮）**：**门 ⑩ 拆分片的验收清单里少 `clippy` 这一条，等于没验。** `LUM-2513` 的自报跑了 `cargo build -p …` + `cargo test -p …`（2311 passed）就交割，**独独没跑 ③ clippy**，而 ③ 恰好是唯一红的那道门。拆分的惯用法（子模块 `use super::*` 继承父模块私有项）**不是偶尔踩雷，是系统性踩**：仓内既有 524 处 `use super::*` **全在 `#[cfg(test)]` 模块里**（clippy 对测试模块放宽），而**生产代码模块不放宽** ⇒ 「既有代码这么写所以我也这么写」这个类比**不成立**。
+
+⇒ 已在飞的两片都补了这条硬约束：`LUM-2516` 发了预警评论；新派的第 3 批把「**不许 `use super::*`，要写显式 `use super::{…}`（clippy 的 `help:` 行会逐字打出清单）**」写进工单正文，并把 `gates.sh --only clippy` 列成必贴输出的验收项。
+
+### §220.3 CI `db` 的红**本机复现不出来**（诚实记为未定论）
+
+干净库 + 566 迁移 + 829 用例全绿，日志又读不到（§220.1）⇒ 目前只能判定「阻塞项是 ③」。已要求修完后在 PR 上重跑 CI；`db` 若仍红，再按 ⑧ 方向查（`--only schema-drift` + 同 URL 复跑 ⑥）。**不把「本地绿」写成「CI 那次红是 flake」** —— 那是没有证据的结论。
+
+### §220.4 派发：第 3 批（`LUM-2519`）⇒ 目标 agent `编程助手winpi`（runtime 判活按 §219 的口径）
+
+- **候选是怎么挑的**：`file_size_baseline.tsv` 清单外、**560–800 行**的全部 `.rs`，减掉 `LUM-2513`/`LUM-2516` 的写集。
+- ⚠️ **两个必须避开的落点（本轮实地 `ls` 才发现）**：
+  1. `crates/mc-channel/src/wecom/outbound_media.rs`（784）**已经有一个同名的 `outbound_media/` 目录**并存 —— 合法但会让人读错「哪个是模块」，不作为落点。
+  2. `crates/mc-channel/src/engine/*.rs`（含 `engine/router.rs` 783）**不能拆**：`engine/mod.rs:234` 有 `assert_eq!(files, 8, "engine 目录 = …")` 断言 engine **顶层** `.rs` 个数，`resolvers.rs` 一拆就变 7（`LUM-2513` 已经改过一次）。**⇒ 「拆文件」这个动作族不是彼此独立的：只要目标文件所在目录有计数型边界测试，两片就会互相打架。派拆分片前必须先 `grep read_dir / assert_eq!(files` 查一遍。**
+- **落点**：`mc-repos/src/chat_session.rs` 797、`mc-repos/src/task/store.rs` 782、`mc-http/src/routes/issue_table/spec.rs` 790、`mc-http/src/routes/daemon/lifecycle.rs` 777（四个目标目录**都还不存在**，`ls -d` 已核）。
+- **runtime 判活**：`winpi` 最近 6 条 = `completed 5 / failed 1`（唯一一条 failed 是 09-25 的 2h 无消息，**不是** `runtime unavailable`）。对照 `devbox1`（3 failed，含两条 `runtime went offline`）与 `编程助手-window`（3 failed，含 `runtime unavailable while task was queued`）—— **按 §219 的口径，只有 winpi 够格**。⚠️ 但它最近一次活动是 **4 天前（09-25）**，所以这一派**必须下轮判活**。
+- **在飞 3/3**：`LUM-2513`（返工）/ `LUM-2516`（第 2 批）/ `LUM-2519`（第 3 批，本轮新派）。本机**不再接编译片**（见 §220.5）。
+
+### §220.5 磁盘：同一个动作第三次给出第三个数字 ⇒ **别再记「单片 target 约几 G」**
+
+本机 `df` 起手 28G；本轮一次「③ clippy 全 workspace + ⑤ test 全 workspace + ⑥ db 带 `mc-http/test-util` 集成测试」的连跑，`target/` 从 0 长到 **17G**，`avail` 降到 **11G / 77%**。既往记录里有「5.0G」（窄构建口径）和「28G」（单片冷编口径）—— **三个数都是真的，差别在构建了什么**。⇒ 纪律不变且加强：**冷编片必须独占本机，收尾必删 `target/`；且不清理别人的 workdir**（那是破坏性操作）。
+
+- **清理**：自建 `multica_c2517` + 角色 `mc_c2517` **已 DROP**（先 `pg_terminate_backend` → `dropdb` → `DROP ROLE`）；本机 `target/` 17G 已删。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah 三者皆无（**不重复 @**）；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+### §220.6 下一轮起点
+
+- **base = `98386d0c`**（若本片段落已直推，则以推送后的 commit 为准）。**GH open PR = 1**（`#153`，待返工重推）。
+- **号段**：下一空号 **`## §221`**。
+- **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ **对每条在飞片先看 CI**：有新 commit 就先看对应 run 的 job 结论，**并与 base 那一次逐 job 对照**（§220.1）→ ⑦ 第 26 轮 → 交 PR 走 §210.1 判据链（不信 blob 恒等），**外加 §220.2 的新硬项：clippy 必须在验收输出里**。
+- **收割 `LUM-2513` 的判据链（本轮预登记）**：① CI 四 job 全绿 **且** `98386d0c` 那次对照仍全绿（排除「base 本身也红」）→ ② ③ clippy 的输出里**不再有** `use super::*`（`grep -c 'use super::\*;'` 落在新文件上的计数为 0）→ ③ ⑤⑦⑩ 四条读数与本片段落逐字相同 → ④ 合并树重跑 ⑤⑥⑦⑩。
