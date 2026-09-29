@@ -23125,3 +23125,143 @@ unmounted 1 / unevaluable 29`、族 `1/29/6/17/33`、`bad_total 86` **全部按�
 5. `UNMOUNTED 1`（`known_gap = 0` ⇒ **不许加路由**）。
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
+
+## §248 【LUM-2577 02:30 cycle】收割 PR #171（T1-6-G，判据链 8/8）＋ 派 `LUM-2578`（`REALM_DIFF` 抽取缺陷 lane 9 条）
+
+**起手**：base `a3f2e0ba`（= `§247` 收尾值，`git rev-parse` 实测；与上一 cycle 收尾**逐字相同**）
+⇒ 本轮起点是纯收割轮。GH open PR **2**（`#171` 新交 ＋ `#168` 陈旧）。
+`df` 起手 24G/50%、PG `online`、全盘 `ps` 零 cargo/rustc、本 workdir 零 `target/`。
+**收尾**：base `0606e4b3`。⑦ 八数字**第 47 轮逐字不变**。
+
+### 8.1 收割 PR #171（`LUM-2575` / T1-6-G / 22 条 → 15 子族）
+
+八步链 **8/8 全绿**：
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 预检一 `merge-base..head` numstat | `113/0 docs/37` ＋ `800/0 scripts/t1_6_realm_diff_taxonomy.py` **== API 逐字**（page1=2 / page2=0） |
+| 2 | base 前进段 | `merge-base == base tip == a3f2e0ba`，base **是** head 祖先 |
+| 3 | `merge-tree --write-tree` | rc=0，`7c81f1b8…` |
+| 4 | **独立真库回放** | 见 §8.2 |
+| 5 | **独立跑它的分类器** | 见 §8.2 |
+| 6 | 门 ⑦⑦b⑩ | rc=0，见 §8.3 |
+| 7 | 钉 40 位 sha + `merge_method=merge` | `160d7a5da699fbbfb6b562f9508068edc237be57` |
+| 8 | **回读 parent2** | `0606e4b3^2 == 160d7a5d` **逐字相同** ✔；`0606e4b3^{tree} == 7c81f1b8…` **== 门禁树**，差集 **0** |
+
+#### 8.2 独立复核（**不接受自报**）
+
+起手 base 的**代码面**与 §246 实测 T1-6 的合并树 `cde01aa4` **逐字相同**
+（`git diff --name-only cde01aa4 a3f2e0ba -- . ':(exclude)docs/*'` ＝ **0 行**；
+门 ⑨ 三输入 blob `report.json db01d842` / `mc-conformance/src/lib.rs ed332d1e` /
+`contracts/golden d60800ba` 两端**逐位相同**）
+⇒ 起点读数本可按**树恒等**继承。**本轮仍然真跑了一遍**（566 迁移 3.97s ＋
+`cargo build -p mc-conformance` 2.0G ＋ 回放 32s ≈ **2 分钟 / 2.0G**），
+因为**本片交付的正是一个分类器**——「脚本能跑」和「脚本的数对」是两件事，后者不能继承。
+
+```
+365 / pass 279 / mismatch 56 / unmounted 1 / placeholder 0 / unevaluable 29
+bad_total = fixtures − pass = 86          ← 用减法交叉核对（§237 承重二），不用分桶相加
+族  UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 33
+```
+
+把它的新脚本喂**我自己这份 report**（不是它留的 `/tmp`）⇒ PR 正文的每一条断言**逐条复现**：
+
+* 域分布 `chat 8 / daemon 8 / issues 8 / workspaces 3 / projects 2 / properties 2 / autopilots 1 / tokens 1` ＝ 33 ✔
+* 粗转移 `4xx←2xx 19 / 2xx←4xx 10 / 5xx←2xx 1 / 2xx←5xx 1 / 4xx←4xx 1 / 2xx←2xx 1` ＝ 33 ✔（细粒度 16 种逐字复现）
+* `claimed_elsewhere = 11`（`expected 11`，daemon 7 ＋ issues 4）✔
+* `candidates = 22`、`sum_of_subfamilies = 22`、`balanced`、`22 + 11 == 33`、
+  `33 == mismatch 56 − AUTH_401 6 − SEED_404 17` ✔
+* 归因 `抽取缺陷 9 / 装置面 7 / 行为面 6` ＝ 22 ✔
+* `unmatched_candidates = []`、`unclassified_rows = null`、`warnings = []` ✔
+* **`discriminant_checks` 4 正例 + 4 反例，`ok` 全 true** ✔
+* `--json` 模式 **`stderr` 零字节**（§246 承重一）✔
+
+#### 8.3 门读
+
+⑦ `456 / 546 / 546 / 455 real + 1 ph / gap 0 / unclaimed 0 / regression 0 / local_only 8`
+（**第 47 轮逐字不变**，rc=0）；⑦b `541` 键 / `0 defect`（rc=0）；
+⑩ `limit=800 scanned=1389 baseline=1 violations=0`（rc=0，`1388 → 1389` ＝ 新脚本 ＋1）。
+
+**②③④⑤⑥⑧ 未跑**，理由是**输入未变**（写集 ＝ 1 个 `.py` ＋ `docs/37`，
+零 Rust / 零 manifest / 零迁移 / 零路由）——§236 承重一「判据 ＝ 拿到这个读数的最小可行动作」。
+
+### 8.4 🔴 承重一：`scripts/t1_6_realm_diff_taxonomy.py` **正好 800 行 ＝ 硬上限，余量 0**
+
+门 ⑩ 判据是「清单外文件 **> 800** ⇒ 失败」⇒ 800 行**通过**，但**再加一行就红**。
+而 `§235` 早已指出「下一批 ⑩ 拆分片唯一真目标 = `scripts/schema_drift.py` 799 行（距上限只剩 1 行）」——
+**本片把一颗同类的雷放进了白名单之外**。
+
+⇒ **纪律：新脚本交付前自己 `wc -l` 量一次，≥ 780 就该在本片内拆到 600 以内**，
+不要指望下一个 slice 替你留意。**已在 `LUM-2578` 工单里列为禁改面并写明余量 0。**
+
+### 8.5 🔴 承重二：「一族一派」的反例，恰好是 `LUM-2575` 给的**文件集合** lane
+
+`§246` 承重二判 `REALM_DIFF` 已经没有一族一根因的性质（30 个上游文件 / 8 域 / 6 种转移），
+**不许照「一族一派」派 22 个方向**。`LUM-2575` 的产出正是解药：它按
+**负责面文件集合**分成 3 条 lane，于是：
+
+| lane | 条 | 负责面（**文件集合**） | 本轮可否派 |
+|---|---:|---|---|
+| 抽取缺陷 | 9 | `scripts/extract_*.py` ＋ `contracts/golden/**` | ✅ **可派** |
+| 装置面 | 7 | `mc-conformance/src/{seed,harness,requirements,request_plan}.rs` | ❌ 脚本自己标 `serial_with: [LUM-2572 在飞, LUM-2567]` |
+| 行为面 | 6 | `mc-http/src/routes/**` | 可派，但**槽位只有 1** |
+
+🔴 **可合并的判据是「负责面文件集合相同」，不是「症状像」**——
+5 个抽取缺陷子族症状各异（`400` / `403` / `404` / `201` 四种转移、4 个域），
+**但都只由同一批文件负责**，所以合成一片是对的。
+**这与「一族一派」的区别：前者按文件集合聚合（可并行性判据），后者按症状聚合（多半是错方向）。**
+
+### 8.6 派 `LUM-2578`（T1-6-H，run `01a0ee76` → devbox4）
+
+`REALM_DIFF` 抽取缺陷 lane **9 条 / 5 子族**，写集
+`scripts/extract_upstream_fixtures.py` ＋ `scripts/extract_requirements.py` ＋ `contracts/golden/**`
+——**与在飞 `LUM-2572`（`mc-conformance/{seed,harness}.rs`）零交集**，故可并行。
+
+🔴 **验收表按 §247 三条纪律重写**（不预设目标值）：
+
+* `mismatch 56 → ≤47` 且 **不增**（增了要在 PR 里逐条列——那是信息不是回归）
+* `REALM_DIFF 33 → ≤24`
+* **`bad_total_after == 86 − (pass_after − 279)`（对账式）**——因为这 9 条全是 `mismatch`，
+  **只有 `unevaluable → pass` 才降 `bad_total`**；修成 `unevaluable` 的话 `bad_total` **纹丝不动**。
+  **照抄「86 → 77」就是 §246/§247 已经栽过两次的那个坑。**
+* `unevaluable 29` 逐字不变（抽取器改动**不该**造出新的不可判定）
+* 四族 `UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17` 逐字不变
+* 🔴 **`t1_6_realm_diff_taxonomy.py` 的 `reconciliation` 四条断言全绿**，
+  且 **`claimed_elsewhere == 11`** —— 这是「本片没有和在飞 `LUM-2572` 抢那 11 条」的**机器判据**
+  （人写的「禁改面」纪律拦不住跨 issue 的重复认领，一个会算的断言能）。
+* 门 ⑦ 八个数字**逐字不变**（0 路由）
+
+工单另含：`file_size_baseline.tsv` **天花板 ≠ 实测**（记 1863 / `wc -l` 1862，只能变短）、
+新脚本 800 行余量 0 列入禁改面、**判别式必须正反例双向跑通**（§243 承重二第 3 次适用，
+`LUM-2575` 的 `discriminant_checks` 是正确样板）、**改 golden 的连带位移按
+`(source, method, path, status_expected)` 重配对而不是按 `id`**（§238 承重二）、
+**不要自己刷 `report.json`**（刷新权归 M10-9 / `LUM-2111`）、
+**PR #168 仍开着且同改抽取器 ＋ golden 但已判不合并，不要基于它改**。
+
+### 8.7 两条小订正
+
+* 🔴 **`multica issue cancel-task` 现在存在**（`multica issue --help` 列出来了）。
+  §222.7 / §237 记的「CLI 无 cancel 动词」**已过期** ⇒ 抢救改派后那条幽灵
+  `queued` run（`LUM-2572` 名下 `01a0ee4e-…-f216`、`LUM-2575` 名下 `01a0ee4e-…`）**本可以撤掉**。
+  本轮未动（避免第三写者），但**下轮起手可以清**。
+* 判「在飞」仍只认 daemon ＋ `/proc`：`LUM-2575` 的 issue 状态曾是 `backlog` 而 run 在飞。
+  本轮 `LUM-2572` 状态 `todo`、run `01a0ee1b` 自 17:55:26Z 起 `running` / `att 1` / `err null`，
+  判活（历史带 26–57 min，本轮 47 min）；全盘 `ps` 零 cargo/rustc ⇒ 它当前**不在编译**，
+  但 47 min < 70 min 的可疑线，**不判死**。
+
+### 8.8 下轮顺位（逐条重验，禁抄）
+
+`LUM-2578` 交 PR ⇒ 八步链，证据 = `mismatch 56→≤47` ＋ `REALM_DIFF 33→≤24` ＋
+`bad_total` 对账式 ＋ `unevaluable 29` 不变 ＋ 四族逐字不变 ＋
+**`claimed_elsewhere == 11`** ＋ 门 ⑦ 八个数字逐字不变；
+⚠️ 预期与陈旧的 **PR #168** 撞抽取器 ＋ golden，收割时注意。
+`LUM-2572` 交 PR ⇒ 八步链，证据 = `mismatch 56→≤45` ＋ `REALM_DIFF 33→≤22` ＋
+`unevaluable 29` 不变 ＋ `bad_total 86` 不变。
+**`LUM-2572` 合入后** ⇒ ① `LUM-2567`（PRECONDITION 29，`blocked` 理由解除，按 rev 6 派）
+② `LUM-2578` 的子族 5 交接给**装置面**（要造「第二个 workspace ＋ admin 成员」）
+③ 装置面 7 条（`serial_with` 已清）④ 行为面 6 条（`mc-http/src/routes/**`，真零交集）。
+`AUTH_401 6` / `SEED_404 17` 与 `LUM-2567` **同写集 ⇒ 串行**。
+`UNMOUNTED 1`：`known_gap = 0` ⇒ **不许加路由**。
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah；
+`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**。
