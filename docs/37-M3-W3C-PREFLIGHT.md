@@ -20823,3 +20823,60 @@ CI 的 `image` job 唯一的 `run:` 就是 `bash scripts/gates.sh --only image`�
 `CARGO_INCREMENTAL=0`，真库 `multica_c2541` / 角色 `mc_c2541`（带 `CREATEDB`，**密码在 DSN 里** —— §226 承重二）。
 **冷编一轮 781s 10/10**（起手 `avail 28G`，峰值后 `8.7G`），改完后两轮热跑 **253s / 272s**（其中一轮 ③ 红，见 §229.5）。
 终态树 10/10 + T1-12 绿 + `T1-6` 读数与互证值逐字相同。
+
+---
+
+## §230 【2026-09-29 17:00 cycle / LUM-2545】**零收割**（`LUM-2536` PR `#160` 已交、CI 在跑、等合）＋ **派发门 ⑩ 第 7 批**（`LUM-2544` → `lin`）＋ 🔴 承重一：**白名单里的行数是「天花板」不是「实测值」，两者可以长期不同 —— 派单与报数一律用 `wc -l` 实测** ＋ ⑦ 八数字第 35 轮逐字不变
+
+### §230.1 板面与在飞
+
+base **`e8369de9`**（= `feat/multica-rs-initial` 尖，PR `#159` 合入树）。
+该 commit 的 CI **4/4 success**（`fast` / `image` / `db` / `contract`）⇒ §229 的收尾值在 base 上仍成立。
+GH **1 个 open PR**：`#160`（`agent/lin/a6dcaf74011a`，`LUM-2536` 第 6 批 b `mc-repos inbox.rs` 1185 → 7 文件），
+`mergeable=true` / `mergeable_state=unstable`（**`contract` 已 success，其余三道 `in_progress`** ⇒ 是「CI 还没跑完」不是「跑挂了」，
+判别式：`total_count=4` 且**无一条 `conclusion=failure`**）。本轮**不代合**，等 owner/lin 侧收口。
+
+在飞 **1/3**（`LUM-2536`，`in_review`）＋ cycle 自身。
+
+### §230.2 🔴 承重一：白名单行数是**天花板**，不是实测值
+
+`scripts/file_size_baseline.tsv` 记的是**上限**，`file_size_check.py` 的判据是
+「清单内文件 **>** 记录行数 ⇒ 失败（只许变短）」。于是**文件变短后 tsv 不会跟着降**：
+
+| 条目 | tsv 记录 | `wc -l` 实测 | 差 |
+|---|---|---|---|
+| `crates/mc-conformance/src/lib.rs` | **1024** | **952** | −72 |
+| `scripts/extract_upstream_fixtures.py` | 1863 | 1862 | −1 |
+| 其余 5 条 | 与实测一致 | | 0 |
+
+⇒ **「基线 7 条」不等于「7 个超限文件各超多少」**，`file_size_check` 的 `over` 列报的才是真实超额。
+**现场签名：同一行在 tsv 和 `wc -l` 里给出两个数，而两者都不算错。**
+**纪律：派单表格、PR 描述、收尾报告里凡涉及白名单行数，一律写 `wc -l` 实测值并注明来源**；
+本轮 `LUM-2544` 的 park 描述里写的 `mc-conformance 951` 就是**上一轮凭印象抄下来的错值**，当轮实测 952 已订正
+（与 §225 承重三「上一轮登记的证据数字本身可能是错的」同族，但这里错的是**记录口径**而非测量值）。
+
+### §230.3 派发：门 ⑩ 第 7 批（`LUM-2544` → `lin`）
+
+在线且空闲的编码 agent 判读：`agent list` 全部 `idle`，但 `runtime list` 里
+`Pi (devbox1) 0d113b34` / `Pi (devbox) 478b7f4b` / `Pi (devbox2) e3b45a25` / `Pi (MS-AJRFTMRSXMHB) 041bf509` /
+`Claude (MS-AJRFTMRSXMHB) 970fe6d2` / `Claude (wulanchabu) d08c0c87` 六个 **offline**（心跳停在 09-07 ~ 09-28）
+⇒ **实际可派的只有 `lin`（`Claude (MacBook-Pro-9.local)` 69637c57 online）与 `devbox4`（在另一条流 `LUM-2481`）**。
+本轮把停放中的 `LUM-2544`（`mc-http/tests/inbox.rs` 1149 → 子模块）从 `backlog` 起为 `todo` 并指派 `lin`，
+run `01a0ec66` **单一 running**（起手按 §227 承重三先验 `issue runs`，没有第二个活跃 run ⇒ 无双写者）。
+
+**磁盘算式**：`avail 27G`，本 workdir 无 `target/`（可回收量 0），在飞片 `LUM-2536` 已交付不再编译
+⇒ 单片峰值 19G（`CARGO_INCREMENTAL=0`）可容，**故只排 1 片**，第 2 槽按 §208.5 的两项算式继续留空。
+
+### §230.4 ⑦ 八数字第 35 轮逐字不变
+
+`upstream 456 (f41fae6b08fb) | local 546 | baseline 546`、
+`implemented 455 real + 1 placeholder = 456 / 456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`；
+⑦b `slash_alias_audit` rc=0（`541 registered upstream-key literals`、`0 defect`、`0 warning`）；
+⑩ `file_size_check` rc=0（`scanned=1354 baseline=7 violations=0`）；
+⑨ `report.json` 六数字 `fixtures 365 / pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`。
+**本轮零 handler、零路由、零迁移、零编译**（只读核对 + 一条 docs 提交）。
+
+### §230.5 下轮起手
+
+第一动作仍为：查 `e8369de9` 之后 base 是否前进 → GH open PR（**翻页取全**）→ 判活 `LUM-2536`/`LUM-2544` 两个 run
+（`01a0ec66` 的写集是否与派单逐项吻合）⇒ 若 `#160` 已合，**白名单基线变 6 条**，`LUM-2544` 即 6 → 5（描述里已双情形写明）。
