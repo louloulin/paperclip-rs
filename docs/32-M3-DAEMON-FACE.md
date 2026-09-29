@@ -10148,3 +10148,52 @@ stateless 层补」**不成立**。本仓 `DaemonAuth` 的**每一条**路径都
 database 层 `pass 187 → 187` **一条不掉**、`mismatch −32` / `unmounted −1` 全部转为诚实的 `unevaluable`。
 ⚠️ **`已接入路由等价率 0.5690 → 1.0` 是分母从 58 缩到 34 的结果，不是「契约全部成立」**——
 沿用 §201.2 的口径订正：**任何等价率都要连分母一起读**。
+
+---
+
+## 59. T1-6-C（`LUM-2567`）：PRECONDITION 族的 database 层第二个部署形态（0 路由 / 0 handler / 7 文件）
+
+**号段说明**：§11.5 许出的是 `## 58.`，但 `## 58.` 已被 `## 58. M9-7（LUM-1822）` 占用
+（§11.5 的扫码只 `tail` 到 `## 57.`，漏了它下面那批 58/60/61…65）；`## 59.` 是空洞 ⇒ 取空号补齐。
+🔴 号段判活要把**全部** `^## [0-9]+\.` 取出来看，不能只看 tail 的几个。
+
+**落点**：`crates/mc-conformance/{src/harness.rs,src/main.rs,src/replay.rs,src/requirements.rs,tests/golden.rs}` ＋
+`Cargo.toml`/`Cargo.lock`（**唯一一处**新增依赖 `mc-feature-flags`，理由见下）。
+
+- `harness`: `database_router` → `database_routers`，把 stateless 层那个「已配置 cloud」形态抽成
+  **两层共用**的 `cloud_configured_router`；database 层也装第二个形态。`main.rs` / `tests/golden.rs` 跟随。
+- `requirements`: `cloud_runtime_configured.satisfied_by` 补 `Tier::Database`。
+- 🔴 **新增依赖是必要改动**：上游那批 `cloud_billing_test.go` 用例跑在 `withFeatureFlag(true)` 里，
+  而 `AppState::new` 的 flag 目录是**空的**；第二个形态要开 `billing_workspace_subscriptions`
+  就得到 `mc-feature-flags::FeatureKey` / `FeatureFlagCatalog`，`mc-http` 没有 re-export
+  （只有 `state.rs` 内部 `use`）⇒ 只能加 path 依赖。这不是「想要」是「要开这个事实就得有它」。
+
+**实测（真库 `mc_lum2567`，566 迁移 + 回放）**：
+`pass 295`（不变）· `mismatch 40 → 44` · `unmounted 1` · `unevaluable 29 → 25`；`bad_total 70 → 70`
+（`= 70 − (295 − 295)`，判据 ③ 成立）。四族因**按 observed 状态码重新分桶**而位移：
+`AUTH_401 6→7`（401）、`SEED_404 17→18`（404）、`REALM_DIFF 17→19`（502 / 400）、`UNMOUNTED 1→1`。
+
+**偏离登记（3 条）**：
+1. 🔴 **验收判据 ① + ④ 不可能同时成立**（构造性证明见 `docs/37` §255.5）：4 条 C 组**没有一条**
+   能诚实地变成 `pass`，而任何 `unevaluable → mismatch` 都必然把计数计进 `AUTH_401`/`SEED_404`/
+   `REALM_DIFF` ⇒ 判据 ④「其它四族逐字不变」必被打破。本片选择**交付真读数 + 给出证明**，
+   而不是为了让表变绿去捏种子角色 / flag 期望。
+2. **假 `mismatch` 登记（前 3 条）**：`healthz 204→502`（断言的是上游 `fakeCloudRuntimeProxy` 录下来的
+   响应，真前提是 `cloud_runtime_stub`）· `portal-sessions 403→400`（上游用中间件 ctx **注入**非管理者
+   角色，本仓角色来自库里的成员行，而 seeder 的种子身份按设计一定是 owner）·
+   `checkout 500→404` / `400→401`（上游把**付款人**放在 `X-User-ID`、身份来自 ctx；本仓这一个 header
+   兼作身份，且它是 `direct_handler` 站点）。
+   ⇒ 处置建议：`EXTRACT_*` lane 给这 4 条补一个 `satisfied_by: &[]` 的真前提 id（回到 `unevaluable`），
+   或 owner 认可判据 ② 只约束 C 组以外的位移（§11.2 判据 ⑤ 的措辞本就把 C 组转 `mismatch` 算在内）。
+3. **已知的表述不足（本片引入，已登记）**：第二个形态把「云面已配置」与
+   「`billing_workspace_subscriptions` 开着」两件部署事实压进**同一个前提 id**
+   （golden 里没有单独的 flag 前提）⇒ 未来若有一条声明 `cloud_runtime_configured` 却断言
+   **flag 关**的形态，会被判错。拆分权在 `EXTRACT_*` lane，不在本片。
+
+**门禁**：① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑩ 全 rc=0（⑤ `162s`、⑥ `201s`／`migrate=0,e2e=0`、⑧ `26s`）；
+⑨ rc=1 **存量红**（`line 17`、`committed 13 vs fresh 12`，本片 HEAD 与 `git stash` 后的干净 base
+**同签名**，未跑 `--write`）。⑦ 八数字逐字不变、⑦b `541 literals / 0 defect`、⑩ `0 violation`。
+
+**存量红（非本片引入，已验证）**：`cargo test -p mc-conformance --test golden -- --ignored` 里
+`seeded_symbols_convert_404_into_real_judgements` 红（`left 79 / right 68`）—— 干净 base 上**同样红、同样 79/68**；
+它 `#[ignore]` 且 ⑥ 的 package 列表不含 `mc-conformance` ⇒ 潜伏红，归 §209 的记账 lane。

@@ -23993,3 +23993,143 @@ docker/podman/buildah 三者皆无（而 ⑨ 的 `--no-db` 形态**并不需要*
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无（`report.json` 刷新死锁）；
 `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
+
+---
+
+## §255 【LUM-2567 / T1-6-C】PRECONDITION 族 —— database 层补第二个部署形态（0 路由 / 0 handler / 7 文件）
+
+### 255.1 起手实测（不抄工单、不抄 §254）
+
+- `df -h /` 连采两次（间隔 30s）：**31G used / 17G avail（66%）**，两次同值；
+  `pg_lsclusters` 16/main/5432 **online**。
+- base = `git ls-remote origin feat/multica-rs-initial` = **`a32fdc06`**（与 §254 记录一致），
+  HEAD 逐字相同 ⇒ 与 §11.2 的换基成立。收尾时远端又前进 2 个 **docs-only** 提交
+  （`5bb915b5` = §254、`6dc0d0c1` = 号段订正），已 `git merge` 进分支；`git diff --name-only`
+  显示合并只带进 `docs/37-M3-W3C-PREFLIGHT.md`（+168），**代码树一字未动** ⇒ 下面全部读数按树恒等继承。
+
+🔴 **本 worktree 的一处装置事故（症状极具误导性，值得单独记）**：
+`multica repo checkout` 给这个 worktree 建了 `worktrees/paperclip-rs7/config.worktree`，
+但**只写了 `[user]`，没写 `core.bare=false`**（同目录上一轮的 `paperclip-rs6` 里**有**这一行）。
+后果：`git rev-parse --is-bare-repository` 答 `true`，于是 **`git status` / `git diff` / `git commit`
+全部报 `fatal: this operation must be run in a work tree`，而 `git log` / `git rev-parse HEAD` /
+`git config --worktree` 一切正常** —— 看上去像「仓库坏了」或「checkout 落错线」，
+实际只是少了一行 per-worktree 配置。修法（逐 worktree，不碰共享裸库）：
+`git config --worktree core.bare false`。⇒ **起手第 0 步应当是 `git status --short` 而不是 `git log`**：
+`git log` 只读 HEAD（不碰 work tree），它绿**不能**证明 work tree 是好的。
+
+### 255.2 清单是真跑出来的（不是复算模型）
+
+真库 `mc_lum2567`（角色建时就带 `CREATEDB`，门 ⑧ 要它）＋ 566 迁移 ＋ 回放：
+
+```
+365 / pass 295 / mismatch 40 / unmounted 1 / placeholder 0 / unevaluable 29   ⇒ bad_total 70
+t1_6_taxonomy.py：UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 17
+```
+
+与 §11.2 的起点表**逐格相同**（本轮我自己重取，非继承）。与 §0 那份「30 条零编译模型清单」
+逐条对账 ⇒ **29 条**，差的 1 条正是 §9.3 记的「PR #170 后少 1」。当轮分解：
+
+| 组 | 条 | 未满足的前置 / 根因 |
+|---|---:|---|
+| **C** `cloud_runtime_configured` | **4** | 数据库层没有「已配置 cloud」形态（本片做） |
+| A `actor.kind=agent` 无签发面 | 12 | 两层都没有 agent 凭据面（含 `agents` 那 1 条抽取器误记） |
+| D 上游测试替身（`cloud_runtime_stub` 5 / `webhook_rate_limiter_denying` 1 / `bare_handler_no_wiring` 1 / `external_oauth` 1 / `browser_session_cookie` 1 / `db_fault_injection` 2） | 11 | 按设计不可判定（替身是上游单测的内部结构） |
+| B fixture 自己的 `path` 带 axum 拒收字节 | 2 | 缺口在 golden（`PUT /api/agents/a runtime that this profile does not provide`、`DELETE /api/comments/…/reactions`） |
+| 合计 | **29** | ✓ 与 `unevaluable` 对平 |
+
+### 255.3 交付（0 路由 / 0 handler / 0 迁移；写集 = `mc-conformance` 装配面）
+
+- `harness.rs`：`database_router` → **`database_routers`**，把「已配置 cloud」的构造抽成
+  **两层共用**的 `cloud_configured_router`，database 层按 stateless 层的同形也装第二个形态；
+  `main.rs` / `tests/golden.rs` 两个调用点跟随（`TierRouters::single` 不再被 CLI 走）。
+- `requirements.rs`：`cloud_runtime_configured.satisfied_by` 补 `Tier::Database`
+  —— 这条前提在**两层**都供得起；此前「已配置 cloud」这个部署形态**只存在于 stateless 层**，
+  而这 4 条是 member 身份（stateless 层供不起 member）⇒ 死锁在两层中间。
+- 🔴 第二个形态里**同时打开了 `billing_workspace_subscriptions`**（§244.3 D 单的处方「已配置 cloud
+  ＋ flag 开」）：上游那批 `cloud_billing_test.go` 用例跑在 `withFeatureFlag(true)` 里，而
+  `AppState::new` 给的是**空** flag 目录（每个 flag 取默认关闭）。⇒ 这是**两件部署事实被压进
+  同一个形态**（golden 里没有单独的 flag 前提 id）—— 登记为**已知的表述不足**，
+  拆分权在 `EXTRACT_*` lane（要新增一个前提 id），不在本片。
+
+### 255.4 验收表逐条对账（全部当场取；✗ 的两条给出不可达证明）
+
+| 判据 | 起点 → 实测 | 结论 |
+|---|---|---|
+| ① `PRECONDITION` | **29 → 25** | ✅（≤26，且是 4 条全转真判定） |
+| ② `mismatch` 不增 | **40 → 44** | ❌ 字面未达成（见 255.5） |
+| ③ `bad_total` 对账 | **70 → 70** = `70 − (295 − 295)` | ✅ |
+| ④ 其它四族逐字不变 | `AUTH_401 6→7`、`SEED_404 17→18`、`REALM_DIFF 17→19`；`UNMOUNTED 1→1` | ❌ 见 255.5 |
+| ⑤ 降幅只来自 C 组 | 4 条全部是 C 组，A/D/B 三组**一条未动** | ✅ |
+| ⑦ route-parity 八数字 | `456 / 546 / 546 / 455 real + 1 placeholder / known_gap 0 / unclaimed 0 / regression 0 / local_only 8`（逐字不变） | ✅ |
+| ⑦b slash_alias | `541 literals / 0 defect` | ✅ |
+| ⑩ file-size | `0 violation`（`scanned / baseline 1`） | ✅ |
+| ⑨ `--no-db` | `365 / pass 34 / mismatch 0 / unmounted 0 / unevaluable 331`（与 base 逐字相同） | ✅ |
+| 门 ①②③④⑤⑥⑧⑦⑩ | 全部 rc=0 | ✅ |
+| 门 ⑨ | rc=1，`line 17`、`committed unevaluable 13 vs fresh 12` —— **base 同签名同红**（见 255.7） | 存量红 |
+
+### 255.5 🔴 承重：判据 ② 与 ④ **不可能**与判据 ① 同时成立
+
+这不是「本轮没做到」，是**构造性的**：
+
+1. `t1_6_taxonomy.py` 的第二刀按 **`observed` 状态码**分桶（`401 → AUTH_401`、`404 → SEED_404`、
+   其余 → `REALM_DIFF`）。⇒ **任何** `unevaluable → mismatch` 的转换，都必然把一条计进
+   `AUTH_401` / `SEED_404` / `REALM_DIFF` 里 ⇒ 判据 ④「其它四族逐字不变」**必然**被打破。
+2. ⇒ 要同时满足 ① 与 ④，4 条 C 组**必须全部转 `pass`**（只有这样 ② 才不增、④ 才不动）。
+3. 而 C 组里**没有一条**能诚实地变成 `pass`。两个变体都实测过（同一棵代码树，只改一行 flag 开关）：
+
+   | 变体 | `pass` / `mismatch` / `unevaluable` | C 组逐条 |
+   |---|---|---|
+   | flag **关**（只加 cloud 形态） | 296 / 43 / 25 | portal **403=期望 403**（**巧合**：走的是 flag 闸，不是角色闸）；healthz 502；checkout 403；checkout 401 |
+   | flag **开**（§244.3 D 处方，本片采用） | **295 / 44 / 25** | portal **400**（flag 闸过了 ⇒ 落到「缺 idempotency key」的 400）；healthz 502；checkout 404；checkout 401 |
+
+4. 逐条根因（每条都已回上游 `90e0bdf8` 核过 setup，**没有一条是本仓 handler 的错**）：
+
+   | # | fixture | 期望 | 实测 | 真根因（**都在 golden 的表述不足里**） |
+   |---|---|---:|---:|---|
+   | 1 | `cloud_runtime/TestCloudRuntimeEmptyResponseKeepsStatus` | 204 | **502** | 上游的 204 是 `fakeCloudRuntimeProxy{resp.StatusCode:204}` **录下来的** ⇒ 断言的是替身，不是本仓转发。它的真前提是 `cloud_runtime_stub`（恒 `unevaluable`），抽取器记成了 `configured` |
+   | 2 | `cloud_subscriptions/…WritesRequireManagerRole` | 403 | **400** | 上游用 `ctx = SetMemberContext(ws, db.Member{Role:"member"})` **注入**「非管理者」角色；本仓的身份/角色来自**库里的成员行**，而 seeder 的种子身份按设计**一定是 owner**（`seed.rs:392`）⇒ 角色闸过不了，落到缺 key 的 400。**不是 handler 错** |
+   | 3 | `cloud_subscriptions/…FailsWhenPayerCannotBeResolved` | 500 | **404** | 上游把 **payload 的付款人**放在 `X-User-ID` 里，而**身份**来自中间件 ctx；本仓回放把这**一个 header 兼作身份**（planner 的 member 分支会把它替换成 session 头）⇒ `X-User-ID` 根本到不了 handler，先被「非成员」404 拦掉。同一个 header 两种语义 ⇒ 不可复现 |
+   | 4 | `cloud_subscriptions/…RejectsInvalidPayerID` | 400 | **401** | 同上（`X-User-ID: not-a-uuid`）：上游是 `direct_handler` 站点（**不过中间件**，handler 自己报 400 `invalid user id`）；本仓按既定契约**一律打 router** ⇒ 中间件先 401 |
+
+   ⇒ 前 3 条是**装置面的假 `mismatch`**（把「我们判不了」写成「实现错了」），第 4 条是
+   `direct_handler` 站点的固有差。本片**没有**去动 handler、也**没有**为了让它们变绿去捏
+   种子角色 / flag 期望 —— 那正是 `REQUIREMENTS` 模块文档禁止的形态。
+
+5. **给 owner 的处置建议**（不由本片擅自执行）：
+   - `EXTRACT_*` lane 给这 4 条补一个**真前提 id**（`upstream_middleware_ctx` 一类，`satisfied_by: &[]`）
+     ⇒ 它们回到 `unevaluable`，`mismatch` 与四族全部复原；这是**唯一**能同时满足 ① 与 ④ 的路径。
+   - 或者 owner 认可「判据 ② 只约束 C 组以外的位移」（判据 ⑤ 的措辞允许 C 组转 `mismatch`），
+     那么本片的读数就是终值，④ 的三个位移是**同一批 4 条的换桶**，不是新缺口。
+
+### 255.6 本轮真正被证伪的旧结论
+
+- §9.3 / §244.3-D 说这 4 条是「**最便宜的一单：0 新机制**」「假代理只是背景板，期望值是本地的
+  入参校验 / 角色闸」。**前半句对，后半句对 upstream 成立、对本仓回放不成立**：
+  卡住的不是云面，而是**身份语义**（角色注入 / `X-User-ID` 兼作身份）与 **`direct_handler` 站点**。
+  ⇒ 「装置面干净、值得由本片做的只有 C 组 4 条」这个上限（⇒ `≤26`）**高估了 4 条里能变成 `pass` 的数量**：
+  实际是 **0 条**。
+- 保留有效的那一半：那处**真实的不对称**（`database_router` 只回一个裸 `Router`）确实存在、
+  确实该修，本片修了，并且它让 4 条从「没被判定过」变成「判定过」——**判据 ① 是真成立的**。
+
+### 255.7 存量红与逐条取证（不追、不刷）
+
+- 门 ⑨ `--no-db --check`：rc=1，`line 17`、`committed "unevaluable": 13` vs `fresh: 12`
+  —— 在**本片 HEAD** 与 **`git stash` 后的干净 base** 上**各自**跑过，**两侧同签名** ⇒ 存量红
+  （PR #167 未同步 `report.json`），刷新权归 M10-9 / `LUM-2111`。**未跑 `--write`**。
+- `cargo test -p mc-conformance --test golden -- --ignored`：
+  `seeded_symbols_convert_404_into_real_judgements` **红**（`left 79 / right 68`），
+  在**干净 base 上同样红、同样 79/68** ⇒ **存量红，非本片引入**；该断言自身就写着
+  「真判定条数变了：docs/37 §209 的前后读数与归因表要跟着改」⇒ 归 §209 的记账 lane
+  （`RESOLVED 68 / STILL_404 6 / OTHER 21` 这三个常量自 §213 起没跟上后续合并）。
+  它**不在任何门里**（`#[ignore]`，且 ⑥ 的 `cargo test` 列表不含 `mc-conformance`）⇒ 是潜伏红，不是门红。
+- 同一条命令里 `database_tier_replays_every_decidable_fixture` **绿**（本片改的就是它走的那条装配）。
+
+### 255.8 号段与磁盘
+
+- `docs/37`：§11.5 许出的是 `§254`，但 `§254` 已被 **LUM-2582 的 04:00 cycle** 取走；
+  远端最新提交自己把 **`§255` 留给 `LUM-2567`**（下一空号 `§256`）⇒ 本片取 **`§255`**。
+- `docs/32`：`§11.5` 许出的 `## 58.` **已被 `## 58. M9-7（LUM-1822）` 占**（§11.5 的扫码只扫到 `## 57.`，
+  漏了它下面那批 58/60/61…65）；`## 59.` 是空洞 ⇒ 本片取 **`## 59.`**（补空号，不抬 max）。
+  🔴 **教训**：号段判活不能只 `tail` 几个 `## ` 标题 —— 得把**全部** `^## [0-9]+\.` 取出来看。
+- 磁盘：起手 17G avail → 门 ⑥ 跑完只剩 **4.8G（90%）**（⑥ 的 4 个 package test 二进制最贵）。
+  本片按 §7 只做外科回收，收尾把**本 worktree 自己的** `target/` 回收；**未动任何在飞 workdir 的 `target/`**。
