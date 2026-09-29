@@ -22783,3 +22783,151 @@ T1-6 PRECONDITION 子族  input=conformance_db_json  候选 27  子族 9
 > 合并订正（本轮 `LUM-2571` 重跑时补）：并发 cycle 的 `## §243` 已先落在 base（`cae5b2b3`），
 > 故 `## §244` 改为**接在 §243 之后**，两节均完整保留；上文 §244.1 那句「起手已确认远端无此号」
 > 只对本片开工那一刻成立。
+
+## §246 【2026-09-30 01:30 cycle / LUM-2574】收割 PR #170 + #169（合并树 9/10，⑨ 存量红已归因）＋ T1-6 `bad_total 89 → 86` ＋ 派 `LUM-2572`（11 条，装置面）∥ `LUM-2575`（22 条分类片，零磁盘）
+
+起手 base `cae5b2b3` → 收尾 **`df2b0a01`**（PR #170 合并树 `3ce94af0` ＋ PR #169 合并树 `df2b0a01`）。
+GH open PR 3→**1**（`#168` 判不合并，理由见 §243）。df 起手 **26G/45%** → 门禁峰值 5.0G/90% → 回收 **24G/50%**。PG 5432 `online`。
+
+### 1. 收割判据链（两片合树一次跑，8/8）
+
+两片写集**严格零交集** ⇒ 先用**真 `git merge`**（scratch worktree，`--no-ff --no-commit`）造合并树
+`cde01aa4`，**一次** `--with-db` 门禁覆盖两片（省一整轮 19G 冷编）。
+
+| 步 | 内容 | 结果 |
+|---|---|---|
+| ① 预检一 | #169 `2/+649/−0`、#170 `10/+298/−39` | 与 PR API **逐字相同**（page2=0） |
+| ② 前进段 | #170 的 merge-base `0982d786`，base 前进段**非 docs = 0 文件** | 真合形态，`merge-tree` rc=0 两片皆然 |
+| ③ 合并树 | `9725af8d`(+169) → 合并 #170 ⇒ **`cde01aa4`** | 加性核对 `12/+947/−39` == `649+298` / `0+39` **逐字相加** |
+| ④ 门禁 | 合并树 `--with-db` **9/10 / 672s** | ⑤ test PASS / ⑥ db `migrate=0,e2e=0` 829 passed / ③④⑦⑧⑩ 全 rc=0 |
+| ⑤ 落树 | 落地树 **== 门禁树 == `cde01aa4`** | 门禁证据**按构造继承**，不重跑 |
+| ⑥ parent2 | `3ce94af0` 的 parent2 = 钉的 `152f841a`；`df2b0a01` 的 parent2 = 钉的 `bfaa06c7` | **逐字相同**（§232 承重四） |
+
+🔴 **预飞抽查（§231.4 承重二）**：合并树出门前抽查了 4 条「只可能由某一侧提供」的路径
+（`scripts/t1_6_precondition_taxonomy.py` / `docs/37-M3-W3C-PREFLIGHT.md` /
+`crates/mc-repos/src/issue_status.rs` / `crates/mc-core/src/status.rs`）**全部存在** ⇒ 没有静默丢侧。
+
+### 2. 🔴 承重一（本轮最要紧）：**「CI 红了」要先分「存量」与「回归」，而分清它们的最便宜动作是「在干净 base 上跑同一条门」**
+
+#169 与 #170 的 CI `contract` job（⑦+⑨）**都红**。判读时最容易走错的一步是直接归因成「切片引入的回归」。
+
+实测：**在干净 base `cae5b2b3` 上单独跑 `gates.sh --only conformance` ⇒ 同样红，且失败签名逐字相同** ——
+`first difference at line 17: committed "unevaluable": 13 / fresh "unevaluable": 12`。
+⇒ **存量红**，来自 PR #167 改了 agent fixture 而 `report.json` 未同步（刷新权归 M10-9 / `LUM-2111`）。
+**不许自行刷 `report.json`**（`scripts/stop_condition.sh` 顶部明文禁止），这条已写进本轮两张工单的验收里。
+
+🔴 **一条容易连带假红的**：#170 的作者在自己树上看到 ⑨ 红了、以为是自己的；实际上**基线本身就是红的**。
+**若收割方不先在 base 上复现，就会把一个存量红写成「本片引入的回归」，进而在 PR 上做无谓的修补。**
+
+⚠️ 附带读数：base 上 ⑨ 跑 **100s**，合并树上 **0s**（热 target + 已编译二进制）。
+**门禁耗时不是判据**，别把 0s 读成「短路了」—— 逐字比 `--check` 的失败签名才作数。
+
+### 3. 🔴 承重二：`REALM_DIFF` 的分族「一个根因」性质**已经用完了**，下一轮不能再照那个先例派
+
+`LUM-2565`（#170）能在**一个根因**上动手，是因为那 7 条**真的**共享 `parse_category` 只认两值这一个根因。
+本轮实测剩余 `REALM_DIFF 33` 条**没有这个性质**：
+
+- 散布在 **30 个不同的上游测试文件**、**8 个域**（`chat 8 / daemon 8 / issues 8 / workspaces 3 / projects 2 / properties 2 / autopilots 1 / tokens 1`）
+- **6 种「期望→实测」转移**：`4xx←2xx 19` / `2xx←4xx 10` / `5xx←2xx 1` / `2xx←5xx 1` / `4xx←4xx 1` / `2xx←2xx 1`
+
+⇒ **照「一族一派」把这 22 条派出去，会把工派到 22 个互不相干的方向，其中大部分是错的方向。**
+本仓已两次栽在「分族靠转述」（§240 的 `requires` 分族、§239 的 8 条 daemon 404→200），
+**根因都是「先派工、后分族」**。⇒ 本轮新增 `LUM-2575` 专门做**分类**，零 Rust / 零 cargo / 零真库 / 零磁盘，
+**与 PR #169（`PRECONDITION` 9 子族）同形**。
+
+🔴 **新承重：一条派工单里，「负责面」必须写文件集合，不能写组织归属。**
+本轮实测 `PRECONDITION 29` / `SEED_404 17` / `AUTH_401 6` **三族全在**
+`crates/mc-conformance/src/{harness,seed}.rs`。**按组织归属看是三组人，按文件看是同一批文件，只能串行。**
+（§240 已订正过一次「零交集」的说法，但那是**记忆里**的；本轮是**当前 tree 上实测**的，且结论**更收窄**。）
+
+### 4. 🔴 承重三：**「验收表给的数字」要先在最新 base 上复算，再决定它是不是判据**
+
+`LUM-2572` 原工单写「4 条 fixture、`REALM_DIFF 36→29`」，**两处都过期了**：
+本轮合并树实测起点是 **`REALM_DIFF 33`**（#170 已把它从 36 降到 33），而那 4 条**仍然是红的**（`#170` 只修好 7 条里的另外 7 条中的 3 条行为面，装置面那 4 条未动）。
+本轮把它**扩到 11 条**（4 条自定义 status 目录项 + 7 条跨 workspace daemon 令牌），并改掉判据：
+
+- 🔴 **`bad_total` 本片应当逐字不变**（86 → 86）。本片 11 条**全是 `mismatch`**，
+  而 `bad_total = fixtures − pass`，**只有 `unevaluable → pass` 才降它**。
+  照抄「`bad_total` 86→75」会得到一个**永远达不到**的判据（历史上 `T1-7` 与 `LUM-2567` 都栽在这类「算式看起来顺」的验收表上）。
+  **变的是 `mismatch 56 → ≤45`。**
+- 「`REALM_DIFF 33 → ≤22`」+「其余四族逐字不变」+「`unevaluable 29` 不变」。
+
+### 5. 🔴 承重四：**7 条 `404←200` 的 daemon fixture 是装置面缺口，handler 是对的 —— 写进工单当「不要动」**
+
+本轮实测 8 条 daemon 里 **7 条** `expected=404 / observed=200 / requires=['daemon_token']`：
+
+`daemon_test.go:3815/3840/1180/4482/3931/1586` + `daemon_task_lookup_test.go:133`
+
+与 §239 承重二**同族**（那轮是 8 条，#170 后剩 7 条）。上游用**签发在别的 workspace 的「attacker 令牌」**断言 404，
+注释原文 `same status code as "issue not found" so there is no UUID enumeration oracle` ——
+**反枚举恰是设计目标**；本仓 `routes/daemon/gc.rs:15-17` 明写并实现了「workspace 不匹配与行不存在返回**同一个 404**」。
+
+⇒ **改了 daemon handler 会「修」掉一段正确、且反枚举恰是设计目标的代码。**
+本轮把这条**原文抄进 `LUM-2572` 工单**，并单独点名第 8 条
+（`task_payload_nul_test.go:161#23`，`200 → 500`，NUL 字节处理 = **行为面**）**不属于本片**，
+避免「daemon 8 条一起动」。
+
+### 6. T1-6 读数（合并树 `cde01aa4`，全新库 `multica_c2574`，566 迁移 2.9s）
+
+```
+fixtures 365 / pass 276→279 / mismatch 59→56 / unmounted 1 / placeholder 0 / unevaluable 29
+BAD = 365 − pass = 89 → 86        （🔴 用 365−pass 交叉核对，不分桶相加：§237 承重二）
+族：UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 36→33
+对账 1+29+6+17+33 = 86 ✔ ；mismatch 56 = 6+17+33 ✔ ；四族除 REALM_DIFF 外逐字不变 ✔
+```
+
+`LUM-2565` 自报的 `REALM_DIFF 36→33 / pass 276→279 / 新红 0 条` **逐字复现**。
+`#169` 的 `#169` 交付物独立复核：`t1_6_precondition_taxonomy.py` 在合并树上跑出
+**9 子族 / `sum_of_subfamilies 29 == candidates 29` / `balanced: true` / `equals_unevaluable: true`** ✔
+
+### 7. 门禁读数
+
+⑦ **八数字第 45 轮逐字不变**：`456 / 546 / 546 / 455 real + 1 ph / gap 0 / unclaimed 0 / regression 0 / local_only 8`，rc=0（upstream `f41fae6b08fb`）
+⑧ schema-drift rc=0 ⑩ file-size rc=0
+`--with-db` 汇总 **9/10 / 672s**：② ③ ④ ⑤ ⑥ ⑧ ⑦ ⑩ 全 rc=0，⑨ 存量红（见承重一）
+
+**成本订正**：`T1-6` 的读数只需 `mc-migrate` 3s + `cargo build -p mc-conformance` **1m30s/2.3G** + 回放 **28s**。
+**19G 是被 `mc-http` 的 `test-util` 集成测试撑起来的**，与「回放 fixture 的读数」无关（§236 承重一，本轮第 N 次验证）。
+
+### 8. 派发（2/3 在飞）
+
+| 单 | 目标 | 写集 | 类型 |
+|---|---|---|---|
+| `LUM-2572` | `REALM_DIFF 33 → ≤22`（11 条装置面） | `mc-conformance/{seed,harness}.rs` | 编译片（~2.3G 取读数 + 门禁 19G） |
+| `LUM-2575` | 剩余 22 条拆子族 + 归因 + 可并行性结论 | `scripts/t1_6_realm_diff_taxonomy.py`（新） | **零磁盘类** |
+
+两片**写集零交集**（`crates/**` vs `scripts/**`），可并飞。
+🔴 **空位优先派「0 磁盘类」**（§241 承重）：`LUM-2575` 全程零编译，这是本项目最快的切片形态。
+**`PRECONDITION 29`（`LUM-2567`，仍 `blocked`）与 `AUTH_401 6` / `SEED_404 17` 都写
+`mc-conformance/{harness,seed}.rs` ⇒ 必须排在 `LUM-2572` 之后串行。**
+
+### 9. 其它承重
+
+🔴 **派发后必须回读 task 表才算数**（§241 承重一，本轮第 5 次复现）：
+`assign --no-start` + `status todo` 之后 task 表里仍**没有行**；`multica issue rerun <id>` 才起 run。
+本轮两条 run 的 `created == dispatched == started` 同一秒、`attempt 1` / `error null` ⇒ 真拿到任务。
+
+🔴 **`rerun` 会留下一条 `queued` / `dispatched_at=null` 的幽灵 run，且 CLI 无 cancel 动词**
+（实测 `multica cancel-task` ⇒ `unknown command`；`multica --help` 的 RUNTIME COMMANDS 下无 task/cancel/run）。
+本轮 `LUM-2572` 留下 `01a0ee4e-f216`（`queued`）与真身 `01a0ee4e-9ecb`（`running`）。
+⚠️ 这是 §222.7 承重三的**又一次**复现：**同 issue 同写集**。本轮**只登记不动**（无 cancel 手段，改状态反而会引发第三写者）。
+**判本尊**：`dispatched_at == created_at` ∧ `started_at` 非空。
+
+**清理**：`multica_c2574` + 角色 `mc_c2574` 已 DROP（回读计数 `0` / `0`）；scratch worktree 已
+`worktree remove` + `prune`；`target/` 已删，`df` 回 **24G/50%**。
+
+### 10. 下一轮起点
+
+base **`df2b0a01`**；open PR **1**（`#168`，判不合并）；在飞 **2/3** = `LUM-2572` ∥ `LUM-2575`。
+起手六连：`df` 连采两次 → `pg_lsclusters` → `git rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→
+逐 PID `/proc/*/cwd` 判在飞片 → **`multica agent tasks` 回读 run 表**（认本尊 / 认幽灵）。
+**号段：`§245` 已预留给 `LUM-2575`，下一空号 `## §247`。**
+
+**顺位（起手逐条重验，禁抄）**：`LUM-2572` 交 PR ⇒ 六步链，证据看 **`mismatch 56→≤45` + `REALM_DIFF 33→≤22` + 其余四族逐字不变 + `unevaluable 29` 不变 + `bad_total 86` 不变**（0 路由 ⇒ 门 ⑦ 逐字不变）
+→ `LUM-2567`（PRECONDITION 29，`bad_total` **不会**降到 59，§240 已算过）
+→ `AUTH_401 6` / `SEED_404 17`（同写集，串行）
+→ `LUM-2575` 交分类 ⇒ 按它的子族表派，**不再凭「一族一派」的先例**
+→ `UNMOUNTED 1`（`known_gap = 0` ⇒ **不许加路由**，先按 §238 compat 折叠先例裁定）
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah（本机 `T1-10b` 持续 `SKIP-NO-ASSET`）；
+`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
