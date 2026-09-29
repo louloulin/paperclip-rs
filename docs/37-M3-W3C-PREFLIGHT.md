@@ -19319,3 +19319,93 @@ implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   r
 - **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
 - **未清理（待 owner）**：`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作，不自行执行）。
 - **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ **跨机三信号**判 `LUM-2503` → ⑦ 第 22 轮。
+
+## §217 【2026-09-29 10:00 cycle / LUM-2511】**承重一：跨机判活序整个建在一个结构上不存在的信号上**（`multica agent tasks` 才是那个信号）＋ **承重二：「跨机片会抢本机运力」是错的 ⇒ 反转 §216.5 的压后决定并真的派了片**
+
+起手 base **`764afecf`**（**与 `git ls-remote` 逐字相同**，零位移，不需要 reset）。`df` **`28G` / 41%**、PG 5432 `online`、本 workdir 34M 无 `target/`。checkout 带 `--ref` 第 42 次仍直接落 feat 线。
+
+### §217.1 GH：**0 open PR**（page1 = 0 ⇒ 无 §212 承重二的静默截断）；分支列表**已翻页**（`100 + 76 + 0`）
+
+origin 上 `agent/devbox4/*` 仍**只有** `agent/devbox4/c75ca614ea91`（= 已合的 PR #152 head）⇒ `LUM-2503` 48 分钟内**未推任何分支**。
+
+### §217.2 ⑦ 八数字**第 22 轮逐字不变**（base 上跑，`dirty 0`）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   regression 0   local_only 8
+```
+
+⑦b `slash_alias_audit.py` **rc=0**（0 defect / 0 warning）；⑩ `file_size_check.py` **rc=0**（0 violation）；deps `audit_workspace_deps.py` **rc=0**、`FINDINGS: A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（与 §210/§216 逐字相同）。
+
+三个快照**零位移**（**按 §216.2 的纪律，三个全路径都写出来** —— 仓里有三个都叫 "baseline" 的东西）：
+
+| 文件 | md5 |
+|------|-----|
+| `docs/fixtures/route-parity-baseline.json` | `294c2c2a7f76517b4f4013b1be779220` |
+| `docs/fixtures/slash-alias-allowlist.tsv` | `f4b20cc25ad60bb7972839f79d23869d` |
+| `scripts/file_size_baseline.tsv` | `eeff7a814065c2c86a916aa4f6674764` |
+
+⑨ 门输入 `report.json` blob 仍 **`0509ea6cc21be997eb45fdea312d95c87d1cea18`** ⇒ stateless 读数**继承、不冷编**（`365/34/0/0/0/331`）。
+
+⚠️ **订正 §216.4 的一个数**：`file_size_baseline.tsv` 的白名单条目是 **10 条**（实测 `grep -vc '^#'` = 10），**不是 §216.4 写的 9 条**。§216.4 的「其余 17 行是注释头」这个减法也随之作废。**清单外硬上限 800** 这一条不受影响，仍成立。四个地雷文件的行数本轮复核**零位移**（798 / 796 / 793 / 793）。
+
+### §217.3 🔴🔴 承重一：跨机判活序整个建在一个**结构上不存在**的信号上
+
+§216.3 立的那套「远程三信号」：① run 收据 ② issue 活动/状态翻转/首评 ③ origin 新增 `agent/devbox4/*` 分支。**这三样里，只有 ① 和 ③ 跟「agent 到底有没有在干活」有关，而 ② 是个坏探针。**
+
+本轮找到真正的探针：**`multica agent tasks <agent-id> --output json`**（`multica agent --help` 里的 `tasks: List runs for an agent`；顶层**没有** `multica run` 命令，§216 找不到它不是因为不存在于平台，是因为拼错了入口）。它给出每条 run 的 `status / created_at / started_at / completed_at / attempt / max_attempts / error`。
+
+devbox4 最近 8 条**已完成** run 的实测时长：
+
+| created | done | 时长 |
+|---------|------|------|
+| 01:00:00Z | 01:38:05Z | 38 min |
+| 00:30:00Z | 01:10:27Z | 40 min |
+| 00:16:24Z | 01:03:41Z | 47 min |
+| 00:00:00Z | 00:30:55Z | 31 min |
+| 23:30:00Z | 23:33:41Z | **failed**（`pi exited with error: exit status 1`，4 min 就退） |
+| 23:00:00Z | 23:59:41Z | 57 min |
+| 22:30:00Z | 23:49:43Z | 50 min |
+| 22:00:00Z | 23:25:50Z | 26 min |
+
+⇒ **正常片长 = 26–57 分钟，中位约 40 分钟，且在跑的过程中 issue 侧一个字都不会动。**
+
+`LUM-2503`（uuid `01a0ea84-aeb8-75ae-a3bf-452c4ba3180d`）的 run `01a0eae3-…-e91d950` 系列，01:11:53Z 那条此刻读数：
+
+```
+status=running  created==started=01:11:53Z  completed_at=null
+attempt=1  max_attempts=2  error=null  dispatched_comment_ids=[]
+```
+
+⇒ **48–50 分钟、`attempt` 还是 1、`error` 是空 —— 正落在 26–57 min 正常带的中段。这是「正常在跑」，不是「静默死亡」。**
+
+🔴 **纪律（取代 §216.3 的整套「三信号」框架）**：
+1. **跨机片的死活只由 `multica agent tasks` 判**。issue 评论数、状态翻转、origin 分支这三样在 run 存续期间**恒为无信号**，拿它们判活等于拿噪声判活。
+2. §216.3 写下的「判死下界 = devbox4 历史片 30–60 min 到首推」这个下界是**猜的**；实测是 26–57 min。**换成可判的数字：run 持续 `running`、`attempt` 仍为 1、`error` 为空，且已超 70 min（实测上界 57 min + 余量）⇒ 才标「可疑」；`attempt` 已涨到 2 或 `error` 非空 ⇒ 直接判死，不用等时长。**
+3. 本轮**没有**因为「48 分钟没动静」做任何动作 —— 这正是 §216.3 那条纪律要的效果，本轮只是把它的**探针换对了**。
+
+### §217.4 🔴 承重二：「跨机片会抢本机运力」是错的 ⇒ 反转 §216.5，本轮**真的派了一片**
+
+§216.5 压后 §216.4 地雷片的理由之一是「这两片是未来 30+ 分钟内最可能被 2503 收口轮次抢走全部运力的」。**这条对跨机片不成立**：devbox4 的冷编译吃的是**它自己那台机器**的 CPU 和磁盘，跟本机 28G 一点关系没有。真正被跨机派发占用的资源是**目标 agent 的并发额度**，那才是该看的量。
+
+实测 `资深编程运维助手devbox4` 的 `max_concurrent_tasks = 6`。本轮开始时它在飞 3 条（01:11:53 的 2503、01:30:00、02:00:00，后两条属 lumosbase track），本 track 名下只有 1 条。**§216.5「算式必须按目标 agent 名下并发」这条原则本身是对的**（保留），**但它算出来的数是 3/6，不是「满」**。
+
+⇒ **本轮派 1 片**（不是 0 派发轮）：
+
+**`LUM-2513` —— 门 ⑩ 拆文件（第 1 批）**：`telegram/outbound.rs`(798) / `engine/resolvers.rs`(796) / `dingtalk/mod.rs`(793) / `skills/helpers.rs`(793) 各拆到 **≤ 600**，`mod.rs` + 子模块，**0 路由 0 行为变更**。工单口径 = §216.5 末尾那份预登记，**逐字照搬**（禁改面 / 三条验收 / 起手动作 / 先例 D10 全在里面），只把验收第 2 条从「⑧」更正为「⑦」（⑦ 才是出八数字的那个门）。
+
+- 落库：先 `--status backlog` 建（`backlog` 不起 run），再 `--assign`（只记归属，仍不起 run），最后 `issue status todo` —— **02:02:38Z run 真的起来了**，`running / attempt 1 / error null`。
+- **写集与 `LUM-2503` 零重叠**（后者 0 提交、0 分支，尚无写集；禁改面 = `contracts/golden/**` + `build_request` 凭据表），两片可并行。
+- 本 track 在飞 = **2/3**。
+
+⚠️ 顺带一条**入口纪律**：`--assign` 之后状态**仍是 `backlog`** —— 归属和起跑是两件事，`--status backlog` 建出来的东西**必须显式翻 `todo` 才会起 run**。只看「assign 成功」就以为派出去了，会白等一轮。
+
+### §217.5 收尾与下一轮起点
+
+- **GH 0 open PR**；本轮**未合并任何 PR**。
+- **新派 1 片**：`LUM-2513`（run `02:02:38Z` 起）；在飞 = `LUM-2503`（devbox4，50 min，正常带内）∥ `LUM-2513`（devbox4，0 min）。
+- base = `764afecf`（本节直推后为新 base）。
+- 号段：下一空号 **`## §218`**。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
+- **未清理（待 owner）**：`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作，不自行执行）。
+- **下轮起手固定动作（改了一条，其余照旧）**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ **`multica agent tasks <每个在飞 agent>` 判跨机片的死活（取代 §216.3 的三信号）** → ⑦ 第 23 轮 → **若 2513 已起分支，则按 §210.1 的新判据链复核（不信 blob 恒等，只信 ⑦ 八数字 + ⑨ `--db-url` 六数字逐字不变）**。
