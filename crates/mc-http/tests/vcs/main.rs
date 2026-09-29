@@ -12,7 +12,8 @@
 //!
 //! 文件布局（门 ⑩ 单文件 800 行硬上限）：
 //! - `vcs/support.rs`：连接 / `AppState` 字面量 / 种子 / 两个离线实例替身
-//! - `vcs/connections.rs`：四条 workspace 路由的「产品边界 × 未配置 × 未授权」矩阵 + 出站 e2e
+//! - `vcs/connections/`：四条 workspace 路由的「产品边界 × 未配置 × 未授权」矩阵 + 出站 e2e
+//!   （`mod.rs` 放夹具，`matrix` / `connect` / `rotate_delete` 各一段用例）
 //! - `vcs/webhook.rs`：三种签名方案的正反例、失败阶梯、镜像的幂等与单调
 #![cfg(feature = "test-util")]
 

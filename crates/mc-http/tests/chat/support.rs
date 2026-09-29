@@ -1,9 +1,9 @@
-//! `/api/chat/**` 集成测试的共享夹具（M4-3 写集的一部分，只被 [`crate`] 根文件 `chat.rs` 使用）。
+//! `/api/chat/**` 集成测试的共享夹具（M4-3 写集的一部分，只被 [`crate`] 根文件 `main.rs` 使用）。
 //!
 //! 为什么单独一个文件：门 ⑩（`scripts/file_size_check.py`）对**每个** `crates/**/*.rs` 有
-//! 800 行硬上限。`tests/chat/` 下没有 `main.rs` ⇒ cargo 不把它当独立 target（已用
-//! `cargo test --no-run` 逐字确认），因此这里只是 `tests/chat.rs` 的子模块，不是第二个
-//! 测试二进制（也就不会把夹具编译两遍、更不会各自连一次库）。
+//! 800 行硬上限。`tests/chat/` 下的 `main.rs` 是本 target 的 crate 根，`broadcast.rs` /
+//! `routes.rs` / `session.rs` / `messaging.rs` 与本文件都是它的子模块 —— **一个**测试二进制
+//! （不会把夹具编译两遍、更不会各自连一次库）。
 
 use std::env;
 use std::sync::Arc;
