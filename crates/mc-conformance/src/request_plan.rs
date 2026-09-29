@@ -9,6 +9,7 @@ use axum::http::{HeaderName, HeaderValue, Request};
 use crate::bindings::Bindings;
 use crate::requirements::actor_credential;
 use crate::seed;
+use crate::upstream_facts;
 use crate::{ActorKind, Fixture};
 
 // ---------------------------------------------------------------------------
@@ -162,11 +163,13 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         // （`harness::database_router` → [`daemon_token::register`]）；stateless 层
         // 拿不到令牌，这里照旧说「不伪造」，而不是发一个注定 401 的假头。
         ActorKind::Daemon => {
-            let token = bindings.daemon_token_for(group).ok_or_else(|| {
-                "actor kind Daemon needs an mdt_ credential this tier did not mint \
+            let token = bindings
+                .daemon_token_for_fixture(group, &fx.source)
+                .ok_or_else(|| {
+                    "actor kind Daemon needs an mdt_ credential this tier did not mint \
                  (the database tier mints and registers one per replay)"
-                    .to_string()
-            })?;
+                        .to_string()
+                })?;
             headers.push((
                 HeaderName::from_static("authorization"),
                 format!("Bearer {token}"),
@@ -174,6 +177,13 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
             notes.push(
                 "actor daemon: 以 Authorization: Bearer mdt_… 注入本次回放现场登记的身份".into(),
             );
+            if upstream_facts::is_foreign_daemon_request(&fx.source.test, fx.source.line) {
+                notes.push(
+                    "上游本请求用的是一个**不拥有该资源**的 workspace 身份（见 \
+                     upstream_facts::FOREIGN_DAEMON_REQUESTS）；此处用 outsider 令牌"
+                        .into(),
+                );
+            }
         }
     }
     // 剩下的身份 header（X-Workspace-ID 等）按上游原样转发。

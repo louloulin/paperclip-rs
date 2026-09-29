@@ -107,18 +107,43 @@ impl std::fmt::Debug for GroupSeed {
     }
 }
 
+/// 一个**不拥有任何被种资源**的 workspace ＋ 它里面那枚 `mdt_` 令牌。
+///
+/// 上游跨空间 daemon 探针注入的身份就是这种形状（见 [`crate::upstream_facts`]）。
+/// `Debug` 手写脱敏的理由与 [`GroupSeed`] 同：`daemon_token` 是明文凭据。
+#[derive(Clone)]
+pub struct Outsider {
+    /// outsider workspace 的 id（报告里可以出现 —— 它是 id 级信息）。
+    pub workspace_id: Uuid,
+    /// 登记在 outsider workspace 里的 `mdt_…` 明文。**不写进 `report.json`**。
+    pub daemon_token: String,
+}
+
+impl std::fmt::Debug for Outsider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Outsider")
+            .field("workspace_id", &self.workspace_id)
+            .field("daemon_token", &"mdt_<redacted>")
+            .finish()
+    }
+}
+
 /// 全部种子：**分组键 → 那一组的行**。键是 `Fixture.source.test`，`""` 是兜底分组。
 ///
 /// 字段名与 `Bindings` 里的符号名一一对应（`$testAgentID` ↔ [`GroupSeed::agent`]）。
 #[derive(Clone, Default)]
 pub struct Seed {
     groups: BTreeMap<String, GroupSeed>,
+    /// 全回放共享的**跨空间**身份；只在 [`crate::upstream_facts::needs_outsider`]
+    /// 为真时才建（见 [`seed`]）。
+    outsider: Option<Outsider>,
 }
 
 impl std::fmt::Debug for Seed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Seed")
             .field("groups", &self.groups.len())
+            .field("outsider", &self.outsider)
             .finish()
     }
 }
@@ -168,6 +193,25 @@ impl Seed {
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
+    }
+
+    /// 本次回放里**跨空间**身份所在 workspace 的 id（没建 outsider 时为 `None`）。
+    #[must_use]
+    pub fn outsider_workspace(&self) -> Option<Uuid> {
+        self.outsider.as_ref().map(|o| o.workspace_id)
+    }
+
+    /// outsider workspace 里那枚令牌的 `mdt_…` 明文。
+    #[must_use]
+    pub fn outsider_daemon_token(&self) -> Option<&str> {
+        self.outsider.as_ref().map(|o| o.daemon_token.as_str())
+    }
+
+    /// 挂上 outsider 身份（[`crate::seed_catalog::seed_outsider`] 的产物）。
+    #[must_use]
+    pub fn with_outsider(mut self, outsider: Outsider) -> Self {
+        self.outsider = Some(outsider);
+        self
     }
 
     /// 手工装一个分组。
@@ -293,6 +337,12 @@ pub async fn seed(
         let rows = seed_group(router, db, &user, user_id, group, i + 1, &run).await?;
         seed.groups.insert(group.clone(), rows);
     }
+    // 跨空间 daemon 身份：只在语料真的点了名（[`crate::upstream_facts`]）时才建 ——
+    // 没这一条需求时连建都不建，免得每次回放白加一个 workspace。
+    if crate::upstream_facts::needs_outsider(groups) {
+        let outsider = crate::seed_catalog::seed_outsider(router, db, &user, &run).await?;
+        seed.outsider = Some(outsider);
+    }
     Ok(seed)
 }
 
@@ -311,6 +361,9 @@ async fn seed_group(
     run: &str,
 ) -> Result<GroupSeed> {
     let workspace_id = seed_workspace(router, user, group, index, run).await?;
+    // 上游 `createTestCustomStatus` 直接 INSERT `issue_status`，抽取器只抽 HTTP 调用
+    // ⇒ 目录项得由装置补（且**只补**上游真建过的那些，见 `upstream_facts.rs`）。
+    crate::seed_catalog::seed_custom_statuses(router, user, workspace_id, group).await?;
     let runtime_id = seed_runtime(db, user_id, workspace_id).await?;
     let agent = seed_agent(router, user, workspace_id, runtime_id).await?;
     let issue = seed_issue(router, user, workspace_id).await?;
@@ -337,7 +390,7 @@ async fn seed_group(
 
 /// 用真实路由建一个 workspace（`POST /api/workspaces` 会自动把创建者加成 owner，
 /// 所以种子身份一定是 owner 成员 —— 与 `harness::database_router` 同一条纪律）。
-async fn seed_workspace(
+pub(crate) async fn seed_workspace(
     router: &Router,
     user: &str,
     group: &str,
@@ -534,8 +587,8 @@ fn get(uri: &str, user: &str) -> Result<Request<Body>> {
 /// session 中间件把 `X-Multica-Session` 解析成用户，而 M1 dev-mode 的 `AuthUser`
 /// 提取器直接读 `X-Multica-User-Id`；只发一个的后果不是 403 而是 **401**
 /// （「missing X-Multica-User-Id header」），而 401 在种子里看起来像「路由没挂」。
-const SEED_SESSION_HEADER: &str = "x-multica-session";
-const SEED_DEV_USER_HEADER: &str = "x-multica-user-id";
+pub(crate) const SEED_SESSION_HEADER: &str = "x-multica-session";
+pub(crate) const SEED_DEV_USER_HEADER: &str = "x-multica-user-id";
 
 /// 发一次 `POST`，返回响应体里的 `id`。
 ///

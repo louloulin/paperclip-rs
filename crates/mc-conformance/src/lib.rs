@@ -72,6 +72,8 @@ pub mod report;
 mod request_plan;
 pub mod requirements;
 pub mod seed;
+pub mod seed_catalog;
+pub mod upstream_facts;
 mod verdict;
 
 pub use bindings::Bindings;

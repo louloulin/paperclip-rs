@@ -157,6 +157,27 @@ impl Bindings {
             .or(self.daemon_token.as_deref())
     }
 
+    /// 这条 **fixture** 要用的 `mdt_` 明文。
+    ///
+    /// 与 [`Self::daemon_token_for`] 的差别只有一个：上游把「跨空间探针」编码在**请求
+    /// context 的 workspaceID** 里（`middleware.WithDaemonContext`），而抽取器没有留下
+    /// 那个位置 ⇒ [`crate::upstream_facts`] 按 `(source.test, source.line)` 把哪些请求
+    /// 用的是 outsider 身份**逐条登记**出来。**不读 `expect`**（本仓架构不变式：
+    /// `expect` 只在 `verdict.rs` 的比对侧出现）。
+    ///
+    /// outsider 令牌不存在（stateless 层 / 语料没点名）时**回落**到分组自己的令牌 ——
+    /// 回落而不是另给一句错误文案：stateless 层的 `report.json` 是门 ⑨ 的判据，
+    /// 错误文案变了会让那条门以「报告漂移」的形态红。
+    #[must_use]
+    pub fn daemon_token_for_fixture(&self, group: &str, source: &crate::Source) -> Option<&str> {
+        if crate::upstream_facts::is_foreign_daemon_request(&source.test, source.line) {
+            if let Some(token) = self.seed.as_ref().and_then(|s| s.outsider_daemon_token()) {
+                return Some(token);
+            }
+        }
+        self.daemon_token_for(group)
+    }
+
     /// 符号 → 真值。**唯一**的汇合点：身份两类，实体行四类，外加一枚明文凭据
     /// （`$testPAT*`，见 [`crate::pat_token`]）。
     ///
@@ -283,5 +304,69 @@ mod tests {
             Uuid::from_u128(8).to_string()
         );
         assert_eq!(b.daemon_token_for(other), Some("mdt_default"));
+    }
+
+    /// `LUM-2572`：**登记为跨空间的上游请求**用 outsider 令牌，其余一切都用分组自己的。
+    ///
+    /// 承重之处是「按什么选」：选依据是 fixture 的 `Source`（provenance），而这里
+    /// 故意把同一条分组下**两条 `(test, line)` 不同**的 fixture 放在一起断言 ——
+    /// 一条拿 outsider、一条拿分组令牌。若哪天有人改成读 `expect` 或改成「整组一个
+    /// 令牌」，这条会红。
+    #[test]
+    fn foreign_daemon_fixtures_take_the_outsider_token_and_the_rest_do_not() {
+        let (test, foreign_line) = (
+            crate::upstream_facts::FOREIGN_DAEMON_REQUESTS[0].test,
+            crate::upstream_facts::FOREIGN_DAEMON_REQUESTS[0].line,
+        );
+        let mut seed = seed::Seed::default().with_outsider(seed::Outsider {
+            workspace_id: Uuid::from_u128(0x0777),
+            daemon_token: "mdt_outsider".into(),
+        });
+        seed = seed.with_group(
+            G,
+            seed::GroupSeed {
+                workspace_id: Uuid::from_u128(18),
+                daemon_token: "mdt_secret".into(),
+                agent: Uuid::from_u128(9),
+                issue: Uuid::from_u128(10),
+                chat_session: Uuid::from_u128(11),
+                task: Uuid::from_u128(12),
+            },
+        );
+        let b = Bindings::with_seeded(
+            Uuid::from_u128(7),
+            Uuid::from_u128(8),
+            "mdt_default".into(),
+            seed,
+        );
+        assert_eq!(
+            b.seed.as_ref().unwrap().outsider_workspace(),
+            Some(Uuid::from_u128(0x0777))
+        );
+
+        let src = |line: u64| crate::Source {
+            file: "server/internal/handler/daemon_test.go".into(),
+            line,
+            test: test.to_string(),
+            site: "testutil.Call".into(),
+            via: "handler".into(),
+            commit: String::new(),
+        };
+        assert_eq!(
+            b.daemon_token_for_fixture(G, &src(foreign_line)),
+            Some("mdt_outsider")
+        );
+        assert_eq!(
+            b.daemon_token_for_fixture(G, &src(foreign_line + 6)),
+            Some("mdt_secret"),
+            "同一条测试里的同空间对照必须仍然拿分组自己的令牌"
+        );
+        // stateless / 没建 outsider 时**回落**，不另给一套文案。
+        let no_outsider =
+            Bindings::with_daemon_token(Uuid::from_u128(7), Uuid::from_u128(8), "mdt_x".into());
+        assert_eq!(
+            no_outsider.daemon_token_for_fixture(G, &src(foreign_line)),
+            Some("mdt_x")
+        );
     }
 }
