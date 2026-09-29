@@ -20205,3 +20205,42 @@ crates/mc-repos/src/issue/input.rs:188:    pub(super) fn group_expr(self) -> &'s
 - **清理**：库 `multica_c2528` + 角色 `mc_c2528` 已 DROP；`target/`（19G）已删，`avail` 回 **28G / 42%**。
 - **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；
   `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+### §225.8 补记：`LUM-2531` 由本 cycle 自己做完（PR #157），`LUM-2536` 接手 `inbox.rs`
+
+§225.6 记的是「派 `LUM-2531` 给 devbox5」。**派是派了，但 `issue runs --active` 回读为 0** ——
+本 runtime 在本 run 活跃期间不会再起第二个 run（§222.3「工单已下 ≠ run 已起」的又一形态：
+**状态改成 `in_progress` 也没有用**，实测 `runs --active` 仍为 0）。
+按 §224.2 的兜底「任一步不过就**自己上**」，本 cycle 直接把 `comment.rs` 那一半做掉。
+
+**交付：`crates/mc-repos/src/comment.rs`（1403 行）→ `comment/` 下 9 文件，最大 699，白名单 9 → 8，PR #157。**
+
+| 文件 | 行 | 文件 | 行 |
+|---|---|---|---|
+| `tests.rs` | 699 | `query.rs` | 87 |
+| `crud.rs` | 209 | `util.rs` | 52 |
+| `reaction.rs` | 125 | `resolve.rs` | 51 |
+| `row.rs` | 118 | `mod.rs` | 47 |
+| `input.rs` | 98 | | |
+
+门禁**单次 10/10（693s，`CARGO_INCREMENTAL=0`，峰值 19G）**；⑦/⑨ 逐字不变；
+门 ⑥ 829 条 `... ok` 中 **`comment::tests::db_*` 8 条对真库全过**；PR 预检一 merge-base 口径 `11 / +1480 / −1404` == API 逐字。
+
+**🔴 承重五：切片边界会静默吞掉 `///` 文档注释 —— 编译器不报错，只有 item 级比对抓得到**
+
+`NewComment`（原 151 行）与 `touch_issue`（原 673 行）的文档注释正好落在切片边界**外侧**，被丢弃。
+- 编译器**不报错**（丢的是注释不是代码）；
+- 门 ⑥⑨⑩ 也**全绿**（测试不检查注释）；
+- 本脚本的 L2「item 之外代码行丢失」也**没抓到** —— 因为 `///` 开头行被当成 boilerplate 排除了；
+- **只有 L1「item 多重集」报了红**，因为文档注释是和它描述的 item 绑在一起的。
+
+⇒ **定式：切片的行区间边界必须把 `///` / `#[derive]` 与它描述的 item 一起带走；
+item 级比对脚本是唯一能发现这类损失的手段，门禁全绿不能替代它。**
+
+**其余两处脚本自身缺陷（本轮修掉，记下来给下轮别再踩）**：
+1. 判定「用到某名字」时若不排除注释行，doc 里提到的类型名会骗出假 import（clippy `unused_imports` 红）；
+   且必须加 `(?<![:\w])` 前缀守卫，否则 `mc_db::Db` 这种**全限定写法**会让 `use mc_db::Db;` 被误判为需要。
+2. `#[derive(...)]` 行**必须计入**使用判定（derive 宏是真实使用）⇒ 只排除 `//` 与 `#!` 开头行，不能连 `#[` 一起排掉。
+
+**`inbox.rs`（1185 行）本轮未做**，另开 `LUM-2536` 接手，描述里已把上面 5 条纪律全部钉死。
+`LUM-2531` 的 `comment.rs` 部分已交付并转 `in_review`；`LUM-2530`（lin，第 5 批）收尾时仍在跑（起 05:50）。
