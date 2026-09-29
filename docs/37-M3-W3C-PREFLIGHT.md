@@ -20056,3 +20056,152 @@ error: couldn't create a temp dir: No space left on device (os error 28)
   5. ⚠️ **`checkout --ref` 落点本轮复现为假**（§224 开篇），仍需 `git reset --hard origin/feat/...`。
 - **磁盘**：`target/` 峰值 **28G**（把 49G 的盘吃穿到 `avail 0`），收尾已 `rm -rf target` 回 **28G / 41%**；库 `multica_c2524` + 角色 `mc_c2524` 已 DROP，计数回 0。
 - **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+## §225 【2026-09-29 13:30 cycle / LUM-2528】**收割 3 条 PR**（`#153`+`#155`+`#156`，门 ⑩ 第 1/3/4 批）⇒ **8/8 判据链全绿、单次 `--with-db` 10/10、合并树 == 合入树** ＋ 🔴 承重一：**预检一必须用 merge-base，用 base tip 会把「base 前进」误报成「越界」** ＋ 🔴 承重二：`CARGO_INCREMENTAL=0` 让本机**首次**单次跑出 10/10（峰值 28G → 19G） ＋ 🔴 承重三：**上一轮登记的证据数字本身可能是错的，必须实测** ＋ 🔴 承重四：**「纯搬家」比对脚本自己会写错，且两次都错在同一个假设上**
+
+起手 base **`c617aa38`**；`df` **28G / 42%**、PG 5432 `online`、**全盘无其它 workdir 有活进程**（`LUM-2524` 已收尾，`target/` 已删）。
+`checkout --ref` 本轮**第 44 次直接落 feat 线**（与 §224 的「第 43 次落 agent 分支」相反）⇒ 那条仍不能当默认动作，仍须核对。
+
+### §225.1 收割：三条 PR 一次性收掉，且**合并树 == 合入树**
+
+§223.3 预登记的 7 条判据链 + §224.4 的逐字节比对 + 第 8 条门禁，本轮一次跑完。`#156` 是本轮新增的（第 4 批）。
+
+| 判据 | `#153` | `#155` | `#156` |
+|---|---|---|---|
+| 预检一 numstat vs API | 20 / +2525 / −2424 ✅ | 20 / +2497 / −2276 ✅ | 13 / +2018 / −1950 ✅ |
+| base 祖先判定 | 否 ⇒ 真 merge commit ✅ | 否 ✅ | 否 ✅ |
+| `merge-tree` 三片连合 | **rc=0 零冲突**，树 `22cecd3cf920` | 同左 | 同左 |
+| 合并树 vs base 差集 | **53 文件 / +7040 / −6650 == 20+20+13 与 2525+2497+2018、2424+2276+1950 逐字相加** | | |
+| 差集方向检查 | **「任一 PR 有而合并树无」= 0 条；「合并树有而任一 PR 无」= 0 条** ⇒ 严格并集，无回退、无外来 | | |
+| ⑦ 八数字（第 29 轮） | `456/546/455r+1ph=456/456/gap 0/unclaimed 0/regr 0/local_only 8` 逐字不变，`route_parity` rc=0、`slash_alias_audit` rc=0 | | |
+| ⑩ `file_size_check` | rc=0（白名单 10 → **9**） | | |
+| ⑨ 六数字（**跨过 `#156` 必须复跑**，§224.5） | `365 / pass 34 / mismatch 0 / unmounted 0 / ph 0 / unevaluable 331` **逐字不变** | | |
+| **第 8 条：合并树 `--with-db`** | **10/10 全绿，761s，单次调用** | | |
+| ⑥ db 非空跑 | 829 条 `... ok`；**`issue::db_tests` 6 条在列**（`#156` 搬走的那批 PG 集成测试真跑了） | | |
+
+**合入后再验一次**：GH 三次 `merge_method=merge` 落地后，`origin/feat/multica-rs-initial` 的
+**树对象 = `22cecd3cf9204d5366e34d859d1b5d20adde2543`，与门禁跑过的那棵树逐字相同**，
+差集仍为 53 / +7040 / −6650 ⇒ **门禁证据可直接继承，不必在合入树上重跑。**
+
+⇒ base 推进 `c617aa38` → **`ccab6b3c54cf`**（`7693bbbf` / `d8a50ccd` / `ccab6b3c`）。
+
+### §225.2 🔴 承重一：**预检一必须用 merge-base —— 用 base tip 会把「base 前进」误报成「越界」**
+
+§223.3 的预检一写的是「分支自身 `--numstat` vs API 逐字」，本轮照做，**结果对不上**：
+
+| PR | vs **base tip** `c617aa38` | vs **merge-base** | API |
+|---|---|---|---|
+| `#153` | 47 文件 / +5270 / −6321 ❌ | 20 / +2525 / −2424 ✅ | 20 / +2525 / −2424 |
+| `#155` | 42 文件 / +5192 / −5450 ❌ | 20 / +2497 / −2276 ✅ | 20 / +2497 / −2276 |
+| `#156` | 14 文件 / +2018 / −2094 ❌ | 13 / +2018 / −1950 ✅ | 13 / +2018 / −1950 |
+
+GitHub 的 PR 差分是 **head ↔ merge-base**，不是 head ↔ base tip。base 每推一个 docs 提交，
+base-tip 口径就会把那些文件算进 PR 的差集里，**数字随 base 前进而漂移**。
+
+本轮差点把它当成「PR 越界改了 47 个文件」而退回。§223.3 之所以「碰巧逐字对上」，
+是因为它跑的时候 base 恰好停在 `79641edb`、与 PR 的 merge-base 足够近 —— **那是巧合，不是方法**。
+
+⇒ **定式：预检一必须写成 `git diff --numstat $(git merge-base <base> <head>) <head>`。**
+凡是要拿 PR 差分去和 API 的 `changed_files/additions/deletions` 对账，一律用 merge-base 口径；
+base tip 口径只用于「合进去之后总共动了多少」。
+
+### §225.3 🔴 承重二：`CARGO_INCREMENTAL=0` 让本机**首次**在单次调用里跑出 10/10
+
+§224.3 写下「本机不要指望一次 `--with-db` 出 10/10，正确姿势是先全量拿红项再 `--only` 补」。
+本轮按它的处方（跑前 `rm -rf target/debug/incremental` + `export CARGO_INCREMENTAL=0`）
+**一次就 10/10**，且期间 `target/debug/incremental` 全程只有 **4.0K**：
+
+```
+① fmt 3s  ② build 148s  ③ clippy 67s  ④ clippy-test-util 50s  ⑤ test 160s
+⑥ db 236s (migrate=0,e2e=0)  ⑧ schema-drift 26s  ⑦ route-parity 0s
+⑨ conformance 71s  ⑩ file-size 0s        overall: PASS — 10/10 gate(s) green in 761s
+```
+
+`target/` 峰值 **19G**（对比 §224.3 的 **28G**）。⇒ 那 9G 的差额**全部来自 `incremental`**
+（§224.3 记 `incremental` 11G / `deps` 17G）。**本机 49G 的盘在 `CARGO_INCREMENTAL=0` 下
+装得下一次全量 `--with-db`**，这直接改变了「本机能同时跑几片」的算式（见 §225.5）。
+
+⇒ **定式：本机 `--with-db` 一律带 `CARGO_INCREMENTAL=0`；峰值按 19G 记账，不是 28G。**
+若哪轮 `--with-db` 中途出现 `ld ... signal 7 [Bus error]`，先查盘再查代码（§224.3 仍然成立）。
+
+### §225.4 🔴 承重三：**上一轮登记的证据数字本身可能是错的 —— 「登记」不等于「核实」**
+
+§224.4 为 `#156` 登记「`pub(super)` 窄化 **4 处**（`IssueOrderBy::as_sql`/`as_str`、
+`IssueGroupField::as_str`/`group_expr`）」。本轮逐条 grep，**该函数在原文件与拆分后文件里都不存在**：
+
+```
+crates/mc-repos/src/issue/input.rs:143:    pub(super) fn as_sql(self) -> &'static str {
+crates/mc-repos/src/issue/input.rs:179:    pub(super) fn as_str(self) -> &'static str {
+crates/mc-repos/src/issue/input.rs:188:    pub(super) fn group_expr(self) -> &'static str {
+```
+
+**真实值 = 3 处**。`IssueOrderBy` 在两个文件里都只有 `as_sql` 一个方法（原文件 `issue.rs:409`），
+`as_str` 属于 `IssueGroupField`。⇒ §224.4 多写了一处不存在的站点（**偏多，不是漏**，故不影响「纯搬家」结论，
+但若当时是**漏**登记了一处真的改动，这道判据就会漏检）。
+
+⇒ **定式：判据脚本里凡出现「共 N 处」这种计数，必须由脚本自己 `re.findall` 出来并打印，
+不许从上游描述里抄。** 下游 slice 的描述里已把这条钉成显式要求（第 6 批）。
+
+### §225.5 🔴 承重四：**「纯搬家」比对脚本自己会写错，且两次都错在同一个假设上**
+
+把 §224.4 的比对脚本本轮重写，**前两版都报错，而两次错的是同一个隐含假设：把「文件内容连续」当成不变式。**
+
+- **第 1 版**：断言每个新文件是原文件的一段**连续行区间** ⇒ **11/11 全 FAIL**。
+  原因：拆分本就要把 `impl IssueRepo` 切成五块、把 `use` 展开重写，**连续性在设计层就不成立**。
+- **第 2 版**（改成 item 多重集）⇒ 仍 FAIL 4 项；外加一个 `AttributeError`（把 tuple 当 str）。
+  修完 bug 后剩的 4 项「缺失」是 `// ---- banner` ×2、`impl IssueRepo {`、`#[cfg(test)]` ——
+  **全是拆分必然产物**（banner 随段落走、impl 1→N、测试模块拆成两个 `cfg(test)`）。
+  但第 1 版的噪声里混着 **`use mc_core::Id;` 等展开后的 import**，
+  根因是 item 切分器把 `use` / `mod` 行也当成 item。
+- **第 3 版**：`use`/`mod` 行不计入 item；对 4 项残留**逐条给出理由的白名单**；
+  额外加两条断言 —— `impl` 块计数**净增 = N−1 且不许减少**、**item 之外的可执行代码行丢失数 = 0**。
+
+⇒ **PASS：原 60 个顶层 item，56 个真实 item 逐字命中，未登记缺失 0；`impl` 2 → 6（净增 4）。**
+
+⇒ **定式（拆分类 slice 的必做项，比「门全绿」强一个量级）**：
+1. 不变式是 **item 级**（`fn`/`impl`/`struct`/`enum` 为最小搬动单元），**不是行级、更不是文件级连续性**；
+2. `use` / `mod` / 属性 / 注释 banner **不计入 item**，单独用「item 之外代码行丢失 = 0」这条兜底断言；
+3. 拆分产物白名单要**逐条写理由**，不是「宽松归一」；
+4. `impl` 块计数自洽（净增 N−1，不许减少）；
+5. **脚本必须自己 `exit 0` 判据，且输出打印「未登记缺失 = 0」**；先量真实计数再写理由（§225.4）。
+
+### §225.6 派发：3 个槽位用 2 个，第 3 个**按 §224.2 前置筛留空**
+
+起手 `avail` **28G**，所有权内可回收量 **1.26G**（43 个 workdir 全部无活进程，`du` 逐条核对过），
+本门实测峰值 **19G**（§225.3）⇒ 算式 **28 − 1.26 = 26.7G ≥ 19G ⇒ 可行**（这是自 §223.1 以来第一次可行）。
+
+按 §224.2 派发前三连逐个筛：
+
+| 槽 | agent | runtime | online | 无在飞 | 结论 |
+|---|---|---|---|---|---|
+| 1 | 编程助手lin `700c7941` | `69637c57` | ✅ | ✅ | **派** ⇒ `LUM-2530`（第 5 批 `mc-http` `routes/auth.rs` 1704） |
+| 2 | 编程助手devbox5（我） | `bd3d2b9d` | ✅ | ✅ | **派** ⇒ `LUM-2531`（第 6 批 `mc-repos` `comment.rs` 1403 + `inbox.rs` 1185） |
+| 3 | 资深编程运维助手devbox4 `3df1a3e8` | `4a7f29e1` | ✅ | ❌ **status = `working`，但板面 0 在飞** | **留空**：前置筛第 ③ 步「确认该 agent 名下没有别的在飞」**无法澄清** ⇒ 按 §224.2「任一步不过就不派」 |
+
+派发后**不假设成功**：`LUM-2530` 已回读 identifier 且 `issue runs --active` 实测
+`01a0ebb6 running`（§222.3「工单已下 ≠ run 已起」）。
+
+**两片的冲突面已写进描述**：第 5/6 批写集完全不相交，**唯一共享文件是
+`scripts/file_size_baseline.tsv`** ⇒ 合入时必然冲突，规则写死为「各自只删自己那几行，
+后合者基于最新 base 重做该文件的删除」。
+
+### §225.7 收尾与下一轮起点
+
+- **base = `ccab6b3c54cf`** ＋ 本节 docs 提交（直推 `feat/multica-rs-initial`）。**GH open PR = 0**。
+- **在飞 2/3**：`LUM-2530`（lin，第 5 批）∥ `LUM-2531`（devbox5，第 6 批）∥ 本 cycle。
+  第 3 槽留空理由 = §225.6 的前置筛第 ③ 步。
+- **号段**：下一空号 **`## §226`**（`§225` 回读确认未被占）。
+- **门 ⑩ 白名单 9 条**（`file_size_baseline.tsv`）：`routes/auth.rs` 1704（→第 5 批）、
+  `extract_upstream_fixtures.py` 1863、`mc-repos/comment.rs` 1403（→第 6 批）、
+  `mc-repos/inbox.rs` 1185（→第 6 批）、`mc-http/tests/inbox.rs` 1149、
+  `schema_snapshot.py` 1093、`mc-conformance/src/lib.rs` 1024、
+  `mc-http/routes/inbox.rs` 981、`mc-repos/invitation.rs` 828。
+- **下轮起手**（§225.2/§225.3/§224.2 三条已升级为默认）：
+  1. `df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote`（**并 `git reset --hard`**）→
+     GH open PR（翻页取全）→ 板面 `todo/in_progress/blocked` 重取 → ⑦ 第 30 轮。
+  2. 预检一改用 **merge-base** 口径。
+  3. `--with-db` 带 `CARGO_INCREMENTAL=0`，峰值按 **19G** 记账。
+  4. 判活先跑 §225.4 的「计数必须实测」。
+- **清理**：库 `multica_c2528` + 角色 `mc_c2528` 已 DROP；`target/`（19G）已删，`avail` 回 **28G / 42%**。
+- **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；
+  `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
