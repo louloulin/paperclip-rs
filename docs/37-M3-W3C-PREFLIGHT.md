@@ -21117,3 +21117,136 @@ base **`aef216a0`**；**0 open PR**；在飞 1/3（第 8 批）。
 起手五连：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ 逐片 `issue runs --active`；**再加一条本轮新增的：任何 PUT 合并之后，回读合并提交的 parent2 与你钉的 sha 比对**（§232.5）。
 **Tier-1 只剩 `T1-6` 一条红**（读数 `365/268/64/3/0/30`，与 §213 互证值逐字相同）。
 号段：`§231` = 并发 cycle（LUM-2548）、`§232` = 本 cycle ⇒ 下一空号 **`## §233`**。
+
+## §233 【2026-09-29 19:00 cycle / LUM-2551】**Tier-1 最后一条红 `T1-6` 的 97 条坏 fixture 首次逐条正名** ＋ 🔴 承重一：**`merge()` 的平局裁决把 database 层的理由整段丢掉，于是报告在「已经连上库的那一次运行」里写下「缺 `--db-url`」** ＋ 🔴 承重二：**`ActorKind::Token` 是一个死变体 —— 366 条 golden 里 0 条用它，PAT 认证的 fixture 全被误判成 `member`** ＋ 派发 `LUM-2552`（T1-6-B）
+
+起手 base **`0902aa2e`**（与上一轮收尾值逐字相同）、GH **0 open PR**、在飞 **1/3**、起手 `df` **27G/44%**、PG online。
+⑦ 八数字**第 37 轮逐字不变**：`456/546/455r+1ph=456/456/gap 0/unclaimed 0/regression 0/local_only 8`（upstream `f41fae6b08fb`）；⑦b rc=0（`541 key literals / 0 defect`）；⑩ rc=0。白名单 **5 条**（`mc-conformance/src/lib.rs` 952 记 1024 / `mc-http/src/routes/inbox.rs` 981 / `mc-repos/src/invitation.rs` 828 / `extract_upstream_fixtures.py` 1862 记 1863 / `schema_snapshot.py` 1093）。
+
+### §233.1 零收割，但把 `T1-6` 从「一个数」变成「一张清单」
+
+`T1-6` 是 Tier-1 仅剩的一条红，此前二十余轮一直只登记两个数字（`365/268/64/3/0/30`、`unevaluable+mismatch = 94`）。**94 是一个无法派工的数字** —— 不知道每一条坏在哪，就没法切出任何一片。本轮把真库层跑起来逐条正名。
+
+复现（**只用 `cargo build -p mc-conformance` 一个包，不用全量 19G 门禁**）：
+
+```
+建库 multica_c2551 + 角色 mc_c2551（566 迁移 16s）
+cargo build -p mc-conformance            # ~2min，target 仅 ~1G（对比全量 --with-db 峰值 19G）
+./target/debug/mc-conformance --golden contracts/golden --db-url … --json    # 29s
+```
+
+**读数与 §213/§232 逐字相同**：`fixtures 365 / pass 268 / mismatch 64 / unmounted 3 / placeholder 0 / unevaluable 30`，
+`by_actor {member 56 mismatch + 11 unevaluable + 3 unmounted, daemon 8 mismatch + 2 unevaluable, agent 13 unevaluable, anonymous 4 unevaluable}`，
+`by_via {handler 63 mismatch, router 1 mismatch}`，`tiers {database 300 pass/64 mismatch/3 unmounted, stateless 34 pass/30 unevaluable}`。
+⇒ **零位移**，收割侧不必重跑门禁即可继承。
+
+🔴 **可复用签名（成本极低、以后每轮都能用）**：`T1-6` 只需要 `mc-conformance` 这**一个包**的二进制 ＋ 一个迁移过的空库，
+**不跑门禁也能复现**。既往把它记成「必编译 + 必连库 ⇒ 本机不可派」（§213 时代的判断）高估了它的成本：
+`cargo build -p mc-conformance` 只花 **~1G / 2min**（全量门禁 19G 是因为 `--workspace --all-targets` 带上 `mc-http` 的
+`test-util` 集成测试）。**⇒ 「T1-6 本机不可判」是错的，它本机两分钟就能判。**
+
+### §233.2 97 条坏 fixture 的首次逐条正名
+
+`--json` 的 `fixtures[]` 每行带 `outcome / tier / offline / database / status_expected / status_observed / detail`。
+按**成因**（不是按 domain）分组：
+
+| 桶 | 条数 | 判读 |
+| --- | --- | --- |
+| **U1** agent 身份无真凭据 | 13 | `actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either` |
+| **U2** 声称「缺 `--db-url`」 | 13 | 🔴 **见 §233.3，理由是假的** |
+| **U3** 需 stateless 前提 | 4 | 理由**诚实且逐条不同**：`external_oauth`（Google OAuth 桩）/ `bare_handler_no_wiring`（上游直接 `&Handler{}`，期望值本身就是「缺装配」的 5xx）/ `browser_session_cookie`（签名 cookie，非 header）/ `webhook_rate_limiter_denying`（上游装了个「一律拒绝」的限流 double，真实限流器是进程级单例且回放不带 peer IP ⇒ 闸门被整体跳过） |
+| **M1** `404 != 200` | 7 | 路由/绑定缺失 |
+| **M2** `400 != 2xx` | 15 | 请求被拒（见 §233.4，最大簇是 `POST /api/tokens/current/renew` × 5） |
+| **M3** `2xx != 4xx/5xx` | 12 | **校验过宽**（本该拒的收了）—— 这一族是唯一「正确性问题」，不是覆盖率问题 |
+| **M4** `401 != 2xx` | 4 | 鉴权 |
+| **M5/M6** 其它形态 | 12 | `400!=4xx` 3、`404!=400` 5、`201!=409` 3、以及 9 条各 1–2 条的零散形态 |
+| **unmounted** | 3 | 2 条 `no route: 404 with empty body (axum fallback)`、1 条 `path exists but method is not mounted (405)` |
+
+**`unevaluable 30` = U1 13 + U2 13 + U3 4**，`mismatch 64` = M1 7 + M2 15 + M3 12 + M4 4 + M5/M6 26。
+⇒ **`T1-6` 的 `BAD = unevaluable + mismatch = 94` 里，只有 U3 那 4 条给出了自洽的不可判定理由；其余 90 条要么理由是假的，要么是真实缺陷。**
+
+### §233.3 🔴 承重一（本轮最要紧）：`merge()` 的平局裁决丢掉 database 层的理由，于是报告在**已经连上库的那一次运行**里写下「缺 `--db-url`」
+
+13 条 U2 的 `detail` 逐字是 `member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it`（另 2 条 `daemon actor …`）。
+**但这一次运行传了 `--db-url`。** 读代码得到机制（`crates/mc-conformance/src/lib.rs`）：
+
+* `run_tier()`（`lib.rs:836-891`）对每条 fixture 问 `tier.supports(fx)`；答 `Ok(false)` 时它**按层**生成理由
+  （凭据面 → 前提面 → 请求面），文案由 `actor_credential_detail(kind, tier)` 拼出，**`tier` 是当前层**。
+* `merge()`（`lib.rs:895-921`）合并两层：`if d.outcome < s.outcome { 取 database } else { 取 stateless }`。
+  **`Unevaluable == Unevaluable` 是平局 ⇒ 走 `else` ⇒ 取 stateless 的 outcome 和 detail。**
+  database 层那一条**独立生成的、此时才是真话**的理由被整段丢弃，只在 `database` 字段里留下一个光秃秃的 `unevaluable`。
+
+⇒ **现场签名（可复用）**：一行同时满足 `tier == "stateless"` ∧ `database == "unevaluable"` ∧ `detail` 里含 `rerun with --db-url`。
+**13/13 全部命中。** 这 13 条的 `detail` 解释的是**另一层**的判决，对本层的 0 信息量。
+
+🔴 **为什么这条比「文案不准」严重**：它是 §2541 承重二（「判据的**作用域**错了：两种完全不同的红，长得一模一样」）的**第三个轴 —— 归因**。
+前两个轴是「判据被求值的集合」和「判据的内容」，这里是**「结论来自哪一层 / 理由来自哪一层」三者可以各指不同**。
+**后果是可执行的**：照着 U2 的理由去派工，会去给 database 层补凭据面 —— 而 database 层的真实阻塞（这 13 条 `tier.supports` 也答了 `Ok(false)`）另有其因，**照着假理由修，改完这 13 条一条都不会动**。
+**⇒ 纪律：读 `report.json` 判定任何 `unevaluable` 之前，先看 `tier` 字段与 `detail` 提到的层是否一致；不一致 ⇒ 那条 `detail` 无效。**
+（`crates/mc-conformance/report.json` 是**无库快照**，那 13 条的 `detail` 在快照里同样写着 `rerun with --db-url` —— 快照是 stateless 层的读数，那里文案是对的。**同一个 `report.json` 既是门 ⑨ 的判据，又是 T1-6 的现场，两层的文案混在一处。**）
+
+**本轮只登记、不改**：`merge()` 在 `crates/mc-conformance/src/lib.rs:952` 行，而该文件是**在飞片 `LUM-2550` 的写集**（门 ⑩ 第 8 批要把它 952 → 子模块）。
+派单前预飞已确认 `mc-conformance/src/lib.rs` 与 `LUM-2550` 零和 ⇒ **本轮刻意不派含 `lib.rs` 的片**，把这条留给它落地之后的第一片（见 §233.6）。
+
+### §233.4 🔴 承重二：`ActorKind::Token` 是死变体 —— PAT 认证的 fixture 全被误判成 `member`
+
+`M2` 里最大的簇是 `POST /api/tokens/current/renew`：**8 条 fixture（5 条期望 200、3 条期望 401）全部拿到 400**。
+**8 条同一个数字、与期望值无关 ⇒ 请求根本没进业务逻辑。** 顺链路查到根因：
+
+1. `crates/mc-http/src/routes/pats.rs:286-291`：`renew_current_pat` 的第一件事是 `bearer_token(&headers)`，
+   拿不到 `Authorization: Bearer mk_pat_…` 就 `renew_not_a_pat()` ⇒ **400**（`pats.rs:454` 有单测钉死这个 400）。
+2. golden 契约 `contracts/golden/tokens/002-TestRenewPAT-ExtendsWhenInsideRenewalWindow-L74.json` 记的
+   `actor.upstream_identity` 只有 `{"X-User-ID": "$testUserID", "X-Workspace-ID": "$testWorkspaceID"}`，
+   `extraction.notes` 自己写着「upstream drove the handler directly; replayed here against the router, which also applies its middleware」。
+   **⇒ 上游那 8 条测试是把 PAT 放进请求 context 的，那枚 PAT 在契约里根本没有对应字段。**
+3. 回放按 `actor.kind = member` 注入 `X-Multica-Session + X-Multica-User-Id`（`detail` 里逐字可见）⇒ 路由要 PAT ⇒ 400。
+
+**于是问题落在抽取器上**：`ActorKind` 有 5 个变体，其中 `Token` 的文档注释写的是「带 `Authorization`（个人访问令牌）」
+（`lib.rs:111-112`），`ACTOR_CREDENTIALS` 也给它留了条目（`requirements.rs:206-211`，`satisfied_by: &[]`）。
+**但对 `contracts/golden/**` 全部 366 条做 `actor.kind` 计数：`member 293 / anonymous 39 / daemon 20 / agent 13 / None 1`，
+`token` 恰好 0 条。** `by_actor` 里也从来没有 `token` 这一档。
+
+🔴 **「枚举里有、注释写明了语义、还有配套的凭据表条目」三者齐备，**仍然可以是死代码** —— 唯一能判死的方式是**对语料计数**，
+而不是读代码。**`ActorKind::Token` 与 `ACTOR_CREDENTIALS` 的对称性单测（`requirements.rs:580`）只保证「表覆盖每个变体」，
+它**结构上不可能**发现「没有任何 fixture 是这个变体」。**⇒ 纪律：凭据表的对称性 ≠ 凭据表被用上；每个变体都要对语料数一次。**
+
+⇒ **可派工**（§233.6 的 `LUM-2552`）：`personal_access_token` 表在（`migrations/upstream/011_personal_access_tokens.up.sql`），
+哈希口径是 `PatRepo::hash_token` 的 sha256 hex（`pats.rs:391-399` 有单测），而 `pats.rs:212-228` **已经有现成的签发代码路径**。
+所以「让 database 层给种子用户签一枚真 PAT，并把 PAT 认证的 fixture 标成 `token`」在仓内是**有依托的**，不是凭空发明。
+
+### §233.5 🔴 承重三：M3（`2xx != 4xx`，12 条）是唯一「正确性」族，其余全是覆盖率族
+
+`M3` = 本该拒绝的请求被本仓收下了（`200 != 409/403/400/500` 等）。**它在性质上与其余 84 条不同**：
+`M1/M2/M4` 是「上游能做、本仓做不到」（覆盖率），`M3` 是「本仓比上游宽松」（正确性）。
+`stop_condition.sh` 的 `T1-6` 判据 `unevaluable 0 ∧ mismatch 0` **不区分这两者** ——
+**照着 `mismatch 64` 排优先级会把 12 条正确性缺陷排进 52 条覆盖率工作里。**
+**⇒ 纪律：`T1-6` 收敛时 M3 那一族必须单独留证**（收敛前后的 `M3` 计数要单独报，不能只看 `mismatch` 总数下降）。
+这一族本轮**未派工**（`M3` 跨 `issues`/`chat`/`tokens`/`workspaces` 多个域，需要逐条看上游断言才知道该拒在哪一层，不是机械活）。
+
+### §233.6 派发 `LUM-2552`（T1-6-B / PAT 签发面，0 路由）
+
+**写集（与在飞 `LUM-2550` 零交集，已预飞）**：
+`scripts/extract_upstream_fixtures.py`（新增「PAT 认证 ⇒ `actor.kind = "token`」的抽取规则）
+＋ `contracts/golden/tokens/**`（重新生成受影响 fixture）
+＋ `crates/mc-conformance/src/requirements.rs`（`ActorKind::Token` 的 `satisfied_by` 改为 `[Tier::Database]`）
+＋ `crates/mc-conformance/src/bindings.rs`（database 层签发一枚 `mk_pat_` 并入 `Authorization`）
+＋ `crates/mc-conformance/report.json`（语料变了必须重刷，**新增/删除行数与判定字段的分类照 §228 承重一的三条核**）。
+**禁改面**：`mc-http/src/routes/**`（0 路由、0 行为变更）、`mc-conformance/src/lib.rs`（`LUM-2550` 的）、
+`scripts/file_size_baseline.tsv`（`LUM-2550` 的）、`migrations/**`、`docs/37`。
+
+**验收**：`T1-6` 的 `mismatch 64 → 56`（8 条 renew 全动）、`unevaluable 30` **逐字不变**（本片不碰凭据面的可满足性）、
+`placeholder 0 / unmounted 3` 不变、⑦ 八数字逐字不变、⑩ rc=0、合并树 `--with-db` 10/10。
+
+⚠️ **本片踩得到的两颗雷，工单已写明**：
+① **`extract_upstream_fixtures.py` 现在 1862 行、白名单记 1863** ⇒ **天花板只差 1 行**，本片往里加规则极易撞门 ⑩
+（清单内只允许 ≤ 记录行数）。要么把新增逻辑压进现有函数，要么同片把它拆成 `extract_upstream_fixtures/` 子模块并**删掉白名单那一行**。
+② 改了语料就必须重刷 `report.json`，而门 ⑨ 是**逐字节比对** `report.json` ⇒ 不刷必红；刷了要按 §228 承重一分类（纯新增字段可接受，判定字段增删必须 0）。
+
+### §233.7 下轮起点
+
+base **`0902aa2e`**（本节直推后前进一个 docs-only 提交）；**0 open PR**；在飞 **2/3** = `LUM-2550` ∥ `LUM-2552`。
+**下轮第一动作**：① 查 `LUM-2550` 的 `check-runs`（4/4 全绿才合，收割判据链见 §232）；② 收 `LUM-2552`；
+③ **`LUM-2550` 落地后立刻派 §233.3 的那一片**（`merge()` 平局裁决保留 database 层理由）—— 它改 `lib.rs`，必须在 `LUM-2550` 之后，否则必冲突。
+号段：`§231` = 并发 cycle（LUM-2548）、`§232` = 18:00 cycle（LUM-2547）、`§233` = 本 cycle ⇒ 下一空号 **`## §234`**。
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
