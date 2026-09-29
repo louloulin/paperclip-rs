@@ -20373,3 +20373,131 @@ landed 数 = 12 文件 / +1519 / −1404                          ← 预期 11 
 ⇒ **`#158` 就是 §226.7 预警的那条「与 `LUM-2536` 共享 `scripts/file_size_baseline.tsv`」的片。**
 下轮收割它时：它删 `auth.rs` 那一行、`LUM-2536` 删 `inbox.rs` 那一行 ⇒ **合并树上该文件需解一次冲突（两行都删）**。
 先各自过 10/10，合并树只复验 ⑩（0s），**不要同树合跑门禁**。
+
+## §227 【2026-09-29 15:30 cycle / LUM-2539】**收割 PR #158**（`LUM-2530`，门 ⑩ 第 5 批：`mc-http` `routes/auth.rs` 1704 → `auth/` 9 文件）⇒ **判据链 8/8 全绿、单次 `--with-db` 10/10（780s）、合入树 == 门禁树** ＋ 🔴 承重一：**「PR 头落后 base」与「PR 越界」在 `git diff <base> <head>` 下长得一模一样 —— 比对基准必须是 `merge-base`** ＋ 🔴 承重二：**托管 worktree 有一个空的 `multica-identity.config`，它会盖掉仓库级 `user.name`，让 `commit-tree` 直接 fatal** ＋ 🔴 承重三：**改派一个已挂在死 runtime 上的单子 = 双写者，且平台没有 cancel 动词** ＋ ⑦ 八数字第 32 轮逐字不变
+
+**base = `2dbc060d`**（起手）。**GH open PR = 1**（`#158`）。**在飞 0/3**（`LUM-2530` 已交付、run `01a0ebb6` `completed`）。
+CI 预检：`checks total_count = 4`，`fast` / `image` / `db` / `contract` **四个全 `success`**（先查这个再谈冷编）。
+
+### §227.1 收割：`#158` 判据链 8/8
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 预检一：分支自身 `--numstat` vs API 逐字 | **9 文件 / +1834 / −1658 == API 逐字** ✅ |
+| 2 | base 祖先判定（**用 merge-base**） | `merge-base(2dbc060d, d533b747) = ccab6b3c`，双方共同祖先，无分叉 ✅ |
+| 3 | `merge-tree --write-tree` | **rc=0**（输出恰好 1 行 = 无冲突），树 `8feba19392ef` |
+| 4 | 三哈希等式（`merge-tree` == `commit-tree` == 落地树） | `8feba193…` 三者一致 ✅ |
+| 5–7 | 差集 / 路由 / ⑦⑩ | 差集**恰好它自己 9 个文件**、零外来、**零 docs**；0 路由 ✅ |
+| 8 | **`bash scripts/gates.sh --with-db` 在门禁树上 10/10** | **10/10 绿，780s，单次调用** ✅ |
+
+分项：① 3s ② 149s ③ 70s ④ 50s ⑤ 160s ⑥ 250s（`migrate=0,e2e=0`）⑦ 1s ⑧ 26s ⑨ 71s ⑩ 0s。
+合并提交 **`5d3c6ec17f4b2226a55a10e015e188ee2033a91e`**，`merge_method=merge`，远端已核对。
+**本轮没有触发 §226.2 的「非 docs 差集」放宽条款**：我是把门禁跑在**合并树**上再推的，
+所以「合入树 == 门禁树」是**构造出来**的，不依赖事后比差集。**能构造就别事后推断。**
+
+### §227.2 🔴 承重一：**PR 头落后 base 时，`git diff <base> <head>` 会把「落后」渲染成「越界」，两者形态完全一样**
+
+第一反应式的预检一跑了：
+
+```
+git diff --numstat 2dbc060d d533b747
+=> 20 files / +3238 / −3455          ← 与 API 的 9 / +1834 / −1658 严重不符
+差集里赫然有 11 个 crates/mc-repos/src/comment/** 文件
+```
+
+**这不是越界，是 PR 头不含 `#157`（本仓上一轮刚合的 `comment.rs` 拆分）。**
+把基准换成 `merge-base` 后立刻对上了：
+
+```
+git diff --numstat ccab6b3c d533b747  =>  9 files / +1834 / −1658   ← 与 API 逐字一致
+```
+
+⇒ **定式：预检一的比对基准恒为 `merge-base(base_tip, head)`，永远不用 `base_tip`。**
+反过来的后果比 §225 承重一那次更隐蔽：§225 是把「base 前进」误报成越界，
+这次是**把「base 前进」误报成越界，而且差集里出现的恰好是刚合入的另一片的文件** ——
+若照单全收去喊「对方越界改了 `mc-repos`」，就会对一片完全无辜的 PR 发起错误质询。
+**形态提示：差集里出现「本仓近期刚合入的另一片写集」时，先怀疑自己。**
+
+### §227.3 🔴 承重二：托管 worktree 里有一个**空的** `multica-identity.config`，它会盖掉仓库级身份
+
+本轮 `git config user.name devbox5` 写入成功（`config --list` 里能看到），
+但紧接着 `git commit-tree` 仍然：
+
+```
+Author identity unknown
+fatal: empty ident name (for <>) not allowed
+```
+
+原因：`git rev-parse --git-common-dir` 显示这是**托管 worktree**，其中存在
+`worktrees/<name>/multica-identity.config`，里面有 `user.name=`（**空值**）与 `user.email=`。
+**worktree 级配置的优先级高于仓库级**，所以空值把刚写的身份整个盖掉了。
+
+⇒ **定式**：托管 worktree 里要造提交，先
+`git config -f "$(git rev-parse --git-dir)/multica-identity.config" user.name devbox5`
+（同理 `user.email`），**不要**改 `--global`，也不要在收尾时去清理它 ——
+那是平台用来强制身份注入的，改了会影响该 worktree 的后续所有提交归属。
+一次性绕过也可以：`-c user.name=x -c user.email=x@y commit-tree …`。
+
+### §227.4 🔴 承重三：**「挂到死 runtime 上的单子」改派出去，就等于制造双写者 —— 而平台没有 cancel 动词**
+
+`LUM-2536`（第 6 批 b `mc-repos` `inbox.rs` 1185）自 §226 起挂在 `编程助手-devbox1` 名下，
+run `01a0ebfa` 一直 `queued`（`started_at = null`）。本轮复读 **`runtime list`**：
+`041bf509`（window pi）**仍 offline**，`last_seen_at` 停在 `2026-09-28T10:24:30Z`。
+**派发面实测：在线 runtime 里能写 paperclip-rs 的只有两台** ——
+`69637c57`（lin Claude，`LUM-2530` 刚 `completed`）与我 `bd3d2b9d`；
+`e3b45a25`/`0d113b34`/`478b7f4b`/`d08c0c87`/`970fe6d2` **全 offline**，
+`4a7f29e1`（devbox4）在线但被 lumosbase 另一条 autopilot 流占着。
+
+⇒ 我把 `LUM-2536` **改派给 `编程助手lin`**，run `01a0ec21` **90 秒内 `running`**（`started_at` 已填）。
+**但 `01a0ebfa` 撤不掉**（无 cancel 动词，见 §226.4），它仍以 `queued` 挂在 devbox1 名下。
+**若 devbox1 的 runtime 恢复，那个旧 run 会自动开跑，和 lin 并发写同一批文件**
+（`crates/mc-repos/src/inbox/**` + `scripts/file_size_baseline.tsv`）——
+**两个 writer 抢一个白名单文件 = 必然有一片的删除被静默覆盖**。
+
+⇒ **定式（补强 §226.4）**：`assign` 一个**已有 queued run** 的单子时，
+**必须**在三处同时留痕：① 改 `description`，写明旧 run id、旧 runtime 状态与「起手先 `issue runs` 复核」；
+② 收割评论里点名该风险；③ 下一轮起手复读 `issue runs <该单>`，确认**活跃 run 仍只有 1 个**。
+`queued` 的 run **不是「没派发」，而是「一颗定时磁铁」**。
+
+### §227.5 `LUM-2536` 描述的三处过期数字已当场订正
+
+原描述写「基线 `ccab6b3c`」「白名单 8→7」「禁改面 `crates/mc-http/**`（第 5 批写集）」——
+`#158` 落地后这三句**全部过期**：`#158` 已把白名单 **8 → 7**（删 `mc-http` 的 `auth.rs` 一行），
+所以本片是 **7 → 6**；`crates/mc-http/**` 已从禁改面变回可动面。已在描述里逐条标注并给出
+**当前 7 条基线的完整清单**。⇒ 这是 §225 承重三（登记数字本身可能是错的）的第 5 次复现，
+但这次的形态是**跨 issue 的**：本单由上一轮 cycle 起草、隔一轮才执行，**基线在它睡着期间动了**。
+**凡是把「基线 commit」写进子单描述的，都必须假设那个数字在开工前已过期。**
+
+### §227.6 离线门与不变式
+
+- **⑦ 八数字第 32 轮逐字不变**：`upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546`；
+  `implemented 455 real + 1 placeholder = 456/456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`。
+  `route_parity.py --quiet` 与 `slash_alias_audit.py --quiet` 同一条命令内 **rc=0**。
+- **⑨ 六数字逐字不变**：`golden 365`、
+  `pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`
+  （`契约等价率 34/365 = 9.3%`、`已接入路由等价率 34/34 = 100%`）。
+  ⚠️ 这两个 rate **不是「实现完成度」**（§2485 已警告），逐字沿用并标注「截至 `5d3c6ec1`」。
+- **⑩ 白名单 8 → 7 已随 `#158` 落地**：`crates/mc-http/src/routes/auth.rs`（1704）那一行已删。
+  拆分后最大文件 = `auth/google.rs` **412**，其余 `tests.rs` 396 / `tests/google.rs` 379 /
+  `code.rs` 242 / `cli_token.rs` 143 / `session.rs` 131 / `common.rs` 105，
+  `auth.rs` 本身缩到 **73 行**（`mod` + 重导出），全部 ≤800。
+
+### §227.7 下轮起点
+
+- **base = `5d3c6ec1`**（本节 docs 提交将直推其上）；**GH open PR = 0**。
+- **在飞 1/3**：`LUM-2536`（第 6 批 b，`mc-repos` `inbox.rs` 1185 → `inbox/`，白名单 7→6），
+  run `01a0ec21` 在 `编程助手lin`（`69637c57` online）名下 `running`。
+  ⚠️ **`01a0ebfa` 仍以 `queued` 挂在 devbox1（`041bf509` offline）名下** ⇒ 下轮起手必须
+  `multica issue runs LUM-2536` 确认活跃 run 仍只有 `01a0ec21`。
+- **第 2/3 槽位刻意留空**：`在线 ∩ 会写 paperclip-rs` 只有 lin 与我，而本轮的那一次 19G 冷编
+  已经把 `avail` 从 28G 打到 **8.8G**（收尾已 `rm -rf target` 回 28G）。
+  候选片（`scripts/extract_upstream_fixtures.py` 1863、`crates/mc-http/tests/inbox.rs` 1149、
+  `mc-repos/src/invitation.rs` 828、`mc-http/src/routes/inbox.rs` 981）
+  **每一片都要从 `scripts/file_size_baseline.tsv` 删自己那一行** ⇒ 与在飞片**必然冲突**，
+  收割时要在合并树上人工解一次（两行都删），且**不要同树合跑门禁**。
+  等 `LUM-2536` 落地后再派，冲突面自然归零。
+- **号段**：下一空号 **`## §228`**。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` →
+  GH open PR（翻页取全）**+ 顺带查 head sha 的 `check-runs`（`total_count` 是 0 还是 in_progress）** →
+  ⑦ 第 33 轮 → 逐片 `issue runs` → `runtime list` 看 `offline`。
+  **新增**：预检一用 `merge-base`（§227.2）；造提交先修 `multica-identity.config`（§227.3）。
