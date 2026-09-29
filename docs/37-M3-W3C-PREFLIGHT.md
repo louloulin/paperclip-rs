@@ -21013,3 +21013,107 @@ crates/mc-http/tests/inbox.rs	1149
 2. 合完 `#161` 后白名单 **5 条**：`mc-conformance/src/lib.rs` 952（tsv 记 1024，**天花板 ≠ 实测**，见 §230.2）、
    `mc-http/src/routes/inbox.rs` 981、`mc-repos/src/invitation.rs` 828、`extract_upstream_fixtures.py` 1862、`schema_snapshot.py` 1093。
 3. `lum-2547` 的 19G 若已释放 ⇒ 把停放的第 8 批（`invitation.rs` + `mc-http routes/inbox.rs`）提升为 `todo` 并**显式 `--assignee-id lin`**。
+
+## §232 【2026-09-29 18:00 cycle / LUM-2547】**收割 PR #161**（门 ⑩ 第 7 批，白名单 6→5）＋ 合并树 **两次独立 `--with-db` 10/10** ＋ 四条承重（含一条**我自己踩中并当场抓回**的解冲突错误）
+
+**起手**：base `4637c0e5`、GH open PR = 2（`#160` 第 6 批 b、`#161` 第 7 批）、`avail 27G`、所有权内可回收量 **0**（35 个 workdir 全无 `target/`）、PG 16/main 5432 online。**收尾**：base **`aef216a0`**、**0 open PR**、白名单 **7→5**、`avail` 回收后 27G。
+
+### §232.1 收割判据链（`#161`，head `f1f7f12b`）
+
+| # | 判据 | 读数 |
+|---|---|---|
+| 1 | 预检一：`merge-base(base,head)..head` numstat vs API（翻页取全） | 本地 **10 文件 +1596/−1150** == API page1 逐字，page2 = 0 |
+| 2 | base 前进段 | `091d2fa3`（= `#160` 合并树）→ `3d4980c2` 只多一条 `docs/37`；**非 docs 差集 0** |
+| 3 | `merge-tree --write-tree` | **rc=0，零冲突**（并发 cycle 已把消解推回分支） |
+| 4 | **合并树 vs 门禁树：非 docs 差集** | 合并树 `506397b1` vs 门禁树 `709c9180` 差 **`docs/37-M3-W3C-PREFLIGHT.md` 一个文件**；`-- . ':(exclude)docs/*'` 后**差集 0 行** ⇒ 按 §226 承重一，10/10 证据**按构造继承** |
+| 5 | 门禁（本地，两次独立） | `--with-db` **10/10 / 810s** 与 **10/10 / 799s**，均在树 `709c9180` 上，DSN 起跑前 `psql … -tAc 'select 1'` 通过 |
+| 6 | 停止条件 | `pass=15 fail=1 skip-no-asset=2`，`failing_ids: T1-6`（Tier-1 唯一红，与 §229 逐字同值） |
+| 7 | 落库 | 钉 40 位 `f1f7f12bf068397d757e40bcb745aaf9e6207e40` + `merge_method=merge` ⇒ `aef216a0`；落地树非 docs 差集 **0** |
+
+**加性核对**：合并树 vs base = **17 文件 +2804/−2304**，而 `#160`(+1208/−1154) + `#161`(+1596/−1150) = **+2804/−2304** **逐字相等** ⇒ 两片写集完全不相交（`file_size_baseline.tsv` 被两边各删一行，合并后计一次）。
+
+**⑦ 八数字第 36 轮逐字不变**：`456/546/455real+1ph=456/456/known_gap 0/unclaimed 0/regression 0/local_only 8`（upstream `f41fae6b08fb`）。⑦b rc=0、⑩ rc=0。`route-parity-baseline.json` md5 `294c2c2a…` **零位移**（第 36 轮）；`file_size_baseline.tsv` md5 `b6d18c07…`→`d079233d…`（**预期位移**：7→5 条）。
+
+### §232.2 🔴 承重一：**判据红了，形态与真因不同构 —— 这次是磁盘，而且它伪装成「三道门同时红」**
+
+第一次门禁跑完 10/10（810s）后，我为了给 `T1-10` 补一份完整日志**在同一棵树上重跑了一次**（热 target）。结果 **7/10**，而且红的形态极像代码回归：**⑤ `test` 101 ＋ ⑥ `db` 1 ＋ ⑧ `schema-drift` 2**。
+
+真因：**磁盘打满**。`grep -c 'No space left on device'` = **18**。三条 panic 逐字如下：
+
+```
+⑤ wecom::media_stream::tests::the_temp_file_honours_the_directory_it_is_given
+    crates/mc-channel/src/wecom/media_stream/tests.rs:280
+    mkdir: Os { code: 28, kind: StorageFull }
+⑥ routes::attachments::tests::db_bytes::*   (7 条)
+    crates/mc-http/src/routes/attachments/tests/support.rs:224
+    mkdir tempdir: Os { code: 28, kind: StorageFull }
+⑥ routes::uploads::tests::db::*             (7 条)
+    crates/mc-http/src/routes/uploads/tests/support.rs:64
+    mkdir tempdir: Os { code: 28, kind: StorageFull }
+```
+
+**现场签名（可复用）**：**同一个 `mkdir` 失败点同时出现在 ⑤ 的「文件系统测试」和 ⑥ 的「DB 测试」里** —— 而这两道门在设计上互不相干（⑤ 明确 `env -u MULTICA_TEST_DATABASE_URL`）。凡出现「互不相干的两道门在同一道 `mkdir`/`create_dir_all` 上同时红」，**先 `df` 再谈代码**。
+
+🔴 **本轮实测到的第三个磁盘数字，且它与既往两个都不同**：`--with-db` 一次**冷**编把 `target/` 推到 **18G**（起手 27G → 跑完 7.8G）；**紧接着在同一棵树上再跑一次，`target/` 涨到 27G、`avail` 归 0、盘 100%**。即 **门禁对磁盘不幂等：第二遍不是「白捡的复验」，要多付约 9G**（`--features mc-http/test-util` 的构件与不带该 feature 的构件是两套）。
+
+⇒ **对 §223.2 的算式补一条硬约束**：算式里的「本门实测峰值」**必须区分「第一次」和「第二次」**。本轮若按「一次 18G，够」就动手补日志，会在第二次跑的中途把盘打满并**把一次已通过的门禁变成一份不可采信的日志**。
+⇒ **定式：需要复验时，`rm -rf target` 后重跑，不要在热 target 上叠第二遍。** 本轮 `rm -rf target` 后重跑，799s，10/10，0 红。
+
+### §232.3 🔴 承重二：**`=======` 两侧出现的行，本身可能就是「已被删除的行」—— 机械删标记会把一条删除复活**
+
+`#160` 与 `#161` 各删 `file_size_baseline.tsv` 里**相邻的两行** ⇒ 无论哪个顺序合，第二个都撞 **modify/delete 型冲突**。git 的 diff3 把冲突块渲染成：
+
+```
+<<<<<<< HEAD
+crates/mc-repos/src/inbox.rs	1185
+=======
+crates/mc-http/tests/inbox.rs	1149
+>>>>>>> 1355f0c1 (...)
+```
+
+**这两行在各自一侧都是「被删掉的那一行」**，不是「保留的内容」。我第一次的解冲突脚本是「跳过标记行、保留其余行」，结果把 `crates/mc-http/tests/inbox.rs 1149` **复活**了 —— 白名单停在 6 条而不是 5 条。
+
+抓回它的不是眼力，是**判据**：我要求自己核对「rebase 出的 tip 的树哈希 == 我门禁过的那棵树」，`87bfd4f2 ≠ 709c9180` ⇒ 当场发现。改成**按整行精确匹配过滤两条被删行**后，tip 树 = `709c9180`，**逐位相同**。
+
+🔴 这是 §223「`raw.split('<<<<<<<')[0]` 会连 base 全文一起丢」的**镜像形态**：那一次是**取一侧丢另一侧**，这一次是**两侧都留、把已删行当内容留下**。**两次的错误方向相反，共同的教训是「解冲突的脚本必须用整行精确匹配过滤，不能靠标记行的位置来判断哪段是内容」。**
+
+⇒ **定式：解完冲突必做「树哈希 == 预期树哈希」这一步**，它是唯一能同时抓住两个方向的机械判据。**并且优先选能产出预期树的那条路径**（本轮两条路径产出的树相同，但只有精确过滤那条产出 `709c9180`）。
+
+### §232.4 承重三：**「相邻两行各删一行」在 git 里是冲突，不是自动合并 —— 且两种顺序都撞**
+
+- `base` + `#160` ⇒ **rc=0**（`#160` 的 merge-base 是 `5d3c6ec1`，与 base 只差一条 docs）。
+- 所得树 + `#161` ⇒ **rc=1**，冲突文件**只有** `scripts/file_size_baseline.tsv` 一个。
+- 反序（`base` + `#161` ⇒ rc=0，树 `9a721f37` **逐位等于 `#161` head 树**，故其 CI 4/4 按构造继承）⇒ 再 `#160` 同样 rc=1。
+
+**为什么自动合并失败**：两侧删的是**同一个 hunk 窗口里的相邻两行**（ancestor 7 条 ⇒ ours 少第 4 条、theirs 少第 3+4 条），diff3 无法把两次删除对齐到同一行 ⇒ 报冲突。**「两片各删白名单里自己那一行」这个直觉上必然可合并的形态，实际必须人工裁一次。**
+
+⇒ **对派单的直接修正**：门 ⑩ 拆文件批次的工单里，**凡两片会各自删 `file_size_baseline.tsv` 的一行，必须在描述里写明「本片与 <另一片> 会在该文件同一 hunk 冲突，收敛侧需人工裁：两行都删」**，否则收割方会误判成「有一片越界改了不该改的」（§213 记的那两类漏项之二）。
+
+### §232.5 承重四：**并发 cycle 会在你判活到合并之间把同一条 PR 合掉 —— 且你的推送会变成一次静默无操作**
+
+本轮我已把 `#160` 的冲突消解**以 fast-forward 方式**推到 `agent/lin/a6dcaf74011a`（构造 `9fcfc81c`，树 `709c9180`），随后 PUT 合并返回 `merged=true / 091d2fa3`。但落地后回读发现：合并提交 `091d2fa3` 的 parent2 是 **`1355f0c1`（原 head）而不是我推的 `9fcfc81c`**，而 `3d4980c2` 是一条署名 `devbox5` 的 `§231` docs 提交 —— **并发 cycle（`LUM-2548`）在这中间独立把 `#160` 合掉并写了 §231**。我那次 PUT 合的是它已经合过的那条，返回值仍是 `true`。
+
+对 `#161` 的 PUT 第一次直接失败：`Head branch was modified. Review and try the merge again.` —— **报错的是 head 被改，不是冲突**；若当时照字面理解成「PR 有问题」就会白查一轮。
+
+🔴 **两条纪律**：
+1. **「PUT 返回 `merged: true`」不等于「你合的那棵树落地了」**。必须**回读合并提交的 parent2**，与你自己钉的 sha 比对。逐字相同才算你合的；不同说明被抢先，而返回值不会告诉你。
+2. **本轮的无害残留**：我推的 `9fcfc81c` 仍挂在 `agent/lin/a6dcaf74011a` 分支上，而该 PR 已合 ⇒ 该分支现指向一个内容上等价于 base 的提交。**未回滚**（回滚 = 对他人分支做 force-push，破坏性更大），登记备查。
+
+### §232.6 派发：门 ⑩ 第 8 批
+
+`编程助手lin`（`700c7941`，runtime `69637c57` **online**，刚连交两片）**在线且空闲** ⇒ 派 1 片。白名单剩 5 条，三个 Rust 条目仍 >800：
+
+| 文件 | tsv 记录（天花板） | **`wc -l` 实测** |
+|---|---|---|
+| `crates/mc-http/src/routes/inbox.rs` | 981 | **981** |
+| `crates/mc-conformance/src/lib.rs` | 1024 | **952** |
+| `crates/mc-repos/src/invitation.rs` | 828 | **828** |
+
+**预飞已核**：`crates/mc-http/src/routes`、`crates/mc-repos/src`、`crates/mc-conformance/src` 三个目录**无 `read_dir` / `assert_eq!(files` 型计数边界测试**（`mc-conformance/src/lib.rs:288` 的 `read_dir` 是 fixture 遍历器，不是计数断言）；三个落点**均无同名子目录并存**（`engine/*.rs` 反例见 §221）。**⇒ 可原样执行，无 `assert_eq!(files, N)` 陷阱。**
+
+### §232.7 下轮起手
+
+base **`aef216a0`**；**0 open PR**；在飞 1/3（第 8 批）。
+起手五连：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ 逐片 `issue runs --active`；**再加一条本轮新增的：任何 PUT 合并之后，回读合并提交的 parent2 与你钉的 sha 比对**（§232.5）。
+**Tier-1 只剩 `T1-6` 一条红**（读数 `365/268/64/3/0/30`，与 §213 互证值逐字相同）。
+号段：`§231` = 并发 cycle（LUM-2548）、`§232` = 本 cycle ⇒ 下一空号 **`## §233`**。
