@@ -342,13 +342,17 @@ const SESSION_HEADER: &str = "x-multica-session";
 const DEV_USER_HEADER: &str = "x-multica-user-id";
 
 /// 把 fixture 变成一次真实请求。`Err` ⇒ 这次回放是 `unevaluable`（附原因）。
+///
+/// 🔴 每个符号都按**这条 fixture 的分组**解析（`Fixture.source.test`，§213）：同一个
+/// `$testIssueID` 在两条测试里指两行，分组键因此不是可省的默认参数。
 pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
+    let group = seed::group_of(fx);
     let mut notes = Vec::new();
 
     // ---- 路径：`{name}` 用 path_params 的取值填进去 --------------------------
     let mut path = fx.path.clone();
     for (name, raw) in &fx.path_params {
-        let value = bindings.resolve(raw)?;
+        let value = bindings.resolve(group, raw)?;
         let placeholder = format!("{{{name}}}");
         if !path.contains(&placeholder) {
             return Err(format!(
@@ -365,7 +369,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
     if !fx.query.is_empty() {
         let mut pairs = Vec::with_capacity(fx.query.len());
         for (k, raw) in &fx.query {
-            let v = bindings.resolve(raw)?;
+            let v = bindings.resolve(group, raw)?;
             pairs.push(format!("{}={}", urlencode(k), urlencode(&v)));
         }
         path = format!("{path}?{}", pairs.join("&"));
@@ -375,7 +379,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
     // ---- header：fixture 自带的 + actor 身份的翻译 ---------------------------
     let mut headers: Vec<(HeaderName, String)> = Vec::new();
     for (k, raw) in &fx.headers {
-        let v = bindings.resolve(raw)?;
+        let v = bindings.resolve(group, raw)?;
         headers.push((
             HeaderName::from_bytes(k.as_bytes()).map_err(|e| e.to_string())?,
             v,
@@ -387,6 +391,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         ActorKind::Anonymous => {}
         ActorKind::Member => {
             let session = bindings.resolve(
+                group,
                 identity
                     .remove("X-User-ID")
                     .as_deref()
@@ -416,7 +421,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         // （`harness::database_router` → [`daemon_token::register`]）；stateless 层
         // 拿不到令牌，这里照旧说「不伪造」，而不是发一个注定 401 的假头。
         ActorKind::Daemon => {
-            let token = bindings.daemon_token().ok_or_else(|| {
+            let token = bindings.daemon_token_for(group).ok_or_else(|| {
                 "actor kind Daemon needs an mdt_ credential this tier did not mint \
                  (the database tier mints and registers one per replay)"
                     .to_string()
@@ -433,7 +438,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
     }
     // 剩下的身份 header（X-Workspace-ID 等）按上游原样转发。
     for (k, raw) in identity {
-        let v = bindings.resolve(&raw)?;
+        let v = bindings.resolve(group, &raw)?;
         headers.push((
             HeaderName::from_bytes(k.as_bytes()).map_err(|e| e.to_string())?,
             v,
