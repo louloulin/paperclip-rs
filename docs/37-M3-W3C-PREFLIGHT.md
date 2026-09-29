@@ -22931,3 +22931,84 @@ base **`df2b0a01`**；open PR **1**（`#168`，判不合并）；在飞 **2/3** 
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah（本机 `T1-10b` 持续 `SKIP-NO-ASSET`）；
 `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+---
+
+## §247 LUM-2576 02:00 cycle（2026-09-29 18:0xZ）—— 零收割监控轮，**产出是拆掉一颗地雷**
+
+### §247.1 起点读数（起手实测，不抄）
+
+- base = **`0117129c`**，树哈希 **`c8277027a07b40a63d1bd9cdc913f35de95cca94`**。
+- GH open PR **1** = **`#168`**（`agent/devbox5/8e61c45406b5` head `272acce6`，base `0982d786`，11 文件 +378/−101，
+  `updated_at 16:55:54Z`）—— §243 已判不合并，本轮复核 head 未动 ⇒ **维持不合并，不重判**。
+- daemon **3/3** = cycle ∥ `LUM-2572` ∥ `LUM-2575` ⇒ **空位 0，零派发**。
+- `df` **24G / 50%**；PG 16/main/5432 `online`；本 workdir 零 `target/`（全程零编译）。
+- 本机逐 PID 扫 `/proc/*/cwd`：**只有本 cycle 的 3 个 `pi` 进程** ⇒ 两片都在 devbox4，本机无外来写者。
+
+### §247.2 门读（三条零编译门当场重跑 + ⑨ 静态读）
+
+| 门 | 读数 | rc |
+|---|---|---|
+| ⑦ route-parity | `upstream 456 / local 546 / baseline 546 / implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` | 0 |
+| ⑦b slash_alias | `541 literals / 0 defect` | 0 |
+| ⑩ file-size | `scanned 1388 / baseline 1 / violations 0` | 0 |
+| ⑨ conformance（`--no-db`，静态读 `report.json`） | `365 / pass 34 / unevaluable 331`（blob `db01d842`） | — |
+
+⑦ 八数字**第 46 轮逐字不变**。⑩ 的 `baseline` **9 → 1**（只剩 `extract_upstream_fixtures.py` 1862 行）——
+**按旧白名单数写的检查会误报回归**，这条要跟着进下一批的检查脚本。
+
+### §247.3 🔴 承重一（本轮唯一实质产出）：**「`blocked` 的片」是一个没人看守的雷区**
+
+`LUM-2567`（T1-6-C / PRECONDITION 族）挂在 `blocked`，它自己那份 run 交回了**扎实的根因分析**，
+但**没有把结论写回工单**，于是工单正文留着三处会误导下一个人的东西：
+
+| 正文写的 | 实测 | 为什么是雷 |
+|---|---|---|
+| `PRECONDITION` **30 条** | **29** | 30 是 `9943902a` 上的**零编译复算模型**；合并 PR #170 后少 1 条 |
+| `bad_total 89 → ≈59` | 起点已 **86** | 🔴 **不可达判据**：`bad_total = fixtures − pass`，**只有 `unevaluable → pass` 才降**，`unevaluable → mismatch` 不降 |
+| `PRECONDITION 30 → 0` | 现实落点 **≤26** | 前一轮已逐条核出 A(13)/D(11)/B(2) 三组**按设计就不可判定**（上游 double、替身、fixture 自己的字面量） |
+
+**这不是新问题，是 §246 承重三的第二次犯**：那一轮在 `LUM-2572` 上抓到「照抄 86→75 永远达不到」，
+本轮在 `LUM-2567` 上抓到「照抄 89→59 同样永远达不到」——**同一族，两次，都发生在工单的数字上，不是代码上**。
+
+⇒ **纪律（本轮新增）**：
+1. **每个 `blocked` 片必须有一条「可达成判据」**，否则它就是一颗地雷：判据不可达 ⇒ 下一个接的人
+   必然交付不了 ⇒ 必然再挂 `blocked` ⇒ 零进展，且**每一次都消耗一整轮**。
+2. **判据的起点值必须与当轮 base 绑定**，写法 = 「起点 + 家族逐字不变项 + **不预设目标值**的对账式」。
+   本轮给 `LUM-2567` 写死的就是这个形状：`PRECONDITION 29 → ≤26` ＋ `mismatch 56 不增`
+   ＋ `bad_total_after == 86 − (pass_after − 279)` ＋ 四族逐字不变。
+3. **「复算模型」和「实测」在工单里必须分开标注**。`LUM-2567` 的 30 条是**模型**，
+   前一轮自己在评论里写了「它**是模型不是实测**，必须被真跑打一次」——但工单正文没标，下一个人只会当实测读。
+
+**本轮已落**：`LUM-2567` rev 5 → **rev 6**，追加 `## 9. §247 cycle 更正` 节（覆盖 §2/§6 的绝对读数），
+含 base 树哈希、读数继承证明、新的验收表、当轮门读、以及**覆盖前一轮评论 §6 的起手顺序**。
+状态**维持 `blocked`**——理由已换成可机械判定的：**等 `LUM-2572` 合入 base**（见 §247.4）。
+
+### §247.4 在飞两片（起手 `created==dispatched==started` 同一秒，`attempt 1`，`error null`）
+
+- `LUM-2572` —— run `01a0ee4e-9ecb`（真身；`dispatched_at == created_at` ∧ `started_at` 非空）。
+  同 issue 另留幽灵 run **`01a0ee4e-f216`（`queued`、`dispatched_at=null`）**——§222.7 承重三**又一次**复现，
+  CLI 无 cancel 动词 ⇒ **只登记不动**（改状态反而会引发第三写者）。
+  写集含 **`crates/mc-conformance/**`** ⇒ 与 `LUM-2567` **互斥**。
+- `LUM-2575` —— run `01a0ee4e-f28b`（T1-6 `REALM_DIFF 33` 的分类片，零 Rust / 零 cargo / 零真库 / 零磁盘）。
+  ⚠️ 它的 issue 状态**仍是 `backlog` 而 run 在飞** ⇒ 下一轮若只看板会**重复派发同一条写集**。
+  认在飞**只认 daemon + `/proc`**，别认状态。
+
+### §247.5 省法复用：「门输入恒等」第 10 次生效
+
+`git diff --name-only cde01aa4 HEAD` 只出 `docs/37-M3-W3C-PREFLIGHT.md`（非 docs 路径 **0**）
+⇒ 本轮 base 的**代码面**与 §246 实测 T1-6 的合并树**逐字相同** ⇒ `365 / pass 279 / mismatch 56 /
+unmounted 1 / unevaluable 29`、族 `1/29/6/17/33`、`bad_total 86` **全部按树恒等继承**，
+**零编译、零真库、零磁盘**。这是同一省法第 10 次生效，也是它第一次用来**继承一整族 T1-6 数字**
+（此前只继承过 ⑨ 的三输入 blob）。
+
+### §247.6 下轮顺位（逐条重验，禁抄）
+
+1. 任一片交 PR ⇒ 八步判据链。`LUM-2572` 的验收 = **`mismatch 56 → ≤45` ＋ `REALM_DIFF 33 → ≤22`
+   ＋ 四族逐字不变 ＋ `unevaluable 29` 不变 ＋ `bad_total 86` 不变**（0 路由 ⇒ ⑦ 逐字不变）。
+2. `LUM-2572` 合入 ⇒ **`LUM-2567` 的 `blocked` 理由解除** ⇒ 重新按 rev 6 的验收表派。
+3. `LUM-2575` 交分类 ⇒ **按它的子族表派**，不再凭「一族一派」的先例。
+4. `AUTH_401 6` / `SEED_404 17` 与 `LUM-2567` **同写集（`mc-conformance/{harness,seed}.rs`）⇒ 串行**。
+5. `UNMOUNTED 1`（`known_gap = 0` ⇒ **不许加路由**）。
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
