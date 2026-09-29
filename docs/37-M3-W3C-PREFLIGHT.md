@@ -18993,3 +18993,62 @@ base **`740d3f28`**；GH **0 open PR**；在飞 **0**。
 - **backlog**：`LUM-2503`（`supports()` 与 `build_request` 的凭据表对称化 + `T1-7` 口径重定）、`T1-12`（golden-local）、`LUM-2111`（仍卡 docker/podman/buildah 三者皆无，**待 owner 裁决，不重复 @**）。
 - **号段**：`## 209.` = M11-3（PR #151）、`## §212` = 本轮 ⇒ 下一空号 **`## §213`**；`docs/32` 下一空号待 `LUM-2494` 落地段确认。
 - **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ 判活序 → 逐片判据链（**先查 CI `total_count` 是 0 还是 in_progress**）。
+
+## §214 【2026-09-29 08:30 cycle / LUM-2504】只读监控轮 —— ⑦ 八数字**第 18 轮逐字不变** ＋ 判活 `LUM-2502` ＋ 第 2 槽位**按写集冲突留空**（不是按磁盘） ＋ **回收判据第 4 条对 squash-merge 片失效的修正**
+
+起手 base **`57fef38c`**（`git rev-parse` 与 `ls-remote` 逐字一致；checkout 带 `--ref` 第 39 次仍直接落 feat 线）。GH **0 open PR**（`per_page=100` 翻页，page1 = 0）。`df` 连采两次均 **28G/42%**、PG 5432 `online`、本 workdir **无 `target/`**。daemon `running_task_count = 1`（**只含 cycle 自己**；`LUM-2502` 在 devbox4，不在本机 `/proc` 视野内 —— 跨 device 的在飞片只能靠 `issue runs` + 远端分支判活）。
+
+### §214.1 门读（四道零编译门，base 上当场重跑，合计 < 2s）
+
+- **⑦ route-parity** `rc=0`：`upstream 456 (f41fae6b08fb) | local 546 registered | baseline 546` / `implemented 455 real + 1 placeholder = 456 / 456` / `known_gap 0` / `unclaimed 0` / `regression 0` / `local_only 8`，末行 `OK: every upstream route is either implemented or owned`。
+  ⇒ 与 §212 **逐字相同**，**第 18 轮**。
+- **⑦ slash_alias_audit** `rc=0`。
+- **⑩ file_size_check** `rc=0`。
+- **workspace deps**：`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0` —— 与 §186.2 逐字相同（本轮首次在 base 上复测，与上一轮记录一致）。
+- **baseline md5**：`route-parity-baseline.json` = `294c2c2a7f76517b4f4013b1be779220`（与 §188 起记录的常量**逐字相同**，零位移）；`slash-alias-allowlist.tsv` = `f4b20cc25ad60bb7972839f79d23869d`。
+
+### §214.2 ⑨ 门输入基线**已随 PR #151 位移**（旧读数作废）
+
+`crates/mc-conformance/report.json` blob = **`0509ea6cc21be997eb45fdea312d95c87d1cea18`**、`contracts/golden` = `033bdd7db3c0f9a004848cc5ab85e33a821df107`、`docs/fixtures` = `ecc314dc6861f092516b4a4b43ba1ca1211b9eaf`。
+
+**stateless 层 totals 逐字**：`fixtures 365 / pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`，`by_actor` = `member 293 unevaluable / daemon 20 / agent 13 / anonymous 34 pass + 5 unevaluable`。
+
+🔴 **与 §213 之前记录的 `365/15/23/21/0/306` 不同** —— 位移全部来自 PR #151（M11-3）本身：`mismatch 23→0`、`unmounted 21→0`、`pass 15→34`、`unevaluable 306→331(+25)`。**这不是回归**（#151 已合、⑦ 第 18 轮逐字不变、migrations 零改动），但**下一轮任何「⑨ 逐字不变」的声明必须用这一组值**，旧值已作废。database 层六数字仍以 §212 复核的 `365/252/80/3/0/30` 为准。
+
+### §214.3 第 2 槽位**按写集冲突**留空（本轮唯一的实质裁定）
+
+起手 1 个切片位在飞（`LUM-2502`，devbox4）⇒ 空位 1。**唯一 backlog 候选 `LUM-2503` 与之冲突，故不派** —— 冲突**不是「同文件」，是「同函数」，且是语义冲突**：
+
+| | `LUM-2502`（在飞） | `LUM-2503`（候选） |
+|---|---|---|
+| 落点 | `build_request` 的 6 个 `bindings.resolve()` 调用点，`lib.rs:351/368/378/389/436/…` | `supports()` 与 `build_request` **共用同一张凭据表**，`lib.rs:407` 的 `ActorKind::Agent` 分支 |
+| 性质 | 给 `resolve()` **纯加参** | **改写该分支「是否伪造凭据」的判定语义** |
+
+两者落在**同一个函数**、跨度约 90 行，且**都在决定 `build_request` 怎样处理凭据**。⇒ §146.3 的「两段都保留 + 按号段排序」**机械解法在此不适用**（那是给 docs 同锚点 append 用的）；代码合并需要真实仲裁，且两片对同一段逻辑的理解可能互相污染（一边加分组键、一边换判定来源）。**故留空，不赌。**
+
+🔴 **新互斥判据（第八类预飞检查）= 「同函数」而非「同文件」**。`docs/32` / `docs/37` 的同锚点冲突有机械解 ⇒ 可以并派；**同一函数内两片各改各的语义 ⇒ 不可并派**，哪怕它们连行号区间都只差十几行。既往判据只到「同文件写者」粒度，本轮细化一层。
+
+**磁盘不是本轮留空的理由**（`avail 28G`，全盘唯一 `target/` 是已终态片的 790M）—— 留空**纯因写集冲突**。这两个理由必须分开记，否则下轮会误以为「等磁盘空出来就能派」。
+
+### §214.4 回收判据第 4 条对 **squash-merge** 片失效（本轮自踩并修正）
+
+回收四判据之一是「`HEAD` 是 base 祖先」。本轮对 `lum-2494-b3e0a3b5bb0b`（PR #151 的 workdir）实测：`HEAD = ee7086d3`，`git merge-base --is-ancestor ee7086d3 57fef38c` ⇒ **NO**。
+
+**原因**：PR #151 是 **squash merge**（base log：`740d3f28 feat(conformance): … (#151)`），squash 会**另造一个新提交**，原 head **永远不会**成为 base 的祖先。⇒ **凡经 squash 合入的片，第 4 条永远为假 ⇒ 该片的工作区永远回收不掉**（每轮 ≈790M–20G 泄漏，且随片数线性增长）。
+
+**修正后的第 4 条**：内容在 base ⇒ 用 **`git diff --stat <pr-head> origin/feat/multica-rs-initial -- crates/ contracts/ migrations/ scripts/`**（**代码路径**）为空来判定，而不是祖先关系。本片实测该 diff **空** ⇒ 内容确已在 base ⇒ 四判据成立，删除 `target/` 回收 **790M**（`df` 20G→19G）。`docs/` 路径**故意排除**在 diff 外 —— 并发 cycle 的 docs 直推会让 docs 恒有差异。
+
+### §214.5 判活 `LUM-2502`（devbox4，跨 device）
+
+run `01a0ea85`：`created == dispatched == started` 均为 `00:16:24Z`，起手读数 `running`、**age 16 分钟**、无 error。**远端无 `agent/devbox4/*` 分支**、`porcelain` 面不可见（本机）、交付评论 0 条。
+
+⇒ **判「活」而非「死」**：16 分钟对一条要跑全量 `--with-db`（实测 500–650s 门禁 + 冷建）的片属正常早期；§189.6 的 60 秒回读已在派发当刻做过（`created == dispatched` 同一秒）。**不介入。** 下一轮若仍 `running` 且远端分支出现 ⇒ 进入收割判据链；**判据链起手第一件事仍是先查 head 的 check-runs `total_count`（§212 承重一：0 与 in_progress 必须分开判）。**
+
+### §214.6 交接
+
+- **base**：`57fef38c`；GH **0 open PR**；daemon 1（cycle 自己）；在飞 = `LUM-2502`（devbox4）。
+- **号段**：`## §213.` **已被 `LUM-2502` 预约**（其描述明写「base 有 §212，你的取 §213」）⇒ 本轮落 **`## §214`**，下一空号 **`## §215`**。**新增纪律：号段要同时看「base 末号」与「在飞片描述里的预约」—— 只看 base 会和派出去的那片撞号。**
+- **槽位链（订正，勿抄旧值）**：`LUM-2502` 终 ⇒ 判据链合入（预期 ⑨ database 层 `pass 252→≥275`、`mismatch 80→≤57`、⑦ 八数字**逐字不变**）⇒ **其后** `LUM-2503` 方可派（`lib.rs` 冲突随 `LUM-2502` 合入而解除）。`LUM-2502` 未终前 `LUM-2503` **不得派**。
+- **⑨ 新基线**（下一轮直接用）：`report.json` blob `0509ea6c…`；stateless `365/34/0/0/0/331`；database `365/252/80/3/0/30`。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ 判活序 → 逐片判据链（**先查 CI `total_count` 是 0 还是 in_progress**）→ 回收第 4 条用 **代码路径 diff** 而非祖先关系。
