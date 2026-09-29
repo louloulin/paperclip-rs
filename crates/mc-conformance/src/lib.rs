@@ -64,6 +64,7 @@
 
 pub mod bindings;
 pub mod daemon_token;
+pub mod device_shape;
 mod fixture;
 pub mod harness;
 pub mod pat_token;

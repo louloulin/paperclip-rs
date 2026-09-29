@@ -254,6 +254,19 @@ pub fn groups_for(fixtures: &[Fixture]) -> Vec<String> {
     out.into_iter().collect()
 }
 
+/// 引用了某个符号的分组键集合（[`groups_for`] 的单符号版本）。
+///
+/// 只给 [`seed`] 的**前置守卫**用：解绑形态会连带取消在飞任务，而「声明了该形态又
+/// 引用 `$testTaskID`」的分组会因此静默少掉一行任务 —— 那比明确报错糟得多。
+#[must_use]
+pub fn groups_referencing(fixtures: &[Fixture], symbol: &str) -> BTreeSet<String> {
+    fixtures
+        .iter()
+        .filter(|fx| referenced_symbols(fx).contains(symbol))
+        .map(|fx| fx.source.test.clone())
+        .collect()
+}
+
 /// `plan()` 会送去 [`crate::Bindings::resolve`] 的全部取值位置。
 fn referenced_symbols(fx: &Fixture) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -319,6 +332,7 @@ pub async fn seed(
     db: &mc_db::pool::Db,
     user_id: Uuid,
     groups: &[String],
+    fixtures: &[Fixture],
 ) -> Result<Seed> {
     let user = user_id.to_string();
     // 本次回放的 nonce：workspace 的 name/slug 必须**跨并发回放**唯一 —— 同一个测试库里
@@ -330,6 +344,20 @@ pub async fn seed(
     // 兜底分组先建：`Bindings` 的默认 workspace / 默认令牌取它的那一份。
     let fallback = seed_group(router, db, &user, user_id, DEFAULT_GROUP, 0, &run).await?;
     seed.groups.insert(DEFAULT_GROUP.to_string(), fallback);
+    let task_users = groups_referencing(fixtures, "$testTaskID");
+    for decl in crate::device_shape::SHAPES {
+        if decl.shape
+            == crate::device_shape::Shape::Agent(crate::device_shape::AgentRuntimeState::Unbound)
+            && task_users.contains(decl.test)
+        {
+            bail!(
+                "group {:?} declares the unbound-agent device shape but references \
+                 $testTaskID; unbinding cancels the in-flight task and the fixture would \
+                 silently read 404 instead of its real verdict",
+                decl.test
+            );
+        }
+    }
     for (i, group) in groups.iter().enumerate() {
         if seed.groups.contains_key(group) {
             continue;
@@ -369,6 +397,11 @@ async fn seed_group(
     let issue = seed_issue(router, user, workspace_id).await?;
     let chat_session = seed_chat_session(router, user, workspace_id, agent).await?;
     let task = seed_task(router, user, workspace_id, agent, chat_session).await?;
+    // 装置形态：在**通用世界之上**再改形态，不是从零搭 —— 顺序是语义（见
+    // [`crate::device_shape`] 模块文档的「顺序在这里是语义」）。
+    crate::device_shape::apply(router, user, workspace_id, agent, runtime_id, group)
+        .await
+        .with_context(|| format!("apply the device shape for seed group {group:?}"))?;
     // 🔴 令牌在 workspace 建好**之后**才签发：`daemon_token.workspace_id` 有指向
     // `workspace(id)` 的外键，而这条外键正是「daemon 身份被限定在某个 workspace 内」
     // 的地基（§209.2 的同一段纪律，现在按分组各签一枚）。
