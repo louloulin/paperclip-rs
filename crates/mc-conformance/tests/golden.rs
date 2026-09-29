@@ -21,8 +21,8 @@
 use std::path::PathBuf;
 
 use mc_conformance::{
-    harness, judge, load_dir, merge, missing_requirements, plan, run_tier, to_row, Bindings,
-    Fixture, Observed, Outcome, Report, Tier,
+    harness, judge, load_dir, merge, missing_requirements, plan, run_tier, to_row, upstream_facts,
+    ActorKind, Bindings, Fixture, Observed, Outcome, Report, Tier,
 };
 
 fn golden_dir() -> PathBuf {
@@ -632,4 +632,105 @@ async fn database_tier_replays_every_decidable_fixture() {
     );
     assert_eq!(outcome, Outcome::Mismatch);
     assert!(detail.contains("418"), "{detail}");
+}
+
+/// `upstream_facts` 的两张声明表必须**逐条钉在语料上**。
+///
+/// 它们的键是 `(source.test, source.line)` —— 上游改名或挪行会让这张表**静默绑错**：
+/// 一个指不到任何 fixture 的条目不会报错，只会让那一条 fixture 继续 mismatch，
+/// 而这与「还没修」在报告里长得一样。所以这里把两个方向都钉死：
+///
+/// * 每条声明必须命中**恰好一条** fixture，且该 fixture 的 actor 形状对得上；
+/// * 表里没有的「目录外 `body.status`」必须**仍然存在** —— 否则说明这张表退化成了
+///   「凡自定义 key 就建」，而那会把另外 4 条期望 400 的 fixture 弄红。
+#[test]
+fn declared_upstream_facts_match_the_golden_corpus() {
+    let fixtures = load_dir(&golden_dir()).expect("golden fixtures must load");
+
+    // ---- 跨空间 daemon 请求 -------------------------------------------------
+    for row in upstream_facts::FOREIGN_DAEMON_REQUESTS {
+        let hits: Vec<&Fixture> = fixtures
+            .iter()
+            .filter(|f| f.source.test == row.test && f.source.line == row.line)
+            .collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "FOREIGN_DAEMON_REQUESTS 的 {}:{} 命中 {} 条 fixture",
+            row.test,
+            row.line,
+            hits.len()
+        );
+        assert_eq!(
+            hits[0].actor.kind,
+            ActorKind::Daemon,
+            "{}:{} 声明了跨空间身份却不是 daemon actor",
+            row.test,
+            row.line
+        );
+    }
+
+    // ---- 明确不修的那一条 ---------------------------------------------------
+    for (test, line, _why) in upstream_facts::NOT_DECLARED_FOREIGN {
+        let hits = fixtures
+            .iter()
+            .filter(|f| f.source.test == *test && f.source.line == *line)
+            .count();
+        assert_eq!(
+            hits, 1,
+            "NOT_DECLARED_FOREIGN 的 {test}:{line} 命中 {hits} 条 fixture"
+        );
+        assert!(
+            !upstream_facts::is_foreign_daemon_request(test, *line),
+            "{test}:{line} 同时被登记成「已修」与「不修」"
+        );
+    }
+
+    // ---- 自定义 status 目录项 -----------------------------------------------
+    let custom_keys = |f: &Fixture| -> Option<String> {
+        f.body.as_ref()?.get("status")?.as_str().map(str::to_string)
+    };
+    let declared: Vec<&str> = upstream_facts::CUSTOM_STATUS_ROWS
+        .iter()
+        .map(|r| r.key)
+        .collect();
+    for row in upstream_facts::CUSTOM_STATUS_ROWS {
+        let hits = fixtures
+            .iter()
+            .filter(|f| f.source.test == row.test)
+            .filter(|f| custom_keys(f).as_deref() == Some(row.key))
+            .count();
+        assert_eq!(
+            hits, 1,
+            "CUSTOM_STATUS_ROWS 的 {}/{} 命中 {hits} 条 fixture",
+            row.test, row.key
+        );
+        // 同一个 key 不得横跨多条上游测试 —— 否则「按测试建目录项」会多建一行。
+        let owners: std::collections::BTreeSet<&str> = fixtures
+            .iter()
+            .filter(|f| custom_keys(f).as_deref() == Some(row.key))
+            .map(|f| f.source.test.as_str())
+            .collect();
+        assert_eq!(
+            owners.len(),
+            1,
+            "key {:?} 被多条测试共用：{owners:?}",
+            row.key
+        );
+    }
+
+    // 反面：那 4 条**期望 400** 的「目录外 key」必须既在语料里、又**不**在声明表里 ——
+    // 这是「声明表没有退化成『凡自定义 key 就建』」的判据。
+    let corpus_statuses: std::collections::BTreeSet<String> =
+        fixtures.iter().filter_map(custom_keys).collect();
+    for key in ["in_use_a", "not_a_status", "active"] {
+        assert!(
+            corpus_statuses.contains(key),
+            "语料里已经没有 {key} 了 —— 这条反面判据需要重新选锚点"
+        );
+        assert!(
+            !declared.contains(&key),
+            "{key} 被声明成目录项，但它在语料里有一条期望 400 的 fixture"
+        );
+    }
 }
