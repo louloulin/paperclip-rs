@@ -5,7 +5,7 @@
   "path": "/api/issues",
   "path_params": {},
   "query": {
-    "status": "workspaces/",
+    "status": "sort_custom_started",
     "sort": "status",
     "limit": "1"
   },
