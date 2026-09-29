@@ -24546,3 +24546,82 @@ PR 自己的分析逐条回核到 `90e0bdf8`）。但它有一个**必须写进�
 - 磁盘：起手 24G → 本轮自跑 `mc-conformance` 冷建后 **≈20G**；两片各自冷建 7–18G ⇒
   **下轮起手先 `df` 连采两次再决定是否回收**（死物四判据：PR 已合 ∧ run 终态 ∧
   `/proc` 逐 PID 零命中 ∧ porcelain 空）。
+
+---
+
+## §261 【LUM-2589 06:00 cycle】亲手补上「负责面」那一列 —— **行为面 4 轮不可派工的根因在这**（PR #178）
+
+**性质**：本轮**零收割、零派发**，但不是空转 —— 交付 PR #178，直接销掉 §258.4 顺位第 3 条。
+基线 `48e5bfa4`（起手 `git rev-parse` 实测 == `origin/feat/multica-rs-initial`）。
+
+### §261.1 交付：PR #178（`a4c15fbc`，3 文件 +101/−2，纯 Python，0 编译）
+
+`scripts/t1_6_realm_diff_taxonomy/` 里，`负责面（文件集合）` 那一列对**行为面**一直是空串，
+而同一屏的 `并行结论` 却无条件打「**可并行：是（各域 handler 互不相交）**」。
+**结论所依赖的证据恰是它自己没填的那一列**（§257 承重二的形状，第二次派场 —— 上次是
+`行为面 4 条`，这次是产生该结论的那行代码本身）。
+
+1. `constants.py`：新增**子族级** `BEHAVIOR_OWNER_FILES`（归因级那张表对行为面**故意留空**：
+   一个归因横跨 5 个域，归因级只能给并集，而并集非空**不代表**可并行）。
+   4 个子族逐个**读代码**定位（打开上游测试站位 + 在本仓找到 handler），8 条路径**逐条核对存在**：
+   - `BEHAVIOR_MACHINE_ACTOR_GATE` → `routes/chat/task/history.rs` ＋ `routes/properties.rs` ＋ `actor_guard.rs`
+   - `BEHAVIOR_METADATA_FILTER_PARSE` → `routes/issues/query.rs`（`parse_metadata_filter`）＋ `routes/issues/list.rs`
+   - `BEHAVIOR_STAMPING_CHAIN_UNWIRED` → `routes/pats.rs`（`renew_current_pat`）＋ `middleware/authn.rs`
+   - `BEHAVIOR_ISSUE_PREFIX_UNPORTED` → `routes/workspaces.rs`（`update_workspace`）
+   - `BEHAVIOR_JSON_DECODE_STATUS`（422 vs 400）与 `BEHAVIOR_NUL_PAYLOAD`（NUL 字节）**故意留空**：
+     静态面判不出其成员，要定位修法得先知道成员落在哪些 handler ⇒ **没读就填等于编**
+     （沿用 §258.4「不替它猜」的处置）。
+2. `report.py`：`owner_files_for()` 两级查表（归因级优先）；`verdict()` **就地推导** lane 结论三档
+   —— `serial` / `parallel` / `undetermined`：**有子族负责面为空串 ⇒ 降级「未定」并点名缺哪几条**。
+3. `__main__.py`：按 `verdict` 渲染，**结论不再写死**。
+
+### §261.2 承重一：**「结论必须由证据推导」是第三种不变式，和已知的两种并列**
+
+§257 修的是「**自检正例**」（已知成员判得对）；§258 破的是「**子族覆盖率**」（成员表与候选集做差集）。
+本轮这条是第三种：**已知证据填得全** —— 前两种即使都绿，一族仍可能因「负责面空串」而整族不可派工。
+⇒ **三条每轮都要重算，只看前两条会漏掉这一条。** 可复用的判别式（本次已实现并当场验证两条降级路径）：
+空子族 ⇒ `undetermined` ＋ 点名；子族写集相交 ⇒ `serial` ＋ 点名相交文件。
+`抽取缺陷` lane 这次也被新判据从「靠 `serial_with` 名单」升级成「**由写集相交自动推出**」。
+
+### §261.3 门（base 当场重跑，三门零编译）
+
+⑦ **八数字第 52 轮逐字不变** `456/546/546`、`455 real + 1 placeholder = 456`、
+`gap 0 / unclaimed 0 / regression 0 / local_only 8`（upstream `f41fae6b08fb`）；⑦b rc=0；⑩ rc=0
+（最大子文件 243 行 / 800 上限）。写集 = 3 个 `.py`，零 Rust / migrations / `contracts/golden` /
+`report.json`（blob 仍 `db01d842`）⇒ 门 ⑨ 的**存量红按构造不变**，**主动不冷编**（省 2m08s ＋ 2.3G）。
+`--json` 路径 stderr 仍 **0 字节**（§258 承重的隐含契约未破）。对账仍平：`候选 30 / 子族和 30`。
+
+### §261.4 在飞与派发（**本轮零派发**）
+
+daemon **3/3** = cycle ∥ `LUM-2587`（`lum-2587-0c2c5e027031`，`target/` 3.9G）∥ `LUM-2588`
+（`lum-2588-28bb9108b6e0`，`target/` **17G**，15 分钟内有新写入 ⇒ 活）⇒ **无空位，且不介入**。
+GH open PR 仍 **1** = `#168`（§243 判不合并，head `272acce6` 四轮未动 ⇒ 维持不重判）。
+
+🔴 **磁盘是本轮唯一真风险**：`avail` 从起手 15G 掉到 **3.6G（93%）**，`LUM-2588` 的 `target/`
+一小时内 5.5G → **17G**。devbox1 历史上就是 `failed ENOSPC` 收场 ⇒ **下轮起手第一件事**：
+`df` 连采两次 ＋ 逐 PID `/proc/*/cwd` 核死物四判据（PR 已合 ∧ run 终态 ∧ 零进程 ∧ porcelain 空）再回收。
+本轮已回收 `LUM-2574`（`in_review`、`/proc` 零命中）的 `target/` **2.0G** ⇒ avail 回到 4.9G。
+
+### §261.5 下轮顺位（逐条重验，禁抄）
+
+1. **先 `df` 连采两次**（见 §261.4）；必要时回收 `LUM-2587/2588` 冷建产物（两片 run 终态后）。
+2. `LUM-2588` 交 PR ⇒ 八步链，验收 = `report.json` 与 ⑦ 八数字**逐字不变**（写集只碰装置面）。
+   `LUM-2587` 交 PR ⇒ 它会动 `contracts/golden` ⇒ ⑨ 读数**会动**，按对账式判，别预设目标值。
+3. **PR #178 交 PR** ⇒ 零编译片，只复验「降级两条路径 + 4 个子族负责面路径逐条存在」＋⑦⑦b⑩ rc=0。
+4. **本轮解锁的可派工候选（4 张，写集两两不相交 ⇒ 可并行）**：
+   - `BEHAVIOR_METADATA_FILTER_PARSE` 1 条 → `routes/issues/query.rs` ＋ `issues/list.rs`
+   - `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 1 条 → `routes/pats.rs` ＋ `middleware/authn.rs`
+   - `BEHAVIOR_ISSUE_PREFIX_UNPORTED` 1 条 → `routes/workspaces.rs`
+   - `BEHAVIOR_MACHINE_ACTOR_GATE` 12 条 → `routes/chat/task/history.rs` ＋ `routes/properties.rs` ＋ `actor_guard.rs`
+   派它们的前提是 **§261.3 的门读数**（`报告.json` / `contracts/golden` 未动 ⇒ 门输入同源）。
+5. `AUTH_401 7` / `SEED_404 18` / `UNMOUNTED 1` 顺位不变：前两族与 `LUM-2588` **同写集 ⇒ 串行**；
+   `UNMOUNTED 1` 因 `known_gap 0` **不许加路由**。
+6. `BEHAVIOR_JSON_DECODE_STATUS` / `BEHAVIOR_NUL_PAYLOAD`：**派之前必须先取 db 读数**定位成员，
+   否则 lane 会被自动拉回「未定」（这是期望行为，不是回归）。
+
+### §261.6 待 owner（**不重复 @**）
+
+- `LUM-2111` 卡 docker/podman/buildah ⇒ `report.json` 刷新权死锁 ⇒ 每个 PR 的 `contract` job 持续红。
+- `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（清理属破坏性操作，未自行执行）。
+- **新增**：`LUM-2588` 单片 `target/` 已到 17G、整机 90% ⇒ 若下轮仍无空位，建议给在飞片设
+  `CARGO_TARGET_DIR` 指向共享缓存或定期清理，否则一次冷建就能把盘打满。
