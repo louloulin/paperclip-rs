@@ -24133,3 +24133,113 @@ t1_6_taxonomy.py：UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / RE
   🔴 **教训**：号段判活不能只 `tail` 几个 `## ` 标题 —— 得把**全部** `^## [0-9]+\.` 取出来看。
 - 磁盘：起手 17G avail → 门 ⑥ 跑完只剩 **4.8G（90%）**（⑥ 的 4 个 package test 二进制最贵）。
   本片按 §7 只做外科回收，收尾把**本 worktree 自己的** `target/` 回收；**未动任何在飞 workdir 的 `target/`**。
+## §256 【LUM-2583】门 ⑩ 拆 `t1_6_realm_diff_taxonomy.py` 800 → 包（0 Rust / 0 编译 / 0 真库 / 0 磁盘）
+
+起手 base `git rev-parse origin/feat/multica-rs-initial` 实测 **`6dc0d0c1`**（§254 的
+收尾提交，即「下一空号 §256」那一条的落点）⇒ **无并发 cycle 插队**。
+`df -h /` = **93%**（460Gi 用 17Gi，avail 1.4Gi）—— 本片 0 编译，**不碰 `target/`**。
+
+### 1. 为什么要拆它（不是「体量大」，是「余量 0」）
+
+`wc -l scripts/t1_6_realm_diff_taxonomy.py` = **800 整**。门 ⑩ `file_size_check.py` 的判据是
+「**清单外**文件 `> 800` ⇒ 失败」⇒ **800 通过、加一行就红、余量 0**。
+它**不在** `scripts/file_size_baseline.tsv` 里（白名单只剩 1 条 `extract_upstream_fixtures.py`）。
+🔴 `§254` §5 已把它登记成「刚放进去的新雷」，本片就是那颗雷的拆弹。
+
+同族的另一颗雷 `scripts/schema_drift.py` = **799（余量 1）**，但它**被门 ⑧ 使用** ⇒ **禁改，只登记**。
+
+### 2. 拆成什么（每个 ≤ 600，实际最大 243）
+
+| 文件 | 行 | 内容 | 对应原文件行段 |
+|---|---|---|---|
+| `__init__.py` | 82 | 再导出（`build` / `SUB_RULES` / `classify` / …） | —（新增门面） |
+| `__main__.py` | 182 | 模块 docstring + 人读渲染 + CLI 入口 | 1–99, 701–800 |
+| `constants.py` | 32 | 族名 / 族判据 / 归因标签 / 负责面文件集合 | 69–93 |
+| `fields.py` | 35 | 9 个字段读取小工具 | 158–189 |
+| `sources.py` | 63 | 两种输入的读法（report json / golden 静态扫描） | 101–155 |
+| `claims.py` | 27 | `LUM-2572` 已领走 11 条的机械判据 | 195–213 |
+| `rules.py` | 243 | 15 条子族规则（有序）+ `classify` + 转移形态 | 222–453 |
+| `checks.py` | 93 | 判别式双向验证（正例/反例）+ by-design 审计 | 461–542 |
+| `report.py` | 171 | `build`（组装整棵 JSON） | 550–698 |
+
+合计 928 行（原 800 + 28 行模块头/import）。**最大文件 `rules.py` = 243**，离 600 有 357 行余量。
+
+**切法说明**：`__init__.py` 只放再导出、不放逻辑，是为了**让 `__main__.py` 的 `__doc__`
+仍然是被 argparse 拿去当 `description` 的那份**（`__doc__.splitlines()[0]`，原文件
+`main()` 第 767 行）—— 若把 docstring 挪进 `__init__.py`，`__main__.py` 的 `__doc__` 就是
+`None` ⇒ `AttributeError`。所以 docstring 留在 `__main__.py`，`__init__.py` 另写一段短说明。
+
+**依赖方向是单向的**：`constants` ← `fields` ← `sources` / `claims` / `rules` ← `checks` ← `report` ← `__main__`。
+`constants.py` 刻意**不导入任何兄弟模块**，这样 `__init__.py` 顶部的再导出不会形成循环导入。
+
+### 3. 验收：stdout 逐字节相同（`cmp`，不是 `diff` 的宽松版）
+
+输入固定为仓内 `crates/mc-conformance/report.json`（🔴 **只读，没 `--write`**）
+与 `contracts/golden/`（静态面）。四条命令，拆分前后各跑一次：
+
+| 命令 | 拆分前 | 拆分后 | `cmp` |
+|---|---|---|---|
+| `-m … crates/mc-conformance/report.json` | `/tmp/before.txt` | `/tmp/after.txt` | **0（逐字节相同）** |
+| `-m … --golden contracts/golden` | `/tmp/before_g.txt` | `/tmp/after_g.txt` | **0（逐字节相同）** |
+| 上两条各加 `--json` | `/tmp/before{,_g}.json` | `/tmp/after{,_g}.json` | **0（逐字节相同）** |
+| report + `--golden /nonexistent`（warning 路径） | `/tmp/b2.txt` | `/tmp/a2.txt` | **0（逐字节相同）** |
+| `--golden /nonexistent`（空读 warning 路径） | `/tmp/b3.txt` | `/tmp/a3.txt` | **0（逐字节相同）** |
+
+**`--json` 路径的 stderr 实测 `0` 字节**（四条命令都是）。这是 §254 承重一 提到的那条
+`mc_golden_local_check.sh:66` 契约（`out="$(… --json 2>&1)"` 后直接 `json.load`）——
+本片没往 stderr 加任何东西。
+
+🔴 **唯一的一处非逐字节输出差异：`--help` 的 usage 行**。
+argparse 的 `prog` 取自 `sys.argv[0]`：原来是 `t1_6_realm_diff_taxonomy.py`，
+改用 `-m` 后是 `python3.14 -m scripts.t1_6_realm_diff_taxonomy`。
+**这是换调用方式的必然结果，不是逻辑改动**；`--help` 不在本片的两条验收命令内，
+且 `grep -rn` 确认**没有任何门/脚本/crate 引用本脚本的 `--help` 输出**。
+help 里的 `description`（= `__doc__` 首行）实测逐字未变。
+
+**允许的注释差异只有一处**：docstring 里那两行调用示例从
+`python3 scripts/t1_6_realm_diff_taxonomy.py …` 改成 `python3 -m scripts.t1_6_realm_diff_taxonomy …`，
+**只在注释里，不在任何输出行里**（已由上表的 `cmp` 反证）。
+
+### 4. git 不能同时跟踪同名文件与目录 —— 实测
+
+`git rm scripts/t1_6_realm_diff_taxonomy.py` + `git add scripts/t1_6_realm_diff_taxonomy/`
+在**同一次提交**里完成。`git status` 全程只有 1 删 9 增，**没有 "both modified"**；
+落地后 `ls -d scripts/t1_6_realm_diff_taxonomy*` **只看到目录**。
+🔴 换句话说：**顺序不能反** —— 先 `git add` 目录再删文件，git 会当 rename 冲突。
+
+### 5. 跑了哪几道门，哪些按「输入未变」继承
+
+| 门 | 结果 | 依据 |
+|---|---|---|
+| ⑩ file-size | **rc=0 PASS** | **实跑**（`python3 scripts/file_size_check.py --quiet`） |
+| ⑦ route-parity | **rc=0 PASS** | **实跑**（八数字 `456 / 546 / 546`、`455 real + 1 placeholder = 456`、`known_gap 0` / `unclaimed 0` / `regression 0` / `local_only 8`，upstream `f41fae6b08fb`，逐字与 base 一致） |
+| ①②③④⑤⑥⑧⑨ | **未跑，按输入未变继承** | 写集 = **1 个 `.py` 拆成 9 个 `.py`**，**零 `Cargo.toml`、零 `.rs`、零 migrations、零 `contracts/**`、零路由表变更**。这九道的输入（`crates/**`、`contracts/**`、`migrations/**`、`route-owners.tsv`、基线 tsv）**一个字节都没动**（`git diff --cached --name-only HEAD` 只列出 1 删 9 增，全在 `scripts/t1_6_realm_diff_taxonomy*`）。⑨ 另按 §2 的约定**不跑也不 `--write`**（存量红，非本片引入） |
+
+### 6. §6 验收数字：**本片一个都碰不到，也一个都不重测**
+
+`365 / pass 295 / mismatch 40 / unmounted 1 / placeholder 0 / unevaluable 29`、
+`bad_total = 70`、族 `UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 17`
+—— 这些数需要 `mc-conformance` **编译 + 真库回放**才有，本片是 **0 编译 0 真库**，
+**测不了**（不是「测了没变」，是「本片不具备测它的条件」）。
+
+能给的等价证据只有一条，但它够强：**同一份输入下脚本 stdout 逐字节相同**（§3 的五条 `cmp`）
+⇒ 归因逻辑、判据、子族划分、对账**一个字节都没动**；而这些数是由被回放的 **fixture 集合**
+决定的，本片**一个 fixture 都不碰**（写集零 `contracts/**`）⇒ **数必然不变**。
+
+### 7. 未发现真 bug（按约定登记而非顺手修）
+
+通读 800 行未发现需要开单的真 bug。三处「看着像」的地方，结论都是**设计如此**、已在原注释里写明：
+
+1. `classify` 里 `except Exception: continue` —— 判据读不到字段就**不命中**。故意的，
+   原注释「判据读不到字段就**不命中**，绝不猜」。代价是**静默漏判**，但漏判的行会落进
+   `unmatched_candidates` 被对账抓到，不是真的静默。
+2. `is_claimed` 里的 `== 11` 断言在静态面被短路（`claimed_matches_expected = None`）
+   —— 静态面 `claimed` 恒为空，断言没有意义。设计如此。
+3. `discriminant_checks` 在静态面直接 `applies: False` —— 原注释已解释「静态投影只给超集，
+   跑正反例只会把超集误报成判别式错」。
+
+### 8. 下一空号 `## §257`
+
+🔴 **追加前先 `git fetch` + 在远端最新 base 上 `grep`**（§237 承重五 / §238 承重三 两次都栽在
+「查的是起手 base 上的号」）。本片的取号依据是 base `6dc0d0c1` 上 `## §250`–`## §254`
+＋ **§255 已被 `LUM-2567` 描述 §11.5 预留**（§254 收尾自查的结论）⇒ 取 **§256**。
