@@ -19683,3 +19683,116 @@ implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   r
 - **号段**：下一空号 **`## §221`**。
 - **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ **对每条在飞片先看 CI**：有新 commit 就先看对应 run 的 job 结论，**并与 base 那一次逐 job 对照**（§220.1）→ ⑦ 第 26 轮 → 交 PR 走 §210.1 判据链（不信 blob 恒等），**外加 §220.2 的新硬项：clippy 必须在验收输出里**。
 - **收割 `LUM-2513` 的判据链（本轮预登记）**：① CI 四 job 全绿 **且** `98386d0c` 那次对照仍全绿（排除「base 本身也红」）→ ② ③ clippy 的输出里**不再有** `use super::*`（`grep -c 'use super::\*;'` 落在新文件上的计数为 0）→ ③ ⑤⑦⑩ 四条读数与本片段落逐字相同 → ④ 合并树重跑 ⑤⑥⑦⑩。
+
+---
+
+## §221 【2026-09-29 11:30 cycle / LUM-2520】收割 `LUM-2516`（门 ⑩ 第 2 批）⇒ **PR #154** ＋ 🔴 承重：**门 ③ clippy 绿，对 `crates/*/tests/**` 是「空的绿」** ＋ 抢救 `LUM-2519`（winpi runtime 离线静默死亡）＋ ⑦ 八数字第 26 轮逐字不变
+
+### §221.1 起手读数
+
+| 项 | 读数 |
+|---|---|
+| base（`ls-remote` 对 `rev-parse`） | **`3873cd0d`**（= §220 收尾值，逐字一致） |
+| GH open PR（翻页取全） | 起手 **1**（`#153`，`LUM-2513` 待返工）；本轮收尾 **2** |
+| `df` 起手 | 28G / 41% |
+| `pg_lsclusters` | 16 main 5432 online |
+| 全盘 `target/` | **0 个**（上轮收尾已回收干净）⇒ 无在飞片占本机运力 |
+
+### §221.2 收割 `LUM-2516`（门 ⑩ 第 2 批）—— **通过 ⇒ PR #154**
+
+分支 `agent/lin/24472f60c4c4`（head `12292680`，自 `0e911678` 切出），**交付时未开 PR**（只给了 `/pull/new` 链接），由本轮补开。
+
+- **写集 23 文件**，`git diff --numstat` 逐字核对：4 处 rename（`gitlab.rs`、`stream.rs`、`tests/chat.rs`、`tests/vcs/connections.rs`），其余为新增子模块与 `mod` 声明行 ⇒ **0 路由**，`scripts/route-owners.tsv` 零改动。
+- base 已前进到 `3873cd0d`（较其 base `0e911678` 多 2 个 **docs-only** 提交）⇒ 判据链第 2 步判定**需真合**；合并**零冲突**（与「base 前进仅 docs」的预判一致）。
+- **合并树 10/10 全绿，658s**：
+
+  | 门 | exit | 用时 | | 门 | exit | 用时 |
+  |---|---|---|---|---|---|---|
+  | ① fmt | 0 | 4s | | ⑥ db | 0 | 246s（migrate=0, e2e=0） |
+  | ② build | 0 | 144s | | ⑧ schema-drift | 0 | 27s |
+  | ③ clippy | 0 | 5s | | ⑦ route-parity | 0 | 1s |
+  | ④ clippy-test-util | 0 | 0s | | ⑨ conformance | 0 | 71s |
+  | ⑤ test | 0 | 160s | | ⑩ file-size | 0 | 0s（0 violation） |
+
+- ⑦ 八数字**第 26 轮逐字不变**：`upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546`、`implemented 455 real + 1 placeholder = 456/456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`。
+
+### §221.3 🔴 承重（本轮最要紧）：**门 ③ clippy 绿，对 `crates/*/tests/**` 是「空的绿」**
+
+§220 的承重是「验收清单少 clippy 一条 = 没验」。本轮把这条**收窄并定型**：
+
+`crates/mc-http/tests/{chat,vcs}/main.rs` 首行是 `#![cfg(feature = "test-util")]`。门 ③ 的命令是
+
+```
+cargo clippy --workspace --all-targets -- -D warnings      # 不带 --features test-util
+```
+
+⇒ 那几个**集成测试 crate 在门 ③ 里整体编译为空**，一个符号都不检查。而门 ④
+
+```
+cargo clippy -p mc-http --all-targets --features mc-http/test-util -- -D warnings
+```
+
+才是唯一看得见 `tests/**` 的门（CI 里 ④ 的 step 名就写着「覆盖 `tests/*` 的 DB e2e」）。
+
+**实测证据（本片 5 处 `use super::*`）**：
+
+| 位置 | 所在上下文 | 门 ③ | 门 ④ |
+|---|---|---|---|
+| `mc-vcs/src/gitlab/tests.rs` | `#[cfg(test)] mod tests;` 之后 | 放宽 | 放宽 |
+| `mc-runtime/…/cursor/stream/tests.rs` | `#[cfg(test)] mod tests;` 之后 | 放宽 | 放宽 |
+| `tests/vcs/connections/{connect,matrix,rotate_delete}.rs` | **集成测试 crate 子模块** | **编译为空，无覆盖** | rc=0，**不触发** |
+
+⇒ 两条结论，方向相反，都要记住：
+
+1. **好消息**：集成测试 crate 里的 `use super::*` **实测不触发** `clippy::wildcard_imports`（真正会触发的是 `src/**` 下的**生产**子模块 —— §220 的 `LUM-2513` 就死在那，`mc-channel` 编不过）。
+2. **纪律**：**判 `tests/**` 的干净与否只能看门 ④**。「门 ③ 绿」对 `tests/**` 不构成任何证据。
+
+### §221.4 承重二：**「某道门绿 ⇒ 某文件没问题」这个推理必须补一步阳性对照**
+
+§221.3 的教训可以 generalize：门 ③ 的绿对 `tests/**` 是空的，而**光看 exit code 你分辨不出「绿」和「没看」**。本轮在门 ④ 绿之后做了阳性对照：
+
+往 `tests/vcs/connections/matrix.rs` 注入一条故意违规（重复 `use super::*;`），重跑门 ④ ⇒ 立刻红：
+
+```
+error: unused import: `super::*`
+ --> crates/mc-http/tests/vcs/connections/matrix.rs:8:5
+error: could not compile `mc-http` (test "vcs") due to 1 previous error   (exit 101)
+```
+
+这才**证明**门 ④ 的编译集确实包含该文件，而不是因为 `#![cfg(...)]` 被整块跳过。随后已还原（`git status` 干净）。
+
+⇒ **定式**：凡是说「某道门绿，所以某文件没问题」，先问「**我怎么知道那道门看得见这个文件？**」看得见的证据是**阳性对照**（故意注入 → 必须红），不是 exit code。这条与 §220.2（clippy 必须在验收输出里）合起来才是完整的「验」。
+
+### §221.5 抢救 `LUM-2519`：`todo` 19 分钟不动 ≠ 慢，是**派在离线 runtime 上**
+
+§219 的承重是「派发面不是结构性 1 台，是 runtime 健康度」。本轮这条**以另一种形态复现**：
+
+- `LUM-2519`（门 ⑩ 第 3 批）03:16 派给 `编程助手-winpi`，19 分钟后仍 `todo`、**零 workdir、零进程**。
+- 查 runtime：`dbe772db` 的 `runtime_id = 041bf509…` = **Pi (window)**，`status = **offline**`，`last_seen_at = 2026-09-28T10:24:00Z`（约 17 小时前）。
+- ⇒ **静默死亡在离线 runtime 上**，不是「在慢慢跑」。
+
+**已抢救**：改派 `编程助手lin`（`700c7941`，runtime `69637c57` **online**、`idle`，且 12 分钟前刚交付同族第 2 批 `LUM-2516` —— 同族同写集类型的已验证执行者）。**写集/约束/验收清单一字未改**，只换了 runtime。
+
+**派发前按 §184 纪律重取板面**：确认无他人已派同类拆分片（全库「拆分/800」相关 issue 仅 `LUM-2517` 一条，是本 cycle 自身）⇒ 才动的手。
+
+**追加给下游的读数**（已作为评论发到 `LUM-2519`）：① 4 个落点**逐一复核干净**（无 `read_dir`/`assert_eq!(files` 计数型边界测试、无同名目录冲突 ⇒ 可原样执行；对比反例是第 1 批的 `engine/*.rs`，被 `engine/mod.rs:234` 的 `assert_eq!(files, 8)` 锁住不能拆）；② §221.3 的 ③④ 口径；③ §221.4 的阳性对照法。
+
+### §221.6 在飞盘点（收尾时）
+
+| 片 | 执行者 | runtime | 状态 |
+|---|---|---|---|
+| `LUM-2513`（门 ⑩ 第 1 批返工） | `3df1a3e8` devbox4 | `4a7f29e1` **online** / working | in_progress，分支仍停在 `5e6dad3e`（返工未推） |
+| `LUM-2519`（门 ⑩ 第 3 批，已抢救重派） | `700c7941` lin | `69637c57` **online** / idle | todo（刚重派） |
+| 本 cycle `LUM-2520` | `3c6087f9` devbox5 | `bd3d2b9d` online | 本轮收尾 |
+
+⇒ 在飞 3/3，符合上限。
+
+**仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
+
+### §221.7 下一轮起点
+
+- **base = `3873cd0d`** + 本节 docs 提交（直推 `feat/multica-rs-initial`）。**GH open PR = 2**（`#153` 待返工重推、`#154` 待 CI/合并）。
+- **号段**：下一空号 **`## §222`**。
+- **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ 每条在飞片先看 CI 并**与 base 那一次逐 job 对照** → **先判活 `LUM-2519`（刚重派，看它是否真在 `69637c57` 上起了 workdir）** → ⑦ 第 27 轮。
+- **收割 `LUM-2516`（PR #154）的预登记判据**：CI 四 job 全绿 **且** base 那一次对照仍全绿 ⇒ ⑦ 八数字第 27 轮逐字不变 ⇒ 合并树重跑 `--with-db` 10/10（**④ 必须单列**，它是 `tests/**` 的唯一覆盖门）。
+- **收割 `LUM-2513`（PR #153）的判据链沿用 §220.6**，并**加一条**：其新文件里 `use super::*` 的计数必须为 0（`grep -c` 实测，不是「clippy 只报了 8 条」那种读法）。
