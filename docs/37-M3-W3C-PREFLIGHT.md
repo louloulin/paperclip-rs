@@ -21250,3 +21250,71 @@ base **`0902aa2e`**（本节直推后前进一个 docs-only 提交）；**0 open
 号段：`§231` = 并发 cycle（LUM-2548）、`§232` = 18:00 cycle（LUM-2547）、`§233` = 本 cycle ⇒ 下一空号 **`## §234`**。
 
 **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库。
+
+### §233.8 🔴 抢救：上一轮派发的 `LUM-2550` **代码全部丢失**，本轮重做 ⇒ PR #163
+
+起手时把 `LUM-2550` 判为「活」（run `01a0ecc6` 在 lin 名下 running）。**11:02Z 它转 `blocked`，
+run 正常 completed —— 而交付物不存在。** 两条原因都不是需求或实现问题：
+
+1. **GitHub 从该 runtime 不可达**：`git push` 两次 `LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443`（关沙箱重试同结果）。
+   ⇒ 它给的 `pull/new/agent/lin/30bb0f2bde45` **背后没有分支**。
+2. **跑完 clippy 后任务 workdir 被从外部整个删除**（`.git` 一起没了），本地 commit `526911f3` 随之消失，
+   `multica repo checkout` 回 `workdir is not owned by the active task`。
+   本轮实测 `git ls-remote origin 'refs/heads/agent/lin/*'` —— **该分支不在远端**，确认无残留可救。
+
+原 agent 留下了一份**完整拆分蓝图**（逐文件行数 + 搬了哪些符号 + 硬约束自查），本轮照它重做，**逐条独立复核、不采信自述**：
+
+| 原文件 | 行数 | 拆成 | 复核证据 |
+| --- | --- | --- | --- |
+| `mc-conformance/src/lib.rs` | 952 | 薄壳 **98** + `fixture`/`request_plan`/`verdict`/`replay` | 条目集 **39/39**；**门 ⑨ 逐字节 `report matches`** |
+| `mc-http/src/routes/inbox.rs` | 981 | 薄壳 **109** + `dto`/`handlers`/`query`/`context`/`tests` | 条目集 **62/62**；路由键 **15/15 逐字**；`mc-http --lib` **708 passed** |
+| `mc-repos/src/invitation.rs` | 828 | 薄壳 **115** + `repo`/`tests`/`integration_tests` | 条目集 **41/41**；`mc-repos --lib` **180 passed**；**真库集成 5/5** |
+
+`scripts/file_size_baseline.tsv` **5 → 2**（行数一律 `wc -l` 实测值核对，没抄天花板值）。
+**合并树 `--with-db` 一次干净跑 10/10（776s，`CARGO_INCREMENTAL=0`）**，`CARGO_INCREMENTAL` 关掉后 `target` 峰值把 `avail` 打到 7.7G，
+第二遍冷跑前先 `rm -rf target` 回 27G（§223.2 定式，本轮第 N 次救场）。**PR #163**（`68f5af56`，4 提交 16 文件 +2654/−2481，预检一与 API 逐字相同）。
+
+🔴 **承重四（新增，与 §232.5 承重四同族但更狠）：「工单已下 + agent 报完成」不等于「有交付物」，而**丢失可以是**静默**的**。
+本片在 `10:46Z` 起跑、`11:02Z` 转 blocked，中间的信号是**正常的**（run completed、`error=null`、状态翻转有评论）。
+**唯一能判死的是「远端有没有那个分支」** —— `git ls-remote` 一次，秒级。**⇒ 判活加第五条：任何以「推分支 + 开 PR」为交付形式的片，
+收到完成信号后必须 `ls-remote` 确认分支存在；分支不存在 = 交付物不存在，与 run 状态无关。**
+
+🔴 **承重五（新）：丢了不要重派同一台机器。** 本片改派给自己（devbox5，`avail 27G` 可用），
+因为原片的两条死因里有一条是**那台 runtime 到 GitHub 不通** —— 重派给同一 runtime 只会再产一次同样的丢失。
+**派发前判 runtime 的可交付性，要看「它能不能 push」，不只看 `status=online` / `idle`。**
+
+#### 拆这类「带 `use super::*` 的测试模块」的四条踩雷记录
+
+① **`clippy::wildcard_imports` 是 deny，生产 `src/**` 子模块不放宽**（§220）。第一版在 `handlers.rs` 写了
+`use crate::routes::inbox::query::*;` ⇒ 门 ③ 红。`#[cfg(test)]` 模块才放宽，所以 `tests.rs` 反而该逐项显式 import。
+② **`cargo fix` 会把「靠 `use super::*` 从父模块继承的 import」误判成未使用并删掉**，
+然后 `--all-targets` 目标瞬间 **79 个错误**（测试目标全靠父模块那些 import 活着）。**拆分带 `use super::*` 的测试模块时不要用 `cargo fix`。**
+③ **一条正则同时改了结构体字段和方法签名**：给「4 空格缩进的 `name: Type`」加 `pub(super)` 时，
+把多行函数签名里的**参数**也加了（`pub(super) headers: &HeaderMap`）⇒ 报「expected identifier, found keyword `pub`」，**报在参数位置而不是字段位置**是判别式。
+④ 边界是**闭区间**：`sed -n '310,494p'` 少一行就让 `urlencode` 的收尾 `}` 掉出去，编译器报「unclosed delimiter」而不是「少了一个花括号」。
+
+### §233.9 🔴 承重六：`LUM-2552`（PR #162）与 #163 **两个方向都必冲突**，且冲突面是「整文件重写」这一类
+
+`LUM-2552`（devbox4，41 分钟）交付 **PR #162**：`T1-6` 的 `mismatch 64 → 57`、`BAD 94 → 87`，
+`unevaluable 30` 逐字不变，一次 `--with-db` 10/10（477s）。**两条偏差它如实报了**（动了禁改面 `lib.rs` +30/−3，且给出**负向对照**；
+`mismatch` 落 57 而非 56，并说明那一行是「盖章链未接线」而非可修的令牌问题）—— 这种披露质量值得记一笔。
+
+**但它与本轮的 #163 撞在同一个文件上**：`comm` 求写集交集 = **只有** `crates/mc-conformance/src/lib.rs`。
+实测两个方向都冲突（`git merge-tree --write-tree` 双双 rc=1，冲突文件都只有它）：
+
+- **先 #162 再 #163**：本片的拆分是**照 pre-#162 的 `lib.rs` 行号**算的，`#162` 那 +30 行落在 `plan()` 里 ⇒ 取本片侧会**静默吃掉** #162 的成果。
+- **先 #163 再 #162**：本片把 `lib.rs` 整文件换成 98 行薄壳（`plan()` 搬进 `request_plan.rs`）⇒ 取本片侧同样**静默吃掉** #162 的成果。
+
+🔴 **这是 §232 承重四「`merged:true` 不等于你合的那棵树落地」的加强版：这里的形态是**
+**「两片各自都 10/10、预检一都逐字相同、机械解冲突也能得到一个 rc=0 的树，但那个树少了一片的业务改动」**。
+**判别式：冲突文件里若有一方是「整文件重写」（本片把 952 行换成 98 行），就不要机械解冲突 —— 先问「这一侧删掉的 900 行里有没有别人的新代码」。**
+
+**⇒ 收割顺序（本轮给出的结论，不是「下轮再看」）**：
+1. **先合 #162**（`T1-6` 的实质进展，57 条具名 mismatch 是它带来的）。
+2. **#163 的 `mc-http/routes/inbox` + `mc-repos/invitation` + tsv 三块（13 个文件）可以原样合** —— 写集零相交，已 10/10。
+3. **#163 的 `mc-conformance` 那一块（5 个文件）必须重做**：在 #162 落地后的树上重新拆 `lib.rs`，
+   把 #162 在 `plan()` 里的 +30 行一并搬进 `request_plan.rs`。**不要在现在这棵树上合。**
+
+**顺带**：本片原本计划「等 `LUM-2550` 落地后派 `merge()` 平局裁决那一片（§233.3）」——
+现在 `LUM-2550` 的拆分由本片以 #163 承接，**#162 落地后就是派它的最好时机**（`merge()` 在 `lib.rs`，
+必须在任何一次 `lib.rs` 拆分定稿之后，否则第三次撞同一个文件）。
