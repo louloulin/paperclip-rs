@@ -74,7 +74,8 @@ pub use report::{OfflineSplit, Report, Row, Totals};
 pub use requirements::{
     actor_credential, actor_credential_detail, credential_satisfied_by, missing_requirements,
     request_target_is_encodable, requirement, requirements_detail, unplannable_request_detail,
-    ActorCredential, Requirement, ACTOR_CREDENTIALS, REPO_SIDE_PRECONDITIONS, REQUIREMENTS,
+    ActorCredential, Requirement, ACTOR_CREDENTIALS, PARTIAL_GOLDEN_ROOTS, REPO_SIDE_PRECONDITIONS,
+    REQUIREMENTS,
 };
 
 use anyhow::{anyhow, Context, Result};
