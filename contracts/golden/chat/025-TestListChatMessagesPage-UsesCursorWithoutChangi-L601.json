@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#23",
+  "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#25",
   "method": "GET",
   "path": "/api/chat/sessions/{sessionId}/messages",
   "path_params": {

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "chat/TestUpdateChatSession_RenamesTitle@server/internal/handler/chat_test.go:356#21",
+  "id": "chat/TestUpdateChatSession_RenamesTitle@server/internal/handler/chat_test.go:356#22",
   "method": "PATCH",
   "path": "/api/chat/sessions/{sessionId}",
   "path_params": {

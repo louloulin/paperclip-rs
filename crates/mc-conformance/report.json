@@ -1062,7 +1062,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestDeleteChatSession_PrunesChannelRows@server/internal/handler/chat_test.go:772#25",
+      "id": "chat/TestDeleteChatSession_PrunesChannelRows@server/internal/handler/chat_test.go:772#27",
       "domain": "chat",
       "method": "DELETE",
       "path": "/api/chat/sessions/{sessionId}",
@@ -1266,7 +1266,7 @@
       "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
     },
     {
-      "id": "chat/TestGetChatSessionRejectsMalformedSessionID@server/internal/handler/handler_test.go:1658#26",
+      "id": "chat/TestGetChatSessionRejectsMalformedSessionID@server/internal/handler/handler_test.go:1658#28",
       "domain": "chat",
       "method": "GET",
       "path": "/api/chat/sessions/not-a-uuid",
@@ -1334,7 +1334,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestListChatMessagesPage_RejectsInvalidLimit@server/internal/handler/chat_test.go:709#24",
+      "id": "chat/TestListChatMessagesPage_RejectsInvalidLimit@server/internal/handler/chat_test.go:709#26",
       "domain": "chat",
       "method": "GET",
       "path": "/api/chat/sessions/{sessionId}/messages/page",
@@ -1351,7 +1351,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#23",
+      "id": "chat/TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList@server/internal/handler/chat_test.go:601#25",
       "domain": "chat",
       "method": "GET",
       "path": "/api/chat/sessions/{sessionId}/messages",
@@ -1385,7 +1385,41 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#27",
+      "id": "chat/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#21",
+      "domain": "chat",
+      "method": "POST",
+      "path": "/api/chat/sessions/{sessionId}/messages",
+      "actor": "member",
+      "via": "handler",
+      "status_expected": 409,
+      "source": "server/internal/handler/chat_test.go:249",
+      "requires": [],
+      "outcome": "unevaluable",
+      "tier": "stateless",
+      "status_observed": null,
+      "offline": "unevaluable",
+      "database": null,
+      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+    },
+    {
+      "id": "chat/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#24",
+      "domain": "chat",
+      "method": "POST",
+      "path": "/api/chat/sessions/{sessionId}/messages",
+      "actor": "member",
+      "via": "handler",
+      "status_expected": 400,
+      "source": "server/internal/handler/chat_test.go:537",
+      "requires": [],
+      "outcome": "unevaluable",
+      "tier": "stateless",
+      "status_observed": null,
+      "offline": "unevaluable",
+      "database": null,
+      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+    },
+    {
+      "id": "chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#29",
       "domain": "chat",
       "method": "POST",
       "path": "/api/chat/sessions/{testChatSessionID}/messages",
@@ -1402,7 +1436,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestUpdateChatSession_RejectsBlank@server/internal/handler/chat_test.go:518#22",
+      "id": "chat/TestUpdateChatSession_RejectsBlank@server/internal/handler/chat_test.go:518#23",
       "domain": "chat",
       "method": "PATCH",
       "path": "/api/chat/sessions/{sessionId}",
@@ -1419,7 +1453,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "chat/TestUpdateChatSession_RenamesTitle@server/internal/handler/chat_test.go:356#21",
+      "id": "chat/TestUpdateChatSession_RenamesTitle@server/internal/handler/chat_test.go:356#22",
       "domain": "chat",
       "method": "PATCH",
       "path": "/api/chat/sessions/{sessionId}",
@@ -1427,40 +1461,6 @@
       "via": "handler",
       "status_expected": 200,
       "source": "server/internal/handler/chat_test.go:356",
-      "requires": [],
-      "outcome": "unevaluable",
-      "tier": "stateless",
-      "status_observed": null,
-      "offline": "unevaluable",
-      "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
-    },
-    {
-      "id": "chat_sessions/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#1",
-      "domain": "chat_sessions",
-      "method": "POST",
-      "path": "/api/chat-sessions/{sessionId}/messages",
-      "actor": "member",
-      "via": "handler",
-      "status_expected": 409,
-      "source": "server/internal/handler/chat_test.go:249",
-      "requires": [],
-      "outcome": "unevaluable",
-      "tier": "stateless",
-      "status_observed": null,
-      "offline": "unevaluable",
-      "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
-    },
-    {
-      "id": "chat_sessions/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#2",
-      "domain": "chat_sessions",
-      "method": "POST",
-      "path": "/api/chat-sessions/{sessionId}/messages",
-      "actor": "member",
-      "via": "handler",
-      "status_expected": 400,
-      "source": "server/internal/handler/chat_test.go:537",
       "requires": [],
       "outcome": "unevaluable",
       "tier": "stateless",
