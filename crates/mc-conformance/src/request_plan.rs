@@ -95,7 +95,9 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         ));
     }
 
-    let mut identity = fx.actor.upstream_identity.clone();
+    // 身份头里**借来的行 id** 先折成该分组的符号（`bindings::IDENTITY_ROW_HEADERS`）：
+    // 抽取器只在 path / query / body 上做这件事，身份头是原样保留的。
+    let mut identity = crate::bindings::normalize_identity(&fx.actor.upstream_identity);
     match fx.actor.kind {
         ActorKind::Anonymous => {}
         ActorKind::Member => {
@@ -143,9 +145,39 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
                 "actor token: 以 Authorization: Bearer mk_pat_… 注入本次回放现场签发的身份".into(),
             );
         }
-        // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入）。
+        // agent：本仓的身份面是「AuthUser 只认 `X-Multica-User-Id`」（M1 dev-mode 契约，
+        // `routes/auth_user.rs`）+「只有 `/api/chat/**` 读 `X-Actor-Source` / `X-Task-ID`」
+        // （`routes/chat/task/history.rs:144-150`）。所以这里只做**一件**翻译：
+        // `X-User-ID` → 本仓的会员会话（与 `Member` 档逐字同一句）；其余身份头
+        // （`X-Actor-Source` / `X-Task-ID` / `X-Agent-ID` / `X-Workspace-ID`）按上游原样转发。
+        //
+        // 🔴 不伪造 `X-Agent-ID`：那张脸在本仓没有解析面（`routes/agents.rs:42` 逐字登记
+        // 「agent actor … 本片不解析」），所以「上游发了什么就转发什么」是本档唯一忠实的
+        // 做法 —— 伪造一个真 agent id 会把 `…RejectsForgedAgentIDHeader` 的**前提**从
+        // 「伪造」改成「自证」。同理，回放器也不会替上游编一个 `X-Multica-User-Id`。
+        //
+        // `X-Task-ID` 已由 `Bindings::normalize_identity` 折到本分组种下的那一行：
+        // 本仓的 `/api/chat/**` 真的读它，而它必须指到一行真的 `agent_task_queue`。
+        ActorKind::Agent => {
+            if let Some(raw) = identity.remove("X-User-ID") {
+                let session = bindings.resolve(group, &raw)?;
+                headers.push((
+                    HeaderName::from_bytes(SESSION_HEADER.as_bytes()).unwrap(),
+                    session.clone(),
+                ));
+                headers.push((
+                    HeaderName::from_bytes(DEV_USER_HEADER.as_bytes()).unwrap(),
+                    session,
+                ));
+                notes.push(
+                    "actor agent: 以 X-Multica-Session + X-Multica-User-Id 注入上游 \
+                     X-User-ID 那位主体；X-Actor-Source / X-Task-ID / X-Agent-ID 原样转发"
+                        .into(),
+                );
+            }
+        }
         // 没有任何层有签发面的档：`supports` 已在它那一侧答了否。
-        ActorKind::Agent | ActorKind::System => {
+        ActorKind::System => {
             let c = actor_credential(fx.actor.kind)?;
             return Err(if c.satisfied_by.is_empty() {
                 c.detail.to_string()

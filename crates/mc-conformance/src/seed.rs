@@ -223,7 +223,11 @@ fn referenced_symbols(fx: &Fixture) -> BTreeSet<String> {
     for raw in fx.headers.values() {
         collect_symbols(raw, &mut out);
     }
-    for raw in fx.actor.upstream_identity.values() {
+    // 🔴 身份头里的行 id 要走与 `plan` **同一个**折叠（`bindings::normalize_identity`）：
+    // 字面 UUID 的 `X-Task-ID` 在 `plan` 里会解析成 `$testTaskID`，所以这里也必须看见
+    // 那个符号，否则「这一组要不要种行」与「请求发不发得出来」会各说一套 —— 而
+    // `$testTaskID` 种不出来时，那批 fixture 是静默 `unbound symbol` → `unevaluable`。
+    for raw in crate::bindings::normalize_identity(&fx.actor.upstream_identity).values() {
         collect_symbols(raw, &mut out);
     }
     collect_json_symbols(fx.body.as_ref(), &mut out);

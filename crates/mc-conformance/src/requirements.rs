@@ -207,9 +207,17 @@ pub const ACTOR_CREDENTIALS: &[ActorCredential] = &[
     },
     ActorCredential {
         kind: ActorKind::Agent,
-        satisfied_by: &[],
-        detail: "actor kind Agent needs a real credential; this runner does not fabricate one — \
-                 the database tier does not mint one either",
+        // `LUM-2560`：这一档不再是「没有凭证面」。本仓的 agent 身份面是**两段**：
+        // ① `X-User-ID` → 会员会话（AuthUser 只认 `X-Multica-User-Id`，M1 dev-mode 契约）；
+        // ② `/api/chat/**` 直接读 `X-Actor-Source` + `X-Task-ID`（`chat/task/history.rs:144`）。
+        // 两段都不需要新签什么凭证，只需要 database 层**把实体行种下来**（`X-Task-ID`
+        // 指到一行真的 `agent_task_queue`）。`X-Agent-ID` 按上游原样转发：它在本仓
+        // 没有解析面（`routes/agents.rs:42`），伪造它等于改掉 `…RejectsForgedAgentIDHeader`
+        // 那条断言的前提。
+        satisfied_by: &[Tier::Database],
+        detail: "agent identity is a seeded user session (`X-User-ID` → `X-Multica-User-Id`) \
+                 plus the `X-Actor-Source` / `X-Task-ID` pair `/api/chat/**` reads directly; \
+                 the stateless tier has no user or task table to resolve either against",
     },
     ActorCredential {
         kind: ActorKind::Token,

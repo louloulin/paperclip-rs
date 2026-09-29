@@ -9,6 +9,8 @@
 //! [`crate::seed::Seed`] 持有**实体行**（agent / issue / chat session / task）。
 //! 两者合成一次回放能发出的全部符号；`lookup` 是它们唯一的汇合点。
 
+use std::collections::BTreeMap;
+
 use uuid::Uuid;
 
 use crate::{daemon_token, seed, STATELESS_USER_ID, STATELESS_WORKSPACE_ID};
@@ -194,6 +196,59 @@ impl Bindings {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 身份头里的「借来的行 id」
+// ---------------------------------------------------------------------------
+
+/// 身份头里**借来的行 id** → 本分组现场种下的那一行（`(header, symbol)`）。
+///
+/// # 为什么需要它
+///
+/// 抽取器把 **path / query / body** 里的「package const」行 id 折成符号
+/// （`scripts/extract_borrowed_ids.py::seeded_symbol_for`，按路由段判集合），但**身份头**里
+/// 的同一类行 id 是**原样保留**的（`scripts/extract_requirements.py:233` 逐字：
+/// 「Identity headers carry upstream's own DB fixture values; the runner binds them to a
+/// locally seeded identity」）。本函数就是那句话的落地 —— 补一条**早已写明的缝**，
+/// 不是新判据。
+///
+/// # 为什么只有 `X-Task-ID`
+///
+/// * 本仓**真的读**这个头的只有 `/api/chat/**`
+///   （`routes/chat/task/history.rs:150` 的 `x-task-id`），而那条路要求它指到一行真的
+///   `agent_task_queue`（`repos/chat_history.rs:79` 的单行读）⇒ 必须绑到本分组种下的
+///   那一行；否则 `404`（行不存在）与「实现写错」在报告里长得一样。
+/// * `X-Agent-ID` **有意不折**：本仓没有任何路由读它（`routes/agents.rs:42` 逐字登记
+///   「agent actor … 本片不解析」）⇒ 按上游原样转发才是忠实的。折了它反而把
+///   `agents/TestGetAgent_RejectsForgedAgentIDHeader` 那条**故意伪造**的 id 换成真的，
+///   等于悄悄改掉断言的前提。
+///
+/// # 已登记的边界
+///
+/// 判据是「这个头的值是一个**字面 UUID**」。一条**故意指向不存在任务**的 fixture 会被这条
+/// 规则绑到一行真行上。今天没有这种 fixture：`chat/TestGetChatHistory_RejectsForgedTaskID`
+/// 的 403 来自更前面那道 `X-Actor-Source` 闸，与任务行无关（实测：那条闸先于任何查库）。
+pub const IDENTITY_ROW_HEADERS: [(&str, &str); 1] = [("x-task-id", "$testTaskID")];
+
+/// 把身份头里的字面行 id 折成该分组的符号（见 [`IDENTITY_ROW_HEADERS`]）。
+///
+/// [`crate::seed::referenced_symbols`] 与 [`crate::plan`] **共用这一个函数**：前者决定
+/// 「这一组要不要种行」，后者决定「请求发不发得出来」。两处各写一套就是本仓反复记载的
+/// 那个缺陷（「判据不对称」），所以它们只能读同一张表 + 同一个折叠。
+#[must_use]
+pub fn normalize_identity(identity: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    identity
+        .iter()
+        .map(|(header, raw)| {
+            let folded = IDENTITY_ROW_HEADERS
+                .iter()
+                .find(|(name, _)| header.eq_ignore_ascii_case(name))
+                .filter(|_| Uuid::parse_str(raw.trim()).is_ok())
+                .map_or_else(|| raw.clone(), |(_, symbol)| (*symbol).to_string());
+            (header.clone(), folded)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +338,48 @@ mod tests {
             Uuid::from_u128(8).to_string()
         );
         assert_eq!(b.daemon_token_for(other), Some("mdt_default"));
+    }
+
+    /// 身份头里的字面行 id 必须折到符号上，而**别的**身份头与已是符号的取值一律不动。
+    ///
+    /// 承重：折错了（或漏折）会让 `/api/chat/**` 那批 fixture 落回 `unbound symbol` /
+    /// `404`，而这两种形态在报告里与「实现写错」长得一样（§205.5）。
+    #[test]
+    fn normalize_identity_folds_only_literal_row_ids() {
+        let identity = BTreeMap::from([
+            (
+                "X-Task-ID".to_string(),
+                "5c57b65b-ee7a-4603-a72d-b659c34a1dc3".to_string(),
+            ),
+            (
+                "x-agent-id".to_string(),
+                "1c331d0b-94fd-412a-a7cc-6a209add00a1".to_string(),
+            ),
+            ("X-User-ID".to_string(), "$testUserID".to_string()),
+            ("X-Workspace-ID".to_string(), "$testWorkspaceID".to_string()),
+            ("X-Actor-Source".to_string(), "task_token".to_string()),
+            ("X-Task-ID-2".to_string(), "not-a-uuid".to_string()),
+        ]);
+        let folded = normalize_identity(&identity);
+        assert_eq!(folded["X-Task-ID"], "$testTaskID");
+        // `X-Agent-ID` 有意不折（本仓没有解析面）—— 折了会改掉「伪造 id」那条断言的前提。
+        assert_eq!(folded["x-agent-id"], "1c331d0b-94fd-412a-a7cc-6a209add00a1");
+        // 别的身份头逐字不动，含「名字里带 X-Task-ID 前缀」和「非 UUID 取值」两种负例。
+        assert_eq!(folded["X-User-ID"], "$testUserID");
+        assert_eq!(folded["X-Workspace-ID"], "$testWorkspaceID");
+        assert_eq!(folded["X-Actor-Source"], "task_token");
+        assert_eq!(folded["X-Task-ID-2"], "not-a-uuid");
+    }
+
+    /// 已是符号的 `X-Task-ID` 不该被二次折叠（幂等），且**空身份**照样是空的 ——
+    /// 后者是 `credential_table_is_symmetric_with_the_replay_planner` 那条探针的前提。
+    #[test]
+    fn normalize_identity_is_idempotent_and_keeps_empty() {
+        let once = normalize_identity(&BTreeMap::from([(
+            "X-Task-ID".to_string(),
+            "5c57b65b-ee7a-4603-a72d-b659c34a1dc3".to_string(),
+        )]));
+        assert_eq!(normalize_identity(&once), once);
+        assert!(normalize_identity(&BTreeMap::new()).is_empty());
     }
 }

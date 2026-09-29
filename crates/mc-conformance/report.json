@@ -358,7 +358,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "agents/TestListAgentSkills_OmitsContent@server/internal/handler/skill_list_test.go:97#40",
@@ -1110,7 +1110,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_ChannelTaskCannotReadEarlierContextGeneration@server/internal/handler/chat_history_test.go:486#14",
@@ -1127,7 +1127,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_MissingTaskHeader@server/internal/handler/chat_history_test.go:628#16",
@@ -1161,7 +1161,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_NilReaderServesTranscript@server/internal/handler/chat_history_test.go:289#11",
@@ -1178,7 +1178,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_NoSlackBindingFallsBackToTranscript@server/internal/handler/chat_history_test.go:213#9",
@@ -1195,7 +1195,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_NoSlackBindingReadsStoredTranscript@server/internal/handler/chat_history_test.go:246#10",
@@ -1212,7 +1212,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_NonChatTask@server/internal/handler/chat_history_test.go:642#17",
@@ -1229,7 +1229,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_RejectsForgedTaskID@server/internal/handler/chat_history_test.go:610#15",
@@ -1246,7 +1246,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatHistory_TranscriptNamesItsChannel@server/internal/handler/chat_history_test.go:380#13",
@@ -1263,7 +1263,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatSessionRejectsMalformedSessionID@server/internal/handler/handler_test.go:1658#26",
@@ -1297,7 +1297,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetChatThread_CurrentThread@server/internal/handler/chat_history_test.go:169#7",
@@ -1314,7 +1314,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "chat/TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue@server/internal/handler/chat_pending_tasks_test.go:234#18",
@@ -3434,7 +3434,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "agent actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "issues/TestCustomStatusPayloadsAgreeAcrossRenderings@server/internal/handler/issue_status_test.go:1921#80",
