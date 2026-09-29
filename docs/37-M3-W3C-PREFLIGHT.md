@@ -22218,3 +22218,36 @@ actor.kind == "agent"  且  actor.upstream_identity 里没有 x-task-id
 若不做这步回读，本片会静默地以「已派发」收尾，实际什么也没跑 —— 而磁盘照旧紧张、下轮照旧以为有位。
 
 **下一空号**：`## §242`。
+
+### §241.9 🔴 订正 §240 的「秒级静默死亡」判别式：字段名是错的
+
+§240 写下的判别式是「assistant 消息里没有 `tool_use` 块 ⇒ 轮次直接结束、harness 记 completed」。
+本轮照它去查在飞片，**对两个都活着��会话都报「0 tool_use」** ⇒ 若不是多问一句，就会把
+`LUM-2565` 和刚派的 `LUM-2569` 双双误判成静默死亡。
+
+实测 `~/.multica/pi-sessions/*.jsonl` 的真实形状：
+
+- 记录 `type` 是 **`message`**（不是 `assistant`），role 在 `message` 里；
+- **工具调用块的 type 是 `toolCall`**（不是 `tool_use`），键为 `name` / `arguments` / `id`；
+- 结果记录的 role 是 **`toolResult`**。
+
+⇒ **正确判别式（按 `role` 计数，最省事）**：
+
+```python
+import json, collections
+roles = collections.Counter()
+for line in open(session):
+    try: d = json.loads(line)
+    except: continue
+    if d.get('type') != 'message': continue
+    roles[(d.get('message') or d).get('role')] += 1
+# roles['toolResult'] > 0 ⇒ 这个会话真的在动
+```
+
+本轮实测：`LUM-2569` 会话 `assistant 47 / toolResult 47`（起手 5 分钟内）、
+`LUM-2565` 会话 `assistant 154 / toolResult 154` ⇒ **两个都活**。
+
+**教训比判别式本身更重要**：**一个「据以判死」的经验规则，必须先在活物上跑一遍正例。**
+§240 那条规则是在一个真死掉的会话上归纳出来的 —— 归纳集里只有负例，字段名就没人核对过。
+**判别式要有正例对照组**，否则它会把「读错了」和「真死了」混成同一个结论，而后者是不可逆动作
+（改派 / rerun / 杀 run）的唯一依据。
