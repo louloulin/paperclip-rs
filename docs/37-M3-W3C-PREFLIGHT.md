@@ -20373,3 +20373,510 @@ landed 数 = 12 文件 / +1519 / −1404                          ← 预期 11 
 ⇒ **`#158` 就是 §226.7 预警的那条「与 `LUM-2536` 共享 `scripts/file_size_baseline.tsv`」的片。**
 下轮收割它时：它删 `auth.rs` 那一行、`LUM-2536` 删 `inbox.rs` 那一行 ⇒ **合并树上该文件需解一次冲突（两行都删）**。
 先各自过 10/10，合并树只复验 ⑩（0s），**不要同树合跑门禁**。
+
+## §227 【2026-09-29 15:30 cycle / LUM-2539】**收割 PR #158**（`LUM-2530`，门 ⑩ 第 5 批：`mc-http` `routes/auth.rs` 1704 → `auth/` 9 文件）⇒ **判据链 8/8 全绿、单次 `--with-db` 10/10（780s）、合入树 == 门禁树** ＋ 🔴 承重一：**「PR 头落后 base」与「PR 越界」在 `git diff <base> <head>` 下长得一模一样 —— 比对基准必须是 `merge-base`** ＋ 🔴 承重二：**托管 worktree 有一个空的 `multica-identity.config`，它会盖掉仓库级 `user.name`，让 `commit-tree` 直接 fatal** ＋ 🔴 承重三：**改派一个已挂在死 runtime 上的单子 = 双写者，且平台没有 cancel 动词** ＋ ⑦ 八数字第 32 轮逐字不变
+
+**base = `2dbc060d`**（起手）。**GH open PR = 1**（`#158`）。**在飞 0/3**（`LUM-2530` 已交付、run `01a0ebb6` `completed`）。
+CI 预检：`checks total_count = 4`，`fast` / `image` / `db` / `contract` **四个全 `success`**（先查这个再谈冷编）。
+
+### §227.1 收割：`#158` 判据链 8/8
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 预检一：分支自身 `--numstat` vs API 逐字 | **9 文件 / +1834 / −1658 == API 逐字** ✅ |
+| 2 | base 祖先判定（**用 merge-base**） | `merge-base(2dbc060d, d533b747) = ccab6b3c`，双方共同祖先，无分叉 ✅ |
+| 3 | `merge-tree --write-tree` | **rc=0**（输出恰好 1 行 = 无冲突），树 `8feba19392ef` |
+| 4 | 三哈希等式（`merge-tree` == `commit-tree` == 落地树） | `8feba193…` 三者一致 ✅ |
+| 5–7 | 差集 / 路由 / ⑦⑩ | 差集**恰好它自己 9 个文件**、零外来、**零 docs**；0 路由 ✅ |
+| 8 | **`bash scripts/gates.sh --with-db` 在门禁树上 10/10** | **10/10 绿，780s，单次调用** ✅ |
+
+分项：① 3s ② 149s ③ 70s ④ 50s ⑤ 160s ⑥ 250s（`migrate=0,e2e=0`）⑦ 1s ⑧ 26s ⑨ 71s ⑩ 0s。
+合并提交 **`5d3c6ec17f4b2226a55a10e015e188ee2033a91e`**，`merge_method=merge`，远端已核对。
+**本轮没有触发 §226.2 的「非 docs 差集」放宽条款**：我是把门禁跑在**合并树**上再推的，
+所以「合入树 == 门禁树」是**构造出来**的，不依赖事后比差集。**能构造就别事后推断。**
+
+### §227.2 🔴 承重一：**PR 头落后 base 时，`git diff <base> <head>` 会把「落后」渲染成「越界」，两者形态完全一样**
+
+第一反应式的预检一跑了：
+
+```
+git diff --numstat 2dbc060d d533b747
+=> 20 files / +3238 / −3455          ← 与 API 的 9 / +1834 / −1658 严重不符
+差集里赫然有 11 个 crates/mc-repos/src/comment/** 文件
+```
+
+**这不是越界，是 PR 头不含 `#157`（本仓上一轮刚合的 `comment.rs` 拆分）。**
+把基准换成 `merge-base` 后立刻对上了：
+
+```
+git diff --numstat ccab6b3c d533b747  =>  9 files / +1834 / −1658   ← 与 API 逐字一致
+```
+
+⇒ **定式：预检一的比对基准恒为 `merge-base(base_tip, head)`，永远不用 `base_tip`。**
+反过来的后果比 §225 承重一那次更隐蔽：§225 是把「base 前进」误报成越界，
+这次是**把「base 前进」误报成越界，而且差集里出现的恰好是刚合入的另一片的文件** ——
+若照单全收去喊「对方越界改了 `mc-repos`」，就会对一片完全无辜的 PR 发起错误质询。
+**形态提示：差集里出现「本仓近期刚合入的另一片写集」时，先怀疑自己。**
+
+### §227.3 🔴 承重二：托管 worktree 里有一个**空的** `multica-identity.config`，它会盖掉仓库级身份
+
+本轮 `git config user.name devbox5` 写入成功（`config --list` 里能看到），
+但紧接着 `git commit-tree` 仍然：
+
+```
+Author identity unknown
+fatal: empty ident name (for <>) not allowed
+```
+
+原因：`git rev-parse --git-common-dir` 显示这是**托管 worktree**，其中存在
+`worktrees/<name>/multica-identity.config`，里面有 `user.name=`（**空值**）与 `user.email=`。
+**worktree 级配置的优先级高于仓库级**，所以空值把刚写的身份整个盖掉了。
+
+⇒ **定式**：托管 worktree 里要造提交，先
+`git config -f "$(git rev-parse --git-dir)/multica-identity.config" user.name devbox5`
+（同理 `user.email`），**不要**改 `--global`，也不要在收尾时去清理它 ——
+那是平台用来强制身份注入的，改了会影响该 worktree 的后续所有提交归属。
+一次性绕过也可以：`-c user.name=x -c user.email=x@y commit-tree …`。
+
+### §227.4 🔴 承重三：**「挂到死 runtime 上的单子」改派出去，就等于制造双写者 —— 而平台没有 cancel 动词**
+
+`LUM-2536`（第 6 批 b `mc-repos` `inbox.rs` 1185）自 §226 起挂在 `编程助手-devbox1` 名下，
+run `01a0ebfa` 一直 `queued`（`started_at = null`）。本轮复读 **`runtime list`**：
+`041bf509`（window pi）**仍 offline**，`last_seen_at` 停在 `2026-09-28T10:24:30Z`。
+**派发面实测：在线 runtime 里能写 paperclip-rs 的只有两台** ——
+`69637c57`（lin Claude，`LUM-2530` 刚 `completed`）与我 `bd3d2b9d`；
+`e3b45a25`/`0d113b34`/`478b7f4b`/`d08c0c87`/`970fe6d2` **全 offline**，
+`4a7f29e1`（devbox4）在线但被 lumosbase 另一条 autopilot 流占着。
+
+⇒ 我把 `LUM-2536` **改派给 `编程助手lin`**，run `01a0ec21` **90 秒内 `running`**（`started_at` 已填）。
+**但 `01a0ebfa` 撤不掉**（无 cancel 动词，见 §226.4），它仍以 `queued` 挂在 devbox1 名下。
+**若 devbox1 的 runtime 恢复，那个旧 run 会自动开跑，和 lin 并发写同一批文件**
+（`crates/mc-repos/src/inbox/**` + `scripts/file_size_baseline.tsv`）——
+**两个 writer 抢一个白名单文件 = 必然有一片的删除被静默覆盖**。
+
+⇒ **定式（补强 §226.4）**：`assign` 一个**已有 queued run** 的单子时，
+**必须**在三处同时留痕：① 改 `description`，写明旧 run id、旧 runtime 状态与「起手先 `issue runs` 复核」；
+② 收割评论里点名该风险；③ 下一轮起手复读 `issue runs <该单>`，确认**活跃 run 仍只有 1 个**。
+`queued` 的 run **不是「没派发」，而是「一颗定时磁铁」**。
+
+### §227.5 `LUM-2536` 描述的三处过期数字已当场订正
+
+原描述写「基线 `ccab6b3c`」「白名单 8→7」「禁改面 `crates/mc-http/**`（第 5 批写集）」——
+`#158` 落地后这三句**全部过期**：`#158` 已把白名单 **8 → 7**（删 `mc-http` 的 `auth.rs` 一行），
+所以本片是 **7 → 6**；`crates/mc-http/**` 已从禁改面变回可动面。已在描述里逐条标注并给出
+**当前 7 条基线的完整清单**。⇒ 这是 §225 承重三（登记数字本身可能是错的）的第 5 次复现，
+但这次的形态是**跨 issue 的**：本单由上一轮 cycle 起草、隔一轮才执行，**基线在它睡着期间动了**。
+**凡是把「基线 commit」写进子单描述的，都必须假设那个数字在开工前已过期。**
+
+### §227.6 离线门与不变式
+
+- **⑦ 八数字第 32 轮逐字不变**：`upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546`；
+  `implemented 455 real + 1 placeholder = 456/456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`。
+  `route_parity.py --quiet` 与 `slash_alias_audit.py --quiet` 同一条命令内 **rc=0**。
+- **⑨ 六数字逐字不变**：`golden 365`、
+  `pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`
+  （`契约等价率 34/365 = 9.3%`、`已接入路由等价率 34/34 = 100%`）。
+  ⚠️ 这两个 rate **不是「实现完成度」**（§2485 已警告），逐字沿用并标注「截至 `5d3c6ec1`」。
+- **⑩ 白名单 8 → 7 已随 `#158` 落地**：`crates/mc-http/src/routes/auth.rs`（1704）那一行已删。
+  拆分后最大文件 = `auth/google.rs` **412**，其余 `tests.rs` 396 / `tests/google.rs` 379 /
+  `code.rs` 242 / `cli_token.rs` 143 / `session.rs` 131 / `common.rs` 105，
+  `auth.rs` 本身缩到 **73 行**（`mod` + 重导出），全部 ≤800。
+
+### §227.7 下轮起点
+
+- **base = `5d3c6ec1`**（本节 docs 提交将直推其上）；**GH open PR = 0**。
+- **在飞 1/3**：`LUM-2536`（第 6 批 b，`mc-repos` `inbox.rs` 1185 → `inbox/`，白名单 7→6），
+  run `01a0ec21` 在 `编程助手lin`（`69637c57` online）名下 `running`。
+  ⚠️ **`01a0ebfa` 仍以 `queued` 挂在 devbox1（`041bf509` offline）名下** ⇒ 下轮起手必须
+  `multica issue runs LUM-2536` 确认活跃 run 仍只有 `01a0ec21`。
+- **第 2/3 槽位刻意留空**：`在线 ∩ 会写 paperclip-rs` 只有 lin 与我，而本轮的那一次 19G 冷编
+  已经把 `avail` 从 28G 打到 **8.8G**（收尾已 `rm -rf target` 回 28G）。
+  候选片（`scripts/extract_upstream_fixtures.py` 1863、`crates/mc-http/tests/inbox.rs` 1149、
+  `mc-repos/src/invitation.rs` 828、`mc-http/src/routes/inbox.rs` 981）
+  **每一片都要从 `scripts/file_size_baseline.tsv` 删自己那一行** ⇒ 与在飞片**必然冲突**，
+  收割时要在合并树上人工解一次（两行都删），且**不要同树合跑门禁**。
+  等 `LUM-2536` 落地后再派，冲突面自然归零。
+- **号段**：下一空号 **`## §228`**。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` →
+  GH open PR（翻页取全）**+ 顺带查 head sha 的 `check-runs`（`total_count` 是 0 还是 in_progress）** →
+  ⑦ 第 33 轮 → 逐片 `issue runs` → `runtime list` 看 `offline`。
+  **新增**：预检一用 `merge-base`（§227.2）；造提交先修 `multica-identity.config`（§227.3）。
+
+## §228 【2026-09-29 16:30 cycle / LUM-2543】**零收割**（磁盘：并发 cycle 的 21G 不可回收）＋ 对 `LUM-2541` 的门 ⑨ 写集做**预收割核验**并当场判为「位移已被完全解释」＋ 🔴 承重一：**门 ⑨ 的 `report.json` 位移必须在收割前按「加了什么字段」逐行分类，而不是等门禁自己说绿** ＋ 🔴 承重二：**豁免表的第一条纪律是「判据现场永不可豁免」，且豁免行数必须人工裁定、严禁从实测值反推生成** ＋ ⑦ 八数字第 33 轮逐字不变
+
+### §228.0 起点读数
+
+| 项 | 值 |
+|---|---|
+| base（`ls-remote`） | `53290e3b`（= PR `#158` 合并树 `5d3c6ec1` + §227 docs） |
+| GH open PR | **0**（两页都取全） |
+| 在飞 | **1/3** = `LUM-2541`（本 agent 的 16:00 cycle） |
+| 磁盘起手 | `avail 6.7G`（86%） |
+| ⑦ | `456/546/455r+1ph=456/456/gap 0/unclaimed 0/regr 0/local_only 8` |
+| ⑦b / ⑩ | rc=0 / rc=0 |
+| `file_size_baseline.tsv` | md5 `cd6fe2a8f81accab0b83f807ce165247`，19 行（零位移） |
+
+`2dbc060d..53290e3b` 的全量差集只有一条 PR：`LUM-2530` 的门 ⑩ 第 5 批
+（`mc-http` `routes/auth.rs` 1704 → `auth/` 9 文件，白名单 9→8）。⑦ 八数字**逐字不变**
+⇒ 这次合并对路由面是中性的，可安全继承，无需重跑 ⑨。
+
+### §228.1 承重一：`report.json` 的位移要**按字段分类**，不能等门禁说绿
+
+`LUM-2541` 的写集里有 `contracts/golden-local/{default,token}/report.json`。
+按 §222 的承重（「门 ⑨ 的读数位移被『不冷编 ⇒ 不报』藏了两轮」），**这类位移必须逐行归因**，
+否则「门 ⑨ 绿」既可能是「如实记录了新字段」，也可能是「顺手把读数改小」。
+
+本轮当场对在飞 worktree 取全量差集并分类（只读，未干预）：
+
+| 判据 | 读数 |
+|---|---|
+| 新增行去重后的**全部**形态 | `13 × "requires": []` |
+| 删除行 | **0** |
+| `"outcome"` / `"status_expected"` / `"status_observed"` / `"tier"` 的任何增删 | **0** |
+
+⇒ 位移是**纯追加的一个新字段**，且与代码侧改动一一对应
+（`mc-conformance` 的 row 序列化新增 `requires`）。golden-local 两根的 `requires` 全为空
+（`10 + 3 = 13`），与「自造面不承载仓库侧前提」一致。
+
+🔴 **定式（下轮收割直接照抄）**：见到 `report.json` 位移，先跑这三条再谈门禁 ——
+① 新增行 `sort | uniq -c` 看**全部**形态；② 删除行数必须为 0；
+③ `grep -E '^[+-].*"(outcome|status_expected|status_observed|tier)"'` 计数必须为 0。
+三条齐 ⇒ 位移已被完全解释，门 ⑨ 的绿可以继承；任一不满足 ⇒ 必须逐条问清再合。
+
+### §228.2 承重二：豁免表的第一条纪律是「判据现场永不可豁免」
+
+`LUM-2541` 给「每条 `REPO_SIDE_PRECONDITIONS` 至少命中一个 fixture」这条断言加了
+`PARTIAL_GOLDEN_ROOTS` 豁免。**给断言加豁免是本仓最高危的一类改动** —— 它关掉的正是
+「有没有一条前提是死的」这个判据。实测踩中的形态：自造面不含 `/auth/send-code` fixture，
+两个根**在加载期就 exit 2**，`T1-12` 判红，而 T1-12 真正要问的那件事
+（自造面 `mismatch == 0 ∧ unmounted == 0`）**一条都没被跑到** ——
+判红原因与被测性质完全无关，正是 `docs/64` §9.8 反复警告的「没法判定被记成红」。
+
+该片对这张表钉了三条纪律，方向正确，本轮**预登记为门禁外的必查项**：
+1. **主语料 `contracts/golden` 永不可豁免**（它就是这条断言唯一的判据现场），并配了
+   `the_primary_corpus_is_never_exempt` 单测；
+2. 每行写明理由，且**行数人工裁定** —— 🔴 严禁从实测值反推生成
+   （那等于每轮都在判「实测 == 实测」，判据归零，与 `T1-1b` 占位白名单同一条纪律）；
+3. 豁免**只作用于逐条前提断言**；根里 fixture 一条都没判定仍照旧 bail。
+
+另有一处实现细节值得留档：`--json` 模式下**一个字都不能往 stderr 写**，否则
+`mc_golden_local_check.sh` 的 `json.load` 会报 `Extra data`，而报出来的错与真因无关 ——
+**豁免通知本身会把 T1-12 换成另一种红**。该片首次实现即踩过此坑并在代码注释里留了记录。
+
+### §228.3 零派发：按「所有权内最大可回收量」算，不动并发 cycle 的 21G
+
+`avail 6.7G`。全盘唯一大 `target/` = `lum-2541-3a7bf449b31e/workdir/paperclip-rs/target`
+（**21G**），属在飞片；其 `cargo` PID 在本轮内从 `38184` → `45443` → `49909` 连续更替，
+`target` 3 分钟内被写 66 个文件 ⇒ **活**（§165 判活序：单点零 `rustc` ≠ 死亡）。
+
+**本 agent 所有权内可回收量 = 0**（本 workdir 无 `target/`；其余 50 个 workdir 均 < 110M）。
+故 `avail − 可回收量 = 6.7G − 0`，远低于全量 `--with-db` 峰值 18–30G
+⇒ 期望收益为负，**第 2/3 槽按算式留空**（§167/§223.2 算式第二次派场，结论不变）。
+
+⚠️ `/tmp/wt6`（§225 记的 19G）本轮**已不存在**，磁盘未回补是因为 21G 转移到了在飞片上 ——
+**「某个大目录消失」不等于「空间回来了」**，回收后必须重采 `df` 再做算式。
+
+### §228.4 交接
+
+- **下轮第一动作**：回读 `LUM-2541`（若已交 PR ⇒ 按 §228.1 三条判据 + 常规判据链当场复核；
+  若已 `done` ⇒ 收 base）。`LUM-2541` 收尾后其 21G 可回收，`avail` 大概率回 28G 左右，
+  那时**才**具备再排一片的余量。
+- **⑦ 八数字第 33 轮逐字不变**：`456/546/455r+1ph=456/456/gap 0/unclaimed 0/regr 0/local_only 8`；
+  ⑦b rc=0、⑩ rc=0；baseline md5 `cd6fe2a8f81accab0b83f807ce165247` 零位移。
+- **号段**：下一空号 **`## §229`**（§228 = 本 cycle；`LUM-2541` 未占号）。
+- **起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` →
+  GH open PR（翻页取全）+ head sha 的 `check-runs` → ⑦ 第 34 轮 →
+  逐片判活 → `runtime list` 看 `offline`。新增：`report.json` 位移先跑 §228.1 三条。
+
+## §229 【2026-09-29 16:00 cycle / LUM-2541】**`T1-12` 由 FAIL 收成 PASS**（⑨ 逐条前提断言的**作用域**判错：全仓表 × 局部语料）＋ Tier-1 收敛到**只剩 `T1-6` 一条红** ＋ 🔴 承重一：**豁免通知本身会把判据换成另一种红法 —— `--json` 模式下往 stderr 写一行，`json.load` 报的是 `JSONDecodeError`，与真因毫无关系** ＋ 🔴 承重二：**判据的「作用域」是一个独立于「判据内容」的缺陷类，而它的现场签名是「两种完全不同的红，长得一模一样」** ＋ ⑦ 八数字第 34 轮逐字不变
+
+### §229.0 起点读数
+
+base `53290e3b`（起手）⇒ 收尾 `24d602fd`（并发 cycle 的 §228）。**GH open PR = 0**。
+在飞 1/3 = `LUM-2536`（门 ⑩ 第 6 批 b，`mc-repos` `inbox.rs` 1185 → 子模块）——
+本轮**头一次读到它活了**：run `01a0ec21` 在 `编程助手lin` 名下 `running`（`07:47:11Z` 起），
+而挂在 `编程助手-devbox1` 名下的同一个 issue 还有一条 run `01a0ebfa` 仍 `queued`
+（`041bf509` = `MS-AJRFTMRSXMHB`，`offline`）。**同一 issue 两条 run、只有一条能跑** ——
+与 §227 承重三同源，本轮**没有**改派（改派 = 双写者，且平台无 cancel 动词）。
+
+派发面复读（`agent list` + `runtime list` **同看**，§224/§226 承重三）：
+
+| agent | `agent list` | 所属 runtime | `runtime list` | 可派 |
+|---|---|---|---|---|
+| `编程助手lin` | **working** | `69637c57`（MacBook） | online | 否（在飞 `LUM-2536`） |
+| `编程助手devbox4` | working | `4a7f29e1` | online | 否（另一条 autopilot 流 `LUM-2540`） |
+| `编程助手-devbox1` | idle | `041bf509` | **offline** | **否**（`idle` ≠ 空机，§224） |
+| `编程助手devbox2` | idle | `e3b45a25` | **offline** | 否 |
+| `编程助手devbox` | idle | `478b7f4b` | **offline** | 否 |
+| `编程助手-chong` / `-go` | idle | `970fe6d2` / `d08c0c87` | **offline** | 否 |
+
+⇒ **在线且空闲的编码 agent = 0 台**。**本轮 0 新派发**，
+而**本机自己就是唯一有余量的执行面**（`avail 28G − 可回收量 0 = 28G`，够一次 19G 冷编）⇒ 改走「自己上」。
+
+### §229.1 收割：`T1-12` 的根因是**作用域判错**，不是实现缺陷
+
+`T1-12` 的判据是「`--golden contracts/golden-local` ⇒ `mismatch 0 ∧ unmounted 0`」。
+本轮实测**头一次**拿到了它的原始失败形态（此前多轮只登记到 `no golden-local rows parsed`）：
+
+```
+FAIL  contracts/golden-local/default: mc-conformance exited 2
+FAIL  contracts/golden-local/token:   mc-conformance exited 2
+mc-conformance: REPO_SIDE_PRECONDITIONS entry POST /auth/send-code (["database"]) matches no fixture
+```
+
+**两个根都在加载期 `exit 2`，一条 fixture 都没被回放** ——
+`T1-12` 要问的那件事（自造面 `mismatch == 0 ∧ unmounted == 0`）**根本没被跑到**。
+
+顺着报错行号（`crates/mc-conformance/src/main.rs:185`）读上去，缺陷点一目了然：
+
+```rust
+for (method, path, ids) in mc_conformance::REPO_SIDE_PRECONDITIONS {   // ← 全仓表
+    let hits = fixtures.iter().filter(...)                             // ← 当前 --golden 根的语料
+    if hits == 0 { anyhow::bail!("... matches no fixture") }           // ← 判「这条前提是死的」
+}
+```
+
+这张断言回答的问题是「**有没有一条前提是死的**」（§199 那个形态：声明了但从不被机器判定）。
+可是 [`REPO_SIDE_PRECONDITIONS`] 是**全仓**表，而 `--golden` 可以指向**任意一个根**。
+对 `contracts/golden-local/{default,token}` 再问同一句话，得到的**不是**「前提写错了」，
+而是「**这个根本来就不含那条路由**」——
+`POST /auth/send-code` 的 fixture 在 `contracts/golden/auth/002-TestSendCode-L2154.json`，
+两个自造根里一条都没有（自造面按设计只放 `/api/config` 键集 / `feature_flags` / `/health/realtime` 三组场景）。
+
+⇒ **两种完全不同的红，在输出上完全一样**（一行 `matches no fixture` + `exit 2`），
+但处置相反：前者改表，后者**什么都不用改**。
+
+修法（**0 路由 / 0 迁移**，只动判据的**作用域**，不动任何判据内容）：
+
+1. `requirements.rs` 新增 `PARTIAL_GOLDEN_ROOTS: &[(&str, &str)]`（根 + 为什么），
+   `main.rs` 按 `--golden` 精确匹配该表，命中则**只豁免逐条前提断言**；
+2. 根里 fixture 一条都没被判定（`totals.fixtures != fixtures.len()`）**仍然照旧 bail** ——
+   那是 `main.rs` 里另一条、更强的断言，豁免碰不到它；
+3. 主语料 `contracts/golden` 被列进豁免单 ⇒ `main.rs` **当场 bail**（它没有第二个判据现场）；
+4. 三条单测把「豁免单不许变成万能豁免」钉死（见 §229.3）。
+
+**豁免只作用于「逐条前提断言」这一条**，`--check` 的逐字节比对、`require-pass`、
+`totals` 对账、`unexplained` 全部**一字未动**。
+
+### §229.2 🔴 承重一：**通知本身可以把判据换成另一种红法 —— 且报出来的错与真因毫无关系**
+
+第一次实现里，豁免命中时打了一行通知：
+
+```rust
+eprintln!("逐条前提断言：按 PARTIAL_GOLDEN_ROOTS 豁免（{}）—— {why}", ...);
+```
+
+结果 `default` 根**换了一种红法**，而且报出来的是：
+
+```
+json.decoder.JSONDecodeError: Extra data: line 92 column 1 (char 2184)
+```
+
+看着像「快照文件坏了」或「Python 版本不兼容」，**与「判据作用域」这个真因毫无关系**。
+真因在 `scripts/mc_golden_local_check.sh:66`：
+
+```bash
+out="$("${CLEAN_ENV[@]}" "$@" "$BIN" --golden "$root" --no-db --json 2>&1)"   # ← 2>&1
+...
+report = json.load(open(sys.argv[1]))                                        # ← 直接 json.load 那一坨
+```
+
+**该脚本把 stderr 并进了 `--json` 的 stdout，然后直接 `json.load`。**
+所以在 `--json` 模式下，**二进制的 stderr 必须一个字都不写** ——
+加一行「我豁免了」的礼貌通知，就把「加载期 bail」换成了「JSON 解析失败」。
+
+⇒ 定式：往被机器读的 stdout 流旁边加 stderr 通知之前，先看**读它的那一段有没有 `2>&1`**。
+本仓至少两处这样的读法（`mc_golden_local_check.sh` 的断言 1 与 `--check` 都是），
+它们把「stdout 必须是纯 JSON」当成了**隐含契约**，而这条契约**没有任何一行文档写着**。
+修法：`if !args.json { eprintln!(...) }` —— 文本渲染路径仍然可见，`--json` 路径保持可解析。
+
+**形态提示**：`JSONDecodeError` 出现在一个刚跑绿的判据上 ⇒ 先怀疑「有人往 stderr 写了东西」，
+再怀疑快照与工具链。**这与 §226 承重二（DSN 少一个密码 ⇒ ⑥/⑧ 报红）是同一族**：
+*判据红了，但红的形态与真因不同构*。
+
+### §229.3 豁免表的纪律（写进代码注释 + 三条单测，不只写在这里）
+
+`PARTIAL_GOLDEN_ROOTS` 是一张**能让一条判据失效**的表，所以它的纪律必须比一般白名单更严：
+
+| # | 纪律 | 落地方式 |
+|---|---|---|
+| 1 | **判据现场永不可豁免**：主语料 `contracts/golden` 一旦被列进去，`main.rs` 当场 bail | `main.rs:196` + 单测 `the_primary_corpus_is_never_exempt` |
+| 2 | **行数人工裁定，🔴 严禁从实测值反推生成**（反推 = 每轮都在判「实测 == 实测」= 判据归零）。与 `T1-1b` 的占位白名单同一条纪律 | 表是 `const` 字面量，每行必写理由；单测 `every_exempted_root_exists_and_states_why` 钉住「根真实存在 + 理由非空」 |
+| 3 | **拼错路径的方向是安全的**（匹配不上 ⇒ 断言照旧生效），所以只需钉住「主语料被豁免」这一种不安全方向 | 纪律 1 |
+| 4 | **豁免的收益必须是真的**：被豁免的根按设计就不含任何前提条目的路由。哪天有人给它补上了那条 fixture，这行豁免就**应当**被划掉 | 单测 `exempted_roots_really_carry_none_of_the_preconditions`：命中数 ≠ 0 就 fail，并提示「豁免的前提已不成立」 |
+
+纪律 4 是**双向**的：它既防「豁免了却其实有判据现场」（白条），也防
+「豁免单变成一张万能单」——因为表里每多一行，就多关掉一条断言在一组根上的效力。
+
+### §229.4 快照漂移：**先逐行分类，再决定刷不刷**（`report.json` 13 行位移）
+
+豁免修好、两个根真的回放起来之后，暴露的是**第二层**问题：`--check` 报**报告漂移**。
+按 §228 承重一（先按字段分类，不等门禁自己说绿）逐行 diff：
+
+```
+root default（10 行）: 46a47 > "requires": []   62a64 > "requires": []   ... 共 10 处「纯新增」
+root token  （ 3 行）: 46a47 > "requires": []   62a64 > "requires": []   ... 共  3 处「纯新增」
+```
+
+**13 处全是纯新增 `"requires": []`，删除 0 行**；
+`outcome` / `status_expected` / `status_observed` / `tier` 的**增删各为 0**。
+即：报告行**多了一个字段**，而自造面这 13 条 fixture **一条都没声明场景前提**，所以它是 `[]`。
+
+**这是 schema 演进，不是期望值改写** —— 与 §208 记录的那 111 个 `contracts/golden/**` 文件
+同一形状（新增 `path_params` / `extraction.bindings`，`expected.status` 零改动）。
+最强的一条反证：`status_observed` **逐行未动**（脚本自报 `10/10`、`3/3`，`契约等价率 100.0%`）——
+若判定面真的变了，`status_observed` 必然跟着动。
+
+⇒ **有解释、才刷新**（`docs/65` §1「🔴 禁止为让 exit 变绿而刷新快照」的兑现方式：
+禁令禁的是**无解释的刷新**，不是刷新本身）。刷后 `report matches` 两根都绿。
+
+### §229.5 门禁：**`clippy::cmp_owned` 是我自己写的**（§220 承重的第 N 次复现）
+
+第一次跑整轮 `--with-db` 时门 ③ `exit 101 / 2s`：
+
+```
+error: this creates an owned instance just for comparison
+  --> crates/mc-conformance/src/main.rs:196:51
+196 |     if partial_reason.is_some() && args.golden == PathBuf::from("contracts/golden") {
+    = note: `-D clippy::cmp_owned` implied by `-D warnings`
+```
+
+**2 秒就红 ⇒ 是编译错误不是 lint 判决**（判别式同 §226 承重二的「0 秒红先看是不是 exit 2」）。
+`② build` 却是绿的 —— 因为 `build` 不带 `-D warnings`。
+**这正是 §220 承重说的那一族**：自报 10/10 的验收清单若少跑一道，就会带着一个红的门交付。
+`PathBuf::from("contracts/golden")` 改成 `Path::new("contracts/golden")` 后 ③ 绿。
+
+### §229.6 本轮终态读数（**Tier-1 只剩一条红**）
+
+**`stop_condition.sh --gates-log /tmp/gates_c2541.log --db-url … --sha 24d602fd`**：
+
+```
+pass=16 fail=1 skip-no-db=0 skip-no-asset=1 skip-no-gate=0 total=18
+exit=1
+failing_ids: T1-6
+undecidable_ids (exit 2): none
+```
+
+| 向量 | 结论 | 读数 |
+|---|---|---|
+| T1-1a…1f / T1-2 / T1-3 / T1-4 | **PASS** | `456/546/455r+1ph/gap 0/unclaimed 0/regr 0/local_only 8`；owners `{}`；⑦b defect 0 stale 0 |
+| T1-5 | **PASS** | ⑨ `--no-db` mismatch 0 ∧ unmounted 0 |
+| T1-7 | **PASS** | `pass 34/365 · unevaluable 331 · contract 0.093151 · mounted 1.000000` |
+| **T1-6** | **FAIL** | `365 / pass 268 / **mismatch 64** / unmounted 3 / unevaluable 30` |
+| T1-8 | **PASS** | `apply-exception=9, differs=14, extra=22 (ok=True)` |
+| T1-9 | **PASS** | `scanned=1354 baseline=7 violations=0` |
+| T1-10 | **PASS** | 11 条 `GATE_*_EXIT` 全 0 |
+| T1-10b | `SKIP-NO-ASSET` | 本机 `exit 2`（docker/podman/buildah 三者皆无） |
+| T1-11 | **PASS** | CI **4/4** `success`（`fast` / `db` / `contract` / **`image`**） |
+| **T1-12** | **PASS（本轮由 FAIL 收成）** | `default 10/10 ∧ token 3/3`，`mismatch=unmounted=placeholder=unevaluable=0` |
+
+🔴 **`T1-6` 的读数是「已知稳定值」，不是本轮回归**，且有**两条互不相干的测量路径互证**：
+本轮实测 `mismatch 64 + unevaluable 30 = 94`，与 §213 登记的
+「`LUM-2503` 自报 database 层 `365/268/64/3/0/30`」**逐字相同**。
+⇒ 真库层的 94 条欠账**一条都没被本轮改动碰到**（本轮写集零 `mc-repos` / 零 `mc-http`）。
+
+🔴 **`T1-10b` 与 `T1-11` 其实是同一条判据在两个执行面上的读数**：
+CI 的 `image` job 唯一的 `run:` 就是 `bash scripts/gates.sh --only image`（`.github/workflows/ci.yml:165+`），
+而它 `success` ⇒ **这条向量在「有 docker 的执行面」上已经达标**；
+本机的 `exit 2` 是 `SKIP-NO-ASSET`（按 `LUM-2482` 的三分档 = 「没法开跑」，**不是红**）。
+
+### §229.7 🔴 承重二：**判据的「作用域」是一个独立于「判据内容」的缺陷类**
+
+`T1-12` 这次的红与之前所有红的**形状都不同**：
+不是「某个数比期望大」，而是「**判据在一个它无权判的语料上被求值**」。
+它的现场签名可以复用：
+
+> **同一个 `bail!`/`exit 2`，既可能是「声明写错了」，也可能是「这个语料不该问这个问题」，而输出逐字相同。**
+
+`docs/65` §1 已经把「判据不能复制真相源」立成纪律，但**没有**覆盖这一族 ——
+一条判据的**内容**正确、**位置**正确，仍然可能因为**作用域**过宽而恒红。
+可复用的判别式：**问「这条判据被求值的那个集合，和它以为自己覆盖的那个集合，是同一个吗」**。
+本仓已确认处在该形态上的判据：
+
+| 判据 | 它以为自己覆盖 | 实际被求值于 | 状态 |
+|---|---|---|---|
+| `main.rs` 逐条前提断言 | 全仓 `REPO_SIDE_PRECONDITIONS` | `--golden` 指向的**任意一个根** | **本轮已修**（按根豁免） |
+| `stop_condition.sh` T1-10 | 10 道门 | 门禁日志里 `GATE_*_EXIT` 的**行数** | 🟡 本轮实测 `expect=11/11` 却实到 11 行且全 0 —— **期望值 11 与「10 道门」不同源**，见下 |
+
+**顺带一条口径瑕疵（本轮实测，不改）**：T1-10 的 `expect` 印的是 **`11/11`**，
+而它的判据文字是「门禁 `gates.sh --with-db` **10/10**」。
+`11` 的来源是日志里 `GATE_*_EXIT=` 行的**条数**（`image` 那行即使 `not selected` 也占一行）。
+即：**期望值取自「日志行数」，判据文字说的是「门数」，两者不同源**。
+本轮它没有造成误判（11 行全 0 ⇒ 两个口径都过），但**它是一个恒等关系**：只要 `gates.sh` 增删一道门，
+这两个数就会分叉，而分叉时哪个才是对的**没有第三方判据**。
+按 `docs/65` §1「判据只能有一处实现」，这条期望值应当改为从 `gates.sh --list` 取；
+**本轮只登记，不动** —— 改判据的期望值属于「让判据变绿」的灰色地带，必须单独一片并留下理由。
+
+### §229.8 ⑦ 八数字第 34 轮逐字不变
+
+`456 / 546 / 455 real + 1 placeholder = 456 / 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8`，
+`owners = {}`，`OK: every upstream route is either implemented or owned`。
+⑦b `slash_alias_audit --quiet` rc=0（defect 0 / stale 0）；⑩ `file_size_check --quiet` rc=0
+（`scanned=1354 baseline=7 violations=0`）。**本轮零路由**（写集零 handler）。
+
+### §229.9 写集与门禁
+
+写集（5 文件）：`crates/mc-conformance/src/{requirements.rs,main.rs,lib.rs}`（判据作用域 + 3 条单测）、
+`contracts/golden-local/{default,token}/report.json`（13 行**纯新增** `"requires": []`）、
+本节文档。**0 handler / 0 路由 / 0 迁移**。
+
+`CARGO_INCREMENTAL=0`，真库 `multica_c2541` / 角色 `mc_c2541`（带 `CREATEDB`，**密码在 DSN 里** —— §226 承重二）。
+**冷编一轮 781s 10/10**（起手 `avail 28G`，峰值后 `8.7G`），改完后两轮热跑 **253s / 272s**（其中一轮 ③ 红，见 §229.5）。
+终态树 10/10 + T1-12 绿 + `T1-6` 读数与互证值逐字相同。
+
+---
+
+## §230 【2026-09-29 17:00 cycle / LUM-2545】**零收割**（`LUM-2536` PR `#160` 已交、CI 在跑、等合）＋ **派发门 ⑩ 第 7 批**（`LUM-2544` → `lin`）＋ 🔴 承重一：**白名单里的行数是「天花板」不是「实测值」，两者可以长期不同 —— 派单与报数一律用 `wc -l` 实测** ＋ ⑦ 八数字第 35 轮逐字不变
+
+### §230.1 板面与在飞
+
+base **`e8369de9`**（= `feat/multica-rs-initial` 尖，PR `#159` 合入树）。
+该 commit 的 CI **4/4 success**（`fast` / `image` / `db` / `contract`）⇒ §229 的收尾值在 base 上仍成立。
+GH **1 个 open PR**：`#160`（`agent/lin/a6dcaf74011a`，`LUM-2536` 第 6 批 b `mc-repos inbox.rs` 1185 → 7 文件），
+`mergeable=true` / `mergeable_state=unstable`（**`contract` 已 success，其余三道 `in_progress`** ⇒ 是「CI 还没跑完」不是「跑挂了」，
+判别式：`total_count=4` 且**无一条 `conclusion=failure`**）。本轮**不代合**，等 owner/lin 侧收口。
+
+在飞 **1/3**（`LUM-2536`，`in_review`）＋ cycle 自身。
+
+### §230.2 🔴 承重一：白名单行数是**天花板**，不是实测值
+
+`scripts/file_size_baseline.tsv` 记的是**上限**，`file_size_check.py` 的判据是
+「清单内文件 **>** 记录行数 ⇒ 失败（只许变短）」。于是**文件变短后 tsv 不会跟着降**：
+
+| 条目 | tsv 记录 | `wc -l` 实测 | 差 |
+|---|---|---|---|
+| `crates/mc-conformance/src/lib.rs` | **1024** | **952** | −72 |
+| `scripts/extract_upstream_fixtures.py` | 1863 | 1862 | −1 |
+| 其余 5 条 | 与实测一致 | | 0 |
+
+⇒ **「基线 7 条」不等于「7 个超限文件各超多少」**，`file_size_check` 的 `over` 列报的才是真实超额。
+**现场签名：同一行在 tsv 和 `wc -l` 里给出两个数，而两者都不算错。**
+**纪律：派单表格、PR 描述、收尾报告里凡涉及白名单行数，一律写 `wc -l` 实测值并注明来源**；
+本轮 `LUM-2544` 的 park 描述里写的 `mc-conformance 951` 就是**上一轮凭印象抄下来的错值**，当轮实测 952 已订正
+（与 §225 承重三「上一轮登记的证据数字本身可能是错的」同族，但这里错的是**记录口径**而非测量值）。
+
+### §230.3 派发：门 ⑩ 第 7 批（`LUM-2544` → `lin`）
+
+在线且空闲的编码 agent 判读：`agent list` 全部 `idle`，但 `runtime list` 里
+`Pi (devbox1) 0d113b34` / `Pi (devbox) 478b7f4b` / `Pi (devbox2) e3b45a25` / `Pi (MS-AJRFTMRSXMHB) 041bf509` /
+`Claude (MS-AJRFTMRSXMHB) 970fe6d2` / `Claude (wulanchabu) d08c0c87` 六个 **offline**（心跳停在 09-07 ~ 09-28）
+⇒ **实际可派的只有 `lin`（`Claude (MacBook-Pro-9.local)` 69637c57 online）与 `devbox4`（在另一条流 `LUM-2481`）**。
+本轮把停放中的 `LUM-2544`（`mc-http/tests/inbox.rs` 1149 → 子模块）从 `backlog` 起为 `todo` 并指派 `lin`，
+run `01a0ec66` **单一 running**（起手按 §227 承重三先验 `issue runs`，没有第二个活跃 run ⇒ 无双写者）。
+
+**磁盘算式**：`avail 27G`，本 workdir 无 `target/`（可回收量 0），在飞片 `LUM-2536` 已交付不再编译
+⇒ 单片峰值 19G（`CARGO_INCREMENTAL=0`）可容，**故只排 1 片**，第 2 槽按 §208.5 的两项算式继续留空。
+
+### §230.4 ⑦ 八数字第 35 轮逐字不变
+
+`upstream 456 (f41fae6b08fb) | local 546 | baseline 546`、
+`implemented 455 real + 1 placeholder = 456 / 456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`；
+⑦b `slash_alias_audit` rc=0（`541 registered upstream-key literals`、`0 defect`、`0 warning`）；
+⑩ `file_size_check` rc=0（`scanned=1354 baseline=7 violations=0`）；
+⑨ `report.json` 六数字 `fixtures 365 / pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`。
+**本轮零 handler、零路由、零迁移、零编译**（只读核对 + 一条 docs 提交）。
+
+### §230.5 下轮起手
+
+第一动作仍为：查 `e8369de9` 之后 base 是否前进 → GH open PR（**翻页取全**）→ 判活 `LUM-2536`/`LUM-2544` 两个 run
+（`01a0ec66` 的写集是否与派单逐项吻合）⇒ 若 `#160` 已合，**白名单基线变 6 条**，`LUM-2544` 即 6 → 5（描述里已双情形写明）。

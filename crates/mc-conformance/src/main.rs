@@ -1,6 +1,6 @@
 //! `mc-conformance` CLI：回放 golden fixture，按需写出可 `--check` 的报告。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -182,14 +182,45 @@ async fn run(args: Args) -> Result<ExitCode> {
     }
     // 前提表的每一行都得命中至少一个 fixture：写错 path 的后果不是「少一条判定」，
     // 而是一条**永远不会被评估的声明**——§199 那个形态（声明了但从不被机器判定）。
-    for (method, path, ids) in mc_conformance::REPO_SIDE_PRECONDITIONS {
-        let hits = fixtures
-            .iter()
-            .filter(|fx| fx.method.eq_ignore_ascii_case(method) && fx.path == *path)
-            .count();
-        if hits == 0 {
-            anyhow::bail!(
-                "REPO_SIDE_PRECONDITIONS entry {method} {path} ({ids:?}) matches no fixture"
+    //
+    // 🔴 作用域：这条断言问的是「有没有一条前提是**死的**」，而 [`REPO_SIDE_PRECONDITIONS`]
+    // 是**全仓**表。对 [`PARTIAL_GOLDEN_ROOTS`] 里那些**按设计不承载上游语料**的根，
+    // 同一个问题没有意义（它答的是「这个根有没有那条路由」，不是「前提写错了」），
+    // 而这两种形态在输出上完全一样。所以按根豁免，主语料永远不豁免。
+    let partial_reason = mc_conformance::PARTIAL_GOLDEN_ROOTS
+        .iter()
+        .find(|(root, _)| *root == args.golden.to_string_lossy())
+        .map(|(_, why)| *why);
+    // 主语料被列进豁免单 = 这条断言被永久关闭，而它没有别的判据现场。
+    // 拼错路径的方向是**安全**的（匹配不上 ⇒ 断言照旧生效），所以只需钉住这一种不安全方向。
+    if partial_reason.is_some() && args.golden == Path::new("contracts/golden") {
+        anyhow::bail!(
+            "PARTIAL_GOLDEN_ROOTS 列了主语料 {}：逐条前提断言会被永久关闭",
+            args.golden.display()
+        );
+    }
+    if partial_reason.is_none() {
+        for (method, path, ids) in mc_conformance::REPO_SIDE_PRECONDITIONS {
+            let hits = fixtures
+                .iter()
+                .filter(|fx| fx.method.eq_ignore_ascii_case(method) && fx.path == *path)
+                .count();
+            if hits == 0 {
+                anyhow::bail!(
+                    "REPO_SIDE_PRECONDITIONS entry {method} {path} ({ids:?}) matches no fixture"
+                );
+            }
+        }
+    } else {
+        let why = partial_reason.unwrap_or_default();
+        // 🔴 `--json` 模式下**一个字都不能往 stderr 写**：`mc_golden_local_check.sh` 的
+        // 断言 1 是 `out="$(... --json 2>&1)"` 然后 `json.load` 那一坨 —— 往 stderr 加一行
+        // 通知就会把 JSON 变成「Extra data」，而报出来的错是 `json.JSONDecodeError`，
+        // 与真因（判据作用域）毫无关系。首次实现就踩了这个，豁免通知本身把 T1-12 换了种红法。
+        if !args.json {
+            eprintln!(
+                "逐条前提断言：按 PARTIAL_GOLDEN_ROOTS 豁免（{}）—— {why}",
+                args.golden.display()
             );
         }
     }

@@ -23,7 +23,7 @@
 | **判据不复制**：12 条全部委托给既有脚本（`route_parity.py` / `slash_alias_audit.py` / `mc-conformance` / `schema_drift.py` / `file_size_check.py` / `gates.sh` / GitHub check-runs），本脚本只取数 + 对账 | 判定逻辑复制一份就有两处真相源；`docs/64` §9.8 要求门集合不许因新工具而漂移 |
 | **退出码沿用 `gates.sh` 的逐字语义**：`0` = 全绿、`1` = 有判据不达标、**`2` = 没法开跑** | 「没法判定」既不是绿也不是红；`gates.sh` 对 ⑥/⑧ 缺库报的就是 2。`scripts/gates.sh:31-33` |
 | **🔴 禁止为让 exit 变绿而刷新快照**：`crates/mc-conformance/report.json`、`docs/fixtures/route-parity-baseline.json`、`scripts/file_size_baseline.tsv` 的刷新权分别归 M10-9（`LUM-2111`）/ M10-0 / M10-9 | 「还剩多少」是**观测**，不是**可写**的。允许本脚本自己刷快照，它就变成一台「自己给自己判绿的机器」 |
-| **不存在的对象按缺报**：T1-10 的 `image` 门与 T1-11 的 `image` job 在本仓**不存在** ⇒ 报 `SKIP-NO-GATE` / `FAIL` 并指名，**不改** `gates.sh`、**不改** CI workflow 去凑 | 见 §5 的「口径缺陷」 |
+| **不存在的对象按缺报**：T1-10 的 `image` 门与 T1-11 的 `image` job 在本仓**不存在** ⇒ 报 `SKIP-NO-GATE` / `FAIL` 并指名，**不改** `gates.sh`、**不改** CI workflow 去凑 | 见 §5 的「口径缺陷」。🔴 **`docs/37` §229.6 已订正下述两个前提**：门 `image`（`gates.sh --only image`）与 CI job `image` 已由 **M10-7（`LUM-2109`）交付**，两者**都存在**。T1-10b 现读作 `SKIP-NO-ASSET`（本机无 docker，三分档里「没法开跑」），T1-11 现读作 **PASS（CI 4/4 `success`）** |
 
 ---
 
@@ -62,7 +62,7 @@ T1-1b 还必须**打印键名**，否则「还剩多少」这个问题就没有�
 | **T1-9** (`:419`) | ⑩ `file_size_check`：`violations == 0` | `0` | `scripts/file_size_check.py` 首行 | `python3 scripts/file_size_check.py \| head -1` | 新文件超 800 行 ⇒ 拆；清单内条目只允许变短。**`scripts/file_size_baseline.tsv` 的刷新权归 M10-9**（本片不动它） |
 | **T1-10** (`:457`) | 门禁 `gates.sh --with-db` **10/10** | 10 道门全 `GATE_*_EXIT=0` | `scripts/gates.sh` 的 10 行 `GATE_<NAME>_EXIT=` | `bash scripts/gates.sh --with-db --db-url 'postgres://…'`（或 `--gates-log <已有的日志>`） | 逐门 `bash scripts/gates.sh --only <name>` 复现；红的门归对应面 |
 | **T1-10b** (`:541`) 🔴**`LUM-2482` 已订正** | 门禁 `gates.sh --only image` 绿 | `exit 0` | `gates.sh --only image` 的退出码 | `bash scripts/gates.sh --only image` | 🔴 **三分档**（与 T1-10 同源的 0/1/2 语义）：`0 ⇒ PASS`、`1 ⇒ FAIL`、`2 ⇒ SKIP-NO-ASSET`（「没法开跑」，缺 docker/podman/buildah，与 ⑥/⑧ 缺库同档）。未给 `--gates-log` ⇒ 没跑过 ⇒ `SKIP-NO-ASSET`。原判据把初值 2 一律打成 FAIL，等于**把「没法开跑」记成「红」** |
-| **T1-11** (`:501`) | CI 4 个 job 全绿 | `fast` / `db` / `contract` / `image` 全 `success` | GitHub check-runs API（`--sha` 指定 commit，默认 `HEAD`） | `bash scripts/stop_condition.sh --sha <commit>` | job 红 ⇒ 看该 commit 的 Actions 日志；🔴 `image` job **不存在**（见 §5） |
+| **T1-11** (`:501`) | CI 4 个 job 全绿 | `fast` / `db` / `contract` / `image` 全 `success` | GitHub check-runs API（`--sha` 指定 commit，默认 `HEAD`） | `bash scripts/stop_condition.sh --sha <commit>` | job 红 ⇒ 看该 commit 的 Actions 日志。🔴 **`docs/37` §229.6 已订正**：`image` job **存在**（M10-7 / `LUM-2109` 交付，`.github/workflows/ci.yml` 的 `image:` job），本轮 4/4 `success`。本行早先的「**不存在**」是 M10-7 之前的 relics，未随 M10-7 同步 |
 | **T1-12** (`:540`) | 对账：`--golden contracts/golden-local` ⇒ `mismatch 0 ∧ unmounted 0` | 两个 golden-local 根都 `0 ∧ 0` | `scripts/mc_golden_local_check.sh` 的逐根读数行 | `bash scripts/mc_golden_local_check.sh` | 字段级契约不符 ⇒ 归该字段的实现面（`docs/64` §9.7） |
 
 ### 2.1 退出码与判定取值
@@ -267,7 +267,7 @@ M10-8 内清）。且在 `image` 门 / `image` job 建出来之前，**T1 根本
 | ⑨ `mismatch 25 / unmounted 1`（离线层） | 26 | **M10-9**（`LUM-2111`）刷快照 / 各波次收敛实现 | 快照刷新权归 INT 面（两个 INT 不得同轮） |
 | ⑨ `mismatch 159 / unevaluable 15`（真库层） | 174 | 同上 | 同上 |
 | ⑨ 两个 rate `0.090411 / 0.568966` | — | 同上 | 同上 |
-| 门 `image` / CI job `image` 不存在 | 2 格 | **M10-7**（`LUM-2109`） | 需容器运行时；本机三者皆无 |
+| 门 `image` / CI job `image` 不存在 | 2 格 | **M10-7**（`LUM-2109`） | 🔴 **已于 M10-7 交付**（`docs/37` §229.6 订正）：两者**都存在**，T1-10b 现为 `SKIP-NO-ASSET`、T1-11 现为 PASS。本行保留是因为**它记录的是当初的缺口归属**，不是当前读数 |
 | `helm` / 打包分发 | 明确不做 | — | `docs/64` §9.8 已裁定 |
 | 真实前端 E2E / 真实镜像部署 | 明确不做 | — | `docs/64` §9.8 已裁定（Tier-3 人工验收） |
 

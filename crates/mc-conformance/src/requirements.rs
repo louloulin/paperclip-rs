@@ -37,6 +37,39 @@ pub const REPO_SIDE_PRECONDITIONS: &[(&str, &str, &[&str])] = &[
     ("POST", "/auth/send-code", &["database"]),
 ];
 
+/// 那些**按设计就不承载上游全量语料**的 golden 根目录（`<路径>` , `<为什么>`）。
+///
+/// 🔴 这张表存在的原因是 [`REPO_SIDE_PRECONDITIONS`] 的作用域是**全仓**，而 CLI 的
+/// `--golden` 可以指向任意一个根。`mc-conformance` 的「每条前提至少命中一个 fixture」
+/// 断言（`main.rs`）回答的问题是「**有没有一条前提是死的**」—— 这个问题只对**主语料**
+/// （`contracts/golden`，上游 365 条）有意义。对一个**刻意只放本仓自造场景**的根
+/// （`contracts/golden-local/**`）再问同一句话，得到的不是「前提写错了」，而是
+/// 「这个根本来就不含那条路由」—— 两者形态完全一样，但处置相反。
+///
+/// **实测踩中的就是这一条**：`contracts/golden-local/{default,token}` 里没有任何
+/// `/auth/send-code` fixture（那条在 `contracts/golden/auth/002-TestSendCode-L2154.json`），
+/// 于是 `mc_golden_local_check.sh` 的**两个根都在加载期 exit 2**，`T1-12` 判红，
+/// 而 T1-12 要问的那件事（自造面 `mismatch == 0 ∧ unmounted == 0`）**一条都没被跑到**。
+/// 判红的原因与被测的性质完全无关 —— 这正是 `docs/64` §9.8 反复警告的「没法判定被记成红」。
+///
+/// 纪律（防止这张表退化成一张万能豁免单）：
+///   * **主语料 `contracts/golden` 永不可豁免** —— 它就是这条断言唯一的判据现场；
+///   * 每行必须写清理由，且行数是**人工裁定**的：🔴 **严禁从实测值反推生成**
+///     （那等于每轮都在判「实测 == 实测」，判据归零 —— 与 `T1-1b` 的占位白名单同一条纪律）；
+///   * 豁免只作用于**逐条前提断言**。根里 fixture 一条都没被判定（`totals.fixtures` 对不上）
+///     仍然照旧 bail —— 那是 `main.rs` 里另一条、更强的断言。
+pub const PARTIAL_GOLDEN_ROOTS: &[(&str, &str)] = &[
+    (
+        "contracts/golden-local/default",
+        "本仓自造面「未配置 cloud」形态：只放 /api/config 键集、feature_flags、/health/realtime \
+         三组自造场景，按设计不含上游 auth 路由",
+    ),
+    (
+        "contracts/golden-local/token",
+        "本仓自造面「已配置 cloud」形态：同上，且额外要求 X-Multica-Session 场景；同样不含上游 auth 路由",
+    ),
+];
+
 /// 前提 id → (哪些层供得起它, 缺它时报告里写什么)。
 ///
 /// `satisfied_by` 为空 ⇒ **没有任何一层**能供得起 ⇒ 该 fixture 恒 `unevaluable`。
@@ -331,6 +364,57 @@ mod tests {
     fn golden() -> Vec<Fixture> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/golden");
         crate::load_dir(&dir).expect("contracts/golden loads")
+    }
+
+    /// 豁免单不能变成万能豁免：主语料一旦被列进去，`main.rs` 的逐条前提断言就被永久关闭，
+    /// 而它**没有第二个判据现场**。这是这张表唯一的不安全方向（路径拼错的方向是安全的：
+    /// 匹配不上 ⇒ 断言照旧生效），所以只钉这一条。
+    #[test]
+    fn the_primary_corpus_is_never_exempt() {
+        assert!(
+            !PARTIAL_GOLDEN_ROOTS
+                .iter()
+                .any(|(root, _)| *root == "contracts/golden"),
+            "PARTIAL_GOLDEN_ROOTS 列了主语料 contracts/golden"
+        );
+    }
+
+    /// 豁免单的每一行都必须指向一个**真实存在**的 golden 根，且写清了理由 ——
+    /// 否则它会退化成「凭一条注释关掉一道判据」。
+    #[test]
+    fn every_exempted_root_exists_and_states_why() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (root, why) in PARTIAL_GOLDEN_ROOTS {
+            assert!(
+                base.join(root).is_dir(),
+                "PARTIAL_GOLDEN_ROOTS 列了不存在的根 {root}"
+            );
+            assert!(!why.trim().is_empty(), "{root}: 豁免必须写理由");
+        }
+    }
+
+    /// 豁免的**收益**必须是真的：被豁免的根按设计就不含任何 `REPO_SIDE_PRECONDITIONS`
+    /// 条目的路由。若哪天有人给这些根补上了那条 fixture，这行豁免就该被划掉
+    /// （否则就是「有判据现场却不判」——§199 那个形态从另一个方向回来了）。
+    #[test]
+    fn exempted_roots_really_carry_none_of_the_preconditions() {
+        for (root, _) in PARTIAL_GOLDEN_ROOTS {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(root);
+            let fixtures = crate::load_dir(&dir).expect("partial root loads");
+            for (method, path, _ids) in REPO_SIDE_PRECONDITIONS {
+                let hits = fixtures
+                    .iter()
+                    .filter(|fx| fx.method.eq_ignore_ascii_case(method) && fx.path == *path)
+                    .count();
+                assert_eq!(
+                    hits, 0,
+                    "{root} 现在含有 {method} {path} 的 fixture ⇒ \
+                     PARTIAL_GOLDEN_ROOTS 里这一行应当划掉（豁免的前提已不成立）"
+                );
+            }
+        }
     }
 
     fn daemon_token_fixtures() -> Vec<Fixture> {
