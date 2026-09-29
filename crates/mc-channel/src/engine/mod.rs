@@ -213,25 +213,45 @@ mod tests {
     #[test]
     fn engine_never_names_a_platform_module() {
         let engine_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine");
-        let mut files = 0;
-        for entry in std::fs::read_dir(&engine_dir).expect("engine dir") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().is_none_or(|ext| ext != "rs") {
-                continue;
-            }
-            files += 1;
-            let raw = std::fs::read_to_string(&path).expect("read engine file");
-            // 只看非测试代码：本测试自己的 needle 列表就在 `#[cfg(test)]` 模块里。
-            let source = raw.split("\n#[cfg(test)]").next().unwrap_or_default();
-            for needle in ["slack::", "lark::", "dingtalk::", "wecom::", "telegram::"] {
-                assert!(
-                    !source.contains(needle),
-                    "engine 引用平台类型：{} 里出现 {needle}",
-                    path.display()
-                );
+        // 门 ⑩ 把 `resolvers.rs` 拆成 `resolvers/` 子目录 ⇒ engine 顶层 `.rs` 由 8 变 7。
+        // 扫描随之改成**递归**，让拆分出去的 engine 代码仍留在边界契约的覆盖内。
+        let mut top_level = 0;
+        let mut scanned = 0;
+        let mut pending = vec![engine_dir.clone()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).expect("engine dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                scanned += 1;
+                if dir == engine_dir {
+                    top_level += 1;
+                }
+                let raw = std::fs::read_to_string(&path).expect("read engine file");
+                // 只看非测试代码：本测试自己的 needle 列表就在 `#[cfg(test)]` 模块里。
+                let source = raw.split("\n#[cfg(test)]").next().unwrap_or_default();
+                for needle in ["slack::", "lark::", "dingtalk::", "wecom::", "telegram::"] {
+                    assert!(
+                        !source.contains(needle),
+                        "engine 引用平台类型：{} 里出现 {needle}",
+                        path.display()
+                    );
+                }
             }
         }
-        assert_eq!(files, 8, "engine 目录 = M7-1 的四个文件 + M7-2 的四个文件");
+        assert_eq!(
+            top_level, 7,
+            "engine 顶层 = M7-1 的四个文件 + M7-2 的四个文件（`resolvers` 已拆成子目录）"
+        );
+        assert!(
+            scanned >= 8,
+            "engine 目录（含子目录）应覆盖 M7-1 + M7-2 的八个文件"
+        );
     }
 
     /// `ChannelDeps::handler()` 与 `deps.router` 是同一个 handler（一次 `Arc::clone`）。
