@@ -1,9 +1,11 @@
 {
   "schema_version": 1,
-  "id": "chat/TestGetChatSessionRejectsMalformedSessionID@server/internal/handler/handler_test.go:1658#26",
-  "method": "GET",
-  "path": "/api/chat/sessions/not-a-uuid",
-  "path_params": {},
+  "id": "chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#29",
+  "method": "POST",
+  "path": "/api/chat/sessions/{testChatSessionID}/messages",
+  "path_params": {
+    "testChatSessionID": "$testChatSessionID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -15,16 +17,18 @@
       "X-Workspace-ID": "$testWorkspaceID"
     }
   },
-  "body": null,
+  "body": {
+    "content": "please help"
+  },
   "expect": {
-    "status": 400,
+    "status": 409,
     "json_subset": {},
     "headers": {}
   },
   "source": {
-    "file": "server/internal/handler/handler_test.go",
-    "line": 1658,
-    "test": "TestGetChatSessionRejectsMalformedSessionID",
+    "file": "server/internal/handler/runtime_access_denied_test.go",
+    "line": 73,
+    "test": "TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict",
     "site": "testutil.Call",
     "via": "handler",
     "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"
@@ -34,6 +38,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testChatSessionID": "chat_session_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

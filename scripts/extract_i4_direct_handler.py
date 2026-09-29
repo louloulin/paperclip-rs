@@ -485,6 +485,21 @@ def extract_site(
             )
         return skip("path_not_registered", detail)
 
+    # Carry the `-`→`/` compatibility fold into the emitted path.
+    #
+    # `match_route` folds `/api/chat-sessions/x` to `/api/chat/sessions/x` to find
+    # the registered route, and it *says so* in `compat_note` — but the path it
+    # hands back is the pre-fold one, so the fixture was written with the un-folded
+    # path while its own `extraction.notes` claimed the fold. A handler-level test
+    # drives `testHandler.X` directly, so its URL string is decorative upstream;
+    # the router replay can only ever match the **registered** route. Emitting the
+    # unfolded path parked those fixtures in `unmounted` (=「本仓没有这条路由」),
+    # which is false: the route exists and the extractor had already matched it.
+    if compat_note:
+        folded = compat_path(path)
+        if folded is not None:
+            path = folded
+
     headers, actor = host["split_headers"](
         req.headers, req.oob, interp.src(rel)[0][fn.body[0] : fn.body[1]]
     )

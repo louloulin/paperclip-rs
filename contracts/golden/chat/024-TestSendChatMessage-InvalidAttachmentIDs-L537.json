@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "chat_sessions/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#2",
+  "id": "chat/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#24",
   "method": "POST",
-  "path": "/api/chat-sessions/{sessionId}/messages",
+  "path": "/api/chat/sessions/{sessionId}/messages",
   "path_params": {
     "sessionId": "$testChatSessionID"
   },

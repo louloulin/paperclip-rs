@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "chat/TestUpdateChatSession_RejectsBlank@server/internal/handler/chat_test.go:518#22",
+  "id": "chat/TestUpdateChatSession_RejectsBlank@server/internal/handler/chat_test.go:518#23",
   "method": "PATCH",
   "path": "/api/chat/sessions/{sessionId}",
   "path_params": {

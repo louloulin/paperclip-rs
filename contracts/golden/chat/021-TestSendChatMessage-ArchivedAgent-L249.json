@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "chat_sessions/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#1",
+  "id": "chat/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#21",
   "method": "POST",
-  "path": "/api/chat-sessions/{sessionId}/messages",
+  "path": "/api/chat/sessions/{sessionId}/messages",
   "path_params": {
     "sessionId": "$testChatSessionID"
   },

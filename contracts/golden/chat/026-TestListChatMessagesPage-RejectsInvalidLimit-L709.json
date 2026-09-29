@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "chat/TestListChatMessagesPage_RejectsInvalidLimit@server/internal/handler/chat_test.go:709#24",
+  "id": "chat/TestListChatMessagesPage_RejectsInvalidLimit@server/internal/handler/chat_test.go:709#26",
   "method": "GET",
   "path": "/api/chat/sessions/{sessionId}/messages/page",
   "path_params": {
