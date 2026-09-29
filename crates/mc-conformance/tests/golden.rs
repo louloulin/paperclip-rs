@@ -479,10 +479,9 @@ async fn seeded_symbols_convert_404_into_real_judgements() {
         return;
     };
     let fixtures = load_dir(&golden_dir()).expect("golden fixtures must load");
-    let (router, bindings) = harness::database_router(&url, &fixtures)
+    let (routers, bindings) = harness::database_routers(&url, &fixtures)
         .await
         .expect("database tier bootstrap");
-    let routers = mc_conformance::TierRouters::single(router);
     let observed = run_tier(&routers, &fixtures, &bindings, Tier::Database).await;
 
     let mut resolved = 0usize;
@@ -577,10 +576,9 @@ async fn database_tier_replays_every_decidable_fixture() {
     };
     let dir = golden_dir();
     let fixtures = load_dir(&dir).expect("golden fixtures must load");
-    let (router, bindings) = harness::database_router(&url, &fixtures)
+    let (routers, bindings) = harness::database_routers(&url, &fixtures)
         .await
         .expect("database tier bootstrap");
-    let routers = mc_conformance::TierRouters::single(router);
     let observed = run_tier(&routers, &fixtures, &bindings, Tier::Database).await;
     assert_eq!(observed.len(), fixtures.len());
     for (fx, got) in fixtures.iter().zip(&observed) {

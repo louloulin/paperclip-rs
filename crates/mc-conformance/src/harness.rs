@@ -57,6 +57,34 @@ fn assemble_with(
     mc_http::apply_default_middleware(router).with_state(state)
 }
 
+/// 一个**已配置 cloud** 形态的 router：基址不可达（见 [`CLOUD_CONFIGURED_URL`]）。
+///
+/// 两层共用同一处构造：stateless 层拿它当第二个形态，database 层同样如此。它只给那些
+/// **在请求出门前就返回**的 fixture 用 —— `cloud_runtime_configured` 断言的就是「配置
+/// 已就位时判定发生在本仓」这件事；真要**走完出站腿**的 fixture 归 `cloud_runtime_stub`，
+/// 那一档恒 `unevaluable`（见 [`crate::REQUIREMENTS`] 里那条的 detail）。
+fn cloud_configured_router(db: mc_db::pool::Db) -> Router {
+    let settings = mc_cloud::config::CloudSettings::from_env_with(|name| {
+        (name == mc_cloud::config::CLOUD_URL_ENV).then(|| CLOUD_CONFIGURED_URL.to_string())
+    });
+    // 上游那批 `cloud_subscriptions` 用例跑在 `withFeatureFlag(true)` 里；本仓的
+    // `AppState::new` 给的是**空**目录（每个 flag 取默认关闭），所以第二个形态要把这条
+    // rollout flag 开上 —— 否则 flag 闸（403）会抢在用例真正断言的那一格（入参校验 /
+    // 角色闸）前面，得到的仍是「为另一个理由作答」。
+    let flags = Arc::new(mc_feature_flags::FeatureFlagCatalog::new());
+    flags.register(
+        &mc_feature_flags::FeatureKey::new(
+            mc_feature_flags::frontend::BILLING_WORKSPACE_SUBSCRIPTIONS,
+        ),
+        true,
+        None,
+    );
+    assemble_with(db, |mut state| {
+        state.feature_flags = flags;
+        state.with_cloud_config(mc_http::state::cloud::CloudConfig::with_settings(settings))
+    })
+}
+
 /// stateless 层：没有任何数据库连接。
 pub fn stateless_router() -> Result<Router> {
     let db = mc_db::pool::Db::connect_lazy(STATELESS_URL, 1, 0)
@@ -79,18 +107,16 @@ pub fn stateless_routers() -> Result<TierRouters> {
     let base = stateless_router()?;
     let db = mc_db::pool::Db::connect_lazy(STATELESS_URL, 1, 0)
         .map_err(|e| anyhow::anyhow!("lazy pool: {e}"))?;
-    let settings = mc_cloud::config::CloudSettings::from_env_with(|name| {
-        (name == mc_cloud::config::CLOUD_URL_ENV).then(|| CLOUD_CONFIGURED_URL.to_string())
-    });
-    let cloud = assemble_with(db, |state| {
-        state.with_cloud_config(mc_http::state::cloud::CloudConfig::with_settings(settings))
-    });
-    Ok(TierRouters::with_cloud_configured(base, cloud))
+    Ok(TierRouters::with_cloud_configured(
+        base,
+        cloud_configured_router(db),
+    ))
 }
 
 /// database 层：真库 + 迁移 + 一个种子身份 + **每个分组一套**种子行。
 ///
-/// 返回 `(router, bindings)`；`bindings.workspace_id` 是用 router 自己新建的兜底
+/// 返回 `(TierRouters, Bindings)`（两个部署形态：默认 + 已配置 cloud，与 stateless 层同形）；
+/// `bindings.workspace_id` 是用 router 自己新建的兜底
 /// workspace（仓库层没有 workspace create API），所以种子身份一定是 owner 成员。
 ///
 /// 🔴 daemon 令牌在 workspace 建好**之后**才签发（[`crate::daemon_token::register`]）：
@@ -106,7 +132,7 @@ pub fn stateless_routers() -> Result<TierRouters> {
 /// 跨测试共享会让一条 `DELETE` 摧毁其后所有引用同一符号的 fixture（docs/37 §209.4 的
 /// C 桶）。要种哪些测试由 [`crate::seed::groups_for`] 从 `fixtures` 面算出 —— 所以这个
 /// 函数必须拿到 fixture 列表，而不是「自己知道自己该种什么」。
-pub async fn database_router(url: &str, fixtures: &[Fixture]) -> Result<(Router, Bindings)> {
+pub async fn database_routers(url: &str, fixtures: &[Fixture]) -> Result<(TierRouters, Bindings)> {
     let db = mc_db::pool::Db::connect(url, 4, 0)
         .await
         .context("connect database")?;
@@ -126,7 +152,13 @@ pub async fn database_router(url: &str, fixtures: &[Fixture]) -> Result<(Router,
         .await
         .context("seed user")?;
 
+    // 两个部署形态：默认（未配置 cloud）+ 已配置 cloud。与 stateless 层同一条纪律 ——
+    // 上游有互不相同的部署场景，而一层只能选一个当默认；`cloud_runtime_configured`
+    // 声明的东西在**两层**都存在，所以 database 层也得有第二个形态（此前只回一个裸
+    // `Router`，于是这类 fixture 死锁在「stateless 层供不起 member 身份 / database 层
+    // 供不起 cloud 配置」中间）。
     let router = assemble(db.clone());
+    let cloud = cloud_configured_router(db.clone());
     let user_id = Uuid::parse_str(&user.id.to_string()).context("user id is not a uuid")?;
 
     // 每个分组各一套：workspace + 一枚 `mdt_` + 四行实体，**用 router 自己的路由**建。
@@ -150,7 +182,7 @@ pub async fn database_router(url: &str, fixtures: &[Fixture]) -> Result<(Router,
         .context("mint the four `mk_pat_` credentials the token fixtures name")?;
 
     Ok((
-        router,
+        TierRouters::with_cloud_configured(router, cloud),
         Bindings::with_seeded(user_id, workspace_id, daemon, seed).with_pat_tokens(pat_tokens),
     ))
 }

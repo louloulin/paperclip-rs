@@ -141,7 +141,8 @@ pub struct TierRouters {
 }
 
 impl TierRouters {
-    /// 只有一个 router 的层（database 层当前如此）。
+    /// 只有一个 router 的层（当前两层都有第二个形态；保留它是为了让「这一层只有一种
+    /// 装配」仍是一种**能写出来**的状态，而不是靠 `Option` 的 `None` 隐式表达）。
     #[must_use]
     pub fn single(base: Router) -> Self {
         Self {
@@ -150,7 +151,7 @@ impl TierRouters {
         }
     }
 
-    /// stateless 层的两个部署形态。
+    /// 一层里的两个部署形态（默认 + 已配置 cloud）。
     #[must_use]
     pub fn with_cloud_configured(base: Router, cloud_configured: Router) -> Self {
         Self {

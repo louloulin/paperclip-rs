@@ -116,8 +116,8 @@ pub const REQUIREMENTS: &[Requirement] = &[
     },
     Requirement {
         id: "cloud_runtime_configured",
-        satisfied_by: &[Tier::Stateless],
-        detail: "upstream ran this with a cloud runtime configured; the stateless tier's default \
+        satisfied_by: &[Tier::Stateless, Tier::Database],
+        detail: "upstream ran this with a cloud runtime configured; each tier's default \
                  deployment has none (that is the third scenario, and \
                  TestStripeWebhookDisabledReturnsForbidden asserts it), so this fixture is replayed \
                  against a second, cloud-configured router",
