@@ -19526,3 +19526,100 @@ test result: FAILED. 14 passed; 1 failed
 
 **本片原写的「下一空号 §217」已作废** —— `§216` 由 `LUM-2509`（09:30 cycle）占用、`§217` 由 `LUM-2511`（10:00 cycle）占用。合并时本段由 **`## §216` 顺延为 `## §218`**，节内 `§216.x` 一并改为 `§218.x`。下一空号 = **`## §219`**。
 **仍未清理（待 owner）**：`T1-12`（golden-local 对账）的存量红；`T1-11`（CI 第 4 个 job `image` 不存在，归 M10-7）。
+
+---
+
+## §219 【2026-09-29 10:30 cycle / LUM-2514】收割 `LUM-2503`（跨机片首度落地）＋ 🔴 承重：**派发面从来不是「结构性 1 台」，是「只有 1 台 runtime 还活着」** ＋ ⑦ 八数字第 23 轮逐字不变
+
+起手 base **`dbb4cfed`**（`git rev-parse` 与 `git ls-remote` 逐字相同）；`df` **`27–28G` / 41%**、PG 5432 `online`；GH **0 open PR**（`per_page=100` 翻页，page1 = 0）。checkout 带 `--ref` 第 42 次直接落 feat 线。
+
+### §219.1 收割 `LUM-2503`：分支已推，PR 没人开（缺 token，不是缺交付）
+
+`LUM-2503`（`01a0ea84`）02:17 转 `in_review`，分支 **`agent/devbox4/c21ee0a661d1`** @ **`913f7916`** 已在 origin，但 **0 open PR** —— 它自己说明「本机没有 `gh`、环境里也没有 GitHub token，所以 PR 我没法自己开」。**交付是完整的，卡点只是开 PR 这一步**，所以收割轮直接代开合并（`f0952cd3`）。
+
+`913f7916` 的基线是 **`a5213f45`**，比收割时 base 落后 **2 个 docs-only 提交**。
+
+### §219.2 合并冲突**只在 `docs/37`**，且只因双方都在文件尾追加
+
+`git merge` 结果：5 个文件自动合入（`report.json` / `lib.rs` / `requirements.rs` / `docs/65` / `stop_condition.sh`），**唯一冲突 `docs/37-M3-W3C-PREFLIGHT.md`**（`CONFLICT (content)`）。
+
+⚠️ **一处操作陷阱（本轮自踩并纠正）**：第一次解冲突时用 `raw.split('<<<<<<<')[0]` 取「ours 侧」，结果**把 base 侧的 `§216`/`§217` 一起丢掉了** —— 因为冲突块的 ours 侧并不等于「base 的全文」。正确做法是 `git checkout --ours -- <file>` 回到 index 的 stage 2，再追加本片段落。**判据：解完必须回读 `grep -n '^## §21'` 确认 base 的段号一个不少。**
+
+按纪律取 base 侧（`§215`/`§216`/`§217` 全保留），本片段落**顺延 `§216` → `§218`**（节内 `§216.x` 一并改），并补一条合并补记说明顺延原因。`docs/65` 与 `stop_condition.sh` 里 3 处指向 `§216` 的交叉引用**同步改为 `§218`**（`docs/65:60`、`docs/65:81`、`stop_condition.sh:365`）。
+
+**合并树逐字复算**：`git diff --numstat dbb4cfed..HEAD` = `report.json 13/13`、`lib.rs 38/21`、`requirements.rs 318/1`、`docs/37 117/0`、`docs/65 9/1`、`stop_condition.sh 71/14` —— **代码三项与 `LUM-2503` 自报的 numstat 逐字相同**，`docs/37` 的 `117` vs 它自报的 `115` 差的 2 行正是我加的合并补记。
+
+### §219.3 独立复核（本轮不接受「它自己说绿」）
+
+冷编译（`clippy -D warnings` clean、`fmt --all --check` clean）后：
+
+| 项 | 读数 |
+|----|------|
+| `cargo test -p mc-conformance` lib | **16/16**（含本片新增的 `credential_table_is_symmetric_with_the_replay_planner` / `an_unencodable_request_is_declared_undecidable` / `credential_detail_points_at_the_tier_that_can_supply_it`）|
+| integration | **4/4**（3 条 `--ignored`）|
+| **`--ignored` 真库**（新建 `multica_c2514` → **566 条迁移** → 回放） | **3/3**，含 **`database_tier_replays_every_decidable_fixture` ok** —— 这正是本片的核心断言（修前恒红、修后 PASS）|
+| `gates.sh --only fmt,conformance,route-parity,file-size` | **4/4 PASS** |
+| `stop_condition.sh`（真库） | `pass=13 fail=3 skip-no-db=0 skip-no-asset=2 total=18`，**`T1-7 PASS`**，`failing_ids = T1-6 T1-10 T1-12` |
+
+🔴 **最有力的一条交叉验证**：`T1-6` 红的读数是 **`unevaluable+mismatch = 94`**，而 `LUM-2503` 自报的 database 层 `365/268/64/3/0/30` 里 `mismatch 64 + unevaluable 30 =` **94** —— **两个互不相干的测量路径给出同一个数**，说明收割没有改变真库层的任何判定。
+
+`T1-10` 红只因 `GATE_DB_EXIT=1` + `GATE_SCHEMA_DRIFT_EXIT=2`，而这是**我临时起的库没有按门 ⑥ 的流程播种**所致，**不是代码回归**（`T1-10` 的判据本身就是「10/10 全绿」，任何一道红都让它红）。`T1-12` 是 §215 已登记的存量红，写集不含 `main.rs` / `contracts/golden-local/**`，不动。
+
+### §219.4 ⑦ 八数字**第 23 轮逐字不变**（合并树上跑，`dirty 0`）
+
+```
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+implemented 455 real + 1 placeholder = 456 / 456   known_gap 0   unclaimed 0   regression 0   local_only 8
+```
+
+⑦b `rc=0`（0 findings）；⑩ `rc=0`（`scanned=1292 baseline=10 violations=0`）；deps `rc=0`、`FINDINGS: A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`（与 §210 逐字相同）。**本片 0 路由 ⇒ 这八位一位都不许动，实测一位未动。**
+
+### §219.5 🔴 承重：**「派发面结构性 1 台」这个前提本身是错的 —— 它是 runtime 健康度问题**
+
+`LUM-2503` 落地后要派第 2 批（`§216.4` 的 4 个地雷）。上一轮（§217 承重二）已经推翻了「跨机片抢本机运力」，本轮轮到**派发面本身**。
+
+先量 devbox4 的并发：`3 running / max_concurrent_tasks = 6` ⇒ **有位**。但真正卡住的是**磁盘**：`LUM-2503` 自报起手 `df` 只有 **64MB**，三次构建撞 `ENOSPC`，并为此**清理了别人的 workdir `target/` 释放 6.8G**。⇒ **两个 Rust 编译片不能叠在同一台机器上**，这是硬约束。
+
+于是本轮第一次**主动往第二台机器派发**（此前所有片都在 devbox4），结果连撞三堵墙：
+
+| agent | `max_concurrent` | 最近 6 条 run | 判读 |
+|-------|------------------|---------------|------|
+| `编程助手-devbox2` | 20 | **0 completed / 6 failed**（全部 `runtime unavailable while task was queued`）| ❌ **runtime 不在线**。派过去后 run 一直停在 `queued`、`started_at = None`、`attempt 1`、`error null` |
+| `编程助手-chong` | 6 | 0 / 6 | ❌ 同上 |
+| `编程助手devbox` | 6 | 0 / 6 | ❌ 同上 |
+| `编程助手-go` | 6 | 2 / 3 | ⚠️ |
+| `编程助手-devbox1` | 5 | 3 / 3 | ⚠️ |
+| `编程助手-winpi` | 20 | 5 / 1 | ✅ |
+| **`编程助手lin`** | **20** | **6 / 0** | ✅ **最干净** |
+| `编程助手-devbox4` | 6 | — | ✅ 但磁盘见上 |
+
+⇒ **结论（覆盖既往多轮「派发面结构性 1 台，不重复 @」）**：**不是只有一台机器能派，是只有一台机器的 runtime 还活着。** 既往每轮写「结构性 1 台」并据此压后派发，是因为**从未试过第二台**。
+
+🔴 **由此得到一条新的、必须前置的派发纪律**（本轮最实用的产物）：
+
+> **`max_concurrent_tasks` 不是派发可行性的判据，`runtime` 才是。** 派发前必须先看目标 agent **最近若干条 run 的 `completed/failed` 分布**；`error = "runtime unavailable while task was queued"` 连续出现 ⇒ 该 agent 的 runtime 不在线，**并发额度再大也没有用**。
+> 并且**必须回读 run 收据确认 `started_at != null`** —— 只看 `status` 会把「`queued` 且 `attempt 1` 且 `error null`」误读成「在跑」，而它其实永远不会开始。
+
+（与 §217 承重一并看：`attempt ≥ 2` 或 `error` 非空 ⇒ 直接判死；本轮补上第三条 —— **`started_at` 长期为 `null` 且同 agent 历史 `completed = 0` ⇒ runtime 不在线，不是「静默早期」。**）
+
+### §219.6 派发 `LUM-2516`（`§216.4` 第 2 批，逐字照搬预登记工单）
+
+`LUM-2516` 派给 **`编程助手lin`**（`700c7941`，`max_concurrent 20`），run **live**（`running / attempt 1 / error null`，workdir `/Users/louloulin/multica_workspaces/…/lum-2516-24472f60c4c4/workdir` —— **路径前缀 `/Users/louloulin/` 实测证明这是另一台 macOS 机器**）。
+
+内容 = `§216.4` 预登记口径逐字照搬：`mc-http/tests/chat.rs`(798) / `mc-vcs/src/gitlab.rs`(790) / `mc-http/tests/vcs/connections.rs`(790) / `mc-runtime/src/adapters/cursor/stream.rs`(786) 各 ≤600，**0 路由 0 行为变更**；禁改面 = `routes/` 注册面 / `mount.rs` / `state.rs` / `migrations` / `contracts/**` / 两个 baseline；验收 = ⑩ `rc=0` 且四文件各 ≤600 ＋ ⑦ 八数字逐字不变 ＋ 构建/测试/clippy/fmt 全绿。
+
+**与 `LUM-2513`（第 1 批）写集零重叠**，可并行（`LUM-2513` 31 min、`attempt 1`、`error null` ⇒ 按 §217 判活）。
+
+工单里加了两条本轮新学到的**硬约束**：
+1. **磁盘纪律**（来自 `LUM-2503` 的 `ENOSPC`）：起手 `avail < 20G` 先报数再决定；收尾删自己的 `target/`；**绝不许清理别人的 workdir** —— `LUM-2503` 为了腾空间删了 `lum-2502` 的 `target/`，那是破坏性操作，即便动机是善意的。
+2. **没 token 不要卡住**：推完分支给出 `pull/new/<branch>` 链接即可，收割轮代开 PR（`LUM-2503` 就是这么丢了一个 PR 的开启机会）。
+
+### §219.7 收尾与下一轮起点
+
+- **本轮收割 1 片**（`LUM-2503`），合并提交 `f0952cd3`，收尾提交 `0e911678`。
+- **新派 1 片**（`LUM-2516`）。在飞 = `LUM-2513`（devbox4）∥ `LUM-2516`（lin）= **2/3**。
+- **base = `0e911678`**（与 `git ls-remote` 逐字相同）。
+- **号段**：下一空号 **`## §220`**（`§218` = `LUM-2503`、`§219` = 本 cycle）。
+- **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**（本轮 `T1-10b` 再次 `SKIP-NO-ASSET` 实测确认），**不重复 @**。
+- **未清理（待 owner）**：`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，不自行执行）。本轮自建的 `multica_c2514` + 角色 `mc_c2514` 已自行 DROP。
+- **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ **`multica agent tasks` 判跨机死活**（`LUM-2513` / `LUM-2516` 两条）→ ⑦ 第 24 轮 → 若任一交分支，按 §210.1 判据链走（**不信 blob 恒等**）。
