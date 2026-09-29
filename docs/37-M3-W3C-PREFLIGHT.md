@@ -22344,3 +22344,132 @@ A4 门 ⑦ 的八个数字**与合并前逐字相同** —— 这正是 §241.3 
    df 从 20G 塌到 7.4G 的唯一原因。
 
 **下一空号**：`## §243`。
+
+## §243 【2026-09-30 01:00 cycle / LUM-2573】零收割（PR #168 **判不合并**）＋ 回收 12.8G ＋ 零派发（3/3）
+
+起手 base `0982d786`（`git rev-parse` 实测 == `ls-remote`；checkout 落目标分支，**未再落 `main` 线**）。
+`df` 起手 **1.3G/97%**、PG 5432 `online`、GH **1 open PR**。本轮**零派发**（3/3）、**回收 12.8G**、
+唯一实质产出 = **PR #168 的 CI 红是本片自己的真回归，附可复跑的机械判别式**。
+
+### §243.1 判不合并：PR #168（`LUM-2570`，T1-6 抽取器 `classify_borrowed`）
+
+head `272acce6`、base `0982d786`（= 本地 HEAD）、`mergeable: true`、11 文件。
+CI 四 job：`db` / `contract` / `image` **绿**，`fast` **红** ⇒ 只差一条判据链的第 ④ 步（证据），前 ①②③ 已过。
+
+**红点定位（不是"红在写集外 ⇒ 瞬时红"那一族）**：
+
+```
+fast → ⑤ test — cargo test --workspace（不带 DB 变量）
+  requirements::tests::an_unencodable_request_is_declared_undecidable ... FAILED
+  panicked at crates/mc-conformance/src/requirements.rs:674
+  golden 面里找不到请求拼不出 URI 的那条（路径字面带空格）—— 本判据会变成空的
+  test result: FAILED. 27 passed; 1 failed
+```
+
+`requirements.rs:295` 的 `request_target_is_encodable` 判两条之一为假：路径去掉 `{占位符}` 后
+① 仍含 `{}`（未填充）或 ② 不是合法 URI 字节。而 `requirements.rs:665` 的守卫测试
+`an_unencodable_request_is_declared_undecidable` **先断言这一族非空**（`!spacey.is_empty()`）
+—— 它的 docstring 写明用途：「**本判据会变成空的**」。
+
+**机械判别式（纯 JSON 扫描、零编译、可复跑）**。按 RFC 3986 重建 `pchar ∪ "/"` 白名单
+（**第一版把 `/` 漏出白名单 ⇒ 366 条里 364 条误判**，判别式必须先在正例与反例上双向验证）：
+
+| 树 | fixture 文件数 | 拼不出 URI 的 fixture |
+|---|---|---|
+| `0982d786`（base） | 366 | **2** |
+| `272acce6`（PR head） | 365 | **0** |
+
+base 那 2 条，**同一个根因**：
+
+- `contracts/golden/agents/023-TestUpdateAgent-KeepsMcpConfigForMemberActor-L1423.json` → `/api/agents/a runtime that this profile does not provide`
+- `contracts/golden/comments/001-TestRemoveReactionOnTombstoneIsNotFound-L472.json` → `/api/comments/a runtime that this profile does not provide/reactions`
+
+那个值正是 PR 正文自己认出的 `package_literals` 撞号（`target` ← `runtime_blocking_agents.go:154`）。
+
+**判词**：本片把这一族**修空了**，而守卫测试的**全部职责**就是"不许它变空"。所以
+
+- 这**不是**瞬时红、**不是** ENOSPC、**不是**基线级噪声 —— 红点由本片删除动作**直接造成**；
+- 但它也**不是**一个 bug：它是**本片成果的诚实代价**（这一族本来就不该有成员）。**判据链第 ④ 步不过 ⇒ 不合并。**
+
+🔴 **本片写集漏了一件**：`crates/mc-conformance/src/requirements.rs` 不在 PR 的 11 个文件里，
+所以本片**无法自愈**。两条出路，**必须显式选一条**（不许默认"重跑就好了"）：
+
+- **(a) 恢复一个见证 fixture** —— 在本片语义下**不可能**：那 2 条的存在本身就是缺陷（路径是撞号值）。
+- **(b) 改守卫的不变式（推荐，且比原式更强）**：把 `!spacey.is_empty()` 从
+  「**这一族至少有一条**」改成「**这一族一条都不许有**」。这一步把一个**防空转断言**升级成
+  **回归守卫**——正是本片想说的事（"抽取器永远不该再吐出一个拼不出来的 URL"）从此被机械锁住。
+  配套要改 `unplannable_request_detail` 的存在性（`requirements.rs:314`）与 `docs/32` §9 族的登记。
+
+⇒ **交回 `LUM-2570` 处置，cycle 不代改**（代改会把它自己的成果记到自己名下，且与在飞写集无交集的
+"可重复动作"纪律相悖）。**下一轮第一动作**：若 `LUM-2570` 推新 head ⇒ 重跑 ①②③ 后直接看 ④。
+
+### §243.2 交付面：`LUM-2570` 的评论是**空的**（第 2 次同形）
+
+`LUM-2570` 是 00:30 那个 autopilot cycle issue，它自己交了 PR #168；`status=in_review` rev 3，
+而 `comment list --roots-only` 只有 1 条、**body 为空字符串**。产物是真的（PR、提交、工作树都对），
+但**下游 cycle 拿不到任何上下文**——本条 §243 的根因分析是重新翻 `git` + CI 日志复原的。
+⇒ 同 `LUM-2569`（§242.4）：**判零交付查「分支 + PR + `merge-base..head` diff」三样**，
+且**空评论本身是缺陷**，交付前必须回读自己发出去的那条评论非空。
+另：`LUM-2570` 标题仍是模板 `multica-rs`，未按 autopilot 指令改名。
+
+### §243.3 回收：**`incremental` 外科 12.8G**（本轮第一杠杆，且它在**活构建**上照样成立）
+
+起手 1.3G/97%（历史 ENOSPC 会顺手杀 PG 5432）。全盘只有一个 `target/`
+= `lum-2565-196f81c51533` 的 **25.4G**，而它**正在编译**（`rustc` / `cc` 在进程表里）⇒ 活物，整 target 禁动。
+
+先按纪律核过再动手：
+
+1. `deps/` **无扩展名派生测试二进制**只有 103 个 / 5.3G（上轮删过、它已重建一半）⇒ 这轮**不是**主杠杆；
+2. `debug/incremental` = **13.9G / 440 个 >5min 的桶** ⇒ 主杠杆；
+3. **先扫 `/proc/*/fd` 确认 0 个句柄**指向 `incremental/`（不是靠"应该没人用"）；
+4. 删桶：`find incremental -maxdepth 1 -mindepth 1 -type d -mmin +5 ! -name incremental -print0 | xargs -0 rm -rf`
+   ⇒ `avail 1347M → 14424M`（**+12.8G**），`incremental` 13.9G→1M，**PG 仍 `online`**，
+   `LUM-2565` 的 `rustc` 仍在跑（**零中断**）。
+
+⇒ **可推广**：「上轮删过的东西会被在飞片重建回来，所以回收是**每轮重做的例行动作**」这条仍然成立；
+而**杠杆排序要按"当下实测的体量"排，不要沿用上轮的结论**——本轮 `deps` 杠杆只剩 5.3G，
+`incremental` 却涨到 13.9G。**活构建上做 `incremental` 外科是安全的**（cargo 不读 incremental
+来编译新单元），但**必须先做 fd 扫描**，且**只删 `-mmin +5` 的陈旧桶**。
+
+### §243.4 门读（base `0982d786` 当场重跑，三个零编译门全绿）
+
+| 门 | 读数 | rc |
+|---|---|---|
+| ⑦ `route_parity.py` | `upstream 456 / local 546 / baseline 546`，`implemented 455 real + 1 placeholder = 456`，`known_gap 0 / unclaimed 0 / regression 0 / local_only 8` | 0 |
+| ⑦b `slash_alias_audit.py` | `541` 个注册上游键字面量，`0 defect / 0 warning` | 0 |
+| ⑩ `file_size_check.py` | `limit=800 scanned=1387 baseline=1 violations=0`（唯一 baseline 条目 `scripts/extract_upstream_fixtures.py` 1862 行，**只许变短**） | 0 |
+
+🔴 **门 ⑩ 与本片直接相关、下一轮必须盯**：PR #168 改了 `scripts/extract_upstream_fixtures.py`
+（`+6 −6`，**净零**，守住了"只许变短"），但它同时**新增** `scripts/test_extract_borrowed_ids.py`（113 行）
+——若 `LUM-2570` 按 §243.1(b) 改 `requirements.rs`，那是 `crates/mc-conformance/src/` 里的文件，
+**门 ⑩ 的 baseline 只覆盖 `scripts/`**，所以 ⑩ 不会替它兜底，**要靠 ⑤ 那条 Rust 单测自己绿**。
+
+### §243.5 在飞与槽位（3/3 ⇒ 零派发）
+
+| | issue | run | 状态 |
+|---|---|---|---|
+| 1 | 本 cycle | `01a0ee1b` | 本轮 |
+| 2 | `LUM-2565`（T1-6-B，status_category 四值） | `01a0edbb` | `running` 自 15:15Z，在编译 |
+| 3 | `LUM-2571`（T1-6-F，PRECONDITION 27 条拆子族，**0 Rust/0 cargo/0 磁盘**） | `01a0ee18` | `running` 自 16:56Z |
+
+**切片位 = 3 − 1(cycle) − 2 = 0** ⇒ 本轮零派发（磁盘算式也不支持：全量 `--with-db` 需 ≈18G，
+回收后 14.4G，且在飞片会继续涨）。
+`LUM-2571` 名下另有一条 `queued` 且 `started_at=null` 的 run `01a0ee19` = 派发失败的幽灵 run
+（与 `LUM-2570` 的 `queued` 同形）⇒ **只登记不动状态**（有活 run 在飞，关 issue 反而会触发重试磁铁，§184）。
+
+**顺位（下一轮起手逐条重验，别抄）**：`LUM-2565` 终 ⇒ 判据链（**0 路由 ⇒ 门 ⑦ 八个数字必须逐字不变**，
+证据只能来自 ⑨ 族计数 `REALM_DIFF 36→29` + 门禁 10/10）⇒ 回收其 `target/` ⇒ 若 `df ≥ 35G` 立即
+`rerun LUM-2567`（PRECONDITION 30；`bad_total 89→≈85`，**不是 59**）。
+`LUM-2571` 终 ⇒ 判据链（0 路由 ⇒ 门 ⑦ 逐字不变）⇒ 它只出**清单**，不碰 fixture，由它自己裁定下一族。
+`LUM-2570` 推新 head ⇒ 走 §243.1 的 ①②③④。**空位优先派"0 磁盘类"**（`LUM-2571` 全程 97M、无 `target/`）。
+
+### §243.6 两条纪律
+
+1. 🔴 **"守卫测试因本片成果而失效"是新failure族**：`fast` 红 + 红点在**写集外** ⇒ 旧判据会说"瞬时红"，
+   但真因是**本片把某个判据族的最后一个成员删掉了**。**判别式 = 读那条失败的断言本身**：
+   `assert!(!X.is_empty())` 破 ⇒ 找**谁删了 X 族的最后一个成员**，别去 rerun、别加 allowlist、别改门禁。
+   归入「预飞检查」：**凡切片会删 fixture，就必须查"有没有守卫测试在数这一族"**。
+2. 🔴 **判别式自己会错，且第一版就错**：`§243.1` 那条 pchar 白名单第一版漏了 `/`
+   ⇒ 366 条里 364 条误判（假阳性率 99.5%）。**判别式必须先在"已知正例 + 已知反例"上双向跑通**
+   （本轮正例 = base 那 2 条、反例 = 任意普通 `/api/...` 路径），再拿去数全量。
+   这是 §240「分族计数不能靠转述」的同一条，但这次栽在**判别式本身**而不是转述上。
