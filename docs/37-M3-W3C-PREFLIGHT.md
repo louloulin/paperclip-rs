@@ -21777,3 +21777,167 @@ detail / tier / actor / via / requires  ⇒  0 处差异
 
 - `LUM-2111` 卡 docker/podman/buildah（`T1-10b` `SKIP-NO-ASSET`）。
 - `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
+
+---
+
+## §239 T1-6 是停止条件里**唯一**还在红的一条 ⇒ 89 条按根因拆成 5 族，派 `T1-6-B`
+
+> 本轮性质：**非只读**（派 1 片 + 落一个新脚本）。零 PR 可收割（GH `0 open PR`），
+> 因为 22:30 轮的 `LUM-2562` 是 cycle 自审单、`LUM-2560` 在 devbox4 仍在飞。
+
+### 1. 🔴 承重：本项目的剩余工作量第一次被压成**一个**数字
+
+起手拿真库（当轮新建 `multica_c2564`，角色带 `CREATEDB`）跑完整停止条件：
+
+```
+bash scripts/stop_condition.sh --db-url 'postgres://mc_c2564:…@…/multica_c2564'
+⇒ pass 15 / fail 1 / skip 2（skip 仅因本轮 --skip-gates）
+   T1-1a  PASS  implemented == upstream
+   T1-1b  PASS  placeholder 键集合 == 裁定白名单
+   T1-1c  PASS  known_gap == 0
+   T1-1d  PASS  unclaimed == 0
+   T1-1e  PASS  regressions == 0
+   T1-1f  PASS  local == baseline_routes
+   T1-2   PASS  ⑦ owners 直方图
+   T1-3   PASS  ⑦ local_only 逐条登记
+   T1-4   PASS  ⑦b slash_alias_audit
+   T1-5   PASS  ⑨ --no-db mismatch/unmounted
+   T1-7   PASS  ⑨ 判词自带凭据（两档举证）
+   T1-6   FAIL  ⑨ conformance (--db-url)
+   T1-8   PASS  ⑧ schema_drift
+   T1-9   PASS  ⑩ file_size_check
+   T1-11  PASS  CI 4 job 全绿
+   T1-12  PASS  --golden contracts/golden-local
+```
+
+**路由面（⑦）已经彻底收口**（`known_gap 0` / `unclaimed 0` / `regressions 0` / `owners {}`），
+契约面（⑦b / T1-5 / T1-7 / T1-11 / T1-12）也全绿。**整个 multica-rs 只剩 T1-6 一条红**，
+它的判词是 `unevaluable 0 ∧ mismatch 0` ⇒ **剩余工作量 = 365 − 276 = 89 条 fixture**。
+
+⇒ **纪律**：从这一轮起，「还差多少」的权威答法是
+`bash scripts/stop_condition.sh --db-url …` 的 `failing_ids`，**不是** ⑦ 的 `known_gap`
+（`known_gap` 讲的是**路由**，早就是 0；89 讲的是**行为**）。两者别混。
+
+### 2. 新脚本 `scripts/t1_6_taxonomy.py`：把「89」变成派工单
+
+一个总数不能直接派工。新脚本（纯 Python、0 编译、秒级）把 89 条按**根因**分族并对账：
+
+| 族 | 条数 | 判据 | 负责面 |
+|---|---|---|---|
+| `UNMOUNTED` | 1 | 404 空 body / 405 ⇒ 路由未挂载 | 先裁定：真缺口还是抽取器错认 |
+| `PRECONDITION` | 30 | `outcome=unevaluable` ⇒ **没被判定过** | conformance 装置（云面 / 令牌 / 故障注入 / cookie）|
+| `AUTH_401` | 6 | 判过了，`observed 401`（认证阶段就拒）| harness 身份注入 + 鉴权中间件 |
+| `SEED_404` | 16 | 判过了，`observed 404` 且 **body 非空** ⇒ handler 主动 404 | `mc-conformance::seed` 按 fixture 种实体 |
+| `REALM_DIFF` | 36 | 判过了，4xx↔2xx / 409 / 403 判定顺序 | 各域 handler |
+
+**对账**：`1 + 30 + 6 + 16 + 36 = 89` ✓；`mismatch 58 = 6 + 16 + 36` ✓（`unevaluable 30` + `unmounted 1` 另计）。
+
+**`SEED_404` 判据的依据**（不是猜的）：`crates/mc-conformance/src/verdict.rs:149` 只把
+「404 **且 body 为空**」（axum fallback）或 405 判成 `unmounted`。所以落在 `mismatch` 里的 404
+**必然 body 非空 ⇒ 路由是挂着的**，问题在 handler 的行为/实体，不在路由表。
+
+### 3. 🔴 承重二：**症状分族 ≠ 根因** —— 最大那族里混着别人的活
+
+`REALM_DIFF` 36 条按**上游源文件**再聚类，两个单根因簇立刻浮出来：
+
+- **`daemon_test.go` 6 + `daemon_task_lookup_test.go` 1 + `integration_test.go` 1 = 8 条，全部 `404 → 200`**
+- **`issue_status_test.go` 6 + `issue_triage_guard_test.go` 1 = 7 条，全部 `2xx → 400`**
+
+第一簇看着像 8 个 handler bug，**其实不是**。上游 `daemon_test.go:1159` 的原形是：
+
+```go
+// Cross-workspace daemon token must be rejected with 404 — same status
+// code as "issue not found" so there is no UUID enumeration oracle.
+req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+issueID+"/gc-check", nil,
+    "00000000-0000-0000-0000-000000000000", "attacker-daemon")
+```
+
+即：issue 属于 `testWorkspaceID`，而令牌签发在**另一个** workspace ⇒ 期望 404。
+本仓 harness 的 `daemon_token` 永远签发在**被播种的那个** workspace（同空间）
+⇒ 请求变成同空间访问 ⇒ 200。
+
+**而本仓 handler 是对的** —— `crates/mc-http/src/routes/daemon/gc.rs:15-17` 明写并实现了
+「先载行 → 再按行里的 workspace 过门，workspace 不匹配与行不存在返回**同一个 404**」。
+
+⇒ **那 8 条是装置面缺口（harness 从不构造「攻击者令牌」），不是实现缺口。**
+若按症状派工，会把 8 条派给 daemon handler 的人去「修」一段已经正确、且**反枚举性质
+恰恰是它的设计目标**的代码 —— 修好的概率低、弄坏安全性质的概率高。
+
+**纪律**：分族只用**症状**（`outcome` + `observed`）**不能**当根因用。
+派工前对每个簇**打开上游那个测试文件看 setup**（本仓上游 checkout 可复用
+`lum-2477-ac326c83b1ed/workdir/multica`，正好在 goldens 记录的 commit `90e0bdf8`）。
+第 8 类预飞检查 = **「这个簇的 fixture 期望值，靠的是装置构造还是 handler 逻辑？」**
+
+### 4. 派发：`T1-6-B`（`LUM-2565`）—— 7 条，一个根因，**不需要新迁移**
+
+第二簇（7 条 `2xx → 400`）的根因是**本仓的 category 词汇比上游窄**：
+
+- 上游四值生命周期词汇 `unstarted` / `started` / `done` / `closed`
+  —— 本仓自己的 `daemon/gc.rs:20` 早就写着这四个词
+- 本仓 `crates/mc-repos/src/issue_status.rs:87` `parse_category()` **只认 `open` / `closed`**，
+  `StatusCategory` 枚举也只有 `{Open, Closed}` ⇒ `statuses.rs:68` 报 `"category must be open or closed"`
+
+级联（一条根因七条红）：`POST /api/issue-statuses {"category":"unstarted"}` → 400 ⇒
+自定义状态**建不出来** ⇒ `issues/crud.rs:72/263` 的 `catalog.contains_key` 落空 ⇒
+`unknown status: race_b_writer` → 400（4 条）⇒ category 过滤 / status 排序计数同样判错 → 400（2 条）。
+
+🔴 **`catalog.contains_key` 不是 bug**：它本来就是工作区作用域（`load_catalog(&state, workspace_id)`），
+自定义状态**在设计上被支持**。缺的是「让上游那套词汇进得来」。
+
+🔴 **不需要新迁移**（这条最容易让人白干一天）：
+
+- 上游 `contracts/upstream-schema.sql:1863`：`CHECK (category = ANY (['unstarted','started','done','closed']))`
+- 本仓 `migrations/compat/539_status_and_role_vocabulary.up.sql:26`：
+  `CHECK (category = ANY (ARRAY['open','unstarted','started','done','closed']))`
+
+⇒ 上游四个值**本来就写得进库**，是本仓 compat 迁移主动**放宽**过的。
+纯 Rust 词汇面的活，`migrations/` 一行都不许动。**「以为缺 DB 支持」是本簇最典型的症状。**
+
+`LUM-2565` 写集（与在飞 `LUM-2560` 的 `mc-conformance/**` **零交集**）：
+`mc-repos/src/issue_status.rs`、`mc-http/src/routes/issues/{statuses,dto}.rs`、
+`mc-repos/src/issue_table/{mod,repo}.rs`；**0 路由** ⇒ ⑦ 八数字须逐字不变。
+
+### 5. 本轮实测门禁（写集 = 1 个 `.py`，零 Rust / 零 `Cargo.toml` / 零 migrations）
+
+| 门 | 结果 |
+|---|---|
+| ⑦ route-parity | rc=0 —— **八数字第 41 轮逐字不变**：`upstream 456 / local 546 / baseline 546 / implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b slash_alias | rc=0 —— `541 literals / 0 defect`（已含在 ⑦ 里，另单跑复核）|
+| ⑩ file_size | rc=0 —— 新脚本入 `scripts/` 后仍 0 violation（上限 800，本脚本 187 行）|
+| ⑧ schema_drift | rc=0 —— `apply-exception 9 / differs 14 / extra 22 (ok=True)` |
+| ⑨ conformance `--no-db` | rc=0 —— `365 / pass 34 / mismatch 0 / unmounted 0 / unevaluable 331` |
+
+**②③④⑤⑥ 未跑，写明理由**：本片写集是 **1 个新 `.py`**，零 Rust 源 / 零 `Cargo.toml` / 零 migrations
+（`git diff --name-only` 可核）⇒ 这五道门的输入未变。按 §236 承重一的「最小可行动作」判据，
+跑它们只是把 12G 磁盘押在一道**输入没变**的门上。
+
+⚠️ `--only` 的门名**不能想当然**：`slash-alias` 不是门名（写它会被 `unknown gate` 拒），
+`⑦b` 是**包含在 ⑦ 里**的（`route_parity.py && slash_alias_audit.py`）。真实门名只有 10 个：
+`fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image`。
+
+### 6. 下一 cycle 第一动作
+
+1. `df -h /` 连采两次 + `pg_lsclusters`（5432 须 `online`）→ `git rev-parse` 对
+   `git ls-remote origin feat/multica-rs-initial`（checkout 落 `main` 线的老坑）→ 认证 GH `pulls?state=open`
+   → 从 `/` 起手逐 PID 扫 `/proc/*/cwd`（先读 `cmdline` 是不是 `pi`）→ `multica issue runs` 逐片 status/error。
+2. **本轮起手实测：`running_task_count = 1`**（只有 cycle 自己）；`LUM-2560` 在 devbox4 仍在飞
+   （run `01a0ed60`，自 13:35:41Z）⇒ 空位 = `3 − 1 − 1 = 1`，已派 `LUM-2565`。
+3. `LUM-2565` 交 PR ⇒ 六步判据链（预检 `merge-base..head` numstat 逐字 == PR API / 形态两半 /
+   三哈希等式 / head CI 3/3 **或** 合并树同树 `--with-db` 10/10 / API 钉 40 位 sha + `merge_method=merge` /
+   落地树逐字 + diff 空）。**它是 0 路由片 ⇒ 合并后 ⑦ 八数字必须逐字不变**，
+   验收证据只能来自 ⑨ 的族计数（`REALM_DIFF 36 → 29`）+ 门禁，**不能来自 ⑦**。
+4. **下一片的顺位（按 §239.2 的族计数排）**：
+   - `SEED_404` 16 ⇒ 与 `LUM-2560` 同族，**等它合入后再派**（否则抢 `seed.rs`）
+   - `REALM_DIFF` 余 29 ⇒ 扣掉 `LUM-2565` 的 7 后还剩 29−7=22（chat 8 / issues 10 / daemon 8 / 长尾）
+     —— ⚠️ **daemon 那 8 条是装置面**（§239.3），**不许派给 daemon handler**
+   - `PRECONDITION` 30 ⇒ 装置面单独立片（`TierRouters` / `daemon_token` / 故障注入档位），
+     体量最大且与其它族零写集交集，适合与行为面并行
+   - `AUTH_401` 6 ⇒ 独立小片（`/v1/**` 的 401 vs 授权判定）
+   - `UNMOUNTED` 1 ⇒ 先按 §238 的 compat 折叠先例**裁定**（真缺口 vs 抽取器错认），
+     本仓 `known_gap = 0` ⇒ **不许加路由**（`PUT /api/autopilots/{id}` 上游同样不注册）
+5. **号段**：`docs/37` 下一节 **`§240`**；`docs/32` 下一空号沿用 `## 60.` 起（新增前先 `git fetch` 查）。
+
+### 7. 待 owner（不重复 @）
+
+- `LUM-2111` 卡 docker/podman/buildah（`T1-10b` 只能 `SKIP-NO-ASSET`）。
+- `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
