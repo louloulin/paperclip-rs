@@ -11,7 +11,8 @@
   "actor": {
     "kind": "member",
     "upstream_identity": {
-      "X-User-ID": "$testUserID"
+      "X-User-ID": "$testUserID",
+      "X-Workspace-ID": "$testWorkspaceID"
     }
   },
   "body": null,
@@ -36,7 +37,8 @@
     ],
     "bindings": {
       "$testChatSessionID": "chat_session_id",
-      "$testUserID": "user_id"
+      "$testUserID": "user_id",
+      "$testWorkspaceID": "workspace_id"
     }
   }
 }
