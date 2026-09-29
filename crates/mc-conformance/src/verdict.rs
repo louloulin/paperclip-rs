@@ -180,4 +180,3 @@ pub fn judge(fx: &Fixture, observed: &Observed) -> (Outcome, String) {
         format!("status {} != expected {expected}", observed.status),
     )
 }
-

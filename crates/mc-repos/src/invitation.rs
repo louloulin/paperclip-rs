@@ -23,7 +23,6 @@ use mc_core::id::Id;
 use mc_core::member::WorkspaceMember;
 use mc_core::workspace::WorkspaceRole;
 
-
 /// 默认 token 字节长度（32 → base64url 后约 43 字符）。
 pub const INVITATION_TOKEN_BYTES: usize = 32;
 /// 默认 TTL：7 天。
@@ -112,4 +111,3 @@ mod repo;
 mod integration_tests;
 #[cfg(test)]
 mod tests;
-

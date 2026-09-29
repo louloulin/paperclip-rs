@@ -8,11 +8,11 @@ use tower::ServiceExt;
 
 use crate::bindings::Bindings;
 use crate::report::Row;
+use crate::request_plan::plan;
 use crate::requirements::{
     actor_credential_detail, credential_satisfied_by, missing_requirements,
     request_target_is_encodable, requirements_detail, unplannable_request_detail,
 };
-use crate::request_plan::plan;
 use crate::verdict::{judge, FixtureOutcome, Observed, Outcome};
 use crate::Fixture;
 

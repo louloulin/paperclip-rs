@@ -3,8 +3,8 @@
 //! 从 `routes/inbox.rs` 拆出（门 ⑩ 第 8 批）。**0 路由、0 行为变更**：
 //! 父模块用 `pub(crate) use` / `pub use` 把符号原样重导出，外部路径逐字不变。
 
-use std::collections::HashMap;
 use axum::http::HeaderMap;
+use std::collections::HashMap;
 
 use mc_core::Id;
 use mc_errors::Error;
@@ -69,4 +69,3 @@ pub(crate) fn resolve_workspace_id(
         None => Err(bad_request("invalid workspace id")),
     }
 }
-

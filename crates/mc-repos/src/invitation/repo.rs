@@ -17,8 +17,8 @@ use mc_core::workspace::WorkspaceRole;
 use mc_db::Db;
 
 use crate::invitation::{
-    AcceptOutcome, InvitationRepo, InvitationRow, NewInvitation,
-    INVITATION_DEFAULT_TTL_DAYS, INVITATION_TOKEN_BYTES,
+    AcceptOutcome, InvitationRepo, InvitationRow, NewInvitation, INVITATION_DEFAULT_TTL_DAYS,
+    INVITATION_TOKEN_BYTES,
 };
 use crate::{RepoError, Result};
 

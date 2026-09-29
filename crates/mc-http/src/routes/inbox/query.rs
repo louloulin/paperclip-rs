@@ -17,7 +17,10 @@ use mc_repos::inbox::{ArchivedCursor, ArchivedInboxFilter, InboxItemRow};
 // ---------------------------------------------------------------------------
 
 use crate::routes::inbox::dto::ArchivedCursorWire;
-use crate::routes::inbox::{LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, ARCHIVED_PAGE_DEFAULT_LIMIT, ARCHIVED_PAGE_MAX_LIMIT, LIST_BODY_PREVIEW_LIMIT, CURSOR_MAX_LEN, FILTER_MAX_RAW_LEN, FILTER_MAX_VALUES};
+use crate::routes::inbox::{
+    ARCHIVED_PAGE_DEFAULT_LIMIT, ARCHIVED_PAGE_MAX_LIMIT, CURSOR_MAX_LEN, FILTER_MAX_RAW_LEN,
+    FILTER_MAX_VALUES, LIST_BODY_PREVIEW_LIMIT, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT,
+};
 pub(super) fn bad_request(message: &str) -> Error {
     Error::Validation {
         message: message.to_string(),
@@ -65,7 +68,10 @@ pub(super) fn parse_archived_limit(query: &HashMap<String, String>) -> Result<i6
 }
 
 /// 解析一个逗号分隔的过滤器（排序 + 去重，与上游 `slices.Sort`+`Compact` 一致）。
-pub(super) fn parse_filter_values(query: &HashMap<String, String>, name: &str) -> Result<Vec<String>, Error> {
+pub(super) fn parse_filter_values(
+    query: &HashMap<String, String>,
+    name: &str,
+) -> Result<Vec<String>, Error> {
     let Some(raw) = query_value(query, name) else {
         return Ok(Vec::new());
     };
@@ -110,7 +116,11 @@ pub(super) fn parse_group_id(query: &HashMap<String, String>) -> Result<Option<I
 }
 
 /// 游标作用域：绑定「用户 + workspace + 过滤条件 + 分组」，防止跨查询续页。
-pub(super) fn archive_scope_tag(workspace_id: Id, user_id: Id, filter: &ArchivedInboxFilter) -> String {
+pub(super) fn archive_scope_tag(
+    workspace_id: Id,
+    user_id: Id,
+    filter: &ArchivedInboxFilter,
+) -> String {
     let canonical = format!(
         "{}|{}|{}|{}|{}|{}|{}",
         workspace_id.as_string(),
@@ -162,7 +172,11 @@ pub(super) fn encode_cursor(scope_tag: &str, row: &InboxItemRow) -> Result<Strin
 ///
 /// 上限**含**省略号：超过 200 字符时保留前 199 个字符 + `…`（与上游
 /// `inboxListBody` 逐字对应）。
-pub(super) fn list_body_preview(category: &str, has_issue: bool, body: Option<&str>) -> Option<String> {
+pub(super) fn list_body_preview(
+    category: &str,
+    has_issue: bool,
+    body: Option<&str>,
+) -> Option<String> {
     let full = body?;
     if category != "new_comment" || !has_issue {
         return Some(full.to_string());

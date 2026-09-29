@@ -67,8 +67,8 @@ pub mod daemon_token;
 mod fixture;
 pub mod harness;
 mod replay;
-mod request_plan;
 pub mod report;
+mod request_plan;
 pub mod requirements;
 pub mod seed;
 mod verdict;
@@ -95,4 +95,3 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const STATELESS_USER_ID: u128 = 1;
 /// 见 [`STATELESS_USER_ID`]。
 pub const STATELESS_WORKSPACE_ID: u128 = 2;
-

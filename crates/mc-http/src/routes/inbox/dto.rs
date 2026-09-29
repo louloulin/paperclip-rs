@@ -103,4 +103,3 @@ pub(super) struct ArchivedCursorWire {
     pub(super) id: String,
     pub(super) scope: String,
 }
-
