@@ -24,18 +24,34 @@
 //! 与 `harness::database_router` 建 workspace 时同一条纪律（那里是因为仓库层没有
 //! workspace create API）。种子行的形状因此永远和 handler 期望的一致 —— 我们不会
 //! 手写 `INSERT` 去猜一张表的列。**唯一**的例外是 runtime，见 [`seed_runtime`]。
+//! # 每类**每个测试**一行（§213）
 //!
-//! # 一行种子，一个符号，**以及它的代价**
-//!
-//! 每个域**只种一行**，所有引用该符号的 fixture 共享它。这不是省事：上游的 CRUD
+//! §209 的第一版是「每类**一行**，全回放共享」。那一刻的权衡是真的：上游的 CRUD
 //! 链（`TestIssuesCRUDThroughRouter`：create → get → put → put → list → delete →
-//! get 404）正是靠「同一个 id 贯穿全链」才成立的，各自种一行会把 delete-then-get
-//! 变成 get-200。
+//! get 404）正是靠「同一个 id 贯穿全链」才成立的，给每条 fixture 各建一行会把
+//! delete-then-get 变成 get-200。
 //!
-//! 代价是**独立的测试之间会互相摧毁**：一条 `DELETE /api/issues/{testIssueID}` 跑过之后，
-//! 其后所有引用同一符号的 fixture 一起 404（docs/37 §209.4 的 C 桶，23 条）。
-//! 这是**已知缺口，不是设计** —— 下一片应把符号从「每类一行」变成「每类每测试一行」
-//! （`Fixture.source.test` 就是现成的分组键）。在那之前，不要把「只种一行」当成结论。
+//! 但「共享」的粒度选错了：跨测试共享让**独立测试之间互相摧毁**。replay 序 57 的
+//! chat 用例删掉了唯一的 session、序 206 的 issues 用例删掉了唯一的 issue、
+//! 序 335 的 workspace 用例删掉了唯一的 workspace —— 其后引用同一符号的 fixture
+//! 一起 404，23 条，登记在 docs/37 §209.4 的 C 桶。
+//!
+//! 修法是把共享的粒度从**回放**降到**测试**：分组键 = `Fixture.source.test`
+//! （`lib.rs` 的 `Source::test`；300 个上游测试名全仓没有一个重名）。每个分组独占
+//!
+//! * 一个 workspace：`$testWorkspaceID` 就是它（workspace 被 `DELETE` 摧毁同样是
+//!   分组内的破坏，见 C 桶里那 5 条 `workspaces/…`）；
+//! * 一枚 `mdt_` 令牌：daemon 身份被限定在某个 workspace 内，令牌因此也得按组分
+//!   （见 [`crate::daemon_token::register`]）；
+//! * 四行实体：agent / issue / chat session / task。
+//!
+//! 于是「同一个 id 贯穿全链」在**分组之内**仍然成立，而分组之间的 `DELETE` 只摧毁
+//! 自己那一份。`""` 是兜底分组：`Bindings` 拿它的 workspace 与令牌当默认值。
+//!
+//! 要种几个分组由 [`groups_for`] 从 fixture 面算出 —— **只有**真的引用了那五类符号
+//! 的测试才被种，不是给 300 个测试各建一套。
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Context, Result};
 use axum::body::{to_bytes, Body};
@@ -45,22 +61,44 @@ use serde_json::json;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-/// 种出来的那几行。字段名与 `Bindings` 里的符号名一一对应（`$testAgentID` ↔ `agent`）。
+use crate::Fixture;
+
+/// 兜底分组的键。它不是任何测试的名字，只用来承载 `Bindings` 的默认 workspace /
+/// 默认令牌 —— 不引用任何种子符号的 fixture 从不落到别的分支上。
+pub const DEFAULT_GROUP: &str = "";
+
+/// 会让一个分组需要**自己那套行**的符号：四类实体，加上 workspace。
 ///
-/// `Debug` 手写而非 derive：derive 会把这四个 `Option<Uuid>` 打成一行紧凑文本，
-/// 而「哪几类种到了、哪几类没种到」正是排查时要先看的东西。这里逐字段列出。
-/// 里面**没有凭据**（明文 `mdt_` 在 `Bindings` 里单独脱敏），所以可以逐字打。
-#[derive(Clone, Default)]
-pub struct Seed {
-    pub agent: Option<Uuid>,
-    pub issue: Option<Uuid>,
-    pub chat_session: Option<Uuid>,
-    pub task: Option<Uuid>,
+/// `$testWorkspaceID` 与那四类的解析面不同（它由 `Bindings` 直接持有，不是本文件种
+/// 出来的行），但**它同样是「被 `DELETE` 摧毁的共享行」** —— C 桶里 5 条
+/// `workspaces/…` 就是它，所以它也必须按组分。
+pub const GROUP_SYMBOLS: [&str; 5] = [
+    "$testAgentID",
+    "$testIssueID",
+    "$testChatSessionID",
+    "$testTaskID",
+    "$testWorkspaceID",
+];
+
+/// 一个[分组](groups_for)独占的那几行。
+///
+/// `Debug` 手写而非 derive：`daemon_token` 是明文凭据（只活在内存里），derive 会把它
+/// 逐字打进任何一条 `{:?}`；而「哪几类种到了」正是排查时要先看的东西，所以逐字段列。
+#[derive(Clone)]
+pub struct GroupSeed {
+    pub workspace_id: Uuid,
+    pub daemon_token: String,
+    pub agent: Uuid,
+    pub issue: Uuid,
+    pub chat_session: Uuid,
+    pub task: Uuid,
 }
 
-impl std::fmt::Debug for Seed {
+impl std::fmt::Debug for GroupSeed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Seed")
+        f.debug_struct("GroupSeed")
+            .field("workspace_id", &self.workspace_id)
+            .field("daemon_token", &"mdt_<redacted>")
             .field("agent", &self.agent)
             .field("issue", &self.issue)
             .field("chat_session", &self.chat_session)
@@ -69,56 +107,279 @@ impl std::fmt::Debug for Seed {
     }
 }
 
+/// 全部种子：**分组键 → 那一组的行**。键是 `Fixture.source.test`，`""` 是兜底分组。
+///
+/// 字段名与 `Bindings` 里的符号名一一对应（`$testAgentID` ↔ [`GroupSeed::agent`]）。
+#[derive(Clone, Default)]
+pub struct Seed {
+    groups: BTreeMap<String, GroupSeed>,
+}
+
+impl std::fmt::Debug for Seed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Seed")
+            .field("groups", &self.groups.len())
+            .finish()
+    }
+}
+
 impl Seed {
-    /// 抽取器（`scripts/extract_upstream_fixtures.py::SEEDED_COLLECTIONS`）会发出的
-    /// 四个域符号。**两边必须逐字一致** —— 少一个，那一类 fixture 就整批
-    /// `unbound symbol` → `unevaluable`；多一个，就是一条没人种、也无人认领的声明。
-    pub const SYMBOLS: [&'static str; 4] = [
+    /// 抽取器只发这四个「实体行」符号。`$testWorkspaceID` 在这里**不是**一行，而是
+    /// 「每个分组一个 workspace」（见 [`GROUP_SYMBOLS`]）。
+    pub const SYMBOLS: [&str; 4] = [
         "$testAgentID",
         "$testIssueID",
         "$testChatSessionID",
         "$testTaskID",
     ];
 
-    /// 一个符号对应的那一行。抽取器只发 [`Self::SYMBOLS`] 里那四个符号，所以
-    /// 未种出的一律是 `None`，由 [`crate::Bindings::resolve`] 报「unbound symbol」。
+    /// 一个符号在**该分组**里的那一行。
     ///
-    /// `$testWorkspaceID` 刻意落在 `_` 那一支：workspace 由 `harness` 自己用
-    /// `POST /api/workspaces` 建，不经本文件（它也不在 [`Self::SYMBOLS`] 里）。
+    /// 未种出的（含分组不存在）一律 `None`，由 [`crate::Bindings::resolve`] 变成
+    /// 「unbound symbol」错误：猜一个 UUID 会让请求落在一个不存在的行上，症状是
+    /// `404`，而 `404` 与「这条 fixture 本来就不该过」在报告里**长得一样**。
     #[must_use]
-    pub fn get(&self, symbol: &str) -> Option<Uuid> {
+    pub fn get(&self, group: &str, symbol: &str) -> Option<Uuid> {
+        let rows = self.groups.get(group)?;
         match symbol {
-            "$testAgentID" => self.agent,
-            "$testIssueID" => self.issue,
-            "$testChatSessionID" => self.chat_session,
-            "$testTaskID" => self.task,
+            "$testAgentID" => Some(rows.agent),
+            "$testIssueID" => Some(rows.issue),
+            "$testChatSessionID" => Some(rows.chat_session),
+            "$testTaskID" => Some(rows.task),
             _ => None,
         }
     }
+
+    /// 该分组的 workspace —— `$testWorkspaceID` 就是它。
+    #[must_use]
+    pub fn workspace(&self, group: &str) -> Option<Uuid> {
+        self.groups.get(group).map(|rows| rows.workspace_id)
+    }
+
+    /// 该分组的 `mdt_` 明文令牌。
+    #[must_use]
+    pub fn daemon_token(&self, group: &str) -> Option<&str> {
+        self.groups
+            .get(group)
+            .map(|rows| rows.daemon_token.as_str())
+    }
+
+    /// 种了几个分组（含兜底的那一个）。
+    #[must_use]
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// 手工装一个分组。
+    ///
+    /// 生产的唯一入口是 [`seed`]；这个只开在 `#[cfg(test)]` 下，好让 `bindings` 的
+    /// 单测能造出一份种子 —— 那些断言要验的是**解析规则**，不该为此起一个真库。
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_group(mut self, group: &str, rows: GroupSeed) -> Self {
+        self.groups.insert(group.to_string(), rows);
+        self
+    }
 }
 
-/// 种出全部四行。任一行种不出来就整体失败 —— 半套种子会让一部分 fixture 变成
-/// 「看起来判过了」的假象，那比明确报错糟得多。
+/// 分组键 = `Fixture.source.test`。
+///
+/// 用它而不是 `id`：`id` 是 `<domain>/<test>@<file>:<line>#<n>`，**同一条上游测试的
+/// 多次请求**（CRUD 链）会落在不同 `id` 上，按 `id` 分组等于没分组。`source.test`
+/// 才是「同一个上游测试」这件事的键。
+#[must_use]
+pub fn group_of(fx: &Fixture) -> &str {
+    &fx.source.test
+}
+
+/// 需要**自己一套行**的分组键，按字典序。
+///
+/// 判据是「这条 fixture 在 [`crate::plan`] 会解析到的位置里引用了 [`GROUP_SYMBOLS`]
+/// 之一」。刻意扫得比 `plan()` 宽（连 `body` 与 `path` 一起扫）：多算一个分组只会
+/// 多建一套行，少算一个分组则会让那批 fixture 静默变成 `unbound symbol` →
+/// `unevaluable`（§205.5 纪律：不可判定与判定为过在总数里长得一样）。
+#[must_use]
+pub fn groups_for(fixtures: &[Fixture]) -> Vec<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for fx in fixtures {
+        let used = referenced_symbols(fx);
+        if GROUP_SYMBOLS.iter().any(|sym| used.contains(*sym)) {
+            out.insert(fx.source.test.clone());
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// `plan()` 会送去 [`crate::Bindings::resolve`] 的全部取值位置。
+fn referenced_symbols(fx: &Fixture) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    collect_symbols(&fx.path, &mut out);
+    for raw in fx.path_params.values() {
+        collect_symbols(raw, &mut out);
+    }
+    for raw in fx.query.values() {
+        collect_symbols(raw, &mut out);
+    }
+    for raw in fx.headers.values() {
+        collect_symbols(raw, &mut out);
+    }
+    for raw in fx.actor.upstream_identity.values() {
+        collect_symbols(raw, &mut out);
+    }
+    collect_json_symbols(fx.body.as_ref(), &mut out);
+    out
+}
+
+/// 扫出一个字符串里所有 `$name` 形态的符号（`$` + `[A-Za-z0-9_]*`）。
+fn collect_symbols(raw: &str, out: &mut BTreeSet<String>) {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        out.insert(raw[start..i].to_string());
+    }
+}
+
+/// `body` 是任意 JSON：逐层走到字符串上再扫符号。
+fn collect_json_symbols(value: Option<&serde_json::Value>, out: &mut BTreeSet<String>) {
+    match value {
+        Some(serde_json::Value::String(s)) => collect_symbols(s, out),
+        Some(serde_json::Value::Array(items)) => {
+            for item in items {
+                collect_json_symbols(Some(item), out);
+            }
+        }
+        Some(serde_json::Value::Object(map)) => {
+            for item in map.values() {
+                collect_json_symbols(Some(item), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 给 `groups` 里每个分组各建一套行（workspace + `mdt_` 令牌 + 四行实体）。
+///
+/// 任一行种不出来就整体失败 —— 半套种子会让一部分 fixture 变成「看起来判过了」的
+/// 假象，那比明确报错糟得多。
 pub async fn seed(
     router: &Router,
     db: &mc_db::pool::Db,
     user_id: Uuid,
-    workspace_id: Uuid,
+    groups: &[String],
 ) -> Result<Seed> {
-    let runtime_id = seed_runtime(db, user_id, workspace_id).await?;
-    // 身份：与 `plan()` 同一条链路（session 头 + dev-mode 头，见 `post_json`）。
-    // 种子身份自己是这些行的 owner。
     let user = user_id.to_string();
-    let agent = seed_agent(router, &user, workspace_id, runtime_id).await?;
-    let issue = seed_issue(router, &user, workspace_id).await?;
-    let chat_session = seed_chat_session(router, &user, workspace_id, agent).await?;
-    let task = seed_task(router, &user, workspace_id, agent, chat_session).await?;
-    Ok(Seed {
-        agent: Some(agent),
-        issue: Some(issue),
-        chat_session: Some(chat_session),
-        task: Some(task),
+    // 本次回放的 nonce：workspace 的 name/slug 必须**跨并发回放**唯一 —— 同一个测试库里
+    // 可能同时跑着两条 `database_router`（`cargo test` 默认并行），slug 撞车会让后一条
+    // 的 `POST /api/workspaces` 直接失败。
+    let run = Uuid::new_v4().to_string().replace('-', "");
+    let run = run[..8].to_string();
+    let mut seed = Seed::default();
+    // 兜底分组先建：`Bindings` 的默认 workspace / 默认令牌取它的那一份。
+    let fallback = seed_group(router, db, &user, user_id, DEFAULT_GROUP, 0, &run).await?;
+    seed.groups.insert(DEFAULT_GROUP.to_string(), fallback);
+    for (i, group) in groups.iter().enumerate() {
+        if seed.groups.contains_key(group) {
+            continue;
+        }
+        let rows = seed_group(router, db, &user, user_id, group, i + 1, &run).await?;
+        seed.groups.insert(group.clone(), rows);
+    }
+    Ok(seed)
+}
+
+/// 一个分组的一整套行。顺序在这里是**语义**而不是风格：workspace 是四行的容器，
+/// 而 runtime ⇒ agent ⇒ chat session ⇒ task 每一环都依赖前一环。
+///
+/// `index` 只用来让同一次回放里的 workspace 名字/slug 互不相同 —— 分组键本身可能很长、
+/// 带大小写与斜杠，不是合法的 slug。
+async fn seed_group(
+    router: &Router,
+    db: &mc_db::pool::Db,
+    user: &str,
+    user_id: Uuid,
+    group: &str,
+    index: usize,
+    run: &str,
+) -> Result<GroupSeed> {
+    let workspace_id = seed_workspace(router, user, group, index, run).await?;
+    let runtime_id = seed_runtime(db, user_id, workspace_id).await?;
+    let agent = seed_agent(router, user, workspace_id, runtime_id).await?;
+    let issue = seed_issue(router, user, workspace_id).await?;
+    let chat_session = seed_chat_session(router, user, workspace_id, agent).await?;
+    let task = seed_task(router, user, workspace_id, agent, chat_session).await?;
+    // 🔴 令牌在 workspace 建好**之后**才签发：`daemon_token.workspace_id` 有指向
+    // `workspace(id)` 的外键，而这条外键正是「daemon 身份被限定在某个 workspace 内」
+    // 的地基（§209.2 的同一段纪律，现在按分组各签一枚）。
+    let daemon = crate::daemon_token::register(
+        &mc_repos::daemon::DaemonRepo::new(db),
+        mc_core::Id::from(workspace_id),
+    )
+    .await
+    .with_context(|| format!("register daemon token for seed group {group:?}"))?;
+    Ok(GroupSeed {
+        workspace_id,
+        daemon_token: daemon.raw,
+        agent,
+        issue,
+        chat_session,
+        task,
     })
+}
+
+/// 用真实路由建一个 workspace（`POST /api/workspaces` 会自动把创建者加成 owner，
+/// 所以种子身份一定是 owner 成员 —— 与 `harness::database_router` 同一条纪律）。
+async fn seed_workspace(
+    router: &Router,
+    user: &str,
+    group: &str,
+    index: usize,
+    run: &str,
+) -> Result<Uuid> {
+    let suffix = if group.is_empty() {
+        "default".to_string()
+    } else {
+        format!("g{index:04}")
+    };
+    // `run` 是跨并发回放唯一的 nonce（见 [`seed`]）；`suffix` 只区分**同一次**回放里的分组。
+    let payload = json!({
+        "name": format!("Conformance {run}-{suffix}"),
+        "slug": format!("conformance-{run}-{suffix}"),
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/workspaces")
+                .header("content-type", "application/json")
+                .header(SEED_SESSION_HEADER, user)
+                .header(SEED_DEV_USER_HEADER, user)
+                .body(Body::from(payload.to_string()))?,
+        )
+        .await
+        .context("dispatch POST /api/workspaces")?;
+    let status = resp.status();
+    let body = to_bytes(resp.into_body(), 1 << 20).await?;
+    if status != StatusCode::CREATED {
+        bail!(
+            "seeding a workspace for seed group {group:?} failed: {status} {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    let created: serde_json::Value = serde_json::from_slice(&body)?;
+    let id = created["id"]
+        .as_str()
+        .with_context(|| format!("workspace id missing from create response: {created}"))?;
+    Uuid::parse_str(id).context("workspace id is not a uuid")
 }
 
 /// 🔴 **本文件唯一的非路由种子**，且这是一个被记录在案的缺口，不是抄近路。
@@ -332,28 +593,82 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    /// 造一条最小 fixture：只填 `groups_for` 会看的那些字段，以及 `Fixture::verify`
+    /// 会看的那几个。用它来验分组键，不必依赖 `contracts/golden/**` 的具体内容。
+    fn fx(test: &str, path_params: &[(&str, &str)]) -> Fixture {
+        let mut value = json!({
+            "schema_version": crate::SCHEMA_VERSION,
+            "id": format!("dom/{test}@a.go:1#1"),
+            "method": "GET",
+            "path": "/api/things/{id}",
+            "actor": { "kind": "anonymous" },
+            "expect": { "status": 200 },
+            "source": { "file": "a.go", "line": 1, "test": test, "site": "handler" },
+        });
+        if !path_params.is_empty() {
+            let mut map = serde_json::Map::new();
+            for (k, v) in path_params {
+                map.insert((*k).to_string(), json!(v));
+            }
+            value["path_params"] = serde_json::Value::Object(map);
+        }
+        serde_json::from_value(value).expect("minimal fixture")
+    }
+
     #[test]
     fn every_emitted_symbol_maps_to_exactly_one_seed_field() {
         // 承重：抽取器 `SEEDED_COLLECTIONS` 发出的符号必须一个不漏地在这里落到字段上。
         // 漏一个的表现是那批 fixture 全部变成 `unbound symbol` → unevaluable，
         // 而 unevaluable 在总数里**不显眼**（§205.5 纪律：不可判定与判定为过长得一样）。
-        let mut seed = Seed {
-            agent: Some(Uuid::from_u128(1)),
-            issue: Some(Uuid::from_u128(2)),
-            chat_session: Some(Uuid::from_u128(3)),
-            task: Some(Uuid::from_u128(4)),
-        };
+        let group = "TestSeededRows";
+        let mut seed = Seed::default();
+        seed.groups.insert(
+            group.to_string(),
+            GroupSeed {
+                workspace_id: Uuid::from_u128(9),
+                daemon_token: "mdt_placeholder".into(),
+                agent: Uuid::from_u128(1),
+                issue: Uuid::from_u128(2),
+                chat_session: Uuid::from_u128(3),
+                task: Uuid::from_u128(4),
+            },
+        );
         for sym in Seed::SYMBOLS {
-            assert!(seed.get(sym).is_some(), "{sym} 没有落到任何字段");
+            assert!(seed.get(group, sym).is_some(), "{sym} 没有落到任何字段");
         }
-        // workspace 由 harness 直接建，不经本文件；未知符号必须返回 None 而不是猜。
-        assert_eq!(seed.get("$testWorkspaceID"), None);
-        assert_eq!(seed.get("$testProjectID"), None);
-        // 未种出的一律 None：报告里「不可判定」必须可区分于「种到了但请求失败」。
-        seed = Seed::default();
-        for sym in Seed::SYMBOLS {
-            assert_eq!(seed.get(sym), None, "{sym}");
-        }
+        // workspace 不是「一行实体」：它是**分组自己的那个容器**，所以走 `workspace()`。
+        assert_eq!(seed.get(group, "$testWorkspaceID"), None);
+        assert_eq!(seed.workspace(group), Some(Uuid::from_u128(9)));
+        assert_eq!(seed.get(group, "$testProjectID"), None);
+        // 未种出的分组一律 None：报告里「不可判定」必须可区分于「种到了但请求失败」。
+        assert_eq!(seed.get("TestNotSeeded", "$testIssueID"), None);
+        assert_eq!(seed.workspace("TestNotSeeded"), None);
+        assert_eq!(seed.group_count(), 1);
+    }
+
+    #[test]
+    fn groups_for_picks_exactly_the_tests_that_reference_a_group_symbol() {
+        // 承重：分组多算一个只是多建一套行，少算一个会让那批 fixture 静默变 unevaluable。
+        // 所以这条钉住**两个方向**：引用了的必须进，没引用的必须不进。
+        let fixtures = vec![
+            fx("TestUsesIssue", &[("id", "$testIssueID")]),
+            fx("TestUsesIssueAgain", &[("id", "$testIssueID")]),
+            fx("TestUsesWorkspace", &[("id", "$testWorkspaceID")]),
+            fx("TestUsesTaskEmbedded", &[("id", "api/$testTaskID/tail")]),
+            fx("TestUsesNothing", &[("id", "not-a-uuid")]),
+        ];
+        assert_eq!(
+            groups_for(&fixtures),
+            vec![
+                "TestUsesIssue".to_string(),
+                "TestUsesIssueAgain".to_string(),
+                "TestUsesTaskEmbedded".to_string(),
+                "TestUsesWorkspace".to_string(),
+            ]
+        );
+        // 分组键是 `source.test` 而不是 `id`：同一条上游测试的多次请求（CRUD 链）必须
+        // 落到**同一组**，否则 delete-then-get 会变成 get-200。
+        assert_eq!(group_of(&fixtures[0]), "TestUsesIssue");
     }
 
     #[test]
@@ -374,12 +689,21 @@ mod tests {
             .map(|(_, kind)| format!("$test{kind}ID"))
             .collect();
         let declared: BTreeSet<String> = Seed::SYMBOLS.iter().map(|s| (*s).to_string()).collect();
-        // `Workspace` 不经本文件（harness 自己建 workspace），所以这里允许它少一个。
+        // `Workspace` 不在 `SYMBOLS` 里，因为本文件不给它种「一行」—— 它每个分组一个，
+        // 由 [`GROUP_SYMBOLS`] 与 [`seed_workspace`] 供，所以这里允许它少一个。
         let extra: Vec<&String> = derived.difference(&declared).collect();
         assert_eq!(
             extra,
             vec!["$testWorkspaceID"],
             "抽取器会发这些符号，但 seeder 没有对应字段"
         );
+        // 反方向也要钉：`GROUP_SYMBOLS` 必须**恰好**是抽取器那一份加上 workspace。
+        let group_symbols: BTreeSet<String> =
+            GROUP_SYMBOLS.iter().map(|s| (*s).to_string()).collect();
+        assert!(
+            group_symbols.is_superset(&declared),
+            "$testWorkspaceID 之外还有缺口"
+        );
+        assert_eq!(group_symbols.len(), declared.len() + 1);
     }
 }

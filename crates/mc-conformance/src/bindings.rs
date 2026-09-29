@@ -17,6 +17,10 @@ use crate::{daemon_token, seed, STATELESS_USER_ID, STATELESS_WORKSPACE_ID};
 /// 除它们以外的符号已在抽取期被 skip 成 `value_unresolved`，所以这里的
 /// `resolve` 对未知符号直接报错而不是猜一个值。
 ///
+/// 🔴 解析必须带**分组键**（`Fixture.source.test`，见 [`crate::seed::group_of`]）：
+/// `$testWorkspaceID` 与四类实体行都按分组各有一份，所以 `resolve("$testIssueID")`
+/// 这种不带分组的问法在语义上是**缺参数**的（§213）。
+///
 /// 🔴 `daemon_token` 是**明文凭据**且只在内存里：`Debug` 手写脱敏，报告侧
 /// （`Report::from_rows`）只登记 `user_id` / `workspace_id`，连字段都不给它。
 /// 见 [`daemon_token`] 模块文档的「明文只活在内存里」。
@@ -97,10 +101,35 @@ impl Bindings {
         }
     }
 
-    /// 这次回放能不能施加 daemon 身份。
+    /// 这次回放能不能施加 daemon 身份（兜底分组那一枚）。
     #[must_use]
     pub fn daemon_token(&self) -> Option<&str> {
         self.daemon_token.as_deref()
+    }
+
+    /// **该分组**的 `$testWorkspaceID`：分组自己那个 workspace。
+    ///
+    /// 缺省回落到兜底 workspace 而不是报错：不引用 `$testWorkspaceID` 的分组根本不
+    /// 会走到这里；stateless 层（没有种子）更是只有一个 workspace —— 那正是它该拿的值。
+    #[must_use]
+    pub fn workspace_for(&self, group: &str) -> Uuid {
+        self.seed
+            .as_ref()
+            .and_then(|s| s.workspace(group))
+            .unwrap_or(self.workspace_id)
+    }
+
+    /// **该分组**的 `mdt_` 明文。
+    ///
+    /// 令牌按分组而不是全局一枚：`daemon_token.workspace_id` 有指向 workspace 的外键，
+    /// 而「daemon 身份被限定在某个 workspace 内」正是上游断言的那件事 —— 现在每个分组
+    /// 都有自己的 workspace，令牌也就必须跟着分组走。
+    #[must_use]
+    pub fn daemon_token_for(&self, group: &str) -> Option<&str> {
+        self.seed
+            .as_ref()
+            .and_then(|s| s.daemon_token(group))
+            .or(self.daemon_token.as_deref())
     }
 
     /// 符号 → 真值。**唯一**的汇合点：身份两类，实体行四类。
@@ -108,21 +137,26 @@ impl Bindings {
     /// 🔴 未知符号返回 `None`（由 `resolve` 变成 `unbound symbol` 错误）而不是
     /// 猜一个值：猜出来的 UUID 会让请求落在一个不存在的行上，症状是 `404`，
     /// 而 `404` 与「这条 fixture 本来就不该过」在报告里**长得一样**。
-    fn lookup(&self, sym: &str) -> Option<String> {
+    fn lookup(&self, group: &str, sym: &str) -> Option<String> {
         let id = match sym {
+            // 身份两类是**全回放共享**的：上游的 `$testUserID` 就是「跑这次测试的用户」，
+            // 把它也分组化会把「同一个用户拥有两个 workspace」这条语义编错。
             "$testUserID" => Some(self.user_id),
-            "$testWorkspaceID" => Some(self.workspace_id),
-            _ => self.seed.as_ref().and_then(|s| s.get(sym)),
+            "$testWorkspaceID" => Some(self.workspace_for(group)),
+            _ => self.seed.as_ref().and_then(|s| s.get(group, sym)),
         }?;
         Some(id.to_string())
     }
 
     /// 解析一个 fixture 里的取值：`$symbol` 走绑定表，其余当字面量。
-    pub fn resolve(&self, raw: &str) -> Result<String, String> {
+    ///
+    /// `group` 是这条 fixture 的分组键（[`crate::seed::group_of`]）—— 同一个符号在
+    /// 不同分组里指**不同的行**，所以它不是一个可以省的默认参数。
+    pub fn resolve(&self, group: &str, raw: &str) -> Result<String, String> {
         let trimmed = raw.trim();
         if trimmed.starts_with('$') {
             return self
-                .lookup(trimmed)
+                .lookup(group, trimmed)
                 .ok_or_else(|| format!("unbound symbol {trimmed}"));
         }
         Ok(trimmed.to_string())
@@ -133,58 +167,90 @@ impl Bindings {
 mod tests {
     use super::*;
 
+    const G: &str = "TestSeeded";
+
+    fn seeded() -> Bindings {
+        Bindings::with_seeded(
+            Uuid::from_u128(7),
+            Uuid::from_u128(8),
+            "mdt_default".into(),
+            seed::Seed::default().with_group(
+                G,
+                seed::GroupSeed {
+                    workspace_id: Uuid::from_u128(18),
+                    daemon_token: "mdt_secret".into(),
+                    agent: Uuid::from_u128(9),
+                    issue: Uuid::from_u128(10),
+                    chat_session: Uuid::from_u128(11),
+                    task: Uuid::from_u128(12),
+                },
+            ),
+        )
+    }
+
     #[test]
     fn resolve_leaves_literals_alone_and_refuses_unknown_symbols() {
         let b = Bindings::stateless();
-        assert_eq!(b.resolve("  hello ").unwrap(), "hello");
-        assert_eq!(b.resolve("$testUserID").unwrap(), b.user_id.to_string());
+        assert_eq!(b.resolve(G, "  hello ").unwrap(), "hello");
+        assert_eq!(b.resolve(G, "$testUserID").unwrap(), b.user_id.to_string());
         assert_eq!(
-            b.resolve("$testWorkspaceID").unwrap(),
+            b.resolve(G, "$testWorkspaceID").unwrap(),
             b.workspace_id.to_string()
         );
         // stateless 层没有实体行：四个域符号必须**报错**而不是给一个编出来的 UUID。
         for sym in seed::Seed::SYMBOLS {
-            let err = b.resolve(sym).expect_err("stateless 层不该供得起实体行");
+            let err = b.resolve(G, sym).expect_err("stateless 层不该供得起实体行");
             assert!(err.contains("unbound symbol"), "{sym}: {err}");
         }
         // 完全未知的符号同样报错 —— 这是「抽取器与回放器必须同步」的承重断言。
-        assert!(b.resolve("$testProjectID").is_err());
+        assert!(b.resolve(G, "$testProjectID").is_err());
     }
 
     #[test]
     fn seeded_bindings_resolve_every_entity_symbol() {
-        let b = Bindings::with_seeded(
-            Uuid::from_u128(7),
-            Uuid::from_u128(8),
-            "mdt_secret".into(),
-            seed::Seed {
-                agent: Some(Uuid::from_u128(9)),
-                issue: Some(Uuid::from_u128(10)),
-                chat_session: Some(Uuid::from_u128(11)),
-                task: Some(Uuid::from_u128(12)),
-            },
-        );
+        let b = seeded();
         assert_eq!(
-            b.resolve("$testAgentID").unwrap(),
+            b.resolve(G, "$testAgentID").unwrap(),
             Uuid::from_u128(9).to_string()
         );
         assert_eq!(
-            b.resolve("$testIssueID").unwrap(),
+            b.resolve(G, "$testIssueID").unwrap(),
             Uuid::from_u128(10).to_string()
         );
         assert_eq!(
-            b.resolve("$testChatSessionID").unwrap(),
+            b.resolve(G, "$testChatSessionID").unwrap(),
             Uuid::from_u128(11).to_string()
         );
         assert_eq!(
-            b.resolve("$testTaskID").unwrap(),
+            b.resolve(G, "$testTaskID").unwrap(),
             Uuid::from_u128(12).to_string()
         );
         // 身份类符号与实体行互不干扰。
         assert_eq!(
-            b.resolve("$testUserID").unwrap(),
+            b.resolve(G, "$testUserID").unwrap(),
             Uuid::from_u128(7).to_string()
         );
-        assert_eq!(b.daemon_token(), Some("mdt_secret"));
+        assert_eq!(b.daemon_token(), Some("mdt_default"));
+    }
+
+    /// §213 的承重断言：**同一个符号在不同分组里指不同的行**，而没被种的分组走兜底。
+    ///
+    /// 少了这一条，「按分组种」会悄悄退化回「按回放种」而没有人发现。
+    #[test]
+    fn the_same_symbol_resolves_per_group_and_falls_back_otherwise() {
+        let b = seeded();
+        assert_eq!(
+            b.resolve(G, "$testWorkspaceID").unwrap(),
+            Uuid::from_u128(18).to_string()
+        );
+        assert_eq!(b.daemon_token_for(G), Some("mdt_secret"));
+
+        let other = "TestNotSeeded";
+        assert!(b.resolve(other, "$testIssueID").is_err());
+        assert_eq!(
+            b.resolve(other, "$testWorkspaceID").unwrap(),
+            Uuid::from_u128(8).to_string()
+        );
+        assert_eq!(b.daemon_token_for(other), Some("mdt_default"));
     }
 }

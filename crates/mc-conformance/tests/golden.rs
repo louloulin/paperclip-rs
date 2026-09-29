@@ -407,42 +407,86 @@ fn every_seeded_symbol_is_provided_by_the_seeder() {
     }
 }
 
-/// 🔴 本片的算式（§209.3）。
+/// 🔴 本片（§213）之后的算式 —— 三桶的定义没变，**数字是隔离修好后的实测**。
 ///
-/// 门 ⑨ 实测：100 条 `→404` 里 **60 条**变成真判定、**40 条**仍 404、0 条滑到 400。
-/// 这条测试按**自己的口径**（只数带种子符号的 95 条 fixture）把同一件事拆成三桶：
+/// 这条测试按自己的口径（只数带种子符号的 95 条 fixture）把同一件事拆成三桶：
 ///
-/// | 桶 | 条数 | 含义 |
-/// |----|------|------|
-/// | `RESOLVED` | 56 | 判成 `pass`，且观测状态码**等于**各自期望值 |
-/// | `STILL_404` | 24 | 仍观测到 404 —— 归因见 docs/37 §209.4 |
-/// | `OTHER`    | 15 | 既不是 pass 也不是 404：**本仓更严**的方向（`200→400` 等），本片刻意不碰 |
+/// | 桶 | §209 | §213 | 含义 |
+/// |----|------|------|------|
+/// | `RESOLVED` | 56 | 68 | 判成 `pass`，且观测状态码**等于**各自期望值 |
+/// | `STILL_404` | 24 | 6 | 仍观测到 404 —— 归因见 docs/37 §209.4 |
+/// | `OTHER`    | 15 | 21 | 既不是 pass 也不是 404：**本仓更严**的方向（`200→400` 等） |
 ///
-/// 三个常数加起来恒等于带种子符号的 fixture 总数，所以任何一个桶被「平移」走
-/// （404 变 400、404 变 401、pass 变 mismatch）都会让某条断言失败。
+/// 三个常数加起来**恒等于 95**（带种子符号的 fixture 总数）：这是这条测试的地基，
+/// 任何一个桶被「平移」走都会让某条断言失败。
 ///
 /// 🔴 单独说 `OTHER`：那一桶是**本仓比上游更严**造成的差异（§203 纪律：方向相反，
-/// 不是同一个问题）。本片把它和 `STILL_404` 一起钉住，是为了防止有人把 404 挪进
-/// 这一桶 —— 那会让 `STILL_404` 变小而看起来像进展。
+/// 不是同一个问题）。它和 `STILL_404` 一起钉住，是为了防止有人把 404 挪进这一桶 ——
+/// 那会让 `STILL_404` 变小而看起来像进展。
+///
+/// 🔴 §213 把 24 → 6 的那 18 条**逐条点名**（见函数体里的 `LEFT_404_FOR`）：数字变小
+/// 可以是修好，也可以是转移，只有点名才能把两者分开。其中 **15 条**进了 `RESOLVED`，
+/// **3 条**进了 `OTHER`（它们现在真的返回 409 / 201 / 200，是**新的真判定**而不是
+/// 「404 换了个 400」）。另外有 **3 条**从 `RESOLVED` 掉进 `OTHER`：它们的旧 404/409
+/// 是**跨测试摧毁**给的假通过，隔离修好之后不再成立（见 `LOST_RESOLVED`）。
 #[tokio::test]
 #[ignore = "需要 MULTICA_TEST_DATABASE_URL（真库 + 迁移 + 种子 + 实体行）"]
+#[allow(clippy::too_many_lines)] // §213 的三桶算式 + 点名式护栏：拆函数只是把状态搬来搬去。
 async fn seeded_symbols_convert_404_into_real_judgements() {
-    const RESOLVED: usize = 56;
-    const STILL_404: usize = 24;
-    const OTHER: usize = 15;
+    // §213 实测（docs/37 §213 的算式表）：68 + 6 + 21 ≡ 95。
+    const RESOLVED: usize = 68;
+    const STILL_404: usize = 6;
+    const OTHER: usize = 21;
+
+    /// `STILL_404` 里**剩下**的那 6 条 —— 逐条点名，不是只数个数。
+    ///
+    /// 它们的 404 与种子无关（A/B 桶：非法 id 形态、缺第二个身份），所以隔离修好之后
+    /// 照旧 404。**任何一条被换成别的状态码**都会让下面这条断言红：这正是「不许把
+    /// 404 平移成 400/401 再把 `STILL_404` 说小」的执行方式。
+    const STILL_404_IDS: [&str; 6] = [
+        "agents/TestGetAgent_PrivateAgentForbidsPlainMember@server/internal/handler/agent_access_test.go:235#7",
+        "agents/TestListAgentTasks_PrivateAgentForbidsPlainMember@server/internal/handler/agent_access_test.go:414#12",
+        "chat_sessions/TestSendChatMessage_ArchivedAgent@server/internal/handler/chat_test.go:249#1",
+        "chat_sessions/TestSendChatMessage_InvalidAttachmentIDs@server/internal/handler/chat_test.go:537#2",
+        "issues/TestCancelTask_SameIssue_Succeeds@server/internal/handler/daemon_test.go:1452#13",
+        "issues/TestComment_SquadPrivateLeader_PlainMemberNoEnqueue@server/internal/handler/squad_private_leader_test.go:185#101",
+    ];
+
+    /// §213 从 `STILL_404` 里**离开**、但没有落进 `RESOLVED` 的 3 条。
+    ///
+    /// 它们的 404 原来只是「共享行被别的测试删了」；隔离修好之后请求真的走到了
+    /// 判定面，于是暴露出一条**独立**的缺口（队列头状态 / 运行时可拒 / 版本冲突）。
+    /// 点名它们是本片的诚实条款：这 3 条**不是**修好了，是**露出来了**。
+    const LEFT_404_FOR: [&str; 3] = [
+        "chat/TestPrioritizeQueuedChatTask_BroadcastsQueueInvalidation@server/internal/handler/chat_pending_tasks_test.go:586#19",
+        "chat/TestSendChatMessage_RuntimeAccessDeniedReturnsStructuredConflict@server/internal/handler/runtime_access_denied_test.go:73#27",
+        "issues/TestTextBaselinesIgnoreUnrelatedAggregateRevisionChanges@server/internal/handler/issue_revision_test.go:277#66",
+    ];
+
+    /// §213 让本来「通过」的 3 条**掉出** `RESOLVED` 的清单。
+    ///
+    /// 它们原来拿到的 404 / 409 是别的测试顺手造成的 —— 也就是本片在修的那个病。
+    /// 隔离修好之后它们不再通过，而这不是回归，是**假通过被拆穿**。写在这里是为了
+    /// 让下一个人一眼看出「-3」去了哪，而不是去别处找一个不存在的回归。
+    const LOST_RESOLVED: [&str; 3] = [
+        "chat/TestChatSend_UnboundAgentReturnsStructuredConflict@server/internal/handler/agent_runtime_required_test.go:78#1",
+        "daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3815#11",
+        "daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3840#13",
+    ];
 
     let Some(url) = harness::database_url_from_env() else {
         eprintln!("seeded_symbols_convert_404_into_real_judgements: 未设置 URL，跳过");
         return;
     };
     let fixtures = load_dir(&golden_dir()).expect("golden fixtures must load");
-    let (router, bindings) = harness::database_router(&url)
+    let (router, bindings) = harness::database_router(&url, &fixtures)
         .await
         .expect("database tier bootstrap");
     let routers = mc_conformance::TierRouters::single(router);
     let observed = run_tier(&routers, &fixtures, &bindings, Tier::Database).await;
 
     let mut resolved = 0usize;
+    let mut resolved_ids: Vec<&str> = Vec::new();
     let mut still_404: Vec<&str> = Vec::new();
     let mut other: Vec<&str> = Vec::new();
     for (fx, got) in fixtures.iter().zip(&observed) {
@@ -463,6 +507,7 @@ async fn seeded_symbols_convert_404_into_real_judgements() {
                 fx.id
             );
             resolved += 1;
+            resolved_ids.push(&fx.id);
         } else if got.status_observed == Some(404) {
             still_404.push(&fx.id);
         } else {
@@ -484,10 +529,41 @@ async fn seeded_symbols_convert_404_into_real_judgements() {
         "「本仓更严」那一桶的条数变了：docs/37 §209 归因表要跟着改"
     );
     eprintln!(
-        "§209 算式：带种子符号的 {} 条 fixture = {resolved} 真判定 / {} 仍 404 / {OTHER} 本仓更严",
+        "§213 算式：带种子符号的 {} 条 fixture = {resolved} 真判定 / {} 仍 404 / {OTHER} 本仓更严",
         resolved + still_404.len() + other.len(),
         still_404.len(),
     );
+
+    // 🔴 点名式的护栏（§213）：`STILL_404` 必须是这 6 条，一条不多一条不少 ——
+    // 只钉个数的话，「把一条 404 换成 400 再补一条进来」可以骗过上面的数字断言。
+    let mut left_404 = still_404.clone();
+    for id in STILL_404_IDS {
+        assert!(
+            left_404.contains(&id),
+            "{id}: 从 STILL_404 里消失了 —— 它的 404 与种子无关，不该被隔离修好"
+        );
+        left_404.retain(|got| *got != id);
+    }
+    assert!(
+        left_404.is_empty(),
+        "STILL_404 里出现了清单外的新条目（{left_404:?}）：要么是新的 404 缺口，要么是 404 平移"
+    );
+    // 离开 STILL_404 的另外那 3 条必须落在 `other` 里，而且**不是** 400/401：
+    // 它们是真的走到了判定面（409 / 201 / 200），与「平移」是两件事。
+    for id in LEFT_404_FOR {
+        assert!(
+            other.contains(&id),
+            "{id}: 既不在 STILL_404 也不在 other —— 算式漏了一条"
+        );
+    }
+    // 掉出 `RESOLVED` 的 3 条同样点名，避免「-3」被当成回归去找。
+    for id in LOST_RESOLVED {
+        assert!(
+            other.contains(&id),
+            "{id}: 假通过被拆穿之后应当落在 other 里"
+        );
+        assert!(!resolved_ids.contains(&id), "{id}: 仍在 RESOLVED");
+    }
 }
 
 #[tokio::test]
@@ -501,7 +577,7 @@ async fn database_tier_replays_every_decidable_fixture() {
     };
     let dir = golden_dir();
     let fixtures = load_dir(&dir).expect("golden fixtures must load");
-    let (router, bindings) = harness::database_router(&url)
+    let (router, bindings) = harness::database_router(&url, &fixtures)
         .await
         .expect("database tier bootstrap");
     let routers = mc_conformance::TierRouters::single(router);

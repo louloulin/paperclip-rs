@@ -7,13 +7,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::body::{to_bytes, Body};
-use axum::http::{Request, StatusCode};
 use axum::Router;
-use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::{Bindings, TierRouters};
+use crate::{Bindings, Fixture, TierRouters};
 
 /// 不可达端口上的懒连接池：不拨号、不建库，专门用来判定匿名断言（401 一类）。
 const STATELESS_URL: &str = "postgres://conformance:conformance@127.0.0.1:1/conformance";
@@ -91,10 +88,9 @@ pub fn stateless_routers() -> Result<TierRouters> {
     Ok(TierRouters::with_cloud_configured(base, cloud))
 }
 
-/// database 层：真库 + 迁移 + 一个种子身份 + 一枚现场签发的 `mdt_` 身份
-/// **+ 几行用真实路由种下的实体**。
+/// database 层：真库 + 迁移 + 一个种子身份 + **每个分组一套**种子行。
 ///
-/// 返回 `(router, bindings)`；`bindings.workspace_id` 是**用 router 自己**新建的
+/// 返回 `(router, bindings)`；`bindings.workspace_id` 是用 router 自己新建的兜底
 /// workspace（仓库层没有 workspace create API），所以种子身份一定是 owner 成员。
 ///
 /// 🔴 daemon 令牌在 workspace 建好**之后**才签发（[`crate::daemon_token::register`]）：
@@ -102,10 +98,15 @@ pub fn stateless_routers() -> Result<TierRouters> {
 /// 某个 workspace 内」正是上游 `TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace`
 /// 断言的那件事 —— 挂在一个现编的 UUID 上，那个断言就恒为真（而恒为真的断言不是断言）。
 ///
-/// 🔴 实体种子（[`crate::seed`]）也在这之后：它依赖 agent ⇒ runtime ⇒ workspace 这条
+/// 🔴 实体种子（[`crate::seed`]）也在这之后：它依赖 workspace ⇒ runtime ⇒ agent 这条
 /// 链，每一环都得先存在。顺序在这里是**语义**而不是风格 —— 种子建在 workspace 之前
 /// 会整批失败，而失败信息（`404`）与「种子没建」在报告里长得一模一样。
-pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
+///
+/// 🔴 workspace / 令牌 / 四行实体都是**按分组**（`Fixture.source.test`，§213）种的：
+/// 跨测试共享会让一条 `DELETE` 摧毁其后所有引用同一符号的 fixture（docs/37 §209.4 的
+/// C 桶）。要种哪些测试由 [`crate::seed::groups_for`] 从 `fixtures` 面算出 —— 所以这个
+/// 函数必须拿到 fixture 列表，而不是「自己知道自己该种什么」。
+pub async fn database_router(url: &str, fixtures: &[Fixture]) -> Result<(Router, Bindings)> {
     let db = mc_db::pool::Db::connect(url, 4, 0)
         .await
         .context("connect database")?;
@@ -126,55 +127,24 @@ pub async fn database_router(url: &str) -> Result<(Router, Bindings)> {
         .context("seed user")?;
 
     let router = assemble(db.clone());
-
-    // 用真实路由建 workspace（POST /api/workspaces 会自动把创建者加成 owner）。
-    let session = user.id.to_string();
-    let payload = serde_json::json!({
-        "name": format!("Conformance {suffix}"),
-        "slug": format!("conformance-{suffix}"),
-    });
-    let resp = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/workspaces")
-                .header("content-type", "application/json")
-                .header("x-multica-session", &session)
-                .body(Body::from(payload.to_string()))?,
-        )
-        .await
-        .context("dispatch POST /api/workspaces")?;
-    let status = resp.status();
-    let body = to_bytes(resp.into_body(), 1 << 20).await?;
-    if status != StatusCode::CREATED {
-        anyhow::bail!(
-            "seeding a workspace failed: {status} {}",
-            String::from_utf8_lossy(&body)
-        );
-    }
-    let created: serde_json::Value = serde_json::from_slice(&body)?;
-    let workspace_id = created["id"]
-        .as_str()
-        .context("workspace id missing from create response")?;
-    let workspace_id = Uuid::parse_str(workspace_id).context("workspace id is not a uuid")?;
     let user_id = Uuid::parse_str(&user.id.to_string()).context("user id is not a uuid")?;
 
-    // daemon 身份：现造一枚 `mdt_` 并登记进 `daemon_token`。明文只活在
-    // `bindings` 里（`Debug` 脱敏、不进报告），库里只落它的 `hex(sha256(·))`。
-    let daemon_repo = mc_repos::daemon::DaemonRepo::new(&db);
-    let daemon = crate::daemon_token::register(&daemon_repo, mc_core::Id::from(workspace_id))
+    // 每个分组各一套：workspace + 一枚 `mdt_` + 四行实体，**用 router 自己的路由**建。
+    let seed = crate::seed::seed(&router, &db, user_id, &crate::seed::groups_for(fixtures))
         .await
-        .context("mint + register daemon token")?;
-
-    // 实体种子：agent / issue / chat session / task，**用 router 自己的路由**建。
-    let seed = crate::seed::seed(&router, &db, user_id, workspace_id)
-        .await
-        .context("seed the entity rows the fixtures address by id")?;
+        .context("seed the per-group entity rows the fixtures address by id")?;
+    // `Bindings` 的默认值取兜底分组那一份：不引用种子符号的 fixture 只会用到它。
+    let workspace_id = seed
+        .workspace(crate::seed::DEFAULT_GROUP)
+        .context("the seeder did not build its fallback workspace")?;
+    let daemon = seed
+        .daemon_token(crate::seed::DEFAULT_GROUP)
+        .context("the seeder did not register its fallback daemon token")?
+        .to_string();
 
     Ok((
         router,
-        Bindings::with_seeded(user_id, workspace_id, daemon.raw, seed),
+        Bindings::with_seeded(user_id, workspace_id, daemon, seed),
     ))
 }
 

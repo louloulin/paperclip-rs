@@ -103,7 +103,7 @@ async fn run(args: Args) -> Result<ExitCode> {
         args.db_url.clone()
     };
     if let Some(url) = db_url {
-        match harness::database_router(&url).await {
+        match harness::database_router(&url, &fixtures).await {
             Ok((router, db_bindings)) => {
                 let routers = TierRouters::single(router);
                 let observed = run_tier(&routers, &fixtures, &db_bindings, Tier::Database).await;
