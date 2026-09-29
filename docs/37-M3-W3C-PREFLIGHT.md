@@ -19975,3 +19975,84 @@ fixtures 365 | pass 34 | mismatch 0 | unmounted 0 | placeholder 0 | unevaluable 
 - **号段**：下一空号 **`## §224`**。
 - **收割 `#153` + `#155` 的判据链 = §223.3 那张表（7 条已预登记，勿重跑）＋ 第 8 条**：在**合并树**上 `bash scripts/gates.sh --with-db` 跑 10/10，逐项比 §222.6 的分项耗时；两片可**同树合跑一次**（已验证零冲突、差集严格可加），省一轮冷编。`merge_method` 用 `merge`（两片都不是 ff）。
 - **起手固定动作**：§223.2 那三项磁盘读数 + `pg_lsclusters` + `rev-parse` 对 `ls-remote` + GH open PR（翻页取全）+ ⑦ 第 29 轮 + 逐片 `issue runs --active`。
+
+---
+
+## §224 【2026-09-29 12:30 cycle / LUM-2524】门 ⑩ 第 4 批（`mc-repos` `issue.rs` 1949 → 13 文件）⇒ **PR #156** ＋ 🔴 承重：**`agent list` 的 `idle` 说的不是「机器空着」** ＋ 🔴 承重：**本机一次 `--with-db` 装不下，`SIGBUS` 就是磁盘耗尽**
+
+> 号段说明：本节原拟 §223，推送时发现 `§223` 已被并发 cycle 占用（`12d4aa95`）⇒ 顺延为 **§224**。**这是「号段 collided」第 3 次复现**（前两次见 MEMORY：`LUM-2501`、以及本轮前一条），再次印证那条纪律：**立项/写节后回读 `docs/37` 尾部确认真实下一空号**。
+
+起手 base **`79641edb`**（与 `git ls-remote` 逐字相同）；`df` **`28G` / 41%**、PG 5432 `online`。
+⚠️ checkout 带 `--ref` **第 43 次落到了 `agent/devbox5/b5ee171eadf2` 而不是 feat 线** ⇒ 又一次要 `git reset --hard origin/feat/...`。**§217「`checkout --ref` 直接落目标线」那条本轮复现为假，别当默认动作。**
+
+### §224.1 收割：`LUM-2513`（PR #153）与 `LUM-2519`（PR #155）双双交割，但本轮**零收割**
+
+起手 `issue runs --active`：两条都**活着**（`01a0eb61` 04:16:42Z 起 / `01a0eb42` 03:43:52Z 起）⇒ §222.7 那条 `queued` 残骸确实已不在列表里，上一轮的 `cancel-task` 生效了。收尾时两条 `--active` 均为空，GH 上 **#153 head 已更新为 `d410fac1`**（返工重推）、**#155 新建**（head `05aa09ff`）⇒ **两条片都交了 PR**。
+
+本轮**没有收**：磁盘预算被自己的门禁吃光（§224.3），没有余量做「合并树当场重跑 `--with-db`」这条判据链。⇒ 下轮按 §223.3 已预登记的 7 条 ＋ 第 8 条（合并树 10/10）收 `#153` + `#155`，**那套判据链直接照用，勿重跑**；`#156` 追加 §224.4 的逐字节比对脚本。
+
+### §224.2 🔴 承重：`agent list` 的 `status: idle` 说的不是「这台机器空着」，只是「这个 agent 此刻没有 run」
+
+本轮把 §221.5（派到 offline runtime 会静默死亡）升级成一条**前置筛**。实测 8 个 idle 的编程 agent：
+
+| agent | 绑定 runtime | runtime 状态 |
+|---|---|---|
+| `编程助手lin` `700c7941` | `69637c57` | online（在飞 #155） |
+| `资深编程运维助手devbox4` `3df1a3e8` | `4a7f29e1` | online（在飞 #153） |
+| `编程助手devbox5` `3c6087f9`（我） | `bd3d2b9d` | online（只有本 cycle） |
+| `编程助手-devbox1` / `-winpi` / `-window` | `041bf509` | **offline** |
+| `编程助手devbox` `763a92a6` | `478b7f4b` | **offline** |
+| `编程助手-chong` | `970fe6d2` | **offline** |
+| `编程助手-go` | `d08c0c87` | **offline** |
+| `编程助手-devbox2` | `e3b45a25` | **offline** |
+
+**8 个 idle 里有 7 个绑在 offline runtime 上** ⇒ 「板面看着空」与「有运力」在本轮**完全脱钩**。照 `agent list` 的 `idle` 派发，有 7/8 的概率投进黑洞，而且**投递成功、issue 变 `in_progress`、但永远不会有 run**（正是 §222.3「工单已下 ≠ run 已起」的上游成因）。
+
+⇒ **定式：派发前三连** —— ① `agent get <id>` 取 `runtime_id` ② `runtime list` 确认那个 runtime `online` ③ `agent tasks` 确认该 agent 名下没有别的在飞。三步都过才派；任一步不过就**自己上**。本轮第 3 片就是 devbox5 自己做的。
+
+### §224.3 🔴 承重：本机一次 `--with-db` 装不下，`ld` 的 `SIGBUS` 就是磁盘耗尽
+
+第一次 `--with-db` 的结果极具误导性：`① fmt FAIL` / `⑥ db FAIL(e2e=101)` / `⑨ conformance FAIL`，而失败原因是
+
+```
+collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped
+error: couldn't create a temp dir: No space left on device (os error 28)
+```
+
+**链接阶段的 `SIGBUS` / `Bus error` 是磁盘耗尽的典型表现，不是内存问题、也不是并发问题。** `df` 复核：`avail 0 / 100%`，`target/` **28G**（`incremental` **11G** ＋ `deps` 17G）。
+
+处置与代价：`rm -rf target/debug/incremental` 腾出 11G ⇒ 第二轮 **9/10 绿**（⑥ db **真库全过**，含本片搬走的 `issue/db_tests.rs` 那 5 个 PG 集成测试）；但 `incremental` 跑 `--with-db` 时又长回 **8.8G** ⇒ ⑨ 再次 `SIGBUS`。最后 `rm -rf target/debug/incremental` ＋ `CARGO_INCREMENTAL=0` 单独跑 `--only conformance` ⇒ **⑨ 绿**（72s）。
+
+⇒ **定式（本机）**：
+1. 跑 `--with-db` **前**先 `rm -rf target/debug/incremental`，或直接 `export CARGO_INCREMENTAL=0`。
+2. **本机不要指望一次 `--with-db` 出 10/10。** 正确姿势是**先跑全量拿到「哪几道红」，再 `--only <red>` 逐道补**。本轮 10 道最终 exit 全 0，但**没有任何单次调用同时给出 10/10** —— 报数时必须写清这一点，否则下轮会误以为「一次跑全量是可行姿势」。
+3. **`SIGBUS` / `Bus error` / `No space left` 一律先查盘**，与 §198.3 的 `pool timed out` 同一档：**先查盘 → 再查并发 → 最后才查代码**。本轮若把它当代码缺陷去查，会白烧半小时。
+
+### §224.4 门 ⑩ 第 4 批：拆 `mc-repos` `issue.rs`（PR #156）
+
+`crates/mc-repos/src/issue.rs` = **1949 行**，是 `file_size_baseline.tsv` **10 条白名单里最大的一条**。拆成 `issue/` 下 11 个文件（最大 **549**），白名单 **10 → 9**。按**职责**切：行结构 / 输入结构 / 纯函数各归一，`impl IssueRepo` 的方法按 CRUD・查询・批量・JSONB・reactions 分五块。
+
+**判据的加强（本片新增，建议固化为门 ⑩ 拆分片的必做项）**：门 ⑩ 拆分片**光靠「门全绿」不能自证是纯搬家** —— 编译器当然会抓漏，但抓不到「我顺手改了别的东西」。本片因此加了一道**逐字节比对**：把每个新文件与原文件的对应行区间做严格 diff，**11/11 逐字节相同**，唯一差异是拆分必需的
+
+```diff
+-    fn as_sql(self) -> &'static str {
++    pub(super) fn as_sql(self) -> &'static str {
+```
+
+（`IssueOrderBy::as_sql`/`as_str`、`IssueGroupField::as_str`/`group_expr` 四处：原先同文件私有，拆开后需被兄弟模块 `query.rs` 调；`pub(super)` 严格窄于 `pub`，对 `crate::issue` 之外不可见。）**脚本化证据比「我保证没改别的」强一个量级。**
+
+门禁全 10 道 exit 0；⑦ 八数字与 ⑨ 六数字**逐字不变**（`456/546/455r+1ph/gap 0/unclaimed 0/regr 0/local_only 8`；`pass 34 / mismatch 0 / unmounted 0 / ph 0 / unevaluable 331`，`report.json` blob `4f4fb9ff…` 零位移）⇒ **零路由、零行为变更**成立。
+
+### §224.5 收尾与下一轮起点
+
+- **base = `12d4aa95`**（并发 cycle 的 §223）＋ 本节 docs 提交（直推 `feat/multica-rs-initial`）。**GH open PR = 3**（`#153` / `#155` / `#156`）。
+- **号段**：下一空号 **`## §225`**。
+- **在飞 0/3**（`LUM-2513` `in_review`、`LUM-2519` `in_review`、本 cycle `in_review`）⇒ 下轮有满 3 个槽位，但按 §224.2 先筛 runtime。
+- **下轮固定动作**（在 §223.6 基础上追加）：
+  1. `df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ 逐片 `issue runs --active` → ⑦ 第 29 轮。
+  2. 🔴 **派发前三连**（§224.2）。
+  3. 🔴 **跑 `--with-db` 前先清 `target/debug/incremental` 并 `CARGO_INCREMENTAL=0`**；**`SIGBUS` 先查盘**（§224.3）。
+  4. 收割 **#153 / #155 / #156**：判据链 = §223.3 那 7 条（勿重跑）＋ 第 8 条合并树 10/10 ＋ **§224.4 的逐字节比对脚本**。三条写集互不重叠（#153 四个非白名单文件 / #155 四个 ≤600 文件 / #156 = `mc-repos/src/issue/**` ＋ 删一条白名单条目），但**都要过 ⑩**。**跨过 #156 的合入后必须复跑 ⑨** —— §222.4 钉的读数是「截至 `5f289e2c`」，而 #156 动的是 `mc-repos`。
+  5. ⚠️ **`checkout --ref` 落点本轮复现为假**（§224 开篇），仍需 `git reset --hard origin/feat/...`。
+- **磁盘**：`target/` 峰值 **28G**（把 49G 的盘吃穿到 `avail 0`），收尾已 `rm -rf target` 回 **28G / 41%**；库 `multica_c2524` + 角色 `mc_c2524` 已 DROP，计数回 0。
+- **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
