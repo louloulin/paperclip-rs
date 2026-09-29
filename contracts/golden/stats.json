@@ -11,15 +11,15 @@
   },
   "extraction_rate": {
     "candidate_sites": 1897,
-    "extracted_sites": 361,
-    "rate": 0.1903
+    "extracted_sites": 360,
+    "rate": 0.1898
   },
   "fixtures": {
     "by_actor_kind": {
       "agent": 12,
       "anonymous": 39,
       "daemon": 20,
-      "member": 286,
+      "member": 285,
       "token": 8
     },
     "by_domain": {
@@ -32,7 +32,7 @@
       "cloud_billing": 1,
       "cloud_runtime": 4,
       "cloud_subscriptions": 6,
-      "comments": 3,
+      "comments": 2,
       "config": 17,
       "context": 1,
       "daemon": 24,
@@ -68,17 +68,17 @@
       "400": 58,
       "401": 10,
       "403": 16,
-      "404": 14,
+      "404": 13,
       "409": 7,
       "429": 1,
       "500": 4
     },
     "by_via": {
-      "handler": 331,
+      "handler": 330,
       "router": 34
     },
     "offline_decidable": 39,
-    "total": 365,
+    "total": 364,
     "with_json_subset": 0
   },
   "schema_version": 1,
@@ -100,13 +100,13 @@
       "ambiguous_status": 27,
       "body_unresolved": 557,
       "no_status_assertion": 306,
-      "path_not_literal": 38,
-      "path_not_registered": 35,
+      "path_not_literal": 40,
+      "path_not_registered": 34,
       "recorder_var_unresolved": 31,
       "request_var_unresolved": 248,
       "status_not_equality": 1,
       "value_unresolved": 293
     },
-    "total": 1536
+    "total": 1537
   }
 }

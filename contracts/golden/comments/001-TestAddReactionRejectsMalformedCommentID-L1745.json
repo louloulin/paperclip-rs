@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "comments/TestAddReactionRejectsMalformedCommentID@server/internal/handler/handler_test.go:1745#2",
+  "id": "comments/TestAddReactionRejectsMalformedCommentID@server/internal/handler/handler_test.go:1745#1",
   "method": "POST",
   "path": "/api/comments/not-a-uuid/reactions",
   "path_params": {},

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "comments/TestRemoveReactionOnTombstoneIsNotFound@server/internal/handler/comment_delete_test.go:472#1",
-  "method": "DELETE",
-  "path": "/api/comments/a runtime that this profile does not provide/reactions",
+  "id": "comments/TestUpdateCommentRejectsMalformedCommentID@server/internal/handler/handler_test.go:1753#2",
+  "method": "PUT",
+  "path": "/api/comments/not-a-uuid",
   "path_params": {},
   "query": {},
   "headers": {
@@ -16,17 +16,17 @@
     }
   },
   "body": {
-    "emoji": "👍"
+    "content": "updated"
   },
   "expect": {
-    "status": 404,
+    "status": 400,
     "json_subset": {},
     "headers": {}
   },
   "source": {
-    "file": "server/internal/handler/comment_delete_test.go",
-    "line": 472,
-    "test": "TestRemoveReactionOnTombstoneIsNotFound",
+    "file": "server/internal/handler/handler_test.go",
+    "line": 1753,
+    "test": "TestUpdateCommentRejectsMalformedCommentID",
     "site": "testutil.Call",
     "via": "handler",
     "commit": "90e0bdf830436b3981b32a7017e1c18d41c7cdea"

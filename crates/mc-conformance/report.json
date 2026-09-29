@@ -6,15 +6,15 @@
     "workspace_id": "00000000-0000-0000-0000-000000000002"
   },
   "totals": {
-    "fixtures": 365,
+    "fixtures": 364,
     "pass": 34,
     "mismatch": 0,
     "unmounted": 0,
     "placeholder": 0,
-    "unevaluable": 331,
+    "unevaluable": 330,
     "by_actor": {
       "agent": {
-        "unevaluable": 13
+        "unevaluable": 12
       },
       "anonymous": {
         "pass": 34,
@@ -33,7 +33,7 @@
     "by_via": {
       "handler": {
         "pass": 26,
-        "unevaluable": 305
+        "unevaluable": 304
       },
       "router": {
         "pass": 8,
@@ -43,11 +43,11 @@
     "tiers": {
       "stateless": {
         "pass": 34,
-        "unevaluable": 331
+        "unevaluable": 330
       }
     }
   },
-  "contract_equivalence_rate": 0.09315068493150686,
+  "contract_equivalence_rate": 0.09340659340659341,
   "mounted_equivalence_rate": 1.0,
   "offline_decidable": {
     "fixtures": 39,
@@ -348,7 +348,7 @@
       "domain": "agents",
       "method": "GET",
       "path": "/api/agents/{id}",
-      "actor": "agent",
+      "actor": "member",
       "via": "handler",
       "status_expected": 403,
       "source": "server/internal/handler/agent_access_test.go:520",
@@ -358,7 +358,7 @@
       "status_observed": null,
       "offline": "unevaluable",
       "database": null,
-      "detail": "actor kind Agent needs a real credential; this runner does not fabricate one — the database tier does not mint one either"
+      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
       "id": "agents/TestListAgentSkills_OmitsContent@server/internal/handler/skill_list_test.go:97#40",
@@ -704,7 +704,7 @@
       "id": "agents/TestUpdateAgent_KeepsMcpConfigForMemberActor@server/internal/handler/agent_test.go:1423#23",
       "domain": "agents",
       "method": "PUT",
-      "path": "/api/agents/a runtime that this profile does not provide",
+      "path": "/api/agents/{id}",
       "actor": "member",
       "via": "handler",
       "status_expected": 200,
@@ -1675,7 +1675,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "comments/TestAddReactionRejectsMalformedCommentID@server/internal/handler/handler_test.go:1745#2",
+      "id": "comments/TestAddReactionRejectsMalformedCommentID@server/internal/handler/handler_test.go:1745#1",
       "domain": "comments",
       "method": "POST",
       "path": "/api/comments/not-a-uuid/reactions",
@@ -1692,24 +1692,7 @@
       "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
     },
     {
-      "id": "comments/TestRemoveReactionOnTombstoneIsNotFound@server/internal/handler/comment_delete_test.go:472#1",
-      "domain": "comments",
-      "method": "DELETE",
-      "path": "/api/comments/a runtime that this profile does not provide/reactions",
-      "actor": "member",
-      "via": "handler",
-      "status_expected": 404,
-      "source": "server/internal/handler/comment_delete_test.go:472",
-      "requires": [],
-      "outcome": "unevaluable",
-      "tier": "stateless",
-      "status_observed": null,
-      "offline": "unevaluable",
-      "database": null,
-      "detail": "member actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
-    },
-    {
-      "id": "comments/TestUpdateCommentRejectsMalformedCommentID@server/internal/handler/handler_test.go:1753#3",
+      "id": "comments/TestUpdateCommentRejectsMalformedCommentID@server/internal/handler/handler_test.go:1753#2",
       "domain": "comments",
       "method": "PUT",
       "path": "/api/comments/not-a-uuid",

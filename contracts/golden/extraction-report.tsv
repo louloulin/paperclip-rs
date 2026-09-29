@@ -571,7 +571,7 @@ server/internal/handler/comment_delete_test.go	166	TestDeleteCommentWithRepliesL
 server/internal/handler/comment_delete_test.go	169	TestDeleteCommentWithRepliesLeavesTombstone	testutil.Call	skipped	no_status_assertion	no .Want(...) in the call chain
 server/internal/handler/comment_delete_test.go	391	TestCommentChildWritesWaitingOnDeleteDoNotLandOnTombstone	direct_handler	skipped	no_status_assertion	no `w.Code` comparison before line 414
 server/internal/handler/comment_delete_test.go	414	TestCommentChildWritesWaitingOnDeleteDoNotLandOnTombstone	direct_handler	skipped	no_status_assertion	no `w.Code` comparison before line 464
-server/internal/handler/comment_delete_test.go	472	TestRemoveReactionOnTombstoneIsNotFound	testutil.Call	extracted	-	1 fixture(s)
+server/internal/handler/comment_delete_test.go	472	TestRemoveReactionOnTombstoneIsNotFound	testutil.Call	skipped	path_not_literal	path_not_literal
 server/internal/handler/comment_list_test.go	138	?	direct_handler	helper_site	-	request built inside a test helper, asserted by its callers
 server/internal/handler/comment_list_test.go	1473	TestCreateCommentPreservesDirectParent	direct_handler	skipped	request_var_unresolved	request argument 'req' is not traceable
 server/internal/handler/comment_reconcile_test.go	27	?	direct_handler	helper_site	-	request built inside a test helper, asserted by its callers
@@ -1883,7 +1883,7 @@ server/internal/handler/source_context_integration_test.go	386	TestCommentSource
 server/internal/handler/source_context_integration_test.go	445	TestCommentSourceContextLifecycle	direct_handler	skipped	body_unresolved	body_unresolved
 server/internal/handler/source_context_integration_test.go	480	TestCommentSourceContextLifecycle	direct_handler	extracted	-	1 fixture(s)
 server/internal/handler/source_context_integration_test.go	580	TestCommentSourceContextLifecycle	direct_handler	skipped	value_unresolved	fixture needs values the runner cannot bind: $issueCloneID
-server/internal/handler/source_context_integration_test.go	612	TestCommentSourceContextLifecycle	direct_handler	skipped	path_not_registered	DELETE /api/issues is not in docs/fixtures/upstream-routes.tsv
+server/internal/handler/source_context_integration_test.go	612	TestCommentSourceContextLifecycle	direct_handler	skipped	path_not_literal	path_not_literal
 server/internal/handler/source_context_integration_test.go	644	TestCommentSourceContextLifecycle	direct_handler	extracted	-	1 fixture(s)
 server/internal/handler/source_context_integration_test.go	653	TestCommentSourceContextLifecycle	direct_handler	skipped	value_unresolved	fixture needs values the runner cannot bind: $created.ID
 server/internal/handler/source_context_integration_test.go	745	TestBatchDeleteParentAndChildPublishesOnlySurvivingDetach	direct_handler	skipped	body_unresolved	body_unresolved

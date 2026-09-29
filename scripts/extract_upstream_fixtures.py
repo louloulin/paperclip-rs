@@ -734,13 +734,13 @@ class Interpreter:
             if val is None:
                 return None
             if val.kind == "literal" and isinstance(val.value, str):
-                # 🔴 A UUID borrowed from `pkg_literals` is not a compiled-in
-                # value (see scripts/extract_borrowed_ids.py).  When the route says
-                # which row it addresses, bind the row instead of inlining it.
-                symbol = borrowed.seeded_symbol_for(pieces, val.value, val.note)
-                if symbol is not None:
+                # 🔴 `pkg_literals` is repo-wide and bare-name keyed: judge the hit.
+                how, name = borrowed.classify_borrowed(pieces, val)
+                if how == borrowed.SKIP:
+                    return None
+                if how == borrowed.SYMBOL:
                     mark = f"{MARK}{len(markers)}{MARK}"
-                    markers[mark] = Value("symbol", symbol, "seeded row")
+                    markers[mark] = Value("symbol", name, "seeded row")
                     pieces.append(mark)
                     continue
                 pieces.append(val.value)  # a named constant inlines like a literal
