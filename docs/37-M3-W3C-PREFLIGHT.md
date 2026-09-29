@@ -20921,3 +20921,95 @@ run `01a0ec66` **单一 running**（起手按 §227 承重三先验 `issue runs`
   ⑥ = 四个包并行共用一库的跨测试污染（隔离 `--ignored` 复跑 15/15 全过）。
   这些归因看起来成立，但**必须在本机独立复核**，不能因为「写集外」就免检 ——
   这与 §223.3「git 级判据链全绿 ≠ 收割」是同一族：**归因也是需要证据的结论**。
+
+## §231 【2026-09-29 18:30 cycle / LUM-2548】**收割 PR #160**（白名单 7→6）＋ **PR #161 的 tsv 冲突当场消解并推回其分支**（白名单 6→5，CI 重跑中、下轮收割）＋ 三条承重
+
+### §231.1 板面与在飞
+
+起手 base **`12fb3728`**（§226 docs 直推），其 CI **4/4 success**。
+GH **2 个 open PR**，两个都是 `lin` 的门 ⑩ 拆文件片，且**都已经交完**（对应 issue 均 `in_review`、run 已终止）：
+
+| PR | 片 | head | 自报 CI |
+|---|---|---|---|
+| `#160` | 第 6 批 b：`mc-repos inbox.rs` 1185 → `inbox/` 7 文件 | `1355f0c1` | **4/4 success** |
+| `#161` | 第 7 批：`mc-http tests/inbox.rs` 1149 → `inbox/` 7 文件 + `scripts/verify_inbox_split.py` | `44a80090` | **4/4 success** |
+
+**在飞 0/3**（两片的 run 都已终止、写集已交付）＋ cycle 自身。
+
+### §231.2 收割 #160：先按 §226.2 的要求**独立复核**，再合
+
+§226.2 留的规矩是「不可直接采信『红都在写集外』」。本轮复核结论：
+
+- **合前构造**：`git merge-tree --write-tree origin/feat pr160` **单行输出**（无冲突、无 informational）⇒ 与 base 可直接合并。
+- **拆分忠实性（机械复核，不采信作者自报）**：对 `merge-base` 版 `inbox.rs`(1185) 与新 6 文件取签名集
+  `grep -E '^\s*(pub )?(async )?fn |^impl |^(pub )?(struct|enum) |^\s*#\[(test|tokio::test)\]'` 排序后取差集：
+  **68 vs 67，差集只有一条 `fn pool(&self) -> &PgPool`**。它**没丢** —— 迁到 `crates/mc-repos/src/inbox/crud.rs:33` 并从私有改为
+  `pub(super)`，好让兄弟模块 `query.rs` / `state.rs` 能调。**这是签名级必要改动，不是越界**（与 §213.6 登记的
+  「`database_router(url)` 必须改签名才能算出分组」同族）。另两条差集是 `impl InboxRepo {` ×2 —— 1 个 impl 块拆到 3 个文件，预期。
+- **零编译的 ⑦⑩ 在合并树上当场跑**：`route_parity` rc=0（`456/546/546`、`455 real + 1 placeholder`、`gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`）、
+  `slash_alias_audit` rc=0（541 key literals / 0 defect）、`file_size_check` rc=0（`scanned=1367 baseline=6 violations=0`）。
+- **合入** → `091d2fa3`（GH API `merge_method=merge`），base 白名单 **7 → 6**。
+
+### §231.3 🔴 承重一：两个并行拆文件片必然在 `file_size_baseline.tsv` 上冲突，**且正解不是「二选一」而是「两行都删」**
+
+`#161` 的分支基于 `#160` 之前，base 之后含 `#160` ⇒ 合 `#161` 时 tsv 必冲突。冲突块实测形状：
+
+```
+crates/mc-http/src/routes/inbox.rs	981
+<<<<<<< HEAD
+crates/mc-repos/src/inbox.rs	1185
+=======
+crates/mc-http/tests/inbox.rs	1149
+>>>>>>> origin/feat/multica-rs-initial
+```
+
+**正解 = 两行都删**（在合并树里 `mc-repos/src/inbox.rs` 已变成 ≤800 的 shim、`mc-http/tests/inbox.rs` 已变成目录，
+两条都触发门 ⑩ 的「清单内文件 <= 上限 ⇒ 失败，请从基线删除」）。
+**判别式：`file_size_check` 报 `已不在 git 中，请从基线删除` 或 `清单内文件 <= 上限` ⇒ 就是这种「两行都删」型冲突。**
+我第一次**只删了冲突标记行、留下两行内容**，`file_size_check` 立刻报 **2 violations**（`crates/mc-http/tests/inbox.rs 1149 已不在 git 中`）——
+**这个门就是冲突解法的即时判据器**，不要跳过它再提交。
+
+⇒ 顺带一条**下轮可直接复用的省事事实**：这次冲突的解法与 §231.2 的拆分内容**完全解耦**（只动 tsv 一个文件），
+所以我**没有让 `lin` 回头**，而是在本地 scratch worktree 里 `git merge --no-ff` 真实合一次、解一次、
+把结果作为 **fast-forward 提交**推到 `agent/lin/69b03da8a385`（新 head **`f1f7f12b`**，父提交含 `44a80090` ⇒ 作者提交全部保留）。
+`#161` 现已 `mergeable=true`，CI 4 道重跑中 ⇒ **本轮不合，下轮收割**。
+
+### §231.4 🔴 承重二：**`git read-tree` + `update-index` 不能用来"造"合并树 —— 它会静默丢掉被丢掉那一侧的全部文件级改动**
+
+我第一次的合成路径是：`git merge-tree --write-tree` 拿到带冲突的树 → `git read-tree <干净的一侧>` → `update-index` 改那一个 tsv → `write-tree`。
+**结果：那棵"合并树"里 `crates/mc-http/tests/inbox/` 整个目录不存在、`tests/inbox.rs` 还在** —— 即我手工改的那一个文件对，
+**其余属于 PR #161 的改动一个都没进来**，而且 `write-tree` 成功、不报任何错。
+
+⇒ **定式**：
+1. 合成/构造合并树**必须用真 `git merge`**（临时 worktree，`--no-ff --no-commit`），让 index 用 stage 1/2/3 表达冲突；
+   `update-index` 拼树只在「已经完整含双方改动的树」上再改单个文件时才成立。
+2. **任何自造/合成的树，出门前必须抽查一个「只可能由被丢掉的那一侧提供」的路径**。
+   本轮是靠 `ls crates/mc-http/tests/inbox*` 抓到的 —— 如果我只 `git diff --stat` 或只看 tsv，这个错误会一路带到 push。
+   （与 §227「能构造就别事后推断」同源：**构造出来的证据也要有对自身正确的自检**。）
+
+### §231.5 ⑦⑧⑨⑩ 数字（第 36 轮，与 §230.4 逐字相同）
+
+`route_parity`：`upstream 456 (f41fae6b08fb) | local 546 | baseline 546`、`455 real + 1 placeholder = 456/456`、
+`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`；
+`slash_alias_audit` rc=0（541 / 0 defect / 0 warning）；
+`report.json` `totals` = `fixtures 365 / pass 34 / mismatch 0 / unmounted 0 / placeholder 0 / unevaluable 331`（md5 `569cf432…`，**零位移**）；
+`file_size_check` rc=0（`scanned=1367 baseline=5 violations=0`，**在 `f1f7f12b` 树上跑**）。
+**本轮零 handler、零路由、零迁移、零编译**（⑧ schema-drift 与 ⑨ conformance 需要编译，其证据由两个 head 的 CI `contract`/`db` 承担）。
+
+### §231.6 派发：**0 派发**（磁盘算式第三次派场，与「有没有空闲 agent」无关）
+
+起手 `avail 19G`，跑判据期间掉到 **7.8G**：`ps` 抓到 `cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server --features mc-http/test-util -- --ignored`
+（pid 32357）的 cwd 是 **`lum-2547-6c2315a397ac/workdir/paperclip-rs`**，其 `target/` **19G** ⇒ **另一条 cycle 正在本机跑全量 `--with-db`**。
+可回收量只有 `lum-2541`（我方已 `in_review`、无 cargo 进程）的 797M ⇒ `avail − 可回收 ≈ 8.6G`，
+**远小于单片编译峰值 19G（`CARGO_INCREMENTAL=0`）** ⇒ 期望收益为负，**本轮不排片**。
+（在线 runtime 侧本轮反而是**宽裕**的：`lin` 多条 online、`devbox4` online —— **第一次出现「不是 agent 不够，而是盘不够」。**）
+
+⇒ 已把**第 8 批**（两片，写集互不相交）以 `backlog` 停放，**不启动 run**，等盘回 ≥19G 再提升。**留空理由按族写明**：
+两片都要改 `scripts/file_size_baseline.tsv`（各删一行）⇒ 将来仍会撞出 §231.3 那种「两行都删」型冲突，**由收割方一次解决，不让两片互相等**。
+
+### §231.7 下轮起手
+
+1. base 是否已前进到含 `f1f7f12b`（`#161` 合并树）—— 先查该 commit 的 `check-runs`：`total_count=4` 且无 `conclusion=failure` 才合。
+2. 合完 `#161` 后白名单 **5 条**：`mc-conformance/src/lib.rs` 952（tsv 记 1024，**天花板 ≠ 实测**，见 §230.2）、
+   `mc-http/src/routes/inbox.rs` 981、`mc-repos/src/invitation.rs` 828、`extract_upstream_fixtures.py` 1862、`schema_snapshot.py` 1093。
+3. `lum-2547` 的 19G 若已释放 ⇒ 把停放的第 8 批（`invitation.rs` + `mc-http routes/inbox.rs`）提升为 `todo` 并**显式 `--assignee-id lin`**。
