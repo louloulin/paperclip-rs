@@ -62,11 +62,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod bindings;
 pub mod daemon_token;
 pub mod harness;
 pub mod report;
 pub mod requirements;
+pub mod seed;
 
+pub use bindings::Bindings;
 pub use report::{OfflineSplit, Report, Row, Totals};
 pub use requirements::{
     missing_requirements, requirement, requirements_detail, Requirement, REPO_SIDE_PRECONDITIONS,
@@ -79,7 +82,6 @@ use axum::http::{HeaderName, HeaderValue, Request};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
-use uuid::Uuid;
 
 /// fixture 文件格式版本；与 `scripts/extract_upstream_fixtures.py::SCHEMA_VERSION` 对齐。
 pub const SCHEMA_VERSION: u32 = 1;
@@ -301,97 +303,6 @@ pub fn load_dir(dir: &Path) -> Result<Vec<Fixture>> {
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
-}
-
-// ---------------------------------------------------------------------------
-// 绑定：把 fixture 里的 `$symbol` 变成这次回放用的真值
-// ---------------------------------------------------------------------------
-
-/// 一次回放用的身份。抽取器只声明两类可绑定语义（见 `BINDABLE`）：
-/// 除它们以外的符号已在抽取期被 skip 成 `value_unresolved`，所以这里的
-/// `resolve` 对未知符号直接报错而不是猜一个值。
-///
-/// 🔴 `daemon_token` 是**明文凭据**且只在内存里：`Debug` 手写脱敏，报告侧
-/// （`Report::from_rows`）只登记 `user_id` / `workspace_id`，连字段都不给它。
-/// 见 [`daemon_token`] 模块文档的「明文只活在内存里」。
-#[derive(Clone)]
-pub struct Bindings {
-    pub user_id: Uuid,
-    pub workspace_id: Uuid,
-    /// database 层现场签发并登记的 `mdt_` 明文（`None` = 没有 daemon 身份，
-    /// stateless 层就是这种：它连库都没有，签不出来也用不上）。
-    daemon_token: Option<String>,
-}
-
-impl std::fmt::Debug for Bindings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Bindings")
-            .field("user_id", &self.user_id)
-            .field("workspace_id", &self.workspace_id)
-            .field(
-                "daemon_token",
-                &self
-                    .daemon_token
-                    .as_ref()
-                    .map(|_| format!("{}<redacted>", daemon_token::DAEMON_TOKEN_PREFIX)),
-            )
-            .finish()
-    }
-}
-
-impl Bindings {
-    #[must_use]
-    pub fn stateless() -> Self {
-        Self {
-            user_id: Uuid::from_u128(STATELESS_USER_ID),
-            workspace_id: Uuid::from_u128(STATELESS_WORKSPACE_ID),
-            daemon_token: None,
-        }
-    }
-
-    #[must_use]
-    pub fn new(user_id: Uuid, workspace_id: Uuid) -> Self {
-        Self {
-            user_id,
-            workspace_id,
-            daemon_token: None,
-        }
-    }
-
-    /// database 层的绑定：带一枚**已登记**的 `mdt_` 明文。
-    #[must_use]
-    pub fn with_daemon_token(user_id: Uuid, workspace_id: Uuid, token: String) -> Self {
-        Self {
-            user_id,
-            workspace_id,
-            daemon_token: Some(token),
-        }
-    }
-
-    /// 这次回放能不能施加 daemon 身份。
-    #[must_use]
-    pub fn daemon_token(&self) -> Option<&str> {
-        self.daemon_token.as_deref()
-    }
-
-    fn lookup(&self, sym: &str) -> Option<String> {
-        match sym {
-            "$testUserID" => Some(self.user_id.to_string()),
-            "$testWorkspaceID" => Some(self.workspace_id.to_string()),
-            _ => None,
-        }
-    }
-
-    /// 解析一个 fixture 里的取值：`$symbol` 走绑定表，其余当字面量。
-    pub fn resolve(&self, raw: &str) -> Result<String, String> {
-        let trimmed = raw.trim();
-        if trimmed.starts_with('$') {
-            return self
-                .lookup(trimmed)
-                .ok_or_else(|| format!("unbound symbol {trimmed}"));
-        }
-        Ok(trimmed.to_string())
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "daemon/TestGetChatSessionGCCheck@server/internal/handler/daemon_test.go:3821#12",
   "method": "GET",
-  "path": "/api/daemon/chat-sessions/d1473000-0000-4000-8000-000000000031/gc-check",
-  "path_params": {},
+  "path": "/api/daemon/chat-sessions/{testChatSessionID}/gc-check",
+  "path_params": {
+    "testChatSessionID": "$testChatSessionID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -30,7 +32,9 @@
     "notes": [
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
-    "bindings": {},
+    "bindings": {
+      "$testChatSessionID": "chat_session_id"
+    },
     "requires": [
       "daemon_token"
     ]

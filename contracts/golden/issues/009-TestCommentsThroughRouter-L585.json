@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestCommentsThroughRouter@server/cmd/server/integration_test.go:585#9",
   "method": "POST",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/comments",
-  "path_params": {},
+  "path": "/api/issues/{testIssueID}/comments",
+  "path_params": {
+    "testIssueID": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,6 +36,7 @@
   "extraction": {
     "notes": [],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testWorkspaceID": "workspace_id"
     }
   }

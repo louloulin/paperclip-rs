@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "agents/TestUpdateAgentRejectsMalformedRuntimeID@server/internal/handler/handler_test.go:1701#30",
   "method": "PUT",
-  "path": "/api/agents/1c331d0b-94fd-412a-a7cc-6a209add00a1",
-  "path_params": {},
+  "path": "/api/agents/{testAgentID}",
+  "path_params": {
+    "testAgentID": "$testAgentID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -36,6 +38,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testAgentID": "agent_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

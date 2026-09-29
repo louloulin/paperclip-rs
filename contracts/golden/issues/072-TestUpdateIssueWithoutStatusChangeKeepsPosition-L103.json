@@ -2,8 +2,10 @@
   "schema_version": 1,
   "id": "issues/TestUpdateIssueWithoutStatusChangeKeepsPosition@server/internal/handler/issue_status_position_test.go:103#72",
   "method": "PUT",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913",
-  "path_params": {},
+  "path": "/api/issues/{testIssueID}",
+  "path_params": {
+    "testIssueID": "$testIssueID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -37,6 +39,7 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testIssueID": "issue_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }

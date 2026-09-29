@@ -2,8 +2,11 @@
   "schema_version": 1,
   "id": "issues/TestCancelTask_SameIssue_Succeeds@server/internal/handler/daemon_test.go:1452#13",
   "method": "POST",
-  "path": "/api/issues/34c44eb2-bd85-455f-b47c-f39cc7b0b913/tasks/5c57b65b-ee7a-4603-a72d-b659c34a1dc3/cancel",
-  "path_params": {},
+  "path": "/api/issues/{testIssueID}/tasks/{testTaskID}/cancel",
+  "path_params": {
+    "testIssueID": "$testIssueID",
+    "testTaskID": "$testTaskID"
+  },
   "query": {},
   "headers": {
     "Content-Type": "application/json"
@@ -34,6 +37,8 @@
       "upstream drove the handler directly; replayed here against the router, which also applies its middleware"
     ],
     "bindings": {
+      "$testIssueID": "issue_id",
+      "$testTaskID": "task_id",
       "$testUserID": "user_id",
       "$testWorkspaceID": "workspace_id"
     }
