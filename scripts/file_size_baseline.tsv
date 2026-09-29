@@ -14,4 +14,3 @@ crates/mc-conformance/src/lib.rs	1024
 crates/mc-http/src/routes/inbox.rs	981
 crates/mc-repos/src/invitation.rs	828
 scripts/extract_upstream_fixtures.py	1863
-scripts/schema_snapshot.py	1093
