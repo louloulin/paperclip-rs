@@ -63,6 +63,14 @@ IDENTITY_HEADERS = (
     "x-actor-source",
 )
 AGENT_HEADERS = ("x-agent-id", "x-task-id")
+# …but only one of them is *load-bearing*.  Upstream's `resolveActor` only
+# yields an agent identity when the request carries a task scope (`X-Task-ID`);
+# `X-Agent-ID` on its own is a header a caller may set freely, so `resolveActor`
+# falls back to the member identity behind `X-User-ID`.  `TestGetAgent_RejectsForgedAgentIDHeader`
+# is exactly that case — it logs in as a member, sets a forged `X-Agent-ID`, and
+# expects 403.  Classifying on the *set intersection* called it `agent`; the
+# intersection is an OR, and OR is the wrong quantifier for a credential.
+AGENT_CREDENTIAL_HEADER = "x-task-id"
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +276,10 @@ def split_headers(
         # PAT's state in the symbol so the replay can mint one of that shape.
         ident["Authorization"] = "$testPAT" + pat
         kind = "token"
-    elif lower & set(AGENT_HEADERS):
+    elif AGENT_CREDENTIAL_HEADER in lower:
+        # Task scope present ⇒ upstream authenticated an agent.  `X-Agent-ID`
+        # without it is a claim, not a credential; fall through to the branches
+        # below so the real (member) identity is recorded.
         kind = "agent"
     elif "authorization" in lower:
         kind = "token"

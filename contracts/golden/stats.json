@@ -16,10 +16,10 @@
   },
   "fixtures": {
     "by_actor_kind": {
-      "agent": 13,
+      "agent": 12,
       "anonymous": 39,
       "daemon": 20,
-      "member": 285,
+      "member": 286,
       "token": 8
     },
     "by_domain": {

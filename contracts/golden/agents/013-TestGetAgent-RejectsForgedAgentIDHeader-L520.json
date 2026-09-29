@@ -11,7 +11,7 @@
     "Content-Type": "application/json"
   },
   "actor": {
-    "kind": "agent",
+    "kind": "member",
     "upstream_identity": {
       "X-Agent-ID": "1c331d0b-94fd-412a-a7cc-6a209add00a1",
       "X-User-ID": "cccccccc-cccc-cccc-cccc-cccccccccccc",
