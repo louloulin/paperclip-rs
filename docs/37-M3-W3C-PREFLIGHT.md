@@ -21690,3 +21690,90 @@ by_actor  member {mismatch 48, pass 223, unevaluable 11, unmounted 3}
 
 - `LUM-2111` 卡 docker/podman/buildah（`T1-10b` `SKIP-NO-ASSET`）。
 - `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
+## §238 【2026-09-29 22:30 cycle / LUM-2563】**亲手做完 `T1-6-E1`：抽取器把 `-`→`/` 折叠算出来了却没写进 fixture ⇒ 2 条 fixture 被永久误判成「本仓没这条路由」**（PR #166，合并树 `1dbd0861`）
+
+起手 base `8f641505`（＝`§237`）。GH open PR **0**。在飞 **3/3**（本 cycle ∥ `LUM-2562` ∥ `LUM-2560`）⇒ **切片位 0，本轮 0 派发**；按 §208.5 的老规矩，**自己把手上这片做完**。
+
+### 1. 收割：0 条。`⑦` 八个数字**第 40 轮逐字不变**
+
+`546 / 456 (f41fae6b08fb) / baseline 546 / 455 real + 1 placeholder = 456/456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+
+### 2. 🔴 承重一：**`unmounted` 这个桶会把「抽取器自己的 bug」记成「本仓没实现」**
+
+`unmounted` 的定义（`crates/mc-conformance/src/lib.rs:25`）是「本仓没有这条路由（404 空 body / 405）—— 属未实现」。本轮逐条看那 3 条，发现**其中 2 条是假的**：
+
+```
+POST /api/chat-sessions/{sessionId}/messages  409 ← 404   TestSendChatMessage_ArchivedAgent
+POST /api/chat-sessions/{sessionId}/messages  400 ← 404   TestSendChatMessage_InvalidAttachmentIDs
+```
+
+`POST /api/chat/sessions/{sessionId}/messages` **存在**：`docs/fixtures/upstream-routes.tsv:92`（router.go:2343），本仓 `crates/mc-http/src/routes/chat/task.rs:68` 也注册着。**而且抽取器自己早就匹配到了它** —— 那 2 个 fixture 的 `extraction.notes` 里白纸黑字写着：
+
+> `path normalised from upstream's historical /api/chat-sessions/{testChatSessionID}/messages to /api/chat/sessions/{testChatSessionID}/messages`
+
+而同一个 JSON 的 `path` 字段却是 `/api/chat-sessions/{sessionId}/messages`。**一个文件自己跟自己打架**：note 说折了，`path` 说没折。
+
+**成因**（`scripts/extract_i4_direct_handler.py`）：`match_route` 把 `/api/chat-sessions/x` 折叠成 `/api/chat/sessions/x` 去查路由表，但交回 `extract_site` 的是折叠**前**的 `canonical`；`extract_site` 只在 `renames` 非空时改写 `{param}` 名（这正是 `{testChatSessionID}` → `{sessionId}` 生效的原因），**从不把折叠结果写进 `path`**。⇒ **参数名被规范化了，路径前缀没有** —— 半截规范化。
+
+**为什么上游那条 URL 可以是装饰性的**：两条都是 **handler 级**测试（`chat_test.go:249` 的 `testHandler.SendChatMessage(sendW, sendReq)`、`testutil.Call`），真正的入参是 `withURLParam(req, "sessionId", …)` 设的 `chi.URLParam`；URL 字符串在上游**根本不参与路由**。而回放器打的是 `mc_http::routes::router`，只可能匹配已注册的路由。⇒ 抽取器必须把 handler 级测试的装饰性 URL **翻译成已注册路由**，它做了这一步的一半。
+
+🔴 **定式**：**当一个中间件/抽取器「已经算出了正确答案」却只写了一半时，下游的每个失败读数都会被记到别人的账上** —— 这里 2 条 fixture 被记成「本仓未实现该路由」，会误导出「去实现一条上游压根没有的路由」这种**方向性错误**的活。**看到某桶里有反常识的条目，第一件事是去查那个桶的定义，而不是去查实现。**
+
+**剩下的 1 条是真缺口**：`PUT /api/autopilots/not-a-uuid` → 405。上游 router 同样不注册 `PUT /api/autopilots/{id}`（tsv 里只有 GET/PATCH/DELETE，`crud.rs:121` 同样只注册 patch/delete，`Router::merge` 的方法重叠会 panic，**不能顺手补一个**）⇒ 本仓忠实镜像了上游，**不动**。`unmounted` 的真实值就是 **1**。
+
+### 3. 改动与实测（PR #166，合并树 `1dbd0861`）
+
+`extract_site`：`match_route` 成功且 `compat_note` 存在时，把 `compat_path(path)` 写回 `path`。折叠只动 path 本身，`path_params` 的键仍由既有的 renames 块按顺序处理（先折叠、后改名）。
+
+| 判据 | 前 | 后 |
+|---|---|---|
+| `--check`（抽取器自带的逐字节幂等判据） | `365 fixtures reproduce byte-identically` | **`365 fixtures reproduce byte-identically`** |
+| `unmounted` | 3 | **1** |
+| `pass` | 275 | **276** |
+| `mismatch` | 57 | **58** |
+| `unevaluable` | 30 | 30 |
+| `BAD = 365 − pass` | 90 | **89** |
+
+2 条的去向：`InvalidAttachmentIDs` 期望 400 → 实测 400，**直接 pass**；`ArchivedAgent` 期望 409 → 实测 **201**，转成**真** mismatch —— harness 建的 agent 没有 archived（**种子面缺口，不是路由缺口**）。
+
+**golden 的连带位移是机械的、可逐字解释的**：这 2 条的 domain 由 `chat_sessions` 变成 `chat`（`domain_of` 从 path 推导，`:1201`）⇒ `contracts/golden/chat_sessions/` **整个消失**、两条并入 `chat/`，其后 7 条序号 021–027 → 022–028 —— 这 7 条**逐字只差 `id` 里的 `#N` 序号**；`stats.json` 只差 `chat 27→29 / chat_sessions 2→0`；`extraction-report.tsv` **零字节变化**。
+
+### 4. 🔴 承重二：**改了 `id` 就不能用 `id` 当比对键 —— 门 ⑨ 的快照必须按内容键复核**
+
+`id` 里带**域内序号** `#N`，域内增删一条会让同域其后所有条目的 `id` 整体位移 ⇒ 门 ⑨ `--check` 的 `first difference at line 1065` 指的是一条**内容零变化**的 fixture。正确判据是**按 `(source, method, path, status_expected)` 重新配对**再逐字段比：
+
+```
+totals 逐字相同；365 条的 outcome / status_observed / offline / database /
+detail / tier / actor / via / requires  ⇒  0 处差异
+```
+
+⇒ 快照刷新的真实漂移**只有**那 2 条的 `path` 与全体 `id` 序号。**「`--check` 报了几百行 diff」不等于「几百行内容变了」。**
+
+### 5. 门（合并树 `1dbd0861`，**另起一个全新库** `multica_c2563m` 复跑，逐项命中）
+
+| 门 | 结果 |
+|---|---|
+| ① fmt | rc=0 |
+| ⑦ route-parity | rc=0，**八数字第 40 轮逐字不变** |
+| ⑦b slash_alias_audit | rc=0 |
+| ⑧ schema_drift（真库） | rc=0 |
+| ⑨ `--no-db --check` | rc=0，`report matches` |
+| ⑨ `--db-url`（本轮证据源） | `365 / pass 276 / mismatch 58 / unevaluable 30 / unmounted 1` ⇒ `BAD 89` |
+| ⑩ file_size | rc=0，**白名单仍只剩 1 条**（`extract_upstream_fixtures.py` 1862/1863）；`extract_i4_direct_handler.py` **593** 行 |
+| deps `A1..E2` | 全 exit 0（`A1=0 A2=0 A3=0 B=43 C1=2 C2=2 D=2 E1=0 E2=0`） |
+
+**②③④⑤⑥ 未跑，写明理由**：本片写集是 1 个 `.py` + `contracts/golden/**` + 一份报告 JSON，**零 Rust 源 / Cargo.toml / migrations**（`git diff --name-only` 可核）⇒ 这五道门的输入未变。按 §236 承重一的「最小可行动作」判据，跑它们只是把 12G 磁盘押在一道**输入没变**的门上。
+
+### 6. 工具的一条小坑（别照着改没问题的代码）
+
+编辑 `extract_i4_direct_handler.py` 时，语言检查器报了一条 `L210: "end" is not a known attribute of "None"`，指向**我从未碰过**的 190 行之外。对**未改动的文件**做一次探针编辑复检、以及在 pristine 文件上复跑，两次都**干净** ⇒ 冷缓存产物。**「检查器指着一行你没改的代码报错」先复检再动手**，否则会去「修」一段完全正确的逻辑。
+
+### 7. 派发：**0 片**（在飞 3/3）
+
+`空位 = 3 − 2（LUM-2562 + 本 cycle）− 1（LUM-2560，devbox4）= 0`。下一空号 **`## §239`**。
+**`LUM-2560`（T1-6-D2，agent 实体种子）本轮多出一个已知目标**：刚转成 mismatch 的 `TestSendChatMessage_ArchivedAgent` 需要一个 **archived 的 agent 行**，与它「按 fixture 种实体」的写集同面，已在该 issue 里留言指路（**不打断它当前实现**）。
+
+### 8. 待 owner（不重复 @）
+
+- `LUM-2111` 卡 docker/podman/buildah（`T1-10b` `SKIP-NO-ASSET`）。
+- `mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
