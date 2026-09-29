@@ -19796,3 +19796,104 @@ error: could not compile `mc-http` (test "vcs") due to 1 previous error   (exit 
 - **下轮起手固定动作**：`df` 连采 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（翻页取全）→ 每条在飞片先看 CI 并**与 base 那一次逐 job 对照** → **先判活 `LUM-2519`（刚重派，看它是否真在 `69637c57` 上起了 workdir）** → ⑦ 第 27 轮。
 - **收割 `LUM-2516`（PR #154）的预登记判据**：CI 四 job 全绿 **且** base 那一次对照仍全绿 ⇒ ⑦ 八数字第 27 轮逐字不变 ⇒ 合并树重跑 `--with-db` 10/10（**④ 必须单列**，它是 `tests/**` 的唯一覆盖门）。
 - **收割 `LUM-2513`（PR #153）的判据链沿用 §220.6**，并**加一条**：其新文件里 `use super::*` 的计数必须为 0（`grep -c` 实测，不是「clippy 只报了 8 条」那种读法）。
+
+## §222 【2026-09-29 12:00 cycle / LUM-2522】收割 `LUM-2516`（PR #154，合并树 10/10）＋ 🔴 承重一：**「工单已下」≠「run 已起」** ＋ 🔴 承重二：**门 ⑨ 的读数位移被「不冷编 ⇒ 不报」藏了两轮**
+
+### §222.1 起手读数
+
+| 项 | 读数 |
+|---|---|
+| `df` 起手 | **28G / 41%**（承上一轮收尾；全盘零 `target/`） |
+| `pg_lsclusters` | 16 main 5432 **online** |
+| base（`rev-parse` 对 `ls-remote`） | **`f6ed3daa`**（= §221 收尾值，逐字一致；checkout 用 `--ref` **直接落 feat 线**，第 39 次） |
+| GH open PR（翻页取全） | **2** = `#154`（`LUM-2516`，head `12292680`）∥ `#153`（`LUM-2513`，head `5e6dad3e` 待返工） |
+| 本机 daemon `running_task_count` | **1**（只有本 cycle；`LUM-2513`/`LUM-2519` 都在别的 device 上） |
+
+### §222.2 收割 `LUM-2516`（PR #154）—— **通过并合入**
+
+分支 `agent/lin/24472f60c4c4`，head `12292680`，merge-base `0e911678`。**§221.7 预登记的判据逐条兑现**：
+
+| # | 判据 | 读数 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API（**翻页取全**，`page1=21 / page2=0`，未撞 §212 的 100 截断） | 本地 **21 文件 +2801 −2695** == API **21 文件 +2801 −2695** ✅ |
+| ② | base 前进段非 docs 路径 = 0 | `git diff --name-only 0e911678 f6ed3daa \| grep -vc '^docs/'` = **0** ⇒ 判**真合**形态 |
+| ③ | 三哈希等式 | `merge-tree --write-tree` = `6384614e…`（**exit 0**）；rehearsal 合并后 `HEAD^{tree}` = `6384614e…`；落地 `5f289e2c^{tree}` = **`6384614e…`** ✅ 三读数逐字相同 |
+| ④ | 合并树 vs head 树的差集 | **只有 `docs/37-M3-W3C-PREFLIGHT.md`**（非 docs 差集 = **0**）⇒ 代码面等价成立 |
+| ⑤ | 合并树当场 `--with-db` 10/10（**④ 单列**） | **10/10 全绿，768s**（墙钟 12m48s），明细见下表 |
+| ⑥ | API 钉 40 位 sha + `merge_method=merge` | `PUT /pulls/154/merge`，钉 `12292680b09af…` ⇒ `merged: true`，merge commit **`5f289e2c`** |
+
+**合并树门禁（`CARGO_INCREMENTAL=0`，真库 `multica_c2522` / 角色 `mc_c2522` 当轮新建、带 `CREATEDB`）**：
+
+| 门 | exit | 用时 | | 门 | exit | 用时 |
+|---|---|---|---|---|---|---|
+| ① fmt | 0 | 3s | | ⑥ db | 0 | 239s（migrate=0, e2e=0） |
+| ② build | 0 | 148s | | ⑧ schema-drift | 0 | 26s |
+| ③ clippy | 0 | 69s | | ⑦ route-parity | 0 | 1s |
+| ④ clippy-test-util | 0 | 51s | | ⑨ conformance | 0 | 72s |
+| ⑤ test | 0 | 159s | | ⑩ file-size | 0 | 0s（`scanned 1302 / baseline 10 / violations 0`） |
+
+**④ 单列的意义本轮兑现**：`LUM-2516` 拆的四个落点里有**三个在 `crates/*/tests/**`**（`tests/chat.rs`、`tests/vcs/connections.rs`），按 §221.3 门 ③ 对它们是**空的绿** ⇒ 本片的 ③ 绿**不能**作为「`tests/**` 没问题」的证据，只有 ④ 的 51s 才是。**这不是形式主义：本片是 0 行为变更的搬移片，唯一可能出错的地方就是子模块可见性，而那正好只被 ④ 看得见。**
+
+⑦ 八数字**第 27 轮逐字不变**：`upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546`、`implemented 455 real + 1 placeholder = 456/456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`。
+
+### §222.3 🔴 承重一（本轮最要紧）：**「工单已下」不等于「run 已起」—— `in_progress` 且零 active run 是一种新的静默停摆**
+
+`LUM-2513`（门 ⑩ 第 1 批返工）的真实时间线：
+
+| 时刻 | 事件 |
+|---|---|
+| 02:41:39Z | 交付 run `01a0eae6` **completed**，开 PR #153（`5e6dad3e`） |
+| 03:15:46Z | 上一轮 cycle 在 issue 上贴**返工工单**（③ clippy 红因 = 13 个新子模块的 `use super::*`），并把状态留在 `in_progress` |
+| 03:15 → 04:16 | **整整 1 小时，`multica issue runs LUM-2513` 只有那一条 `completed`，零 active run** |
+| 04:16:42Z | 本轮 `multica issue rerun LUM-2513` ⇒ `created == dispatched == started` **同一秒**，`running / attempt 1 / error null` |
+
+⇒ **在 `in_progress` 的 issue 上贴评论，不会唤醒它的 assignee。** 工单写得再细（逐条列出 13 个文件、给出 clippy 的 `help:` 清单、给出两种修法），也只是一段**静态文本**；真正让执行者动起来的是**一次 run**。
+
+这条与既往两种停摆都不同，必须分开记：
+
+| 形态 | 症状 | 判据 | 本轮是否出现 |
+|---|---|---|---|
+| §221.5 静默死亡在**离线 runtime** | 状态 `todo`、零 workdir、零进程 | runtime `status = offline` | `LUM-2519` 上一轮出现过 |
+| **§222.3 工单未起 run** | 状态 `in_progress`、**有历史 completed run**、零 active run | `issue runs <id>` 只有终态行 | **本轮新形态** |
+| §184 重试磁铁 | 失败 run 自动重试挂到**另一条**未关闭 issue | `assignee` 名下多条 `in_progress` | 本轮无 |
+
+**定式（补进起手固定动作）**：对每条 `in_progress` 的片，判活的第一步不是看状态、不是看 CI，而是 `multica issue runs <id> --active` —— **返回空**就说明它**根本没在跑**，此时该做的是 `rerun`（或改派），而不是继续等。同理，**上一轮 cycle 若在某个已终态的 issue 上留了指令，就必须确认它起没起 run，否则那条指令会静默过期一整轮。**
+
+### §222.4 承重二：**门 ⑨ 的读数整体位移，被「不冷编 ⇒ 不报」的习惯藏了两轮**
+
+本轮第一次在 base 上实读 ⑨（`report.json` 的 `totals`）：
+
+```
+fixtures 365 | pass 34 | mismatch 0 | unmounted 0 | placeholder 0 | unevaluable 331
+```
+
+而前几轮（`§216`–`§221`）登记的是 `365 / 14~15 pass / 23 mismatch / 21~22 unmounted / 306 unevaluable`。**位移不是本片造成的** —— `report.json` 的 blob 在 `3873cd0d` 与 `5f289e2c` 上**逐字相同**（`4f4fb9ffb267…`），本片 21 个文件里零个属于 conformance。位移来自 **`LUM-2503` 的合入**（`913f7916`，§219 落的）：它把 `supports()` 与回放面改成**共用声明表**，`mismatch 23 → 0`、`unmounted 22 → 0`、`pass 14 → 34`。
+
+**为什么藏了两轮**：那几轮都按「⑨ 要 ~14G 冷编，代码树非 docs 位移 = 0 ⇒ 主动不跑、不冷编」的省法处理，**并诚实地注明「不作继承声明」**。诚实归诚实，但**「不跑」被当成了「没变」**——读者（和下一轮的 cycle）看到的是连续几轮同一个旧数字，没有任何标记说明它已经过期。**`mismatch 23 → 0` 是语义变更，不是噪声。**
+
+⇒ **纪律**：省掉某道门的前提不只是「树没变」，还得是「**这道门的数字上次是什么时候真跑的**」。凡是跨越了会动该门输入的合入（`crates/mc-conformance/**`、`contracts/**`、`migrations/**`、任何 `--write-baseline`），就必须**在当轮把数字重挂一次**；若因磁盘不跑，则在文档里**显式写「此读数截至 `<sha>`，此后 `X` 已合入未复跑」**，而不是让旧数字继续以常量的面貌流通。本轮已把 ⑨ 的数字重新钉在 base **`5f289e2c`** 上。
+
+### §222.5 在飞盘点（收尾时）
+
+| 片 | 执行者 | runtime | 状态 |
+|---|---|---|---|
+| `LUM-2513`（门 ⑩ 第 1 批返工，PR #153） | `3df1a3e8` devbox4 | `4a7f29e1` **online**（`last_seen` 04:16:30Z） | **本轮 `rerun` 后 `running`**（`01a0eb61`，04:16:42Z 起），分支仍停 `5e6dad3e` |
+| `LUM-2519`（门 ⑩ 第 3 批） | `700c7941` lin | `69637c57` **online** / working | `running`（`01a0eb42`，03:43:52Z 起，25min，`attempt 1 / error null`） |
+| 本 cycle `LUM-2522` | `3c6087f9` devbox5 | `bd3d2b9d` online | 本轮收尾 |
+
+⇒ 在飞 **3/3**（含 cycle 自身），**无空位**。
+
+`LUM-2516`（PR #154）已合入，issue 保持 `in_review`（`done` 归人工）。
+
+### §222.6 下一轮起点
+
+- **base = `5f289e2c`**（PR #154 合并树）＋ 本节 docs 提交（直推 `feat/multica-rs-initial`）。**GH open PR = 1**（`#153`，等 `LUM-2513` 返工重推）。
+- **号段**：下一空号 **`## §223`**。
+- **下轮起手固定动作**（在 §221.7 那五条上追加两条）：
+  1. `df` 连采两次 → `pg_lsclusters` → `rev-parse` 对 `ls-remote` → GH open PR（**翻页取全**）→ ⑦ 第 28 轮。
+  2. 🔴 **对每条 `in_progress` 的片先跑 `multica issue runs <id> --active`** —— 返回空 = 没在跑（§222.3），此时该 `rerun` 而不是等。
+  3. 🔴 **每条在飞片先看 CI 并与 base 那一次逐 job 对照**（§220 承重，本轮沿用）。
+- **收割 `LUM-2513`（PR #153）的判据链** = §220.6 七条，**外加 §221.7 追加的那一条**：13 个新子模块里 `use super::*` 的计数必须为 **0**（`grep -c` 实测，不是「clippy 只报了 8 条」那种读法）。返工是**机械替换**（照抄 clippy `help:` 的显式清单，注意 `skills/helpers` 那一组项是 `pub(crate)` ⇒ 父模块重导出必须仍是 `pub(crate) use`），验收清单里 **③ clippy 是一等公民**。
+- **门 ⑨ 口径**：本轮已把 totals 钉在 base `5f289e2c`（`365 / 34 pass / 0 mismatch / 0 unmounted / 0 ph / 331 unevaluable`）。若下轮跨越了会动 `crates/mc-conformance/**`、`contracts/**`、`migrations/**` 或任何 `--write-baseline` 的合入，**必须复跑**，否则在文档里显式标注「截至 `<sha>`」（§222.4）。
+- **磁盘**：`target/` 峰值 **19G**（`avail 28G → 9.4G`），收尾已 `rm -rf target` 回 **28G / 41%**；库 `multica_c2522` + 角色 `mc_c2522` 已 DROP，两者计数回 0。
+- **仍待 owner（不重复 @）**：`LUM-2111` 卡 docker / podman / buildah 三者皆无；`mc_t2492` 名下 116 张表仍在默认 `postgres` 库（`DROP TABLE CASCADE` 属破坏性，不自行执行）。
