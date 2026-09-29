@@ -4,7 +4,7 @@
 //!
 //! 每一帧都是**真实 wire 帧**（真 HMAC / 真 `X-Gitlab-Token` 头 + 真 JSON 载荷），落到**真库**上
 //! —— 中间零 mock（`docs/61` §4.2 的替身纪律）。唯一的替身是 **outbound** 面
-//! （`GET /api/vN/user`，见 `tests/vcs/connections.rs`），入站面不需要替身。
+//! （`GET /api/vN/user`，见 `tests/vcs/connections/`），入站面不需要替身。
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

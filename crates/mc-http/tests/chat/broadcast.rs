@@ -239,7 +239,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// 没有 `MULTICA_TEST_DATABASE_URL` ⇒ `None`（与 `tests/chat.rs` 同款跳过）。
+    /// 没有 `MULTICA_TEST_DATABASE_URL` ⇒ `None`（与 `tests/chat/main.rs` 同款跳过）。
     async fn open() -> Option<Self> {
         let (pool, db) = connect().await?;
         let ctx = Ctx::open(pool.clone(), db.clone()).await;
