@@ -24546,3 +24546,107 @@ PR 自己的分析逐条回核到 `90e0bdf8`）。但它有一个**必须写进�
 - 磁盘：起手 24G → 本轮自跑 `mc-conformance` 冷建后 **≈20G**；两片各自冷建 7–18G ⇒
   **下轮起手先 `df` 连采两次再决定是否回收**（死物四判据：PR 已合 ∧ run 终态 ∧
   `/proc` 逐 PID 零命中 ∧ porcelain 空）。
+
+---
+
+## §259 【LUM-2587 / T1-6-D】抽取缺陷 5 条：**根因是「函数内 `const` 没遮蔽全仓常量表」**，修好 2 条，另外 3 条的残余**全部在本片写集之外**（0 路由 / 0 handler / 0 迁移 / 0 Rust）
+
+起手 base `d8a73105`（与工单指定逐字相同）；落笔前 `git fetch` 复核：origin 已前进到
+`48e5bfa4`（§258 / `LUM-2586`，**docs-only**，与本片写集零交集）⇒ rebase 上去，
+PR head `944c45bb`。**`§258` 已被并发 cycle 落号**（工单写的「本 cycle 自身占 §258」已过期），
+下一空号仍是 `§259`，未被撞。
+
+### 1. 门读（全部当场取）
+
+- 门 ⑦（route-parity，第 52 轮**逐字不变**）：`upstream 456 (f41fae6b08fb) / local 546 /
+  baseline 546`、`implemented 455 real + 1 placeholder = 456`、`known_gap 0`、`unclaimed 0`、
+  `regression 0`、`local_only 8`。**rc=0**。
+- 门 ⑦b `slash_alias_audit` rc=0；门 ⑩ `file_size_check` rc=0
+  （`extract_upstream_fixtures.py` **1863 = 基线 1863**，正好压线，见 §3）。
+- 门 ⑨ `--no-db --check`：**存量红，签名未变** —— 仍是 `line 17` /
+  `committed "unevaluable": 13` vs `fresh: 12`；报告 blob `db01d842` **未动**
+  （`git diff crates/mc-conformance/report.json` 为空）。
+- 门 ⑨ db-mode（**当轮新建库** `multica_c2587`，角色带 `CREATEDB`，`mc-migrate` 566 迁移
+  + `cargo build -p mc-conformance` + 回放）：
+
+  ```
+  fixtures 365 / pass 295 / mismatch 44 / unmounted 1 / placeholder 0 / unevaluable 25
+  bad_total = 365 − 295 = 70          ← 减法交叉核对（§237 承重二）
+  族：UNMOUNTED 1 / PRECONDITION 25 / AUTH_401 7 / SEED_404 18 / REALM_DIFF 19
+  对账 ②：70 − (295 − 295) = 70 == 实测 70 ✔
+  ```
+
+  **起手 base 与收尾逐字相同**（`pass 295 / mismatch 44 / bad 70`，五族计数全同）——
+  本片**没有改变任何一条判定**，只把 2 条 fixture 改成了与上游逐字相符的形状（§2）。
+
+### 2. 根因与修法（3 文件，`+10/−7`）
+
+`apply_statement` 第 5 步的赋值正则只认 `var` 与裸赋值，**不认 `const`** ⇒ 函数内的
+`const key = "…"` 从未登记进 `ctx.defs`。而 `resolve_scalar` 对裸标识符的**最后一次兜底**
+是 `pkg_literals` —— `extract_borrowed_ids.package_literals` 明确写着它是
+**「全仓扫描 + 按裸名字键」**，`setdefault` 先到先得。于是：
+
+- `issue_sort_test.go:13` 的 `const key = "sort_custom_started"` 没被登记，
+  第 19 行 URL 里的裸 `key` 撞上了 **`handler/file.go:442` 里不相干的
+  `key = "workspaces/"`** ⇒ fixture 回放成 `?status=workspaces/`（observed 400）。
+
+修法是**登记**而不是加特例：让局部 `const` 进 `ctx.defs`，而 `resolve_scalar`
+**先读 `ctx.defs` 再读 `pkg_literals`** —— 这就是 Go 的作用域，一个字都不用猜。
+
+**同一个字面量改动顺带修好第 4 条**，而且是**同一个机制**：局部声明的值不再是
+「借来的常量」（`note` 不再是 `package const`）⇒ `seeded_symbol_for` 不再把它
+改绑成种子行，`integration_test.go:976` 的 `const outsideWorkspaceID` 因此保留字面量。
+
+```
+issues/071      query.status  "workspaces/"  →  "sort_custom_started"
+workspaces/008  path  /api/workspaces/{testWorkspaceID}/dingtalk/groups
+             →  /api/workspaces/d1474000-0000-4000-8000-000000000001/dingtalk/groups
+                path_params {} （不再有 $testWorkspaceID 改绑）
+```
+
+两条都与上游源码逐字相符。**判别式**：抽取器 `--check` 仍报
+`ok: 365 fixtures reproduce byte-identically`，而树差异**恰好**这 2 个文件 ——
+其余 **363 条 + `stats.json` + `extraction-report.tsv` 逐 blob 恒等**（判据 ⑨）。
+
+### 3. 🔴 承重一：**「这条会 pass」不是「这条抽对了」——5 条里 0 条能靠抽取器转 pass**
+
+工单的前提是「缺口在抽取器，合计 5 条，负责面 = `scripts/extract_*.py` + `contracts/golden/**`」。
+**前半句成立（且我修掉了根因），后半句不成立**：把 2 条改对之后实测，**observed 一个都没变**
+（仍 `400 / 201 / 201 / 204 / 200`），`bad_total` 纹丝不动地停在 70。
+逐条查到底，残余**全部落在 `crates/**`（Rust）**，而本片写集明令 0 Rust：
+
+| # | fixture | 改前 → 改后 observed | 残余真因（已逐条自证，不是引分类器） | 归属 |
+|---|---|---|---|---|
+| 1 | `issues/071` | 400 → **400** | **`sort=status`** 被拒：`parse_order` 词汇表（`mc-http/src/routes/issues/query.rs:155-163`）只有 `updated_at/last_activity/last_activity_at/position/created_at/number`，**没有 `status`** ⇒ 400 `unsupported sort`。**证伪实验**：同一个改好的 fixture 去掉 `sort` 后 **pass 200**（`status`/`limit` 任意组合都过，只有带 `sort=status` 才 400）。⇒ 改前的 `status=workspaces/` 其实**被这个 400 掩盖着**，两个缺陷叠在一条上。 | 行为面 |
+| 2 | `projects/014` | 201 → 201 | I4 站点 `project_resource_test.go:530` 在 **`getCount := func(){…}` 闭包里**，而 `walk()` 只走函数体顶层语句 ⇒ `ctx.defs["req"]` 仍是 **509 行那个** `POST /api/projects`。真解需要 `project.ID`（响应体解码而来）⇒ `$ID`，而 `Seed::SYMBOLS` 只有 agent/issue/chat_session/task，`BINDABLE` **没有 project 符号**，`bindings.rs` 还专门断言 `$testProjectID` 必须 unbound。 | 装置面（`seed.rs`）|
+| 3 | `projects/012` | 201 → 201 | 同上，站点在 **`t.Run(tc.name, func(t *testing.T){…})` 闭包**（430 行）里，绑到 393 行的 setup 请求。真解同时需要 `project.ID` **和** `tc.ref`（`cases` 是 7 元 struct 表）。 | 装置面 |
+| 4 | `workspaces/008` | 200 → 200 | 路径已改成上游那个**确实不存在的** workspace，仍返 200 ⇒ 本仓根本没解析这个 workspace：`channels/dingtalk.rs:303` `if !configured(&state) { return Ok(Json(GroupInventory::empty())) }` **早退**，在 `DingTalkScope::resolve(…, raw_workspace_id, …)` **之前**。回放环境没配 dingtalk 密钥。 | 行为面 |
+| 5 | `workspaces/029` | 204 → 204 | **不是抽取缺陷 ⇒ 归因改判为行为面**：上游 `workspace.go:1059-1073` 的 `DeleteWorkspace` 用 `workspaceIDFromURL(r,"id")` **从路径取 workspace**，再查 requester 在**那个** workspace 里的角色、非 owner 即 403（注释明写「测试直接调 handler，所以要在 handler 里再查一遍」）。本仓 `workspaces.rs:453-464` 是 `Path(_id)` 收下就丢、删 `ctx.workspace_id`（请求头那个）⇒ **结构上不可能返回 403**，而且会删错 workspace。 | **行为面（改判）** |
+
+⇒ **判据 ①「4 个子族各归 0 条」不成立，且不是本片能挣到的**：子族是按
+**observed 转移形态**分的，只要这 5 条仍是 `REALM_DIFF`，它们就仍在族里。
+**本片不替它们按 by-design 登记**——分类器（`scripts/t1_6_realm_diff_taxonomy/`）
+不在本片写集内，且 §257 承重三刚在那个文件旁边踩过「把永远满足不了的断言混进自检」的雷。
+**改判表就是派下一片的输入**，而下一片必须**先解掉 `crates/**` 的 4 个缺口**，
+否则「按 by-design 登记」只是把 70 藏起来。
+
+### 4. 🔴 承重二：**号段第五个方向 —— 工单里「本 cycle 自身占 §258」这句话，在落笔前就过期了**
+
+工单指定写 `§259`，并说「base 末号 §257，本 cycle 自身占 §258」。落笔前 `git fetch`：
+origin 已经是 `48e5bfa4`，**§258 已被并发 cycle（`LUM-2586`）落号并推送**。
+四个既有方向（§237 并发 cycle 落号 / §238 / §254 我自己提前许号 / §257 我上轮预言的
+自由号被后来派出的片吃掉）之后，这是**第五个**：「**派发描述里的号段分配，本身会过期**」。
+⇒ 追加一问：**工单写的中间号段，是否也已被别的 run 落掉？** 权威永远是①（当场 fetch 复核），
+而不是工单正文里的转述。
+
+### 5. 下一步（交给下一片，不在本片写集内）
+
+1. **`parse_order` 补 `status`**（`mc-http/src/routes/issues/query.rs`）⇒ 解锁 `issues/071`
+   （改好后它**当场就会 pass**，已由 §3 的证伪实验证明：只差这一个词）。
+2. **dingtalk `list_groups` 先解析 workspace 再看 `configured`**（`channels/dingtalk.rs:303`）
+   ⇒ 解锁 `workspaces/008`；注意这会动 M7 面的 24 条渠道路由的早退语义，**须与 M7 owner 同飞**。
+3. **`delete_workspace` 按路径 id 授权**（`workspaces.rs:453`）⇒ 解锁 `workspaces/029`；
+   这是**上游语义对齐**，不是新功能。
+4. **`Seed` 加一行 project**（`seed.rs` + `BINDABLE` 加 `$testProjectID`）
+   ⇒ 解锁 `projects/012/014`；**必须同时**让 I4 能穿过闭包（否则仍绑外层 `req`），
+   这两件事**同写集，必须一片**。
