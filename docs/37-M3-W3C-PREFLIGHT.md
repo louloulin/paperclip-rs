@@ -22784,6 +22784,119 @@ T1-6 PRECONDITION 子族  input=conformance_db_json  候选 27  子族 9
 > 故 `## §244` 改为**接在 §243 之后**，两节均完整保留；上文 §244.1 那句「起手已确认远端无此号」
 > 只对本片开工那一刻成立。
 
+## §245 【LUM-2575 / T1-6-G】`REALM_DIFF` 剩余 22 条拆成 **15 个子族** ＋ 归因与负责面文件集合 —— 零 Rust / 零 cargo 改 / 零磁盘
+
+起手 base **`df2b0a01`**（`git rev-parse` 实测，非抄写）。**号段在即将 push 的那一刻于远端最新 base
+`a3f2e0ba` 上查**：`§245` 空，且 `§246` 正文自己写着「**下一空号**：`## §245`」
+⇒ 本号确为 `LUM-2575` 预留；本片据此把 `§245` **插在 `§244` 与 `§246` 之间**（保持数字序，
+不追加到 EOF —— 追加会让 §246/§247 之后出现一个更小的号，且并发 cycle 再直推时必冲突）。
+
+### 1. 读数（真库，一次，非全量）
+
+`REALM_DIFF` 的边界只有真库回放才有（`mismatch` 是实测结果），所以本片取了一次
+**权威读数**（不是全量 `--with-db`，19G 那套与本片无关）：
+
+```
+PG        mc_lum2575（本片私有；未碰在飞的 mc_lum2572）
+migrate   566 条 / 3.0s
+build     cargo build -p mc-migrate -p mc-conformance   → target/ 3.5G
+replay    32.6s → /tmp/t16.json = 244291 B ≈ 244 字节量级的 **244K**（与工单给的「244K」同）
+```
+
+`totals = 365 / pass 279 / mismatch 56 / unmounted 1 / unevaluable 29` ⇒ `bad_total 86`。
+`t1_6_taxonomy.py` 分族：`UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 33`。
+
+🔴 **工单给的三个数逐一复算并对上**：域分布 `chat 8 / daemon 8 / issues 8 / workspaces 3 /
+projects 2 / properties 2 / autopilots 1 / tokens 1`（=33）；转移形态
+`4xx←2xx 19 / 2xx←4xx 10 / 5xx←2xx 1 / 2xx←5xx 1 / 4xx←4xx 1 / 2xx←2xx 1`（=33）——
+**16 种**细分转移逐字复现。读数可复跑：`mc-conformance --db-url "$DSN" --json > /tmp/t16.json`。
+
+### 2. 新脚本 `scripts/t1_6_realm_diff_taxonomy.py`（800 行，纯 Python，零依赖）
+
+与 `t1_6_precondition_taxonomy.py` 同形：`--json` 机器可读、接受回放 json 作位置参数、
+支持 `--golden contracts/golden` 纯静态扫描；**stderr 零字节**（调用方 `2>&1` + `json.load` 不会翻车）。
+
+对账（硬性，`--json` 里可编程断言）：
+
+| 断言 | 实测 |
+|---|---|
+| `sum_of_subfamilies == candidates` | `22 == 22`（`balanced: true`）|
+| `candidates + claimed_elsewhere == family_total` | `22 + 11 == 33` |
+| `family_total == mismatch − observed_401 − observed_404` | `33 == 56 − 6 − 17` |
+
+🔴 `claimed_elsewhere`（`LUM-2572` 在飞领走的 11 条）**是算出来的**：7 条 daemon `404←200`
++ 4 条 issues 自定义 status `201←400`，并断言 `== 11`；它同时是「15 条规则**一条都不命中**」
+的余集 ⇒ 两个方向互相印证，任一侧漂移就红。**没有一处硬编码 22。**
+
+### 3. 22 条 → 15 个子族（每族：条数 / 上游文件 / 转移 / 负责面 / 归因）
+
+| # | 子族 | 条 | 转移 | 归因 | 负责面（**文件集合**） |
+|---|---|---:|---|---|---|
+| 1 | `EXTRACT_IDENTITY_WORKSPACE_HEADER_ABSENT` | 4 | `200←400`×2 `204←400`×2 | 抽取缺陷 | `scripts/extract_upstream_fixtures.py`、`scripts/extract_requirements.py`、`contracts/golden/chat/**` |
+| 2 | `EXTRACT_QUERY_LITERAL_MISBOUND` | 1 | `200←400` | 抽取缺陷 | 同上 + `contracts/golden/issues/**` |
+| 3 | `EXTRACT_REQUEST_SHAPE_STALE` | 2 | `200←201` `400←201` | 抽取缺陷 | 同上 + `contracts/golden/projects/**` |
+| 4 | `EXTRACT_PATH_BOUND_TO_SEEDED_WORKSPACE` | 1 | `404←200` | 抽取缺陷 | 同上 + `contracts/golden/workspaces/**` |
+| 5 | `EXTRACT_WORKSPACE_BINDING_WRONG_DELETE` | 1 | `403←204` | 抽取缺陷 | 同上 + `contracts/golden/workspaces/**` |
+| 6 | `DEVICE_CHAT_AGENT_RUNTIME_STATE` | 3 | `409←201`×3 | 装置面 | `mc-conformance/src/{seed,harness,requirements,request_plan}.rs` |
+| 7 | `DEVICE_QUEUED_TASK_ROW` | 1 | `200←409` | 装置面 | 同上 |
+| 8 | `DEVICE_INTRA_TEST_SEQUENCING` | 2 | `409←200` `409←201` | 装置面 | 同上 |
+| 9 | `DEVICE_DB_FAULT_INJECTION` | 1 | `500←200` | 装置面 | 同上 |
+| 10 | `BEHAVIOR_MACHINE_ACTOR_GATE` | 1 | `403←201` | 行为面 | `mc-http/src/routes/properties.rs`（+ `actor_guard.rs`）|
+| 11 | `BEHAVIOR_JSON_DECODE_STATUS` | 1 | `400←422` | 行为面 | `mc-http/src/routes/issues/{query,crud}.rs` + 错误映射 |
+| 12 | `BEHAVIOR_METADATA_FILTER_PARSE` | 1 | `400←200` | 行为面 | `mc-http/src/routes/issues/query.rs` |
+| 13 | `BEHAVIOR_NUL_PAYLOAD` | 1 | `200←500` | 行为面 | `mc-http/src/routes/daemon/**` |
+| 14 | `BEHAVIOR_STAMPING_CHAIN_UNWIRED` | 1 | `401←200` | 行为面 | `mc-http/src/middleware/authn.rs` + `mc-http/src/routes/pats.rs` |
+| 15 | `BEHAVIOR_ISSUE_PREFIX_UNPORTED` | 1 | `400←200` | 行为面 | `mc-http/src/routes/workspaces.rs`（+ 列/迁移）|
+
+**归因合计：抽取缺陷 9 ＋ 装置面 7 ＋ 行为面 6 = 22。** 上游文件 22 个（逐条 id 见脚本输出）。
+
+### 4. 并行 / 串行结论（**按文件集合判，不按组织归属**）
+
+- 🔴 **装置面 7 条**（子族 6~9）**全部落在** `crates/mc-conformance/src/` 的同一批文件上，
+  与在飞的 **`LUM-2572`**（11 条，`seed.rs`/`harness.rs`）**和排队的 `LUM-2567`**
+  （`PRECONDITION 29`）**同一批文件** ⇒ **只能串行**，且必须排在它们之后。
+  「按域看是三组人、按文件看是同一批文件」——这正是 §240 那条纪律要防的事。
+- **抽取缺陷 9 条**（子族 1~5）全在 `scripts/extract_upstream_fixtures.py` + `contracts/golden/**`
+  ⇒ 一条**串行**通道（重抽一次 golden 覆盖 5 族）；与任何动这两处的片互斥。
+- **行为面 6 条**（子族 10~15）**各域 handler 互不相交** ⇒ **可并行**，最大并行度 6。
+- 子族 5 有一个**排序约束**：抽取器修好绑定之后它才变成装置面 ⇒ 派工时 `EXTRACT_*` 必须先于 `DEVICE_*`。
+
+### 5. 顺手报告：22 条里 **0 条** by-design
+
+判别式是「**这条判据在什么实现下会 FAIL**」——22 条**都答得上**（抽取器修绑定 / 装置造前置 /
+handler 补判定），没有一条是「实现怎么改都红」的空条 ⇒ **`T1-6` 的真实剩余量没有因本片变小**，
+本片买到的是**派工方向正确**（9/22 该派给抽取器而不是 handler —— 照「一族一根因」的先例
+这 9 条几乎必被派错）。脚本 `by_design_audit` 段把逐族答案记在案。
+
+### 6. 判别式双向验证 —— 两个坑都是**实测**踩出来的
+
+正例 4/4、反例 4/4（`discriminant_checks` 段）：
+
+1. 🔴 **「路径模板里还留着 `{testXxx}`」不是缺陷信号，是高假阳性陷阱。** 回放器按**名字**填
+   占位符（`request_plan.rs`：`path.replace("{name}", …)`），占位符叫什么对最终 URL
+   **毫无影响** ⇒ 纯装饰。第一版判别式用它，把 **9** 条判成抽取缺陷（真值 5）。
+2. 🔴 **「`member` 且身份无 `X-Workspace-ID` ⇒ 400」会吃掉一条绿的**：
+   `chat/…RejectsInvalidLimit@chat_test.go:709#26` 上游**也**期望 400，两个 400 撞成「通过」。
+   判别式补上 `expect != 400` 才收敛（4 条）。这两条都进了脚本的反例表。
+3. 族边界**复用** `t1_6_taxonomy.py::classify` 的 `observed ∉ {401,404}`，不自己再写一遍
+   「4xx↔2xx」—— 两处各写一遍必然漂移。
+
+### 7. 门禁
+
+| 门 | 命令 | 结果 |
+|---|---|---|
+| ⑦ route-parity | `bash scripts/gates.sh --only route-parity` | rc=0；**八数字逐字不变**：`upstream 456 / local 546 / baseline 546 / 455 real + 1 placeholder / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑩ file-size | `python3 scripts/file_size_check.py` | rc=0（`scanned=1388 / violations=0`；新脚本 800 行 = 上限）|
+
+写集：`scripts/t1_6_realm_diff_taxonomy.py`（新建）+ 本节。**0 路由 ⇒ ⑦ 必不变**。
+
+### 8. 本片**没做**的事（如实记）
+
+- **没跑全量 `--with-db`**（19G，与本片无关）。只跑了 `mc-migrate` + `mc-conformance` 回放。
+- **没动任何 Rust / golden / migration**（工单禁改面）。装置面与行为面的**修复**都不在本片写集里。
+- 本片私有库 `mc_lum2575` 与 `target/` 收尾已清；**未碰** `mc_lum2572`（在飞）。
+
+
 ## §246 【2026-09-30 01:30 cycle / LUM-2574】收割 PR #170 + #169（合并树 9/10，⑨ 存量红已归因）＋ T1-6 `bad_total 89 → 86` ＋ 派 `LUM-2572`（11 条，装置面）∥ `LUM-2575`（22 条分类片，零磁盘）
 
 起手 base `cae5b2b3` → 收尾 **`df2b0a01`**（PR #170 合并树 `3ce94af0` ＋ PR #169 合并树 `df2b0a01`）。
