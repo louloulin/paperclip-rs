@@ -251,21 +251,60 @@ pub fn merge(
         (Some(s), None) => s,
         (None, Some(d)) => d,
         (Some(s), Some(d)) => {
-            let (winner, tier) = if d.outcome < s.outcome {
-                (d.clone(), "database")
+            // 平局（`s.outcome == d.outcome`，最常见的是两层都 `Unevaluable`）必须由
+            // **真打过真实基础设施的那层**说了算：database 层跑过了，结论和 `tier`
+            // 归属就都是它的。
+            //
+            // 旧写法是 `d.outcome < s.outcome` —— 只有严格小于才判给 database，于是平局
+            // 全部落进 `else` 取 stateless 侧。后果不是措辞瑕疵：stateless 侧那两档
+            // `member`/`daemon` 身份给出的理由是「请用 `--db-url` 重跑」，而读者手上
+            // 这份报告**正是连着库跑出来的那一份** ⇒ 指路牌指向一件已经做过的事，
+            // 排障者会绕死循环；database 层自己给出的真话理由（缺的是哪一条前提，
+            // 还是 fixture 本身发不出去）被整段丢弃，而 `tier` 字段还把结论错记成
+            // `"stateless"`。
+            let tie = s.outcome == d.outcome;
+            let (winner, loser, tier) = if d.outcome <= s.outcome {
+                (d.clone(), s.clone(), "database")
             } else {
-                (s.clone(), "stateless")
+                (s.clone(), d.clone(), "stateless")
             };
+            // 只有**平局**才需要把落败那层的理由带上：非平局时胜者已经分出强弱，
+            // 落败那层的理由不构成对结论的补充（逐字节保持不变，别动已提交的快照）。
+            // 平局时两层都没判出来 ⇒ 两句都得留，否则读者会以为只跑了一层。
+            // 唯一的例外是那句「请重跑 `--db-url`」：database 层既然已经出过结论，
+            // 它指的那条路已经走过，留着反而是假线索（`actor_credential_detail()`
+            // 自己也把这种自指列为必须避开的坑）。
+            let detail =
+                if !tie || loser.detail == winner.detail || is_database_tier_pointer(&loser.detail)
+                {
+                    winner.detail
+                } else {
+                    format!(
+                        "[{}] {} || [{}] {}",
+                        winner.tier, winner.detail, loser.tier, loser.detail
+                    )
+                };
             FixtureOutcome {
                 outcome: winner.outcome,
                 tier: tier.into(),
-                detail: winner.detail,
+                detail,
                 status_observed: winner.status_observed,
                 offline: s.offline.or(Some(s.outcome)),
                 database: d.database.or(Some(d.outcome)),
             }
         }
     }
+}
+
+/// stateless 层那句「请用 `--db-url` 重跑」是不是指路牌？
+///
+/// 它由 [`crate::requirements::actor_credential_detail`] 生成，语义是「这档身份
+/// 换到 database 层才判得了」。**database 层已经产出结论时这句话是自指的假线索**
+/// —— 读者看的就是连着库跑出来的那一份报告。形状跟着那一条 format 字面量走
+/// （凭据面理由只有这一处拼 `rerun with --db-url`）；真要改措辞，本函数下面那条
+/// 单测会跟着一起红。
+fn is_database_tier_pointer(detail: &str) -> bool {
+    detail.contains("rerun with --db-url")
 }
 
 /// 把 fixture + 两层观察拼成报告行。
@@ -295,5 +334,121 @@ pub fn to_row(fx: &Fixture, merged: &FixtureOutcome) -> Row {
         offline: merged.offline,
         database: merged.database,
         detail: merged.detail.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_database_tier_pointer, merge};
+    use crate::verdict::{FixtureOutcome, Outcome};
+
+    fn at(outcome: Outcome, tier: &str, detail: &str) -> FixtureOutcome {
+        FixtureOutcome {
+            outcome,
+            tier: tier.into(),
+            detail: detail.into(),
+            status_observed: None,
+            offline: None,
+            database: None,
+        }
+    }
+
+    /// 现场那 13 条的形状：两层都没判出来，stateless 侧说「请用 `--db-url` 重跑」，
+    /// 而 database 层其实跑过了、并且给出了自己的理由。
+    const POINTER: &str = "member actor needs the database tier (rerun with --db-url); \
+                           stateless tier cannot decide it";
+    const DB_REASON: &str = "this scenario needs precondition the database tier does not supply";
+
+    /// 平局时胜者是 database 侧，`tier` 归属也改过来 —— 否则报告把「结论来自
+    /// database 层」这件事记成 `"stateless"`。
+    #[test]
+    fn tie_goes_to_the_tier_that_actually_ran() {
+        let got = merge(
+            Some(at(Outcome::Unevaluable, "stateless", POINTER)),
+            Some(at(Outcome::Unevaluable, "database", DB_REASON)),
+        );
+        assert_eq!(got.outcome, Outcome::Unevaluable);
+        assert_eq!(got.tier, "database");
+        assert_eq!(got.detail, DB_REASON);
+    }
+
+    /// database 层已经出过结论 ⇒ 那句「请重跑 `--db-url`」是自指的假线索，
+    /// 赢的那句不能把它带出来。
+    #[test]
+    fn winner_never_repeats_a_resolved_database_pointer() {
+        let got = merge(
+            Some(at(Outcome::Unevaluable, "stateless", POINTER)),
+            Some(at(Outcome::Unevaluable, "database", DB_REASON)),
+        );
+        assert!(
+            !is_database_tier_pointer(&got.detail),
+            "database 层已经跑过，胜者理由却还在叫人 rerun --db-url：{}",
+            got.detail
+        );
+    }
+
+    /// 平局且两层理由都不是指路牌 ⇒ 两句都要留，否则读者以为只跑了一层。
+    #[test]
+    fn tie_keeps_both_reasons_when_neither_is_a_pointer() {
+        let got = merge(
+            Some(at(
+                Outcome::Unevaluable,
+                "stateless",
+                "this scenario needs precondition the stateless tier does not supply",
+            )),
+            Some(at(Outcome::Unevaluable, "database", DB_REASON)),
+        );
+        assert_eq!(got.tier, "database");
+        assert!(got.detail.contains("[stateless]"), "{}", got.detail);
+        assert!(got.detail.contains("[database]"), "{}", got.detail);
+    }
+
+    /// database 层不存在（`None`）时逐字不变：门 ⑩ 那份 stateless 快照走的就是
+    /// 这一支，它必须原封不动。
+    #[test]
+    fn without_a_database_layer_nothing_changes() {
+        let s = at(Outcome::Pass, "stateless", "status matched");
+        let got = merge(Some(s.clone()), None);
+        assert_eq!(got.outcome, s.outcome);
+        assert_eq!(got.tier, s.tier);
+        assert_eq!(got.detail, s.detail);
+    }
+
+    /// database 侧**严格更强**时行为逐字不变（不因为改了平局分支就连累非平局）。
+    #[test]
+    fn strictly_stronger_database_side_still_wins_verbatim() {
+        let got = merge(
+            Some(at(Outcome::Mismatch, "stateless", "status mismatch")),
+            Some(at(Outcome::Pass, "database", "status matched")),
+        );
+        assert_eq!(got.outcome, Outcome::Pass);
+        assert_eq!(got.tier, "database");
+        assert_eq!(got.detail, "status matched");
+    }
+
+    /// 非平局时**不**拼两层理由（这一支的输出已进已提交快照，逐字节不能动）。
+    #[test]
+    fn non_tie_detail_is_not_rewritten() {
+        let got = merge(
+            Some(at(Outcome::Pass, "stateless", "status matched")),
+            Some(at(
+                Outcome::Mismatch,
+                "database",
+                "json_subset mismatch at $.x",
+            )),
+        );
+        assert_eq!(got.detail, "status matched");
+        assert!(!got.detail.contains("||"), "{}", got.detail);
+    }
+
+    /// 指路牌判据跟着 `actor_credential_detail()` 的字面量走：真去改那句措辞，
+    /// 这条会先红，而不是等到某条 fixture 的理由悄悄变假。
+    #[test]
+    fn pointer_predicate_matches_the_credential_detail_shape() {
+        assert!(is_database_tier_pointer(POINTER));
+        assert!(is_database_tier_pointer(
+            "daemon actor needs the database tier (rerun with --db-url); stateless tier cannot decide it"
+        ));
+        assert!(!is_database_tier_pointer(DB_REASON));
     }
 }
