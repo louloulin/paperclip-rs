@@ -123,10 +123,14 @@ def render_human(out: dict) -> None:
             print("      - {}".format(fid))
         print()
     print("并行结论：")
+    label = {"serial": "否", "parallel": "是", "undetermined": "**未定**"}
     for lane in out["parallel_lanes"]:
         print("  · {:<8} {} 条 —— 可并行：{}".format(
             lane["attribution"], lane["count"],
-            "否" if lane["serial_with"] else "是（各域 handler 互不相交）"))
+            "{}（{}）".format(label[lane["parallel"]], lane["parallel_why"])
+            if lane["parallel"] == "parallel" else label[lane["parallel"]]))
+        if lane["parallel"] != "parallel":
+            print("      理由：{}".format(lane["parallel_why"]))
         for other in lane["serial_with"]:
             print("      串行于：{}".format(other))
     print()
@@ -146,7 +150,9 @@ def render_human(out: dict) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # `__doc__ or __name__`：静态分析看不出本模块第 2 行有 docstring（会报
+    # 「`splitlines` is not an known attribute of `None`」），运行期两者都有值 ⇒ 行为不变。
+    ap = argparse.ArgumentParser(description=(__doc__ or __name__).splitlines()[0])
     ap.add_argument("report", nargs="?", help="mc-conformance --db-url --json 的输出")
     ap.add_argument("--golden", default="contracts/golden",
                     help="golden fixture 目录（静态扫描；也是 report 模式的联表来源）")

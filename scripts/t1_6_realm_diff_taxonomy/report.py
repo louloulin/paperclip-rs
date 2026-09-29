@@ -9,6 +9,8 @@ import collections
 from .checks import BY_DESIGN_AUDIT, discriminant_checks
 from .claims import CLAIM_CRITERION, CLAIM_EXPECTED, CLAIM_NAME, is_claimed
 from .constants import (
+    BEHAVIOR,
+    BEHAVIOR_OWNER_FILES,
     EXTRACTION,
     FAMILY,
     FAMILY_CRITERION,
@@ -18,6 +20,58 @@ from .constants import (
 )
 from .fields import obs
 from .rules import STATIC_DECIDABLE, SUB_RULES, classify, transition, upstream_file
+
+
+def owner_files_for(subfamily: str, attribution: str) -> list[str]:
+    """子族负责面：**归因级**表优先（抽取面 / 装置面按归因聚合），否则查**子族级**表。
+
+    两级都查不到 ⇒ 返回 `[]`（空串），并由 `verdict()` 把该 lane 降级为「未定」。
+    """
+    lane_files = OWNER_FILES.get(attribution, [])
+    if lane_files:
+        return lane_files
+    if attribution == BEHAVIOR:
+        return BEHAVIOR_OWNER_FILES.get(subfamily, [])
+    return []
+
+
+def verdict(entry: dict) -> None:
+    """就地写入 lane 的并行结论（`parallel` / `parallel_why`）——**不手工写死**。
+
+    三档：
+      · `serial`     —— 已知同写集（`serial_with` 非空）；
+      · `parallel`   —— 每个子族的负责面都非空，且子族之间**两两不相交**；
+      · `undetermined` —— 有子族负责面为空串 ⇒ 证据缺列，**不许**报「可并行：是」。
+
+    这条是本模块 2026-09-29 22:00 cycle 补的：此前 `__main__` 无条件打
+    「行为面 —— 可并行：是（各域 handler 互不相交）」，而那一列当时是空串。
+    """
+    if entry["serial_with"]:
+        entry["parallel"] = "serial"
+        entry["parallel_why"] = "同写集，必须串行：{}".format("；".join(entry["serial_with"]))
+        return
+    empty = [n for n, f in entry["subfamily_owner_files"].items() if not f]
+    if empty:
+        entry["parallel"] = "undetermined"
+        entry["parallel_why"] = (
+            "子族 {} 的负责面是**空串** ⇒ 结论所依赖的证据缺列（读代码补 `constants.py` "
+            "的 `BEHAVIOR_OWNER_FILES`，不要在 `__main__` 里手写「可并行：是」）".format(
+                "、".join(sorted(empty)))
+        )
+        return
+    seen: dict[str, str] = {}
+    for name, files in sorted(entry["subfamily_owner_files"].items()):
+        for f in files:
+            if f in seen and seen[f] != name:
+                entry["parallel"] = "serial"
+                entry["parallel_why"] = (
+                    "{} 与 {} 都写 `{}` ⇒ 写集相交，不能并行".format(seen[f], name, f))
+                return
+            seen.setdefault(f, name)
+    entry["parallel"] = "parallel"
+    entry["parallel_why"] = (
+        "{} 个子族的负责面均已填写，且文件集合两两不相交".format(len(entry["subfamily_owner_files"]))
+    )
 
 
 def summarise(items: list[dict]) -> dict:
@@ -61,7 +115,7 @@ def build(rows: list[dict], totals: dict, kind: str, reconcilable: bool,
             subfamilies.append({
                 "name": name,
                 "attribution": attribution,
-                "owner_files": OWNER_FILES.get(attribution, []),
+                "owner_files": owner_files_for(name, attribution),
                 "confidence": confidence,
                 "evidence": evidence,
                 "static_decidable": name in STATIC_DECIDABLE,
@@ -80,10 +134,13 @@ def build(rows: list[dict], totals: dict, kind: str, reconcilable: bool,
         entry = lanes.setdefault(s["attribution"], {
             "attribution": s["attribution"], "owner_files": s["owner_files"],
             "count": 0, "subfamilies": [], "serial_with": [],
+            "subfamily_owner_files": {},
         })
         entry["count"] += s["count"]
         entry["subfamilies"].append(s["name"])
+        entry["subfamily_owner_files"][s["name"]] = s["owner_files"]
     for lane, entry in lanes.items():
+        verdict(entry)
         if lane == FIXTURE:
             entry["serial_with"] = [
                 "LUM-2572（T1-6-B2，在飞：mc-conformance/{seed,harness}.rs）",
