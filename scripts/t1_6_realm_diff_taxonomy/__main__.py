@@ -150,7 +150,9 @@ def render_human(out: dict) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # `__doc__ or __name__`：静态分析看不出本模块第 2 行有 docstring（会报
+    # 「`splitlines` is not an known attribute of `None`」），运行期两者都有值 ⇒ 行为不变。
+    ap = argparse.ArgumentParser(description=(__doc__ or __name__).splitlines()[0])
     ap.add_argument("report", nargs="?", help="mc-conformance --db-url --json 的输出")
     ap.add_argument("--golden", default="contracts/golden",
                     help="golden fixture 目录（静态扫描；也是 report 模式的联表来源）")
