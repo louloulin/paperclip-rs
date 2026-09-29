@@ -19245,3 +19245,118 @@ run `01a0ea85`：`created == dispatched == started` 均为 `00:16:24Z`，起手�
 - **号段**：下一空号 **`## §216`**（`§213` = `LUM-2502`、`§214` = `LUM-2504`、`§215` = 本 cycle）。
 - **仍在等 owner**：`LUM-2111` 卡 docker / podman / buildah **三者皆无**，**不重复 @**。
 - **未清理（待 owner，本轮不自行执行）**：`mc_t2492` 名下的 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性操作）。
+
+---
+
+## §216 【2026-09-29 cycle / LUM-2503】收口判据自身收口（第二批）：`supports()` 与被回放面共用声明表 ＋ `T1-7` 口径重定 —— 修掉一条存量红会**露出**下一条 ＋ ⑦ 八数字第 20 轮逐字不变
+
+起手：base = **`a5213f45`**（`git rev-parse` 实测；= `492ddff0`（merge #152 / `LUM-2502`）＋ `§215` docs-only），分支 `agent/devbox4/c21ee0a661d1`。
+写集：`scripts/stop_condition.sh`、`crates/mc-conformance/src/requirements.rs`、`crates/mc-conformance/src/lib.rs`（只加）、`docs/37`（本段）、`docs/65`（判据表同步）。
+
+### §216.1 缺陷 1 的双路取证（同一份真库，先红后绿）
+
+同一份 `mc_lum2503`（新建库 → 566 条迁移 → 真库回放），`cargo test -p mc-conformance --test golden -- --ignored`：
+
+| 树 | `database_tier_replays_every_decidable_fixture` | 首个断言 |
+|----|-----------------------------------------------|----------|
+| **修前**（用 `git show HEAD:` 逐字恢复那两个文件再跑） | **FAIL** | `agents/TestGetAgent_RejectsForgedAgentIDHeader@…:520#13: actor kind Agent needs a real credential; this runner does not fabricate one`（`left: Unevaluable` / `right: Unevaluable`） |
+| **修后** | **PASS** | — |
+
+⇒ 与工单「缺陷 1」逐字同形，**存量得到确认**（不是 `LUM-2502` 的回归）。
+
+### §216.2 修法：三问共用声明面，不靠 `plan` 的 `Err` 兜底
+
+`Tier::supports()` 原来只对「身份」就地写死 `Self::Database => true`，而 `plan()` 的 `ActorKind::Agent` 分支说「不伪造」——**两条断言互斥**，该用例在任何实现下不可能全绿。现在三问都从声明面取值：
+
+| 问 | 声明面 | 位置 |
+|----|--------|------|
+| ① 身份供得起吗 | `ACTOR_CREDENTIALS`（actor kind → 哪些层有签发/解析面 ＋ 供不起时那句话） | `requirements.rs`（本片新增） |
+| ② 前提凑齐了吗 | `REQUIREMENTS` / `REPO_SIDE_PRECONDITIONS` | 同左（原有） |
+| ③ 请求发得出来吗 | `request_target_is_encodable()`（**层无关**） | 同左（本片新增） |
+
+`plan()` 对「一个签发面都没有」的档（`satisfied_by: &[]`）直接取**同一句** `detail`，于是「报告理由」与「拒绝理由」逐字相同。
+
+**修法不是「放宽 `supports`」**：把 `Agent` 写进 `Tier::Database` 会把 13 条 `agent` 从 `unevaluable` 变成**假 `mismatch`**（没有签发面 ⇒ 回放只能拿到 401/500，而那与「实现写错了」在报告里长得一样）。收窄后的当轮读数：真库层 `agent` 仍是 **13 条 `unevaluable`、0 条 `mismatch`**。
+
+### §216.3 拆掉第一条红，**露出**第二条（同族，但在请求面）
+
+修后同一个用例前进到下一条断言，**同样是「声明供得起、其实发不出来」**：
+
+```
+agents/TestUpdateAgent_KeepsMcpConfigForMemberActor@…:1423#23: cannot build request: invalid uri character
+```
+
+机理：那条上游测试 PUT 了一个**字面带空格**的路径（`/api/agents/a runtime that this profile does not provide`），抽取器原样写进了 `path`；而 `plan()` 只对 `path_params` / `query` 的**取值** percent-encode，字面量原样进 URI ⇒ axum 在 `RequestPlan::to_http` 拒掉。**这不是本仓实现写错**（fixture 在 `contracts/golden/**`，属禁改面），所以只能被**声明**为「两层都判不了」，不能反过来变成假 `mismatch`。
+
+⇒ 把「请求面」也做成 `supports` 的闸门后，同一条用例 **PASS**。这条红**本来就在**，只是被第一条挡在前面（用例在首个失败断言处 panic）——所以「修好一条会露出下一条」本身就是这类判据的形态。
+
+### §216.4 双向失败演示（1）：故意不对称的 actor kind ⇒ 对应用例红
+
+临时加一档 `ActorKind::Robot`（表里写 `satisfied_by: &[Tier::Database]`，而 `plan` 没有它的签发面）：
+
+```
+thread '…credential_table_is_symmetric_with_the_replay_planner' panicked at …:
+Robot/Database: 表说供得起，plan 却拒绝（判据不对称）：actor kind Robot needs a real credential…
+test result: FAILED. 14 passed; 1 failed
+```
+
+撤掉 ⇒ `test result: ok. 16 passed; 0 failed`。（演示时把覆盖度判据的档表也补上那一档，让**只有**对称性判据响 —— 演示的是判据的鉴别力，不是连带失败。）
+
+### §216.5 缺陷 2：`T1-7` 口径重定
+
+**旧口径**（`contract_equivalence_rate == 1.0 ∧ mounted_equivalence_rate == 1.0`）在任何正确实现下不可满足：`contract` 的分母是**全部 365 条**，它是「这一层能判多少」的函数。当轮两层实测（`--no-db` vs `--db-url`）：
+
+| 层 | contract | mounted | totals（fix/pass/mismatch/unmounted/placeholder/unevaluable） |
+|----|----------|---------|------------------------------------------------------------|
+| stateless（`report.json`，旧 `T1-7` 读的就是这份） | **0.093151** | **1.000000** | 365 / 34 / 0 / 0 / 0 / **331** |
+| database（真库） | **0.734247** | **0.807229** | 365 / 268 / 64 / 3 / 0 / 30 |
+
+同一指标两层差 **7.9 倍**，差异全部来自 stateless 层 **331 条结构性 `unevaluable`**（它们需要真库 / 真凭据才能判定，诚实标注，不是缺陷）。⇒ 与 `T1-1a/1b` 同族：**rate 是「这一层能判多少」的函数，不是实现完成度，也不是正确性。**
+
+**新口径**（`T1-7`）：不再要求 rate `== 1.0`，改问**判词有没有自带凭据**（五条，`scripts/stop_condition.sh` 一段 python 逐条实现；**不写死任何当轮数字**、**不自动生成白名单**）：
+
+| # | 判据 | 「什么实现下会 FAIL」的正面回答 |
+|---|------|------------------------------|
+| ① | `pass` 必须有 `status_observed == status_expected` | 假 pass（改判为过但不给观测）⇒ 红 |
+| ② | `unevaluable` 必须无观测且理由非空 | 静默不动 / 空理由 ⇒ 红 |
+| ③ | `unevaluable` 的理由必须点名自己的 `requires` id 或 `actor` | 放之四海皆准的套话 ⇒ 红 |
+| ④ | 声明与观测逐条一致：非匿名档不许被 stateless 判定 ∧ 匿名且无声明前提 ⇒ 必须判定 | 「把 `supports` 放宽」那一族 ⇒ 红 |
+| ⑤ | 两个 rate 必须从原始终数**导出** ∧ 账目不平即红 | 手写 rate / 换一个好看的分母 ⇒ 红 |
+
+**双向失败演示（2）**：三类「让 rate 变好」的错误改动，都喂给**逐字取自脚本**的判据（`awk` 抽那段 python 原样跑；另有一个替身二进制把报告按 `--golden` 吐出来，让 `stop_condition.sh` 走**真**的 T1-7 代码路径）：
+
+| 改动 | contract | 判据 |
+|------|----------|------|
+| a 假 pass（331 条未判定 → `pass`，不给观测） | 0.093 → **1.000000** | **FAIL**（① `pass 无观测 n=331`、④ `越权判定 n=326`）|
+| b 只改 rate 定义（换成 `pass/(pass+mismatch)`，决策一条不动） | → **1.000000** | **FAIL**（⑤ `contract rate 非导出`）|
+| c 放宽声明（非匿名档在 stateless 层被「判定」，且补了相符观测） | 0.093 → 0.986301 | **FAIL**（④ `越权判定 n=326`）|
+
+同一份脚本、`--skip-gates`：真报告 ⇒ `T1-7 PASS`（`pass 34/365 · decided 34 · unevaluable 331 · contract 0.093151 · mounted 1.000000`）。
+注：`T1-5`（`mismatch 0 ∧ unmounted 0`）在三类改动下**全绿** —— 这正是「旧 T1-7 没有鉴别力、新 T1-7 有」的对照。
+
+### §216.6 快照刷新：`crates/mc-conformance/report.json` **13 行**
+
+凭据修法让 13 条 `agent` 的理由从「`agent` actor needs the database tier（rerun with `--db-url`）」—— 一句会把读者引到 `--db-url`、到了那儿仍然判不了的**假线索** —— 换成凭据表那一句。`git diff --numstat` 实测 **13/13**：`totals`（365/34/0/0/0/331）、两个 rate、`offline_decidable`、其余 352 行的 `detail` **逐字未动**（`member` / `daemon` 的指路理由保持原样，见新判据 `credential_detail_points_at_the_tier_that_can_supply_it`）。`contracts/golden-local/**`（13 条全是匿名 fixture）**零位移**。
+
+### §216.7 当轮门禁与停止条件
+
+`cargo test -p mc-conformance`：lib **16/16**、integration **4/4**；`--ignored`（真库）**3/3**（含 `database_tier_replays_every_decidable_fixture`）。
+`gates.sh --only fmt,conformance,route-parity,file-size`：首轮 **4/4 PASS**（① ⑨ ⑦ ⑩，实测 `overall: PASS — 4/4 gate(s) green in 5s`）；收尾时本片 `target` 已清到只剩二进制，⑨ 改用**同一命令行**直接跑该二进制复核 ⇒ `report matches crates/mc-conformance/report.json`（`rc=0`，与 `cargo run` 同源同参）。
+`stop_condition.sh --skip-gates`：`pass=12 fail=1 skip-no-db=2 skip-no-asset=3 skip-no-gate=0 total=18`，`failing_ids = T1-12`。
+**PASS**：`T1-1a…T1-1f / T1-2 / T1-3 / T1-4 / T1-5 / T1-7 / T1-9` —— `T1-1a/1b` 未被改回（验收第 4 条）。
+**`T1-12` 的红是存量**：§215 已登记（`golden-local` 子集上没有 `POST /auth/send-code`，`main.rs` 的 `REPO_SIDE_PRECONDITIONS` 覆盖断言直接 `bail`）。本片写集不含 `main.rs` / `contracts/golden-local/**`，**不动**，仍留给 owner。
+
+### §216.8 ⑦ 八数字（第 20 轮，本轮实测，逐字不变）
+
+`upstream 456 (f41fae6b08fb) | local 546 registered | baseline 546` / `implemented 455 real + 1 placeholder = 456/456` / `known_gap 0` / `unclaimed 0` / `regression 0` / `local_only 8`；`⑦b rc=0`。本片 **0 路由**（7 个 PASS 的停止条件格里 6 个与路由无关）。
+
+### §216.9 磁盘（本机操作，owner 需知情）
+
+起手 `df` 实测 **64MB avail**（不是工单写的 26G）：`lum-2508` 正以 `CARGO_TARGET_DIR=…/lum-2501-b106243f404f/workdir/lumosbase/target` 构建，`lum-2501` 的 target 已涨到 **19.4G**，机器上同时有 **29–44 个 cargo/rustc 进程**。构建尝试三次撞 `ENOSPC`（`free=0`）。**Postgres 未被打死**（两次实测 `5432` 仍在听，未被连带杀）。
+
+为让本片与本机其他 agent 都能推进，**清理了 `lum-2502` 工作区（已合并 PR #152、无进程）的 `paperclip-rs/target`，释放 6.8G**；源码 / git / 文档 / 日志全部保留，重建即可恢复。本片自己的 `target` 在收尾时删到只剩 `target/debug/mc-conformance`（129MB）。**结论：本机 49G 盘在「两个 agent 同时构建 Rust 工作区」时不够用；这不是本片特有的问题。**
+
+### §216.10 号段
+
+下一空号 = **`## §217`**（`§213` = `LUM-2502`、`§214` = `LUM-2504`、`§215` = `LUM-2506`、`§216` = 本片）。
+**仍未清理（待 owner）**：`T1-12`（golden-local 对账）的存量红；`T1-11`（CI 第 4 个 job `image` 不存在，归 M10-7）。
