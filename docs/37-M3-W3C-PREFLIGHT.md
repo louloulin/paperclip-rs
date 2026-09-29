@@ -23825,3 +23825,166 @@ GH 1 open PR = `#168`（维持不合并裁定）。**行为面 `BEHAVIOR_*` 余 
 **禁**：普通片刷 `crates/mc-conformance/report.json`（§250 §6.2 docker 死锁待 owner）；
 `UNMOUNTED 1` 加路由（`known_gap = 0`）。
 **下一空号 `## §254`**（并发 cycle 会抢号，**追加前先 `git fetch` + 在远端最新 base 上 grep**）。
+
+## §254 【LUM-2582 04:00 cycle】收割 PR #174（T1-6-I）＋ 拆掉「派出到死 runtime」那颗雷
+
+起手 `df -h /` 连采两次 **24G/50%**（两次逐字相同）、`pg_lsclusters` 5432 `online`；
+base `git rev-parse` 实测 **`b895f8ca`**（与上一轮收尾值相同，**没有**并发 cycle 插队）；
+GH open PR **2** = `#168`（§243 判不合并、head `272acce6` 未动 ⇒ 维持不合并）＋ **`#174`**（`LUM-2580`，新交）。
+
+### 1. 收割 PR #174，八步链 **8/8**
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 预检一 `merge-base..head` numstat == PR API 逐字 | **4 文件 `+410/−7`**，page1=4 / page2=0 ✔ |
+| 2 | base 是否 head 祖先 | `merge-base == b895f8ca` == base tip ⇒ **可快进** ✔ |
+| 3 | `merge-tree --write-tree` | **rc=0**，树 **`09a8afb6…`** ✔ |
+| 4 | 门禁（跑在门禁树上） | ① fmt ② build ③ clippy ⑤ test ⑩ file-size **5/5 PASS / 364s**；⑦ route-parity **rc=0**；⑨ 见 §2 ✔ |
+| 5 | 钉 40 位 sha ＋ `merge_method=merge` | 钉 `9c160a21…` ✔ |
+| 6 | 落地树 == 门禁树 | `a32fdc06^{tree} == 09a8afb6…` **`git diff 9c160a21 a32fdc06` 空** ✔ |
+| 7 | `parent2` == 钉的 sha | `a32fdc06^2 == 9c160a21…` **逐字相同** ✔ |
+| 8 | 独立复核 T1-6 读数 | 见 §3，**8/8 验收格逐字命中** ✔ |
+
+**第 3 条的额外收益**：`merge-tree` 输出的树**恰好等于 head 树**（`09a8afb6`）⇒
+「合并树 == 门禁跑过的那棵树」是**构造出来的**，不是事后推断（§227「能构造就别事后推断」）。
+所以 ①②③⑤⑩⑦ 的绿**按构造继承**到落地提交。
+
+**⑥ 没跑的理由是「输入在别处已被覆盖」，不是「省门禁」**：门 ⑥（真库 e2e）在本 PR head 上
+由 CI 的 `db` job **`success`** 覆盖（见 §2 的 job 表）⇒ 合并树 == head 树 ⇒ ⑥ 的证据继承自那次
+CI run，不是本地缺跑。⑧ schema-drift 未跑：写集零 migrations / 零 `mc-db` / 零 SQL 迁移面。
+
+### 2. 🔴 承重一（本轮最要紧）：`contract` job 红了，**先在干净 base 上跑同一条门**再定性
+
+CI 四道：`fast` / `image` **in_progress**、`db` **success**、**`contract` failure**。
+`contract` = 门 ⑦ route-parity ＋ 门 ⑨ conformance。**收割方不先复现，就会把存量红写成
+「本片引入的回归」并做无谓修补**（§247 承重一第 2 次派场）。
+
+**本轮两侧实测**（各自真跑，`CARGO_INCREMENTAL=0`）：
+
+| 树 | 命令 | 结果 |
+|---|---|---|
+| head `9c160a21` | `gates.sh --only route-parity,conformance` | ⑦ **rc=0**；⑨ **rc=1** |
+| **干净 base `b895f8ca`** | `gates.sh --only conformance` | ⑨ **rc=1** |
+
+**两侧失败签名逐字相同**：
+
+```
+conformance report drifted from crates/mc-conformance/report.json
+  first difference at line 17:
+    committed:         "unevaluable": 13
+    fresh:             "unevaluable": 12
+```
+
+⇒ **存量红，非本片引入**。根因是 PR #167 未同步 `report.json`（PR #167 让一条 agent fixture
+从 `unevaluable` 变可判定），刷新权按不变式归 **M10-9 / `LUM-2111`**，而 `LUM-2111` 卡在
+docker/podman/buildah 三者皆无（而 ⑨ 的 `--no-db` 形态**并不需要** docker）⇒ 死锁仍待 owner 裁决。
+**严禁**为了让 ⑨ 变绿去跑 `--write` 刷 `report.json`。
+
+⚠️ **门禁耗时不是判据**：base 上 ⑨ 跑 **45s**，head 上 **102s**（首次含编译）⇒ 只逐字比
+`--check` 的失败签名，不比秒数。
+
+### 3. 🔴 承重二：验收表要**自己重算**，不要采信自报 —— 但**起点值不要跟着漂**
+
+`LUM-2580` 自报 `pass 293→295 / mismatch 42→40 / bad_total 72→70 / REALM_DIFF 19→17`。
+本轮在 `multica_c2582`（**当轮新建**、566 迁移 **2.9s** ＋ `build -p mc-conformance` ＋ 回放
+**36.7s**）上**同机跑 base 与 head 两次**，逐格命中：
+
+| 项 | base `b895f8ca` | head `9c160a21` | 判据 |
+|---|---:|---:|---|
+| `fixtures` | 365 | **365** | 不许动 ✔ |
+| `pass` | 293 | **295** | +2 ✔ |
+| `mismatch` | 42 | **40** | ≤40 ✔ |
+| `unmounted` / `placeholder` | 1 / 0 | **1 / 0** | 不变 ✔ |
+| `unevaluable` | 29 | **29** | 逐字不变 ✔ |
+| `bad_total`（**减法** `365−pass`） | 72 | **70** | `72 − (295−293) = 70` ✔ |
+| `UNMOUNTED` / `PRECONDITION` / `AUTH_401` / `SEED_404` | 1 / 29 / 6 / 17 | **1 / 29 / 6 / 17** | 逐字不变 ✔ |
+| `REALM_DIFF` | 19 | **17** | 不增 ✔ |
+
+`bad_total` 用 **`fixtures − pass` 减法**交叉核对，**不用分桶相加**（§237 承重二：
+分桶相加与被抄的那行是同一次抄写，抄错一次就永远自洽）。
+
+**逐 fixture 字段级 diff（按 `(source, method, path, expected.status)` 重配对，**不是**按 `id`）**：
+`outcome` 变化**恰好 2 行**、全部 `mismatch → pass`，**新红 0 条**：
+① `POST /api/daemon/tasks/{taskId}/messages` `500 → 200`（NUL 载荷）
+② `GET /api/issues?metadata={not-json}` `200 → 400`（metadata 过滤串）
+其余 84 处 diff **全部**是 `detail` 里的**种子 UUID 逐运行变化**（每次回放重新播种），
+`outcome` / `status_observed` / `tier` / `unmounted` / `offline` / `database` 判定字段**零变化**。
+
+### 4. 🔴🔴 承重三（本轮真正的产出）：**「解除阻塞并派出」可以被无声执行，且派出对象是死 runtime**
+
+`LUM-2567`（**PRECONDITION 29 = `bad 72` 的最大族 40%**）在 `2026-09-29T19:28:01Z` 被派给
+`编程助手-devbox1`（`22e8b20d`），run **`01a0eea3-cf88-72e2-b39e-69c012c54396` 至今
+`queued` / `started_at = null` / `dispatched_at = null`**。而 devbox1 的 runtime
+（`0d113b34` / `041bf509` 一族）**自 2026-09-28 起 offline**，该 agent 最近 6 条 run =
+`queued` / `failed runtime unavailable while task was queued` / `failed did not reconnect` /
+`failed runtime went offline` / `completed` / `failed ENOSPC`。
+
+**issue 侧与「已派出且在跑」完全同形**：`status = todo`、零评论、`last_activity_at` = 派出那一刻。
+§250 §6 判「可以开工」这件事本身是对的，**但它启动的那条 run 从未启动**。
+
+**⇒ 派发三步定式（本轮抽成）**：
+1. **派出前**查 `multica runtime list` 的 `status`。
+   🔴 **`multica agent list` 的 `last_seen_at` 全表 24 个 agent 无一有值**（连 online 的也是）
+   ⇒ 用它判活会得到「全员从未上线」的假结论。**runtime 存活唯一权威读数在 `runtime list`。**
+2. **派出后**回读 run 的 `started_at`。**`null` 不是「早期」，是「没起来」** ——
+   死 runtime 上的 `queued` 永远不会自己变，等它 = 零进展，且是 §184 的**重试磁铁**。
+3. 两者都过（`created == dispatched == started` 同一秒、`attempt 1`、`error null`）才算真的派出去了。
+
+**处置**：`cancel-task 01a0eea3-cf88`（✅ **订正一条过期记忆**：`multica issue cancel-task`
+**现在存在**；§222.7 / §237 记的「CLI 无 cancel 动词」**已过期**，那些幽灵 `queued` run 本可以撤掉）
+→ 改派 **`资深编程运维助手devbox4`（`3df1a3e8`，runtime `4a7f29e1` online，近 6 条 run 6/6 completed）**
+→ `multica issue rerun`（§248 派发纪律第 6 次复现：`assign --no-start` ＋ `status todo` 后
+**task 表里根本没有行**，只有 `rerun` 才起 run）⇒ run **`01a0eed1-5dd0`**，
+`created == dispatched == started == 20:18:13Z`、`att 1`、`err null`。**写集 / 验收 / 约束一字未改，只换 runtime。**
+
+**并已把 `LUM-2567` 描述推进到 rev（§11）**：起点值换基到 `a32fdc06`
+（`pass 295 / mismatch 40 / bad_total 70 / REALM_DIFF 17`，**`PRECONDITION` 仍 29**），
+验收改成**不预设目标值**的对账式 **`bad_total_after == 70 − (pass_after − 295)`**
+（该式已连续验证三次命中），并**作废** §10.4 的在飞表（`LUM-2578` / `LUM-2580` / `LUM-2575` 均已合）。
+
+### 5. 派 `LUM-2583`（第 2 槽，**0 磁盘类**）：门 ⑩ 拆 `t1_6_realm_diff_taxonomy.py`
+
+在飞 2 片（`LUM-2567` ∥ `LUM-2583`）＋ 本 cycle = **3/3**，**第 3 槽刻意留空**。
+
+`wc -l scripts/t1_6_realm_diff_taxonomy.py` = **800 整**。门 ⑩ 的判据是「**清单外** `> 800` ⇒ 失败」
+⇒ **800 通过、加一行就红、余量 0**。🔴 **它是 §248 刚放进去的新雷**（当时登记「余量 0」却没在本片内拆）。
+且 `grep -rn` 确认 **`scripts/`、`crates/`、`.sh`、`.yml` 零命中** ⇒ 没有任何门/脚本/crate 依赖它
+⇒ 拆分对门禁输入**零影响**。
+
+另一颗同型雷 `scripts/schema_drift.py` = **799（余量 1）**，但它**被门 ⑧ 使用** ⇒ 本片**禁改**，只登记。
+白名单只剩 1 条 `extract_upstream_fixtures.py`（tsv 记 **1863** / `wc -l` 实测 **1858**）
+⇒ **天花板 ≠ 实测**这条老坑依然在。
+
+**为什么第 2 槽选它而不是第二片 Rust**：`DEVICE_*` 7 / `AUTH_401` 6 / `SEED_404` 17 **三族全在
+`mc-conformance/src/**`**，与在飞的 `LUM-2567` **同写集 ⇒ 必须串行**；`UNMOUNTED 1` 因
+`known_gap = 0` **不许加路由**。⇒ **当前没有一个「与 `LUM-2567` 零写集交集且可动手」的 T1-6 族**，
+空位就该给 0 磁盘类（§241.6 派片排序：**峰值磁盘占用是第一成本项，不是体量**）。
+
+### 6. 门读（base `a32fdc06` 当场重跑）
+
+⑦ **八数字第 49 轮逐字不变**：`456 / 546 / 546`、`455 real + 1 placeholder = 456`、
+`known_gap []` / `unclaimed []` / `regression 0` / `local_only 8` / `ok=true`（upstream `f41fae6b08fb`）；
+⑦b `541 literals / 0 defect` rc=0；⑩ `scanned 1389+ / violations 0` rc=0；
+⑨ `--no-db --check` **存量红**（§2）。**零编译零路由。**
+
+### 7. 下一 cycle 顺位（**逐条重验，禁抄**）
+
+1. 起手五连：`df` 连采两次 → `pg_lsclusters` → `git rev-parse` 对 `ls-remote` →
+   GH open PR（**翻页取全**，`per_page=100` 被静默截断的整数特征要认）→ 逐 PID `/proc/*/cwd`。
+2. `LUM-2567` 交 PR ⇒ 八步链，验收 = **`PRECONDITION 29 → ≤26`** ＋ **`mismatch 40` 不增** ＋
+   **`bad_total_after == 70 − (pass_after − 295)`** ＋ 其它四族 `1/6/17/17` 逐字不变 ＋
+   `unevaluable 29` 不变 ＋ ⑦ 八数字逐字不变（0 路由片）。
+   🔴 **A 组 13 / D 组 11 / B 组 2 三组按设计不可判定**，现实落点就是 ≤26；
+   **不要**把「30 条全变 pass」写成判据（那会变成一颗没人看守的雷，§247 纪律一）。
+3. `LUM-2583` 交 PR ⇒ ⑦⑦b⑩ 三门 rc=0 ＋ **拆分前后 stdout 逐字节 `diff` 相同** ＋
+   `ls scripts/t1_6_realm_diff_taxonomy*` **只看到目录**（git 不能同时跟踪同名文件与目录）。
+4. `LUM-2567` 合入后 ⇒ `DEVICE_*` 7（`mc-conformance/**`）→ `AUTH_401 6` / `SEED_404 17`
+   （**同写集 ⇒ 串行**）→ `UNMOUNTED 1`（`known_gap = 0` ⇒ **不许加路由**）。
+5. `schema_drift.py`（799，门 ⑧ 在用）拆到 ≤600 —— 只在 ⑩ 门实际红了才做，现在 latent。
+
+**下一空号 `## §255`**（`§253` = `LUM-2580`、`§254` = `LUM-2567` 已预约）。
+🔴 **追加前先 `git fetch` + 在远端最新 base 上 `grep`** —— §237 承重五与 §238 承重三
+**两次都栽在「我查了号，查的是起手 base 上的号，而对方的号是在我起手之后落的」**。
+
+**待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无（`report.json` 刷新死锁）；
+`mc_t2492` 名下 **116 张表仍在默认 `postgres` 库**（`DROP TABLE CASCADE` 属破坏性，未自行执行）。
