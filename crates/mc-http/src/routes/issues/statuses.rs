@@ -25,12 +25,17 @@ use super::helpers::{status_repo_err, validation};
 // status 目录端点
 // ---------------------------------------------------------------------------
 
+/// 400 文案里列出的合法 `category` 词表（上游四值 + 本仓 compat 别名）。
+const CATEGORY_HINT: &str = "unstarted, started, done, closed, open";
+
 pub(crate) fn status_list(rows: &[IssueStatusRow]) -> StatusListResponse {
     let statuses: Vec<IssueStatusDto> = rows.iter().map(IssueStatusDto::from_row).collect();
     StatusListResponse {
         total: statuses.len(),
         statuses,
-        categories: vec!["open", "closed"],
+        // 上游 `issuestatus.Categories()` 的四值展示序 + 本仓 compat 别名 `open`
+        // （`create_status` / `update_status` 接受的词表，两者都能落库）。
+        categories: vec!["unstarted", "started", "done", "closed", "open"],
     }
 }
 
@@ -65,7 +70,7 @@ pub(crate) async fn create_status(
         return Err(validation(format!("name must be 1..={KEY_MAX_LEN} characters")).into());
     }
     let category = parse_category(req.category.trim())
-        .ok_or_else(|| validation("category must be open or closed"))?;
+        .ok_or_else(|| validation(format!("category must be one of: {CATEGORY_HINT}")))?;
     let key = match req.key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         Some(raw) => Some(
             validate_key(raw).ok_or_else(|| validation(format!("invalid status key: {raw}")))?,
@@ -117,9 +122,10 @@ pub(crate) async fn update_status(
         .map(str::trim)
         .filter(|c| !c.is_empty())
     {
-        Some(raw) => {
-            Some(parse_category(raw).ok_or_else(|| validation("category must be open or closed"))?)
-        }
+        Some(raw) => Some(
+            parse_category(raw)
+                .ok_or_else(|| validation(format!("category must be one of: {CATEGORY_HINT}")))?,
+        ),
         None => None,
     };
 

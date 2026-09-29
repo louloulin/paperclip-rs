@@ -9,10 +9,12 @@
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
 
+use mc_core::status::{IssueStatus, StatusCategory};
 use mc_core::Id;
 use mc_db::Db;
 
 use crate::issue::IssueRow;
+use crate::issue_status::parse_category;
 use crate::workspace::map_sqlx_err;
 use crate::{RepoWithDb, Result};
 
@@ -85,7 +87,8 @@ impl IssueTableRepo {
     /// (分类, position, 内置优先, 内置序, key) 排序，内建缺失时补齐。
     pub async fn status_order(&self, workspace_id: Id) -> Result<Vec<String>> {
         // 本仓 0001 的 issue_status 没有 archived / is_system 列，无法过滤归档目录项；
-        // 分类 CHECK 只有 open/closed（上游是 unstarted/started/done/closed 四档）。
+        // category 的 CHECK 是「上游四值 ∪ 本仓 compat 别名 open」（539 迁移），
+        // 排序按 `StatusCategory::rank` 走四档，未识别的值排最后（= len）。
         let rows: Vec<StatusRow> = sqlx::query_as(
             "SELECT key, category, position FROM issue_status WHERE workspace_id = $1",
         )
@@ -362,10 +365,21 @@ impl RepoWithDb for IssueTableRepo {
 
 /// 上游 `issueTableStatusOrder`：目录（key, category, position）合并 7 个内建 key 后排序。
 ///
-/// 排序键：分类（open < closed，上游是 unstarted < started < done < closed 四档，
-/// 本仓 `issue_status.category` 的 CHECK 只有两档）→ position → 内置优先 → 内置序 → key。
+/// 排序键：分类（上游 `unstarted < started < done < closed` 四档，见
+/// [`StatusCategory::rank`]）→ position → 内置优先 → 内置序 → key。
+///
+/// 🔴 **内置 key 一律用真实档（`BUILTIN_STATUSES` / `lifecycle_category`），不用 DB 里
+/// 的 `category` 列**：内置 7 行在本仓统一存 compat `'open'`，直接用列值会让
+/// `in_progress`（真实 `started`）排在自定义 `unstarted` status 后面。自定义 key
+/// 没有这层退化，直接用列值；认不出来的值排最后（上游 `categoryRank` 同语义）。
 fn merge_status_order(mut entries: Vec<(String, String, f64)>) -> Vec<String> {
     let builtin_rank = |key: &str| BUILTIN_STATUSES.iter().position(|(k, _)| *k == key);
+    let rank_of = |key: &str, stored: &str| -> u8 {
+        let builtin = IssueStatus::from_key(key).map(IssueStatus::lifecycle_category);
+        builtin
+            .or_else(|| parse_category(stored))
+            .map_or(u8::MAX, StatusCategory::rank)
+    };
     let seen: Vec<String> = entries.iter().map(|(key, _, _)| key.clone()).collect();
     for (key, category) in BUILTIN_STATUSES {
         if !seen.iter().any(|existing| existing == key) {
@@ -373,12 +387,8 @@ fn merge_status_order(mut entries: Vec<(String, String, f64)>) -> Vec<String> {
         }
     }
     entries.sort_by(|a, b| {
-        let category_rank = |category: &str| match category {
-            "closed" => 1,
-            _ => 0,
-        };
-        category_rank(&a.1)
-            .cmp(&category_rank(&b.1))
+        rank_of(&a.0, &a.1)
+            .cmp(&rank_of(&b.0, &b.1))
             .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
             .then_with(|| {
                 let a_builtin = builtin_rank(&a.0);

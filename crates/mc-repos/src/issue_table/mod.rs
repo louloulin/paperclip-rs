@@ -66,14 +66,18 @@ pub const GROUP_VALUE_NO_PROJECT: &str = "__no_project__";
 /// facet 值里“空”桶的 key（上游 `__none__`，注意与分组用的 `__unassigned__` 不同）。
 pub const FACET_VALUE_NONE: &str = "__none__";
 
-/// 7 个内置 status key 与其生命周期分类（本仓 `issue_status.category` 只有 open/closed）。
+/// 7 个内置 status key 与其生命周期分类（上游 `issuestatus.CategoryForBehavior`
+/// 的四值词汇；`category = 'done'` 是生命周期档，与「状态键叫 `done`」是两件事）。
+///
+/// 这里写的是**真实档**而不是 DB 里的 compat `'open'`：排序需要区分 `unstarted`
+/// 与 `started`，而内置 7 行在 DB 里统一存 `'open'`。
 const BUILTIN_STATUSES: [(&str, &str); 7] = [
-    ("backlog", "open"),
-    ("todo", "open"),
-    ("in_progress", "open"),
-    ("in_review", "open"),
-    ("blocked", "open"),
-    ("done", "closed"),
+    ("backlog", "unstarted"),
+    ("todo", "unstarted"),
+    ("in_progress", "started"),
+    ("in_review", "started"),
+    ("blocked", "started"),
+    ("done", "done"),
     ("cancelled", "closed"),
 ];
 

@@ -32,10 +32,14 @@ impl IssueRepo {
         Ok(next)
     }
 
-    /// 终态 status key 集合：内置 done/cancelled + 目录里 `category = 'closed'` 的自定义 status。
+    /// 终态 status key 集合：内置 done/cancelled + 目录里终态 category 的自定义 status。
+    ///
+    /// 终态在上游是**两档**（`done` / `closed`），只比 `'closed'` 会漏掉
+    /// `category = 'done'` 的自定义 status（内置 `done` 本身仍由上面那行硬编码补上）。
     pub async fn terminal_status_keys(&self, workspace_id: Id) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT key FROM issue_status WHERE workspace_id = $1 AND category = 'closed' ORDER BY position",
+            "SELECT key FROM issue_status WHERE workspace_id = $1 \
+             AND category IN ('done', 'closed') ORDER BY position",
         )
         .bind(workspace_id.0)
         .fetch_all(self.db.pool())

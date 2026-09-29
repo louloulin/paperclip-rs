@@ -7,7 +7,7 @@ use mc_core::status::{StatusCategory, CANONICAL_KEYS};
 use mc_core::Id;
 use mc_errors::Error;
 use mc_repos::issue::{IssueRepo, IssueRow};
-use mc_repos::issue_status::{parse_category, IssueStatusRepo, DEFAULT_STATUSES};
+use mc_repos::issue_status::{category_matches, parse_category, IssueStatusRepo, DEFAULT_STATUSES};
 use serde::Deserialize;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -125,10 +125,13 @@ impl StatusCatalog {
     }
 
     /// 某个分类下的全部 key（内置 + 自定义）——用于 `status_category` 过滤展开。
+    ///
+    /// 按 `category_matches` 判：compat 别名 `open` 跨 `unstarted` / `started` 两档，
+    /// 逐值 `==` 会漏掉存着 `'open'` 的历史自定义 status。
     pub(crate) fn keys_in_category(&self, category: StatusCategory) -> Vec<String> {
         self.categories
             .iter()
-            .filter(|(_, c)| **c == category)
+            .filter(|(_, c)| category_matches(category, **c))
             .map(|(k, _)| k.clone())
             .collect()
     }
