@@ -28547,3 +28547,118 @@ crates/mc-conformance              base=head=e98c2d3c2b2cbf9e458cbae8d1129a982d9
 `section-alloc` = `sections=219 numbers=218 ledger=218 defects=0`。
 
 **门 ②③④⑤⑥⑧⑨ 未跑**（要 cargo / 真库 / 容器），**不作继承声明**，不得读成「全门通过」。
+
+## §291 【`LUM-2621` / T1-6-Q2】门 ④ 的判定器 `scripts/schema_drift.py`：**799 行、0 用例、距门 ⑩ 硬上限差 1 行** —— 补 79 个 `unittest`，**只测不改**，登记 KD-1 / KD-2
+
+§292 记下了这件事的**形状**（「799 行 + 0 测试，今天是绿的」）。本段是它的**读数**：
+同族第四片（`LUM-2606` `route_parity.py` / `LUM-2608` 其缺陷登记表 / `LUM-2617`
+`file_size_check.py` / 并行的 `LUM-2620` `slash_alias_audit.py`），纪律一样 —— **只测不改**。
+
+**🔴 本片的第一约束（它一行动都不能加）**：`scripts/schema_drift.py` 799 行，门 ⑩ 的
+`file_size_baseline.tsv` 规则是「清单外的文件不得超过 800 行」⇒ 新代码**只能进新文件**，
+本片因此交 `scripts/test_schema_drift.py`（**748 行**）+ `scripts/tests.manifest` **+1 行**。
+被测脚本**逐字节未动**（收尾 `git diff --stat scripts/schema_drift.py` 为空）。
+
+**零 Rust / 零 cargo / 零真库 / 零磁盘**：门 ④ 需要 `MULTICA_TEST_DATABASE_URL`，但判红逻辑
+全是**纯函数** —— `load_snapshot` / `object_map` / `load_deviations` / `load_apply_exceptions` /
+`_up_sql_files` / `dir_migrations` / `merged_migrations` / `diff_snapshots` / `check_registry` /
+`render_deviations` 一个字节都不碰数据库。**门 ④ 本身本片不跑**，所以「用例测的是真实函数」
+必须另外证明（见 §291.4）。
+
+### §291.1 覆盖：79 用例，按族
+
+| 族 | 用例数 | 钉住什么 |
+| --- | --- | --- |
+| import 非空壳 | 3 | 9 个被测符号都在；常量仍是 5 列 / 4 类别；**本文件的 import 表**（AST 读，逐字等于 `ast/json/os/pathlib/schema_drift/schema_snapshot/subprocess/sys/tempfile/unittest`）⇒ 门 ⑫ 的「纯标准库」前提可机器复核 |
+| `load_snapshot` | 6 | 正常 / 文件不存在 / JSON 语法错 / format 不符 / 对象为空 / 行缺 `kind`\|`key` |
+| `object_map` | 3 | key 是 `(kind, key)` **二元组**；无 `def` ⇒ `{}`；同名不同 kind **不塌成一行** |
+| `load_deviations` | 11 | 注释与空行（含缩进）、行号按**物理行**计、缺文件、`allow_missing` 两态、列数 4/6、三个必填列、类别前缀、`原因`/`承接 issue`、`--emit-deviations` 骨架行粘回必被拒、**重复条目** |
+| `DeviationRow.matches` | 6 | 精确 key / glob `issue.*` / kind 不匹配 / kind `*` / 类别必须相同 / `category` 取前缀 |
+| `load_apply_exceptions` | 10 | 6 列（比登记多一列 `statement`）、注释空行、缺文件、5 列被拒、空 objects、坏 token、一行多对象、**同对象去重并记两个来源**、`statement:` 兜底 key |
+| `_up_sql_files` / `merged_migrations` | 8 | `recursive` 两态、只收 `*.up.sql`、空目录判红、**跨目录按 stem 排序**、**重复 stem 判红（不是 last-one-wins）**、真仓库 560 + 6 = 566 |
+| `diff_snapshots` | 9 | 零差异 / missing / extra / differs / **子对象折叠** / 两侧都有的子对象逐条列 / 非子 kind 不折叠 / `position_only` / 两侧次序（`mine` = 本地） |
+| `check_registry` | 6 | **三个方向分开**：未登记、过期 `apply-exception`（**硬错**）、过期其余（**只告警**）；覆盖计数与 example；docstring 承诺的两个 skip 方向都可从同一组入参推出 |
+| `render_deviations` / `DiffItem` / `_clip` | 6 | 骨架行留空两列、按 `(category, kind, key)` 排序、`to_json` 全字段、`_clip` 截断到 160 |
+| 真数据 | 7 | 真快照 **2146 对象**且自比零差异、真登记 **45 条**（`原因`/`承接 issue` 无空）、真例外表、真迁移集 566、`main([])` **rc=2** |
+| 缺陷登记表 | 6 | 双向守卫（登记 ⇄ 装饰器）、四字段非空、JSON 可序列化 |
+
+**没覆盖的族与理由**：`print_report` / `_render_table` / `main()` 的 JSON 报告分支需要真
+`ScratchDatabase` 快照对象（本片零真库）；`--apply-set upstream` 的宽松迁移路径同理。
+**这是范围裁剪，不是遗漏** —— 判红逻辑（谁红、为什么红）全在上面那些纯函数里。
+
+### §291.2 docstring 声明的判红条件 vs 实测：逐条核对
+
+| docstring 声明 | 实测 | 结论 |
+| --- | --- | --- |
+| 四个类别 `missing`/`extra`/`differs`/`apply-exception` | `CATEGORIES` 就是这四个；`diff_snapshots` 只产前三类，`apply-exception` 项由 `load_apply_exceptions` 从**另一个文件**读、在 `main()` 里 `+ exceptions` 拼进去 | ✅ 一致，但「四类差异」其实是**三类差异 + 一份生成清单**；报告的 `by_category` 因此永远不含第四类的 diff 侧来源 |
+| `原因`/`承接 issue` 强制非空，`--emit-deviations` 故意留空 ⇒ 粘回永远不满足 | 骨架行 `issue.id\tcolumn\tmissing:\t\t` 粘回 ⇒ `原因 is empty` | ✅ 一致 |
+| 「a skip with no registered row fails **and** a registered row with no skip fails too」 | 两个方向都能从同一组入参推出（`check_registry` 未登记 / 过期硬错），不是靠 mock | ✅ 一致（**实测可达**，不是文案） |
+| 「duplicate stems are rejected, matching `mc_db::Migrator::load_dirs`」 | `001_a.up.sql` 同时在 `upstream/` 与 `compat/` ⇒ `duplicate migration version` 判红 | ✅ 一致 |
+| 「Registry rows are TSV, `#` comments allowed」 | 登记解析器接受**缩进**的 `#` 行；同模块的例外解析器**不接受** ⇒ rc=2 | 🔴 **不一致 ⇒ KD-2** |
+| 「`check_registry` 返回 `(unregistered items, stale errors, stale warnings)`」 | 它**就地改写** `row.covered` / `row.example` ⇒ 第二次调用会把过期行读成已覆盖 | 🔴 **不是纯函数 ⇒ KD-1** |
+
+**另外三条「实测读数」（不构成判红理由，只记录，别在写用例时误当成 bug）**：
+
+1. **重复登记不判红**：两条一模一样的登记行都留着、都 `covered=1`，`check_registry` 不告警
+   ⇒ 冗余登记是静默的。判红需要「重复应当是错」这个前提，而 docstring 没承诺过。
+2. **`fnmatch("issue", "issue.*")` 为假**：表级 glob **不覆盖表本身**，只覆盖它的子对象 ——
+   这是 docstring「`<table>.*` in practice」的**字面含义**（真快照的列 key 正是 `issue.identifier`）。
+3. **例外表要求 6 列却只读 5 列**：第 6 列 `statement` 被校验、不被使用 ⇒ 少写一列就 rc=2，
+   写了也不影响判定。
+
+### §291.3 缺陷登记（`KNOWN_DEFECTS` + `@unittest.expectedFailure` + 双向守卫）
+
+| 号 | 钉住它的用例 | 声明的契约 | 实测 | 收口 |
+| --- | --- | --- | --- | --- |
+| **KD-1** | `TestKnownDefects.test_kd1_check_registry_is_a_pure_read_of_rows_against_items` | `check_registry` 是把 rows 读成三个列表的**纯函数** | 就地改写 `covered`/`example` ⇒ 第二遍（`items` 已不含那条差异）读出 `covered=1`、**stale 列表为空** ⇒ 过期行静默消失。今天 `main()` 只调一次所以门 ④ 仍绿 | 覆盖计数放进返回值，或在 docstring 里写死「只调一次」 |
+| **KD-2** | `TestKnownDefects.test_kd2_an_indented_comment_is_a_comment_in_both_loaders` | 同一模块、同一种「注释」写法，两个解析器应当同一条规则 | `load_apply_exceptions` 用 `line.startswith("#")`（不 `lstrip`）⇒ 缩进 `#` 行 = `malformed row (want 6 tab-separated columns)` ⇒ **rc=2**；而例外表本身**就是一个满屏 `#` 注释的生成文件** | 那一行加 `lstrip()` |
+
+两条都另有一条**今天行为的绿用例**（`test_kd1_today_…` / `test_kd2_today_…`）—— 缺任何一条
+就只剩单边（`LUM-2608` 的理由）。**修不修交回 owner**：两条都不影响门 ④ 今天的判定。
+
+### §291.4 「用例测的是真实函数」怎么证明（门 ④ 本片不跑 ⇒ 必须另证）
+
+`LUM-2614` 家族：import 失败后的空壳也会绿。三个读数：
+
+1. `TestTheRealFunctionsAreUnderTest` 一族打**真文件**：真 `contracts/upstream-schema.json`
+   （`object_map` 出 **2146** 个二元组 key，自比 `diff_snapshots` **零差异**）、真
+   `contracts/schema-deviations.tsv`（**45** 条，`原因`/`承接 issue` 无一为空，喂真例外项
+   ⇒ **过期硬错 0**）、真 `contracts/upstream-apply-exceptions.tsv`、真 `migrations/`
+   （`merged_migrations` = **566** = `upstream/` 560 + `compat/` 6，stem 唯一且有序）。
+2. 真 `main()`：`python3 scripts/schema_drift.py --quiet` 在**无 `MULTICA_TEST_DATABASE_URL`**
+   时 **rc=2** + stderr `no database URL` + stdout 空（子进程跑真入口，不起库、不连网）。
+3. import 表用 AST 逐字比对（§291.1 第一行）⇒ 「不 import 任何 crate」是**读出来的**，不是承诺。
+
+### §291.5 🔴 三段读数（不是用例数 —— 用例数可以是绿的）
+
+| 段 | 动作 | 读数 |
+| --- | --- | --- |
+| **P-A** | 收尾 base（`c3946cd5` + 本片）当场跑门 ⑫ | `Ran 79 tests … OK (expected failures=2)`；`GATE_SCRIPTS_TESTS_EXIT=0`、**11 file(s)**、PASS |
+| **P-B1** | **整行删**掉 `scripts/tests.manifest` 里本片的登记行（不是改名） | `rc=1`，`+ scripts/test_schema_drift.py [discovered, NOT in scripts/tests.manifest]`，`discovery-identity mismatch` ⇒ **不登记 = 文件存在但从不被门执行**（`LUM-2614` 实测） |
+| **P-B2a** | 临时把 `merged_migrations` 的重复 stem 判红改成 `if False:`（探针，逐字节复原） | `rc=1`，失败原因是**目标守卫**：`FAIL: test_a_duplicate_stem_across_two_directories_is_rejected_not_last_one_wins` / `AssertionError: SchemaToolError not raised`（**不是** `NameError`/import 错） |
+| **P-B2b** | 临时**修好** KD-2（`startswith` → `lstrip().startswith`） | `rc=1`，`UNEXPECTED SUCCESS: test_kd2_an_indented_comment_is_a_comment_in_both_loaders` ⇒ **修好登记的缺陷必须同时删装饰器**，否则「修好了」与「登记表过期」被混成同一个红 |
+| **P-C** | `git checkout -- scripts/schema_drift.py` + 复原 manifest | 4/4 绿；`git status --porcelain` **空** |
+
+### §291.6 门读（收尾 base 当场重跑，零编译）
+
+`bash scripts/gates.sh --only route-parity,file-size,scripts-tests,section-alloc`
+⇒ **4/4 rc=0**：⑦ `route-parity` PASS（1s）、⑩ `file-size` PASS（0s）、⑫ `scripts-tests`
+PASS（6s，**11 file(s)**）、⑬ `section-alloc` PASS。
+
+**②③④⑤⑥⑧⑨ 本片一律未跑**（需 cargo / 真库 / 容器），**不作继承声明**；门 ④
+（`schema-drift`）需要 `MULTICA_TEST_DATABASE_URL`，**本片未跑**。
+**不得**据本段写「全门通过」。
+
+### §291.7 号段与并行片
+
+- 本片取 **§291**（起手 base 上空号；已对远端分支扫过 0 命中）。收尾时 base 已前进到
+  `c3946cd5`（13:30 cycle 的 §292 直接推入 base）⇒ **文档里 §291 排在 §292 之后**：
+  号段按「派发时分配」定，文件顺序按「合入先后」定，两者不一致是正常的 ——
+  `section_alloc_check.py` 是**集合**校验（双向 + 撞号），不校验先后。
+- 三个并行写集：`scripts/tests.manifest`（本片 +1 行）、`docs/section-alloc.tsv`（按段号**插入**）、
+  `docs/37`（EOF 追加 ⇒ **必冲突是结构性的**）。本片的登记行按 `LC_ALL=C sort` 插在
+  `test_route_parity_defects.py` 与 `test_t1_6_precondition_taxonomy.py` 之间；`LUM-2620`
+  的 `test_slash_alias_audit.py` 落在 `test_schema_drift.py` **之后**，两侧各自插入后仍然有序。
+- 🔴 **`--find` 输出不是有序的**：门 ⑫ 用 `comm` 做**集合**比对（另查重复行），所以登记行的
+  **物理顺序不影响判定**；`sort -c` 只对数据行成立（文件头的 `#` 注释块会让 `sort -c` 报
+  `disorder: #`，**这是预期的**，不是回归）。
