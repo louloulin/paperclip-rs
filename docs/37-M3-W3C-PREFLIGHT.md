@@ -26457,3 +26457,265 @@ $ bash scripts/gates.sh --only scripts-tests > log 2>&1; grep GATE_SCRIPTS_TESTS
 不动 `crates/mc-conformance/report.json`；不改门 ①–⑪ 的判据；
 不删 PR #184 那 97 个真实用例中的任何一个（只把 4 条**守门**用例从包内迁到顶层）；
 不用「用例数 ≥ 101」当判据（那正是探针 ① 塌到 45 却仍然绿的那类指标）。
+
+## §278 【LUM-2606 / T1-6-K】门 ⑦ 的判定器 `route_parity.py`（779 行）**0 测试** —— 决定「谁该被派工」的那道门无人看守（零 Rust / 零 cargo / 零真库 / 零磁盘）
+
+> 📌 **号段**：§277 是本 cycle 的记录、§279 归并行的 `LUM-2607`（号段台账）。本片**只 append §278**，
+> 不改任何既有段落、不碰 `docs/37` 以外的 `docs/*.md`。
+>
+> 🔴 **跨片交互（必须先看这条）**：`LUM-2607`（分支 `agent/devbox4/9b120682d49b`）引入
+> `docs/section-alloc.tsv` + 门 ⑬ `section-alloc`，它的 **R1 要求「`docs/37` 里每个 `## §NNN` 都要有台账行」**。
+> 该文件在本片 base `a5facad4` 上**不存在** ⇒ 本片**不能**自己建它（会把 `LUM-2607` 那份 237 行台账整体拖进冲突）。
+> 但本片写的 `## §278` 一旦落地，**R1 就会缺一行**。⇒ **分配者需在门 ⑬ 落地的那次提交里补一行**，否则
+> 「本片先进」「`LUM-2607` 先进」两种顺序都会让门 ⑬ 判红：
+>
+> ```
+> 278	LUM-2606	【LUM-2606 / T1-6-K】门 ⑦ 的判定器 route_parity.py（779 行）0 测试 …	1
+> ```
+
+**起手** base **`a5facad4`**（LUM-2604 / T1-6-J 合并后的 merge commit）：`git fetch` 后**当场
+`git reset --hard a5facad4`** 复核（`HEAD == a5facad4…`、`git status --short` 空）。
+**本片零 Rust / 零 cargo / 零真库 / 零磁盘。**
+
+### §278.1 问题（当场实测，不是转述）
+
+门 ⑦ 的门体（`scripts/gates.sh:641`）：
+
+```
+'python3 scripts/route_parity.py --quiet && python3 scripts/slash_alias_audit.py --quiet'
+```
+
+每一轮 cycle 都在报的八个数：
+
+```
+$ python3 scripts/route_parity.py --quiet
+upstream 456 (commit f41fae6b08fb) | local 546 registered | baseline 546
+  implemented  455 real +   1 placeholder =  456 / 456   known_gap    0   unclaimed    0   regression   0   local_only    8
+```
+
+这四个数不是描述性的，是**归因**：`unclaimed` 决定「还有多少缺口没人认领」、`owners.*` 决定
+「哪一队接哪一片」、`local_only` 决定「哪些本仓路由上游没有、不能按上游口径判绿」。而算出这八个数的
+`scripts/route_parity.py`（**779 行**）在**本片之前没有任何用例** —— 门 ⑫ 的发现集合基线
+`scripts/tests.manifest` 当时那 5 行里没有一个是它：
+
+| 发现集合（`find scripts … -name 'test_*.py'`） | 行数 | 测的是 |
+|---|---|---|
+| `scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py` | 632 | T1-6 分族 |
+| `scripts/test_extract_requirements.py` | 107 | 需求抽取 |
+| `scripts/test_gate_scripts_tests.py` | 138 | 门 ⑫ 自己 |
+| `scripts/test_t1_6_precondition_taxonomy.py` | 287 | 前置分类 |
+| `scripts/test_t1_6_taxonomy.py` | 180 | 缺陷分类 |
+| **（本片新增）`scripts/test_route_parity.py`** | **762** | **门 ⑦ 的判定器** |
+
+本仓已经为此付过两次钱，两次都**不是「门红了」，而是「门绿着给出了错的归因」**：`SEED_404` 族的
+13 条鉴权面缺口一直被当装置面派工（`§270`），门 ⑫ 的发现规则只覆盖 `scripts/` 顶层（`§274`）。
+两次的共同形态：**判定器有语义、有分支、有归因，但没有任何东西在它说错时告诉它。**
+
+### §278.2 交付（三件，对应工单三）
+
+1. **`scripts/test_route_parity.py`（762 行 / 66 用例）**，按九组覆盖判定器的**全部**语义面：
+   `mask_rust`／`_unescape`（注释、块注释、raw string、raw identifier、char literal vs lifetime、
+   转义引号、未闭合块注释）→ `matching_paren`／`top_level_args`／`str_literal_at`／
+   `test_module_ranges`／`in_spans`／`rel_or_abs` → `extract_local`（方法链、`any`、placeholder、
+   `#[cfg(test)]` 排除、非字面量路径、1/3 个参数、无 method-router、`.nest*` 四项 limitation、
+   递归发现、`.rs` 过滤）→ `normalize`／`registration_keys`／`duplicates`／`slash_aliases` →
+   fixture 与 baseline 读写 → **`build_report` 的归因**（implemented／known_gap／unclaimed／
+   regression／local_only／placeholder 拆分／`owners`／duplicates／slash_aliases／sources）→
+   `render_human`（八个数的表头行、owner 行、unclaimed/regression/local-only/警告块、`--list-gaps`、
+   `--quiet` 的抑制边界）→ `main` 的 CLI（`--json` / `--quiet` / rc 0・1・2 / `--write-baseline`
+   的写入与拒绝 / `--no-baseline`）→ **真树读数**（门 ⑦ 的命令本体、八数字自洽、基线≡注册集合、
+   `gates.sh` 的接线）。
+2. **`scripts/tests.manifest` 多出恰好一行**（`scripts/test_route_parity.py`，`LC_ALL=C sort` 位次在第 3、4 行之间），
+   且与测试文件**同一个提交**。
+3. **本段（§278）**：用例数、行覆盖读数与命令、7 条探针的三段读数、本轮实测到的两处缺陷。
+
+### §278.3 判别式：7 条探针 × **三段读数**（改前 rc / 改后 rc / 复原 rc）
+
+探针**全部装在真的 `scripts/route_parity.py` 上**（不是 mock，不是复制品）；每跑一条都用
+`shutil.copyfile` 复原并 `cmp` 逐字节确认（`restored_byte_identical=True`），收尾再复测绿。
+**驱动脚本是一次性的、不入库**（`/tmp/probe_t16k.py`）—— 每条变异逐字列在下表，照表复跑即可得同一读数。
+
+```
+$ python3 /tmp/probe_t16k.py
+BASELINE rc=0 failed=0
+…
+all probes restored; final rc = 0
+```
+
+| # | 变异（真判定器上的一处改动） | 改前 | 改后 | 复原 | 变红的用例 |
+|---|---|---|---|---|---|
+| P1 | `PLACEHOLDER_HANDLER` 回退成 LUM-1580 之前的一词判据（去掉 `not_implemented`） | rc=0 | **rc=1**（4 红） | rc=0 | `test_methods_any_placeholder_file_and_line` / `test_a_placeholder_is_only_split_for_implemented_routes` / `test_implemented_known_gap_unclaimed_local_only_and_owners` / `test_header_counts_owner_line_and_fail_verdict` |
+| P2 | `normalize` 的 catch-all 分支挪到 `{…}` **之后**（LUM-2113 的回退） | rc=0 | **rc=1**（2 红） | rc=0 | `test_all_four_wildcard_spellings_fold_to_one_key` / `test_the_wildcard_branch_precedes_the_param_branch` |
+| P3 | `UNCLAIMED_OWNERS` 去掉 `"tbd"` | rc=0 | **rc=1**（3 红） | rc=0 | `test_unclaimed_owner_spellings_are_case_insensitive` / `test_implemented_known_gap_unclaimed_local_only_and_owners` / `test_header_counts_owner_line_and_fail_verdict` |
+| P4 | `build_report` 的 `"ok"` 丢掉 `and not regressions` | rc=0 | **rc=1**（1 红）⚠️ **第一次实测是绿的，见 §278.4** | rc=0 | `test_a_route_missing_from_the_tree_is_a_regression` |
+| P5 | 修好 `str_literal_at` 的 raw string 尾缀判据（= 把 §278.9 缺陷一改对） | rc=0 | **rc=1**（1 红） | rc=0 | `test_a_raw_string_path_with_hashes_is_a_registered_defect` |
+| P6 | 把 `route_parity.py:756`（`--write-baseline` 的第二道守卫）改成死文案 | rc=0 | **rc=0（绿）** | rc=0 | ——（§278.4） |
+| P7 | 把 `route_parity.py:554`（`baseline_note`）改成死文案 | rc=0 | **rc=0（绿）** | rc=0 | ——（§278.4） |
+
+P1／P2／P3 分别钉住归因的三个**分母**：placeholder 判据（`implemented real` ↔ `placeholder` 的拆分）、
+比较键（`implemented` ↔ `local_only` 的分界）、owner 判据（`unclaimed` ↔ `known_gap` 的分界）。
+P5 钉住「缺陷一的用例**确实**钉在了真实行为上」——把它改对，用例当场红。
+
+### §278.4 🔴 承重一：**7 条自报里，P4 第一次实测是绿的** —— 一条是用例有洞，两条证明了死代码
+
+**（一）P4 第一次跑：`改前 rc=0 → 改后 rc=0（绿）→ 复原 rc=0`。**
+根因不是探针装错地方，而是**我的用例没有把 `ok` 的那一项隔离出来**：那条用例原本用的是带
+2 条 `unclaimed` 缺口的树，`ok` 在 `not unclaimed` 那一项上**本来就是 `False`** ⇒ 删掉
+`and not regressions` 也看不出来。修法：让那个场景**只可能因为丢失路由而红**（换 `OWNED_ROWS`，
+`unclaimed = 0`），复跑后 P4 变红（1 红）。
+⇒ 这正是 `§275` 承重一那条纪律要的形态：**探针读绿时，先怀疑自己的用例，而不是先怀疑探针**；
+而「它是绿是红」**只有复跑能回答**。顺带把 `ok` 的五个合取项都变成可独立证伪的
+（unclaimed=P3 那棵树的默认场景 / regressions=P4 / local dups / upstream dups / unsupported 各有隔离场景）。
+
+**（二）P6、P7 是**故意**预期为绿的探针，它们量的是另一件事：那两行是**不可达代码**。**
+* P6 = `main()` 里 `--write-baseline` 的**第二道**守卫（`:756`）。第一道
+  `if args.write_baseline and not baseline: … return 2` 已经在前面把它挡死
+  （`--baseline ""` 与 `--no-baseline` 两种输入实测都走第一道）。
+* P7 = `build_report` 里那句「`no baseline at … — drift gate off`」的**降级说明**（`:554`）。
+  紧邻的上一行 `read_baseline(baseline_path)` 在文件缺失时**先抛 `FileNotFoundError`**
+  （实测：`FileNotFoundError: [Errno 2] … '/nonexistent/baseline.json'`），所以那句说明
+  **永远打不出来**；`main()` 把它兜成 `error: … ` + **rc=2**，而不是「降级」。
+
+⇒ **「没有任何输入能让它红」本身就是一个读数**（§278.6 行覆盖里那 4 行就是这么来的），
+不是「用例不够」，也**不能**为了交付好看去把它改红。
+
+### §278.5 🔴 承重二：**覆盖率的「直读」也会骗人 —— 它给出的是「测试根本没跑」的读数，而 rc=0**
+
+第一次照本宣科地量覆盖：
+
+```
+$ python3 -m trace --count --missing --coverdir=/tmp/cov_naive scripts/test_route_parity.py
+----------------------------------------------------------------------
+Ran 0 tests in 0.000s
+
+NO TESTS RAN
+$ echo $?
+0
+$ grep -c '^>>>>>>' /tmp/cov_naive/route_parity.cover
+461                      # ⇒ 461/520 行「未命中」，看起来是 ~12% 覆盖
+```
+
+**这 461 是假的 —— 那一次测试一个都没跑。** `python3 -m trace` 会把 `sys.modules['__main__']`
+占成 `trace.py` 自己，而 `unittest.main()` 默认 `module='__main__'` ⇒ 用例是从 **`trace.py`** 里
+装载的，结果 `Ran 0 tests` / `NO TESTS RAN`、**rc=0**、cover 文件里把 461 行标成「未执行」。
+最小复现（7 行，`/tmp/t2.py`：一个 `helper()` + 一个 `assertEqual` 的用例）：
+`-m trace` 下 `Ran 0 tests`，把同一段代码换成 `unittest.TextTestRunner(...).run(TestLoader().loadTestsFromTestCase(T))`
+再 trace，函数体**逐行被计数**。
+
+⚠️ 这与 `§274.3` 是同一族：**`exit 0` 不等于「验证过」** —— 一个「全绿、0 用例」的读数。
+本片因此规定：**覆盖读数必须与被覆盖的用例数一起报**（下面的 `testsRun = 66`）。
+
+### §278.6 行覆盖读数（逐字命令 + 逐行分类）
+
+把 tracer 装进**本进程**、并在 import 测试模块**之前**装上（`runfunc`），读数才是真的：
+
+```
+$ rm -rf /tmp/cov2 && python3 -c "
+import io, sys, trace, unittest
+sys.path.insert(0, 'scripts')
+tracer = trace.Trace(count=1, trace=0, ignoredirs=[sys.prefix, sys.exec_prefix])
+def run():
+    import test_route_parity as t
+    return unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(
+        unittest.TestLoader().loadTestsFromModule(t))
+res = tracer.runfunc(run)
+tracer.results().write_results(show_missing=True, coverdir='/tmp/cov2')
+print('testsRun =', res.testsRun, 'failures =', len(res.failures), 'errors =', len(res.errors))
+"
+testsRun = 66 failures = 0 errors = 0
+$ grep -c '^ *[0-9][0-9]*:' /tmp/cov2/route_parity.cover   # 命中
+508
+$ grep -c '^>>>>>>' /tmp/cov2/route_parity.cover           # 未命中
+12
+```
+
+⇒ **可执行行 520，命中 508 ⇒ 行覆盖 `508/520 = 97.7%`**（`testsRun = 66`，failures/errors 均为 0）。
+未命中的 12 行逐条分类（**没有一行是「用例没写到」**）：
+
+| 行 | 内容 | 分类 | 依据 |
+|---|---|---|---|
+| 326–327 | `rel_or_abs` 的 `except ValueError: return path` | **平台不可达** | POSIX 的 `os.path.relpath` 不抛 `ValueError`（Windows 跨盘符才抛） |
+| 554 | `baseline_note = f"no baseline at … — drift gate off"` | **死代码** | 探针 P7 实测绿；上一行 `read_baseline` 先抛 `FileNotFoundError` |
+| 756 | `raise ValueError("--write-baseline requires --baseline <path>")` | **死代码** | 探针 P6 实测绿；第一道守卫已 `return 2` |
+| 772–774、779 | `if __name__ == "__main__":` 壳（`try` / `main()` / `flush` / `SystemExit`） | **脚本壳** | 进程内测试跑不到；直接 `python3 -m trace … scripts/route_parity.py --quiet` 那一轮覆盖 |
+| 775–778 | 同上的 `except BrokenPipeError:` 处理器 | **脚本壳（读者提前走开才触发）** | 两轮都没覆盖 |
+
+并把「直接 trace CLI 本体」那一轮（`python3 -m trace --count --missing --coverdir=/tmp/cov3 scripts/route_parity.py --quiet`）
+与上面那一轮取并集：
+
+```
+$ python3 -c "…取两轮 cover 的交集…"
+in-process missing: 12 | cli missing: 100
+missing in BOTH (never covered by either run): [326, 327, 554, 756, 775, 776, 777, 778]
+union covered: 512/520 = 98.5%
+```
+
+⇒ **两轮并集 512/520 = 98.5%**；剩下 8 行里 **4 行是死代码／平台不可达、4 行是脚本壳的 EPIPE 处理器**。
+
+### §278.7 覆盖面（改前 → 改后）
+
+| 项 | 改前（base `a5facad4`） | 改后（本片） |
+|---|---|---|
+| `scripts/route_parity.py` 的用例数 | **0** | **66** |
+| 该文件**被用例**覆盖的行 | **0**（520 个可执行行没有一个是用例跑出来的） | **508/520 = 97.7%**（两轮并集 512/520 = 98.5%） |
+| 八数字里哪些数被独立钉住 | 无 | `implemented`（含 `real`/`placeholder` 拆分）／`known_gap`／`unclaimed`／`regression`／`local_only`（含 placeholder 标记）／`owners`／`sources.*`／`duplicates`／`slash_aliases` —— 归因的每一项都有可独立证伪的场景 |
+| `normalize` 的四写法 catch-all | 无用例（LUM-2113 的死代码顺序**无回归网**） | `{*name}` / `{*` / `*` / `*name` 四写法各一条 + 分支顺序一条 |
+| placeholder 判据（LUM-1580） | 无用例 | 词边界正反两向（`health::placeholder` 真、`handle_not_implemented_x` 假）+ 归因拆分 |
+| `ok` 的五个合取项 | 无用例 | 五项各有**隔离**场景（P4 的教训写进 §278.4） |
+| 门 ⑫ 发现集合 | 5 文件 | **6 文件** / `Ran 52+6+7+66+25+14 = 170` |
+
+### §278.8 门读（base `a5facad4` + 本片写集，**零编译**）
+
+```
+$ bash scripts/gates.sh --only route-parity,file-size,scripts-tests
+  ⑦  route-parity          0     0s  PASS
+  ⑩  file-size             0     0s  PASS
+  ⑫  scripts-tests         0     2s  PASS  (6 file(s))
+  overall: PASS — 3/3 gate(s) green in 2s
+```
+
+- ⑦ `python3 scripts/route_parity.py --quiet` ⇒ rc=0，八数字**逐字不变**
+  （`456/546/546`、`455 real + 1 placeholder`、`known_gap 0 unclaimed 0 regression 0 local_only 8`）；
+  `python3 scripts/slash_alias_audit.py --quiet` ⇒ rc=0。
+- ⑩ `python3 scripts/file_size_check.py --quiet` ⇒ rc=0（新增文件 762 行 < 800，无需进 `file_size_baseline.tsv`）。
+- ⑫ `bash scripts/gates.sh --only scripts-tests` ⇒ rc=0，`6 file(s)`，逐字
+  `Ran 52 / 6 / 7 / 66 / 25 / 14 = 170`（≥ 104）。
+- ⑨ **`--with-db` 未跑（本片零磁盘）；不作继承声明。** 本片不碰真库、不跑任何 `cargo`、
+  不依赖任何既有片段的读数。
+
+### §278.9 本轮发现、**不在本片写集内**（只测不改；已单独提 issue）
+
+`§四` 规定：若复跑时发现**判据本身**错了，写进 `docs/37` 并**单独提 issue**，不在本片改。
+本轮实测到两处：
+
+**缺陷一（判词本身错）—— `str_literal_at` 认领支持 raw string，实际只支持无 `#` 的那种。**
+`mask_rust` 保留了 raw string 的**结束定界符**（`"#` / `"###`），而 `str_literal_at` 判
+「引号之后是否还有内容」时把那些 `#` 也算进去了 ⇒ 返回 `None` ⇒ 路由被判成
+`non-literal path`，**而那句判词是错的：那确实是一个字面量**。
+
+```
+$ python3 -c "…extract_local 扫三个 .route(r\"…\") 写法…"
+ROUTE GET /plain …          ROUTE GET /raw_no_hash …
+UNSUPPORTED a.rs:1: non-literal path `r#"         "#`
+UNSUPPORTED a.rs:2: non-literal path `r###"          "###`
+```
+
+影响面：今天真树上没有这种写法，所以八数字**当前不受影响**；但一旦有人用 `r#"/a\"b"#`
+这种（路径里带 `"` 时唯一可行的）写法，`ok` 会因为 `unsupported` 判红，且**判词指向错误的方向**
+（`extend the extractor` 会把注意力引向「路径不是字面量」，而真因是尾缀 `#` 没被吞掉）。
+本片把这个**真实行为**钉成一条用例，并在 docstring 里写明「修好后必须改成断言该路由被提取」。
+
+**缺陷二（降级契约与代码不符）—— 「缺 baseline ⇒ drift gate off」这句说明不可达。**
+`build_report` 先无条件 `read_baseline(baseline_path)`、**下一行**才检查
+`not os.path.exists(baseline_path)` ⇒ 缺文件时抛 `FileNotFoundError`，`main()` 兜成
+`error: …` + **rc=2**。也就是说：`--baseline` 指向一个不存在的路径不是「降级」，而是**硬失败**；
+那句 `baseline_note` 是**死代码**（探针 P7 实测绿，行覆盖里那一行永远命中不了）。
+这一条不改变八数字口径，但**改变了「读不到基线时会发生什么」这个契约**，故与缺陷一同单提 issue。
+
+### §278.10 明确未做
+
+**不改 `route_parity.py` 的判据本身**（不改八数字口径、不改分族规则、不动 `regression` 的定义、
+不修 §278.9 的两处缺陷）；**不改 `gates.sh`**（它的写集留给并行的 `LUM-2607`）；
+**不建 `docs/section-alloc.tsv`**（同上，见段首跨片说明）；不跑 ⑨ `--with-db`、不碰真库、不写任何 Rust、
+不跑 `cargo`；不动 `crates/mc-conformance/report.json`；不跑 `--write-baseline` 真树（只在临时目录里跑）；
+不删既有 104 个用例中的任何一个；**不拿 mock 的 `route_parity.py` 冒充真判定器的覆盖**（7 条探针全部装在真文件上）。
