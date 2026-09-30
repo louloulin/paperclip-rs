@@ -65,6 +65,20 @@ def make_repo(tmp: Path) -> Path:
 
 NOW = _dt.datetime(2026, 9, 30, 4, 0, 0, tzinfo=_dt.timezone.utc)
 
+# H7 用例的三个「候选提交时刻」：滞活得**互不相同**且与 NOW 差得开
+# （否则 `stall_hours` 精度不足会把两个候选排成并列，顺序变成 ref 名决定）。
+T_A = "2026-08-30T00:00:00+00:00"
+T_B = "2026-09-05T00:00:00+00:00"
+T_C = "2026-09-10T00:00:00+00:00"
+
+
+def git_at(repo: Path, when: str, *args: str) -> subprocess.CompletedProcess:
+    """带**显式提交时刻**的 git —— H7 的序列顺序完全由 H4 时间决定，测试必须能钉住它。"""
+    env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    return subprocess.run(
+        ["git", *args], cwd=str(repo), capture_output=True, text=True, check=True, env=env
+    )
+
 
 class RepoCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -489,6 +503,257 @@ class TestH5AndCheck(RepoCase):
             self.assertNotIn(forbidden, flags)
         for bad in ("git push", "gh pr", 'run_git(["push"', 'run_git(["merge"'):
             self.assertNotIn(bad, text)
+
+
+# ---------------------------------------------------------------- H7
+
+DOC_NAME = Path(DOC_REL).name
+
+
+class H7Case(RepoCase):
+    """H7（候选集内的两两撞号）的 fixture。三个要点：
+
+    * **各候选对 base 单独都干净**（否则进不了 clean 序列）—— 撞号只发生在「它们**彼此**」
+      合的时候，这正是本判据存在的理由；
+    * 候选之间改**同一处**才撞（docs/37 的 EOF / 同一行），改不同处就不撞。🔴 「看起来会撞」
+      不是判据，本组用例**只**以 H7 读出的 rc 为准；
+    * 提交时刻**显式给定**（`T_A/T_B/T_C`）⇒ 序列顺序可复跑。
+    """
+
+    def branch_at(self, name: str, when: str) -> str:
+        git(self.repo, "checkout", "-q", "-b", name, "main")
+        git_at(self.repo, when, "commit", "-q", "--allow-empty", "-m", f"{name} starts")
+        git(self.repo, "checkout", "-q", "main")
+        return name
+
+    def docs_at(self, ref: str, text: str, msg: str, when: str) -> None:
+        git(self.repo, "checkout", "-q", ref)
+        (self.repo / "docs" / DOC_NAME).write_text(text, encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git_at(self.repo, when, "commit", "-q", "-m", msg)
+        git(self.repo, "checkout", "-q", "main")
+
+    def cand(self, ref: str) -> dict:
+        """按**真实读数**造一个 H5 候选条目（H1/H2/H4 都走实现，不手填）。"""
+        sha = git(self.repo, "rev-parse", ref).stdout.strip()
+        mt = hp.h2_merge_tree(self.main_sha(), sha)
+        return {
+            "ref": ref,
+            "sha": sha,
+            "H1": hp.h1_relation(self.main_sha(), sha)["form"],
+            "H2_rc": mt["rc"],
+            "H2_status": mt["status"],
+            "H4_stall_hours": hp.h4_stall(sha, ref, None, NOW)["stall_hours"],
+        }
+
+    def raw_conflicted_paths(self, base_sha: str, left: str, right: str) -> set[str]:
+        """**独立**重算一遍累积 merge-tree 的冲突路径（不经过 H7 的任何代码）——
+        做法与 H7 相同但用裸 subprocess + 自己封 accumulator commit，只比路径集合，
+        这样「H7 报的清单」就不是在拿自己验证自己。"""
+        t1 = git(self.repo, "merge-tree", "--write-tree", base_sha, left)
+        tree = t1.stdout.splitlines()[0].strip()
+        acc = git(self.repo, "commit-tree", tree, "-p", base_sha, "-p", left, "-m", "acc").stdout.strip()
+        raw = subprocess.run(
+            ["git", "merge-tree", "--write-tree", acc, right],
+            cwd=str(self.repo), capture_output=True, text=True, check=False,
+        )
+        assert raw.returncode != 0, f"本用例的前提是这一步确实冲突：\n{raw.stdout}"
+        paths = set()
+        for line in raw.stdout.splitlines()[1:]:
+            m = re.match(r"^(?:\d{6}) [0-9a-f]+ [0-3]\t(?P<p>.+)$", line)
+            if m:
+                paths.add(m.group("p"))
+        return paths
+
+
+class TestH7Pairwise(H7Case):
+    def test_two_clean_candidates_that_collide_are_reported_verbatim(self):
+        """2 个 clean 候选、彼此撞 ⇒ 报出这一对，**且文件清单与真实 `git merge-tree` 逐字相同**。"""
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        # 两侧都改 docs/37 的**同一行** ⇒ 各自对 base 干净，彼此必撞。
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        self.docs_at("cand-b", "## §1 base\nB SIDE\ntail\n", "b bumps marker", T_B)
+        cands = [self.cand("cand-a"), self.cand("cand-b")]
+        self.assertEqual([c["H2_rc"] for c in cands], [0, 0], "前提：两个候选对 base 各自 clean")
+        # 本仓的 base 没前进 ⇒ H1 是①（可快进）；③（需真合）同样进序列（`CLEAN_H1_FORMS`），
+        # ②/`=` 没有未合内容、H5 早把它们滤掉了。
+        for c in cands:
+            self.assertIn(c["H1"], hp.CLEAN_H1_FORMS, c)
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertEqual(r["status"], "collision", r)
+        self.assertEqual(len(r["pairs"]), 1, r)
+        pair = r["pairs"][0]
+        self.assertEqual((pair["left_ref"], pair["right_ref"]), ("cand-a", "cand-b"))
+        self.assertEqual(pair["H7_rc"], 1)
+        self.assertEqual(pair["files"], [DOC_REL])
+        # 逐字比对：与**独立**重算的冲突路径集合相同
+        self.assertEqual(
+            sorted(pair["files"]),
+            sorted(self.raw_conflicted_paths(self.main_sha(), "cand-a", "cand-b")),
+        )
+        self.assertEqual(r["clean_sequence"], ["cand-a", "cand-b"])
+        self.assertEqual((r["merged_clean"], r["stopped_at"]), (["cand-a"], "cand-b"))
+
+    def test_two_clean_candidates_that_do_not_collide_stay_quiet(self):
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        # 改**不同文件**的不同行 ⇒ 两两不撞
+        (self.repo / "crates" / "a.rs").write_text("fn main() { let _a = 1; }\n", encoding="utf-8")
+        git_at(self.repo, T_A, "add", "-A")
+        git_at(self.repo, T_A, "commit", "-q", "-m", "a on crates")
+        (self.repo / "scripts" / "helper.py").write_text(
+            "".join(f"L{i} = {i}\n" for i in range(1, 11)).replace("L2 = 2", "L2 = 22"),
+            encoding="utf-8",
+        )
+        git_at(self.repo, T_B, "add", "-A")
+        git_at(self.repo, T_B, "commit", "-q", "-m", "b on scripts")
+        git(self.repo, "checkout", "-q", "main")
+        cands = [self.cand("cand-a"), self.cand("cand-b")]
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertEqual(r["pairs"], [])
+        self.assertEqual((r["status"], r["merged_clean"]), ("ok", ["cand-a", "cand-b"]))
+        self.assertNotIn("stopped_at", r)
+
+    def test_three_candidates_report_only_the_conflicting_step(self):
+        """A×B 不撞、B×C 撞 ⇒ **只**报 B×C（累积到第二步才问出答案）。"""
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        self.branch_at("cand-c", T_C)
+        # A 改 crates/（与 B/C 碰不到一起）⇒ A×B 干净
+        git(self.repo, "checkout", "-q", "cand-a")
+        (self.repo / "crates" / "a.rs").write_text("fn main() { let _a = 7; }\n", encoding="utf-8")
+        git_at(self.repo, T_A, "add", "-A")
+        git_at(self.repo, T_A, "commit", "-q", "-m", "a on crates")
+        # B 与 C **都**在 docs/37 的 EOF 追加 ⇒ 彼此撞，但各自对 base 干净
+        self.docs_at("cand-b", "## §1 base\nMARKER LINE\ntail\n## §2 b\n", "b appends", T_B)
+        self.docs_at("cand-c", "## §1 base\nMARKER LINE\ntail\n## §2 c\n", "c appends", T_C)
+        cands = [self.cand(x) for x in ("cand-a", "cand-b", "cand-c")]
+        self.assertEqual([c["H2_rc"] for c in cands], [0, 0, 0])
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertEqual(r["clean_sequence"], ["cand-a", "cand-b", "cand-c"])
+        self.assertEqual(len(r["pairs"]), 1, r)
+        self.assertEqual(
+            (r["pairs"][0]["left_ref"], r["pairs"][0]["right_ref"]), ("cand-b", "cand-c")
+        )
+        self.assertEqual(r["merged_clean"], ["cand-a", "cand-b"])
+        self.assertEqual(r["stopped_at"], "cand-c")
+
+    def test_sequence_is_cumulative_not_all_pairs(self):
+        """🔴 「两两全量」会报出**并不真的互相撞**的组合。三个都撞 EOF 时：
+        全量 = 3 对，序列累积 = 1 对（第 2 步就停）—— 而收割现实里两片是**依次**被合的。"""
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        self.branch_at("cand-c", T_C)
+        self.docs_at("cand-a", "## §1 base\nMARKER LINE\ntail\n## §2 a\n", "a appends", T_A)
+        self.docs_at("cand-b", "## §1 base\nMARKER LINE\ntail\n## §2 b\n", "b appends", T_B)
+        self.docs_at("cand-c", "## §1 base\nMARKER LINE\ntail\n## §2 c\n", "c appends", T_C)
+        cands = [self.cand(x) for x in ("cand-a", "cand-b", "cand-c")]
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertEqual(len(r["pairs"]), 1, f"全量会报 3 对，累积只能报 1 对：{r}")
+        pair = r["pairs"][0]
+        self.assertEqual((pair["left_ref"], pair["right_ref"]), ("cand-a", "cand-b"))
+        # 且 cand-c 确实**本可以**与前两者撞 —— 序列停了是**刻意的**（没有可用的累积树）
+        self.assertIn("cand-c", r["clean_sequence"])
+        self.assertIn("序列终止", r["stopped_reason"])
+    def test_single_clean_candidate_is_quiet(self):
+        self.branch_at("cand-a", T_A)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        cands = [self.cand("cand-a")]
+        self.assertEqual(cands[0]["H2_rc"], 0)
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertEqual((r["pairs"], r["ok"]), ([], True))
+        self.assertIn("少于 2 个", r["note"])
+    def test_zero_clean_candidates_is_quiet(self):
+        r = hp.h7_candidate_pairwise(self.main_sha(), [])
+        self.assertEqual((r["pairs"], r["clean_sequence"]), ([], []))
+        self.assertTrue(r["ok"])
+        # 🔴 另一个「空集不能读成绿」的同族：**全是脏候选**也必须安静而不是报一对。
+        self.branch_at("cand-a", T_A)
+        self.docs_at("main", "## §1 base\nMAIN SIDE\ntail\n", "main bumps marker", T_B)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        dirty = self.cand("cand-a")
+        self.assertNotEqual(dirty["H2_rc"], 0, "前提：该候选对 base 不干净")
+        r2 = hp.h7_candidate_pairwise(self.main_sha(), [dirty])
+        self.assertEqual((r2["pairs"], r2["clean_sequence"]), ([], []))
+        self.assertEqual(len(r2["excluded"]), 1)
+
+    def test_unrelated_histories_branch_never_enters_the_clean_sequence(self):
+        """base 里有 2 条 `unrelated-histories`（rc=128）的远古分支（本仓实测）——
+        它们**不得**被算成 clean 候选，否则 H7 第一步就会报一个「git 拒绝合并」当撞号。"""
+        git(self.repo, "checkout", "-q", "--orphan", "alien")
+        git(self.repo, "rm", "-rq", "--cached", ".")
+        for p in ("docs", "crates", "scripts"):
+            subprocess.run(["rm", "-rf", str(self.repo / p)], check=True)
+        git_at(self.repo, T_A, "commit", "-q", "--allow-empty", "-m", "alien root")
+        git(self.repo, "checkout", "-q", "main")
+        self.branch_at("cand-a", T_B)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_B)
+        remote = hp.list_remote_candidates(
+            self.main_sha(), "main", None, None, NOW, ("refs/heads",), 0)
+        alien = next(c for c in remote["candidates"] if c["ref"] == "alien")
+        self.assertEqual((alien["H2_rc"], alien["H2_status"]), (128, "unrelated-histories"))
+        r = hp.h7_candidate_pairwise(self.main_sha(), remote["candidates"])
+        self.assertNotIn("alien", r["clean_sequence"])
+        self.assertIn("alien", [e["ref"] for e in r["excluded"]])
+
+    def test_h7_does_not_write_back_into_the_h2_readings(self):
+        """🔴 契约：H7 的 rc **不得**回写 H2 的读数（LUM-2613 的读数逐字不变是上一片的承诺）。"""
+        import copy
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        self.docs_at("cand-b", "## §1 base\nB SIDE\ntail\n", "b bumps marker", T_B)
+        cands = [self.cand("cand-a"), self.cand("cand-b")]
+        before = copy.deepcopy(cands)
+        # H7 红（rc=1）时 H2 仍必须是 rc=0 —— 两者读的是**不同**的 base
+        r = hp.h7_candidate_pairwise(self.main_sha(), cands)
+        self.assertTrue(r["pairs"], "本用例的候选确实撞")
+        self.assertEqual(cands, before, "H7 改写了传入的候选读数")
+        self.assertEqual([c["H2_rc"] for c in cands], [0, 0], "H7 的 rc 回写进了 H2")
+        # H7 绿时同样不得回写
+        self.branch_at("cand-c", T_C)
+        git(self.repo, "checkout", "-q", "cand-c")
+        (self.repo / "crates" / "a.rs").write_text("fn main() { let _c = 9; }\n", encoding="utf-8")
+        git_at(self.repo, T_C, "add", "-A")
+        git_at(self.repo, T_C, "commit", "-q", "-m", "c on crates")
+        git(self.repo, "checkout", "-q", "main")
+        quiet = [self.cand("cand-c")]
+        before2 = copy.deepcopy(quiet)
+        r2 = hp.h7_candidate_pairwise(self.main_sha(), quiet)
+        self.assertEqual(r2["pairs"], [])
+        self.assertEqual(quiet, before2)
+
+    def test_h7_writes_nothing_into_the_repository(self):
+        """H7 要把合并树封成提交才能累积 ⇒ 「它写了对象」是真实风险，判据是**对象库计数
+        前后相等**（不是「源码里没有 commit-tree」——那会被注释满足）。"""
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        self.docs_at("cand-b", "## §1 base\nB SIDE\ntail\n", "b bumps marker", T_B)
+        before = git(self.repo, "count-objects", "-v").stdout
+        hp.h7_candidate_pairwise(self.main_sha(), [self.cand("cand-a"), self.cand("cand-b")])
+        self.assertEqual(before, git(self.repo, "count-objects", "-v").stdout,
+                         "H7 在真仓库里落了对象（累积提交没被隔离）")
+
+    def test_cli_list_remote_reports_h7_and_check_stays_zero(self):
+        """🔴 H7 **不引入**工具级不变量 ⇒ 即使它报出撞对，`--check` 仍必须 rc=0
+        （否则这道门在真实收割的 base 上会恒红，门只会被关掉 —— 见文件顶部）。
+        本用例同时是**双重 import 陷阱**的唯一守卫：走 CLI 时宿主模块叫 `__main__`，
+        H7 若读到另一个副本就会在测试仓库里报出一个「假冲突」（本片真实发生过）。"""
+        self.branch_at("cand-a", T_A)
+        self.branch_at("cand-b", T_B)
+        self.docs_at("cand-a", "## §1 base\nA SIDE\ntail\n", "a bumps marker", T_A)
+        self.docs_at("cand-b", "## §1 base\nB SIDE\ntail\n", "b bumps marker", T_B)
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "harvest_preflight.py"), "--check", "--list-remote",
+             "--repo", str(self.repo), "--base", "main", "--prefix", "refs/heads"],
+            cwd=str(self.repo), capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("H7 PAIR", proc.stdout)
+        self.assertIn(DOC_REL, proc.stdout)
+        self.assertIn("check: OK", proc.stdout)
 
 
 # ---------------------------------------------------------------- 真仓库 golden
