@@ -25439,3 +25439,171 @@ daemon `running_task_count = 1`（= cycle 自己）⇒ **切片位 2**；从 `/`
 **可推广**：凡「用一份文档 A 记录对文档 B 的纪律」，必须检查 **A 本身是不是 B 的写入面**。
 本仓 `docs/37` 既是号段台账、预飞结论、门读数、失败判别式的汇总，又是被各片追加的写入面 ——
 **它已经同时是四份东西**。这一条比「号段别撞」本身更值钱。
+
+## §270 【LUM-2597 / T1-6-H0】**零 Rust**：`SEED_404` 的判据被本仓代码证伪 —— `classify()` 从不读 body，13 条「非成员」缺口一直被当「实体缺失」派工
+
+**起手**：base `34447e55`（§268 的 docs 直推 tip）；**本片零 Rust / 零 cargo / 零真库 / 零磁盘**
+（纯 Python 报告器 + 单测 + 文档）。写集 = `scripts/t1_6_taxonomy.py`、
+`scripts/test_t1_6_taxonomy.py`（新建）、`docs/37 §270`。
+
+### §270.1 承重一：一个**被自己代码证伪的推理**，被 docstring 固化成判据用了四轮
+
+模块 docstring 第 2 条（改前 `scripts/t1_6_taxonomy.py:24-29`）写：
+
+> `status_observed == 404` ⇒ 一定是**已挂载的 handler** 主动返回的 404。
+> 依据 `crates/mc-conformance/src/verdict.rs:149`：只有「404 **且 body 为空**」或 405 才判 `unmounted`。
+> 既然落在 `mismatch` 里，body 就必然非空 ⇒ 路由在、行为不对。
+
+`verdict.rs:149` 的真实内容（本轮当场复读）：
+
+```rust
+if observed.status == 404 && empty_body && !json {
+    return (Outcome::Unmounted, "no route: 404 with empty body (axum fallback) ...");
+}
+```
+
+它只说「404 + **空** body ⇒ unmounted」。**反过来推不出来** —— 404 + 非空 body 完全可能是
+**鉴权中间件**返回的，handler 根本没执行到。而 `classify()`（改前 10 行）**从头到尾没有读过 body**：
+
+```python
+if fx.get("status_observed") == 404:
+    return "SEED_404"
+```
+
+⇒ 文档判据（读 body）与代码判据（只读 status）**不一致**，且文档判据**本身是错的**。
+这不是笔误，是一个**非续接推理**被写进了「判据来源（不要凭印象改这里的族）」那一节 ——
+也就是本仓唯一被授权写判据的地方。§267.1 当时已把三种来源列出来并「请 owner 裁决」，
+本片就是那个裁决的落地。
+
+**本仓现成的反例**（`crates/mc-http/src/routes/agents.rs:202-218`）：
+
+```rust
+/// 读取调用者在 workspace 里的角色；非成员 → 404 `workspace`
+pub(crate) async fn workspace_role(...) -> Result<String, Error> {
+    ...
+    row.map(|(role,)| role).ok_or_else(|| not_found("workspace"))
+}
+```
+
+`not_found("workspace")`（`routes/agents.rs:166-171`）→ `Error::NotFound` →
+`ErrorResponse`（`mc-errors/src/http.rs:17-36`）⇒ **body 非空的 404，而路由是挂着的**。
+§267.2 实测：LUM-2591 那 13 条「`SEED_404`」逐条取响应体后，**形态与上面逐字相同**。
+
+⇒ **404 在本仓至少三种来源**，分类器只认第三种：
+
+| 来源 | 形态 | 族（改后） |
+|---|---|---|
+| ① handler 查实体落空 | 404 + 非空 body，指向**业务实体**（`not found: agent`） | `SEED_404` |
+| ② **调用者非成员** | 404 + 非空 body，指向 **workspace 作用域**（`not found: workspace`） | `AUTHZ_404`（新） |
+| ③ axum fallback | 404 + **空 body**（或 405） | `UNMOUNTED` |
+
+### §270.2 判据链：① / ② 光看 body 分不开，必须叠 `status_expected`
+
+🔴 **本片最贵的一条发现**：`not_found("workspace")` 在 `mc-http` 里有 **14 处**
+（`agents.rs` / `invitations.rs` ×5 / `mcp/workspace.rs` / `runtimes/profiles.rs` ×2 /
+`runtimes/access.rs` / `chat/session.rs` / `share_links.rs` ×3），**鉴权先答**与
+**workspace 行查落空**吐出的 body **逐字相同**。⇒ 单靠 body 判 ①/② 是**判据不足**。
+
+判据因此是两刀（顺序有语义）：
+
+1. body **空**（`body_observed` 为空串 / `body_empty: true` / `detail` 含 `404 with empty body`）
+   ⇒ `UNMOUNTED`。这条**与 `outcome` 无关**：空 body 的 404 就是 fallback。
+2. body 非空且**能解析成 JSON**（非 JSON 一律不算 —— 对裸文本做子串匹配就是「猜」）
+   且指向 workspace 作用域（`code == "workspace_not_found"`，或
+   `code == "not_found"` 且 `message == "not found: workspace"`）
+   **且** `status_expected != 404` ⇒ `AUTHZ_404`。
+   `status_expected == 404` 的那批是 fixture **在测**「作用域/实体缺失」⇒ 回到 `SEED_404`。
+3. 其余非空 404 ⇒ `SEED_404`（负责面 = `mc-conformance::seed`）。
+
+**两个方向都钉住了**（单测各一条）：① `not found: agent` 在 5 种 `status_expected` 下
+**永远**是 `SEED_404`；② `not found: workspace` 在 `status_expected == 404` 时是 `SEED_404`、
+在 `!= 404` 时是 `AUTHZ_404` —— 同一份 body、两种期望、两个族，这就是「必须叠一刀」的证据。
+
+🔴 **`AUTHZ_404` 只排除一个根因，不指定另一个**：症状是「调用者不是该 workspace 的成员」，
+而成因可能是**装置少种了第二个成员**（§267.2：LUM-2591 修好的 5 条就是这个形态，
+修法是往 `seed.rs` 加一行成员），也可能是**身份注入 / 鉴权中间件**。**body 分不出来**
+⇒ 族定义与告警都写明「派工前必须逐条拆」，**不许整族当成「装置少种一行」** ——
+那正是本片要拆掉的旧病复发。
+
+### §270.3 🔴 分母：逐族「改前 → 改后」＋**新分母的权威出处 = 尚不存在**
+
+| 族 | 改前（权威读数，`LUM-2591` @ `0dbbd093`，`docs/37 §267.5`） | 本片（`34447e55`） | 改后（**条件式预测，非读数**） |
+|---|---:|---:|---:|
+| `UNMOUNTED` | 1 | **未产出** | 1（body 空且 outcome 已 unmounted ⇒ 归族不变） |
+| `PRECONDITION` | 25 | **未产出** | 25（`outcome` 优先那刀未动） |
+| `AUTH_401` | 7 | **未产出** | 7（401 那刀未动） |
+| `SEED_404` | **13** | **未产出** | **0**（13 条形态逐字 = `not found: workspace` 且 `expected != 404`，§267.2） |
+| `AUTHZ_404` | 0（族不存在） | **未产出** | **13**（同上） |
+| `REALM_DIFF` | 15 | **未产出** | 15 |
+| **待清合计** | **61**（`pass 304 / fixtures 365`） | **未产出** | **61**（族之间搬家，合计不变） |
+
+**新分母的权威出处：目前没有。** 三条理由，逐条可复核：
+
+1. **本片不跑 ⑨ `--with-db`**（工单边界：冷建 18–19G，本机要留给在飞片）⇒ **零新读数**。
+2. 🔴 **更硬的阻塞：`mc-conformance::report::Row`（`report.rs:20-38`）没有 observed body 字段。**
+   它只有 `status_observed` 和一句 `detail`，而 404 的 mismatch 分支写的 `detail` 是
+   `status 404 != expected N`（`verdict.rs:178-181`）—— **不含 body**。
+   ⇒ 判据落地后，**当前 schema 的 report 上这一刀根本跑不起来**。
+3. ⇒ 脚本对此**不装懂**：body 证据缺失时该族标 `authoritative: false` + `unverified: N`，
+   人读输出打 `⚠ 不可派工`，`--json` 写进 `caveats` 数组并往 **stderr** 打 `WARN`。
+   **宁可承认「这一刀没跑成」，也不把症状当根因再派一次工** —— 那正是 LUM-2597 的成因。
+   （顺手核了仓里那份 `crates/mc-conformance/report.json`：`fixtures 365 / pass 34 /
+   mismatch 0 / unevaluable 331`，**一条 404 都没有** ⇒ 它连 `absent` 分支之外的东西都验不了。）
+
+**因此新的权威分族读数的前置是**：① `Row` 加 body 字段（**Rust 面，另一片**，
+写集 `mc-conformance/**`，本片明确不碰）→ ② 有磁盘时 `--with-db` 重跑 → ③ 取
+`AUTHZ_404` / `SEED_404` 两族读数。**本片的合成单测不是读数，不许冒充。**
+
+### §270.4 单测（`scripts/test_t1_6_taxonomy.py`，新建，14 例全绿）
+
+跑法照 `scripts/test_extract_requirements.py`（`unittest` + `sys.path.insert`，无 cargo / 无库 /
+无上游 Go 树）。**正例全部是合成的最小 fixture**，三种 404 各一条：
+
+```
+python3 scripts/test_t1_6_taxonomy.py   ⇒  Ran 14 tests … OK   (0.002s)
+```
+
+分组：`TestThree404Origins`（3 种来源 + `workspace_not_found` 独立码 + `detail` 兜底）、
+`TestBothDirections`（① 不许变 ②、② 不许变 ①、同一 body 两种期望两个族、非 JSON 不许被猜）、
+`TestOrderAndOtherFamilies`（`outcome` 优先 / `requires` 不参与分族 / 401 与 REALM_DIFF 未动）、
+`TestMissingBodyEvidenceIsLoud`（`absent` 时族被标不可派工 + stderr 有 `WARN`）。
+
+🔴 **为什么不用真实 report 当唯一正例**：它**没有 body 字段**（§270.3 第 2 条），
+拿它当正例只能证明 `absent` 分支，等于没测判据。
+
+### §270.5 门读（base `34447e55` 当场重跑，零编译）
+
+- ⑦ **八数字第 57 轮逐字不变**：`upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、
+  `455 real + 1 placeholder = 456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`，
+  **rc=0**。本片**不动路由** ⇒ 这八个数字是本片唯一的自动判据，变了就是回归。
+- ⑦b `slash_alias_audit.py --quiet` **rc=0**（口径按 §266.3：不把 `--declared` 的 rc 当缺陷数）。
+- ⑩ `file_size_check.py --quiet` **rc=0**（`t1_6_taxonomy.py` 173 → **351**、新测试 **180**，
+  均在 R7 的 800 硬上限内；唯一 baseline 条目 `extract_upstream_fixtures.py` 1863 **未动**）。
+- **⑨ 主动不跑、不作继承声明**（理由见 §270.3 第 1 条）。
+
+### §270.6 刻意登记的「不做」（写集纪律）
+
+- **没改** `crates/mc-conformance/**`、`verdict.rs`、`requirements.rs` ⇒ `Row` 仍无 body 字段，
+  这是 §270.3 里新读数的**唯一硬阻塞**，留给下一片（Rust 面）。
+- **没改** `scripts/t1_6_precondition_taxonomy.py:4-6` 与
+  `scripts/t1_6_realm_diff_taxonomy/{__main__.py:8,constants.py:13}` 里
+  「5 个根因族 / `UNMOUNTED/PRECONDITION/AUTH_401/SEED_404/REALM_DIFF`」这两句**已经过期**的转述。
+  改它们会把本片写集从 3 个文件扩到 5 个 ⇒ **登记为欠账，不在本片偷改**。
+  （这条本身也是 §240「分族计数不能靠转述」的一个新实例：族一改，转述就 stale。）
+- **没碰** PR #168（`LUM-2570`）与其 `requirements.rs:674` 红点。
+
+### §270.7 承重二：判据写进「判据来源」那一节，就等于把它变成**可被证伪的断言**
+
+§267.1 已经把三种 404 来源列成表并建议「`SEED_404` 判据应读 `detail`」，
+但它被搁置的理由是「分类器不在本片写集 + §257 承重三刚在旁踩雷」。
+本片能安全落地，是因为**写集里只有判据、没有行为**：改族定义不动一条路由、
+不动一个 fixture、不动 `report.json`（blob `db01d842` 本片**零接触**）⇒ ⑦ 那八个数字
+天然是它的回归网。⇒ **可安全改判据的片 = 写集不含任何被门禁计数的产物**，
+这条比「谁对谁错」更可复用。
+
+### §270.8 待 owner（**不重复 @**，承接 §268.5）
+
+- **`Row` 加 observed body 字段**（`mc-conformance/src/report.rs:20-38`）：这是新分族读数的
+  唯一硬前置。**不加，`AUTHZ_404` 永远只能是合成单测里的族。**
+- `LUM-2111` 卡 docker ⇒ `report.json` 刷新权死锁 ⇒ 每个 PR 的 `contract` job 持续红（第四次实测复现）。
+- `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变）。
