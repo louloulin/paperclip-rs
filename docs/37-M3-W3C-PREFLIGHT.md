@@ -27532,3 +27532,123 @@ base 是否 head 祖先、head 停滞轮数）**零编译、可脚本化**，却
 处置：`multica issue rerun 01a0f062` ⇒ 45 秒内 `running`、workdir 换成
 `lum-2613-4f7b360e0863`（36M，已 checkout）⇒ **本片在飞**。
 ⇒ 与 §275.3（「无 workdir 不是死亡信号」）互补：**有 workdir 也不是起跑信号**。
+## §283 【LUM-2608 / T1-6-K2】把 `§280.9` 的两处缺陷从「钉住行为」升级成「**有编号的已知缺陷**」—— 只测不改（零 Rust / 零 cargo / 零真库 / 零磁盘）
+
+> 📌 **号段**：本片起手取 **`§281`**，**落地时让给了 `§281`/`§282`** ——
+> 写这一段期间 base 前进到 `56a09273`，`§281` 已被 `LUM-2609`（11:00 cycle）取走、
+> `§282` 被 `LUM-2611` 取走。`§281` 的让号规则说「后到者让号」，而**让号方向由「谁起手更晚」
+> 决定**（`§281` 承重一）：本片起手 base 是 `ee910c46`，**早于**那两片 ⇒ 按规则该是
+> **它们**让号。但实测两条反向成本不对称：改 base 已合并的 `§281`/`§282` 要连带改台账两行
+> ＋ `§281` 正文里对 `§278`/`§280` 的交叉引用，而本片只是一个**未合并的 append**。
+> ⇒ **本片让号，取 `§283`**，并把这条不对称成本记在这里，让下一个撞号的人不必重新推一遍。
+> `§280` 归 `LUM-2606`（门 ⑦ 判定器 66 条用例），台账行见 `docs/section-alloc.tsv`。
+> **起手** base **`ee910c46`**（PR #187 落地后的 tip），当场 `git reset --hard` 复核；
+> rebase 到 `56a09273`。
+> 本片零 Rust / 零 cargo / 零真库 / 零磁盘。
+
+### §283.1 问题：上一片钉的是「今天的行为」，不是「正确的行为」
+
+`§280.9` 记下两处**判词 / 契约本身**与实现不符的缺陷（KD-1 raw string 尾缀 `#`、
+KD-2 缺 baseline 的降级说明不可达）。`LUM-2606` 按「只测不改」的纪律把两条都写成了
+**通过**的用例 —— 那是必要的，但**只做了一半**：
+
+```
+$ grep -n 'def test_a_raw_string_path_with_hashes_is_a_registered_defect' -A6 scripts/test_route_parity.py
+        ex = _extract('Router::new().route(r#"/raw_hash"#, get(h))\n')
+        self.assertEqual(ex.routes, [])          # ← 钉住「今天它没被提取」
+```
+
+这两条用例保证的是**「行为没变」**，不是**「行为对」**。按它们写，缺陷可以永远绿下去：
+没有任何输入能让「`r#"…"#` 应当被提取」这句话变红，也没有任何输入能让
+「缺 baseline 应当降级」这句话变红。⇒ **它们是判词，但不是被看守的判词。**
+
+🔴 **本片要造的那条机制**：`unittest.expectedFailure` + 一张**机器双向受检**的登记表。
+它同时给出三个读数：缺陷**今天是红的**（用例每天都跑）、修好之后**会变红**（unittest 报
+`UNEXPECTED SUCCESS` / rc=1 ⇒ 门 ⑫ 立刻红 ⇒ 修的人必须回来改登记表）、登记表本身
+**被看守**（删一行 / 多登记一行都判红）。
+
+### §283.2 交付（三件）
+
+1. **`scripts/test_route_parity_defects.py`（181 行 / 9 用例，其中 2 条 `expectedFailure`）**：
+   `KNOWN_DEFECTS = {KD-1, KD-2}` 四字段表（`case` / `claim` / `observed` / `close`）、
+   4 条登记表守卫（**双向**：登记的必有装饰器、带装饰器的必已登记、字段非空、
+   键恰为 `KD-1`/`KD-2`）、2 条 xfail（断言**正确**的那一侧）、2 条绿用例（断言**今天**的行为，
+   与 `§280` 那两条同侧但与缺陷号共居一地）。
+2. **`scripts/tests.manifest` 多出恰好一行** `scripts/test_route_parity_defects.py`
+   （`LC_ALL=C sort` 位次在 `test_route_parity.py` 之后 —— `'.'(0x2E) < '_'(0x5F)`），
+   与测试文件**同一个提交**（门 ⑫ 的 R1/R2）。
+3. **本段（§283）** ＋ 台账一行。
+
+### §283.3 判别式：4 条探针 × **三段读数**（改前 rc / 改后 rc / 复原 rc）
+
+探针装在**真文件**上（`route_parity.py` 或登记表本体，不是 mock、不是复制品），
+每条用 `shutil.copyfile` 复原并 `cmp` 逐字节确认。**读数取门 ⑫ 本身**
+（`bash scripts/gates.sh --only scripts-tests`），即 CI 用的那条命令。
+驱动脚本一次性、不入库（`/tmp/probe_kd2.py`），每条变异逐字列在下表。
+
+| # | 变异（真文件上的一处改动） | 改前 | 改后 | 复原 | 变红的东西 |
+|---|---|---|---|---|---|
+| P1 | **把 KD-1 修对**：`str_literal_at` 的结尾检查改成 `.strip("#, \t\r\n ")`（吞掉 raw 结束定界符的 `#`） | rc=0 | **rc=1** | rc=0 | `UNEXPECTED SUCCESS: test_kd1_…` ＋ `§280` 那条 ＋ 本片 `test_kd1_today_…` |
+| P2 | **把 KD-2 修对**：`read_baseline` 的条件加上 `and os.path.exists(baseline_path)` | rc=0 | **rc=1** | rc=0 | `UNEXPECTED SUCCESS: test_kd2_…` ＋ `§280` 的 `test_a_missing_baseline_raises_instead_of_soft_disabling` ＋ 本片 `test_kd2_today_…` |
+| P3 | 删掉登记表的 `KD-1` 整行 | rc=0 | **rc=1** | rc=0 | `test_nothing_is_marked_xfail_without_being_registered`（反向守卫） |
+| P4 | 登记一行**不带**装饰器的用例 | rc=0 | **rc=1** | rc=0 | `test_every_registered_defect_has_a_standing_xfail_case`（正向守卫） |
+
+四条全部 `restored rc=0` 且 `byte_identical=True`。P1／P2 证明**两处缺陷真的被看守**：
+修好 ⇒ 门红；P3／P4 证明**登记表不是散文**：它与装饰器双向绑定。
+
+### §283.4 🔴 承重一：**「只测不改」的合法出口是拆文件，不是把新文件登记进白名单**
+
+第一版把登记表**追加进** `scripts/test_route_parity.py`（+148 行 ⇒ 909 行），门 ⑩ 当场判红：
+
+```
+$ python3 scripts/file_size_check.py
+VIOLATIONS (1):
+   lines  limit baseline  path                          reason
+     909    800        -  scripts/test_route_parity.py  不在基线里且超过 800 行上限
+```
+
+两条看似可走的路，**只有一条合法**：`scripts/file_size_baseline.tsv` 的规则写死
+「**基线只减不增，新增违规不得写进白名单**」（`file_size_check.py` 的 rule 1/2/3/4），
+所以「登记进基线」被门体本身禁止；R7 的原话就是 *split the file*。
+⇒ **处置**：新代码拆成 `scripts/test_route_parity_defects.py`（181 行），
+`test_route_parity.py` 回到 **762 行 = 逐字未改**（`git diff --stat` 对它为空）。
+
+🔴 顺带一条**上一片没写下的读数**：`§278.8` 记「新增文件 762 行 < 800，无需进
+`file_size_baseline.tsv`」—— 那是**刚好**。762 离 800 只剩 **38 行**，也就是说
+**任何**往那个文件追加一片的片都会撞门 ⑩。⇒ 那个文件当时就已经是**下一次必然撞门**的形状，
+而门当时是绿的。
+
+### §283.5 门读（base `ee910c46` + 本片写集，**零编译**）
+
+```
+$ bash scripts/gates.sh --only route-parity,file-size,scripts-tests,section-alloc
+  ⑦  route-parity          0     1s  PASS
+  ⑩  file-size             0     0s  PASS
+  ⑫  scripts-tests         0     2s  PASS  (7 file(s))
+  ⑬  section-alloc         0     0s  PASS
+  overall: PASS — 4/4 gate(s) green in 3s
+```
+
+- ⑦ `route_parity.py --quiet` rc=0 ＋ `slash_alias_audit.py --quiet` rc=0；
+  八数字**逐字不变**（本片 0 路由）：`456 / 546 / 546`、`455 real + 1 placeholder = 456`、
+  `known_gap 0 unclaimed 0 regression 0 local_only 8`。
+- ⑫ 逐字 `Ran 53 / 6 / 7 / 66 / 9 / 25 / 14 = 180`（上一片 170），`7 file(s)`。
+  本片那个文件是 `Ran 9 tests … OK (expected failures=2)` ⇒ **门 ⑫ 仍绿**，且两条 xfail 每天都被执行。
+- ⑬ `sections=210 numbers=209 ledger=209 defects=0` rc=0（台账补了本片那一行）。
+- 🔴 **①②③④⑤⑦(conformance ⑨) 未跑，且不作继承声明。** 默认集合里除上面四道外，
+  其余都要么 `cargo`（①–⑤、⑨ `cargo run -p mc-conformance`）、要么真库（`schema-drift`）。
+  本片**零 Rust 零磁盘**，而当轮实测 `df -h /` 只有 **11G → 9.0G 可用**，同时
+  `pgrep -af 'cargo|rustc'` 命中**另一片 `LUM-2610` 正在编译**、其 `target/` 已 **15G**
+  （`/proc/<pid>/cwd` 实测在 `lum-2610-…/workdir/paperclip-rs/target`）⇒ 那是**活物，不动**。
+  冷建需 18–22G ⇒ 在本机**跑不了**，也**不允许**把本片写集说成「全门通过」。
+  工单写的「期望 11/12」需要 ①–⑤ ＋ ⑨ 的真读数，本片**没有拿到**，如实记为未跑。
+
+### §283.6 明确未做
+
+**不修** `route_parity.py` 的两处缺陷（改它们就是改判词的分母，`§四`；P1／P2 的变异只用
+`/tmp` 里的一次性脚本装、逐字节复原）；**不改**八数字口径、不动 `regression` 定义、
+不碰 `gates.sh`；**不写** `scripts/file_size_baseline.tsv`（规则禁止新增违规，见 §283.4）；
+**不删** `§280` 的任何一个用例（`test_a_raw_string_path_with_hashes_is_a_registered_defect` 与
+`test_a_missing_baseline_raises_instead_of_soft_disabling` 仍是「今天行为」的第一道钉）；
+**不跑** ⑨ `--with-db`、不碰真库、不写任何 Rust、不跑 `cargo`；不动
+`crates/mc-conformance/report.json`；不**继承**任何前片的门读数。
