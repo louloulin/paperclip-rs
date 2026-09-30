@@ -734,13 +734,13 @@ class Interpreter:
             if val is None:
                 return None
             if val.kind == "literal" and isinstance(val.value, str):
-                # 🔴 A UUID borrowed from `pkg_literals` is not a compiled-in
-                # value (see scripts/extract_borrowed_ids.py).  When the route says
-                # which row it addresses, bind the row instead of inlining it.
-                symbol = borrowed.seeded_symbol_for(pieces, val.value, val.note)
-                if symbol is not None:
+                # 🔴 `pkg_literals` is repo-wide and bare-name keyed: judge the hit.
+                how, name = borrowed.classify_borrowed(pieces, val)
+                if how == borrowed.SKIP:
+                    return None
+                if how == borrowed.SYMBOL:
                     mark = f"{MARK}{len(markers)}{MARK}"
-                    markers[mark] = Value("symbol", symbol, "seeded row")
+                    markers[mark] = Value("symbol", name, "seeded row")
                     pieces.append(mark)
                     continue
                 pieces.append(val.value)  # a named constant inlines like a literal
@@ -848,7 +848,11 @@ class Interpreter:
                 sub.bindings[pname] = Binding(file, arg, ctx)
             got = self.interpret(fn.file, fn.body, sub, depth + 1)
             if got is not None:
-                rq.apply_helper_identity(self.text(fn.file, fn.body), got, sym)
+                # `newDaemonTokenRequest` ends in `req.WithContext(WithDaemonContext(...))`:
+                # the identity never appears as a header, so record it on the state the
+                # helper hands back and let `split_headers` stop calling it anonymous.
+                if any(call in self.text(fn.file, fn.body) for call in DAEMON_CONTEXT_CALLS):
+                    got.oob.add(REQUIREMENT_DAEMON_TOKEN)
             return got
         return None
 
@@ -997,13 +1001,8 @@ def apply_statement(file: str, interp: Interpreter, span: tuple[int, int], text:
                 ctx.env[hdr.group(1)].headers[k.value] = v
         return
 
-    # 5. `name = expr` / `name := expr` / `var name = expr` / `const name = expr`
-    # 🔴 `const` is load-bearing: a function-local `const key = "…"` must shadow
-    # `pkg_literals` (repo-wide, keyed by **bare name**). Unregistered, the bare `key`
-    # fell through to an unrelated `key = "workspaces/"` (handler/file.go) and the
-    # fixture replayed `?status=workspaces/`. `ctx.defs` wins over `pkg_literals`, and
-    # a locally-declared literal is no longer *borrowed*, so it is not rebound to a row.
-    assign = re.match(r"^(?:(?:var|const)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*\s*(?::=|=)\s*", text)
+    # 5. `name = expr` / `name := expr` / `var name = expr`
+    assign = re.match(r"^(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*\s*(?::=|=)\s*", text)
     if not assign:
         return
     name = assign.group(1)

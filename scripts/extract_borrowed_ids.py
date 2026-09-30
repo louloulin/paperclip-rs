@@ -69,6 +69,79 @@ def package_literals(files: dict[str, tuple[str, str, dict[int, str]]]) -> dict[
     return values
 
 
+# RFC 3986 pchar, bounded: what a single path segment may carry.  A borrowed
+# value outside this is not a path token at all — it is the *name collision* the
+# module docstring describes, surfacing where it cannot even be requested
+# (``/api/agents/a runtime that this profile does not provide``).  The replay
+# error names that failure itself: "carries bytes axum refuses in a URI".
+URI_PATH_TOKEN = re.compile(r"\A[A-Za-z0-9\-._~!$&'()*+,;=:@%]{1,64}\Z")
+
+#: `classify_borrowed` verdicts.  ``INLINE`` keeps upstream's value verbatim,
+#: ``SYMBOL`` replaces it with a seedable row binding, ``SKIP`` abandons the
+#: site.  There is deliberately no verdict that invents a binding: a fixture the
+#: runner can never replay is not a weaker fixture, it is a false denominator.
+INLINE = "inline"
+SYMBOL = "symbol"
+SKIP = "skip"
+
+
+def is_collision(value: Any) -> bool:
+    """Did the package-wide table answer with a value no path could carry?
+
+    Only borrowed values are judged.  A literal the test itself wrote is passed
+    through untouched: if upstream really did concatenate an impossible token,
+    that is upstream's business to record, not ours to rewrite silently.
+    """
+    if getattr(value, "note", None) != BORROWED_NOTE or not isinstance(value.value, str):
+        return False
+    return not URI_PATH_TOKEN.match(value.value)
+
+
+def _collection_symbol(pieces_so_far: list[str]) -> Optional[str]:
+    segs = [s for s in "".join(pieces_so_far).split("/") if s and not s.startswith("{")]
+    if not segs:
+        return None
+    kind = SEEDED_COLLECTIONS.get(segs[-1])
+    return None if kind is None else "$test%sID" % kind
+
+
+def past_query(pieces_so_far: list[str]) -> bool:
+    """Has the concatenation already crossed into the query string?
+
+    A collided name is only provably harmful **in the path**: a query value is
+    an opaque string to the router, so upstream's borrowed text still makes a
+    requestable URL there.  Judging the query half by the path rule would drop
+    sound fixtures (``/api/issues?status=`` + a local ``key``).
+    """
+    return "?" in "".join(pieces_so_far)
+
+
+def classify_borrowed(pieces_so_far: list[str], value: Any) -> tuple[str, Optional[str]]:
+    """How a resolved scalar may enter the URL path: ``(verdict, symbol)``.
+
+    Three cases, in order:
+
+    1. **Collision** — the table answered a local (``target``, ``sourceIssueID``)
+       with another file's string.  The test wrote ``"/api/agents/" + target``
+       where ``target`` is a row the runner can seed, so the honest reading is
+       the row behind the route's collection segment.  An **empty** borrowed
+       value is not a row reference but a degenerate one, and a collection the
+       runner cannot seed leaves us with no truthful binding: both ``SKIP``,
+       which drops the site into the extraction report instead of shipping a
+       fixture that can never be replayed.  Past the ``?`` the value is only a
+       query string, so it inlines as upstream wrote it.
+    2. **Borrowed UUID** — rebind it to the seeded row (pre-existing rule).
+    3. **Anything else** — inline upstream's value verbatim.
+    """
+    if is_collision(value) and not past_query(pieces_so_far):
+        if isinstance(value.value, str) and not value.value:
+            return SKIP, None
+        symbol = _collection_symbol(pieces_so_far)
+        return (SYMBOL, symbol) if symbol else (SKIP, None)
+    symbol = seeded_symbol_for(pieces_so_far, value.value, value.note)
+    return (SYMBOL, symbol) if symbol else (INLINE, None)
+
+
 def seeded_symbol_for(pieces_so_far: list[str], value: Any, note: str) -> Optional[str]:
     """The symbol a borrowed row id should become, or ``None`` to keep the literal.
 
@@ -81,10 +154,4 @@ def seeded_symbol_for(pieces_so_far: list[str], value: Any, note: str) -> Option
         return None
     if not CANONICAL_UUID.match(value):
         return None
-    segs = [s for s in "".join(pieces_so_far).split("/") if s and not s.startswith("{")]
-    if not segs:
-        return None
-    kind = SEEDED_COLLECTIONS.get(segs[-1])
-    if kind is None:
-        return None
-    return "$test%sID" % kind
+    return _collection_symbol(pieces_so_far)
