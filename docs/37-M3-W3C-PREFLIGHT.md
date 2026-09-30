@@ -28772,6 +28772,61 @@ PASS（6s，**11 file(s)**）、⑬ `section-alloc` PASS。
 
 **门 ②③④⑤⑥⑧⑨ 未跑**（要 cargo / 真库 / 容器），**不作继承声明**，不得读成「全门通过」。
 
+## §293 【`LUM-2623` / T1-6-Q3】门 ⑬ 的判定器 `section_alloc_check.py`（234 行 / 0 用例 / **CI `fast` 必过项**）补 89 个 `unittest` —— **只测不改**，登记 KD-1 … KD-5
+
+起手 base `874b7311`（树 `4f66c479`）⇒ 收尾前 base 前进到 `485cc1d9`（并发 cycle 取了 **§295**，§293 仍空）⇒ rebase 后本片落在 `## §292` 与 `## §295` 之间。零 Rust / 零 cargo / 零真库 / 零容器 / 零磁盘。
+写集：`scripts/test_section_alloc_check.py`（新，698 行）+ `scripts/tests.manifest`（+1 行，
+`LC_ALL=C sort` 第 10 位）+ 本段 + `docs/section-alloc.tsv` 的 293 行。
+`scripts/section_alloc_check.py` **本体一行未加**（只测不改）。
+
+### §293.1 门读数
+
+| 门 | base（`874b7311`） | 本片 | 判 |
+|---|---|---|---|
+| ⑫ `scripts-tests` | `12 file(s)` / **420** 用例 | `13 file(s)` / **509** 用例（+1 文件 / +89） | +1/+89 |
+| ⑬ `section-alloc` | `sections=222 numbers=221 ledger=221 defects=0` | `sections=224 numbers=223 ledger=223 defects=0`（含并发 cycle 的 §295） | +1 段 +1 台账行，两侧对齐 |
+| ⑦ `route-parity` | `456/546/546 / 455r+1ph / gap0 unclaimed0 regr0 local_only 8` | **逐字不变** | 本片 0 路由 |
+| ⑩ `file-size` | rc=0 | rc=0 | 新文件 698 ≤ 800，且**未**登记基线 |
+
+门 ②③④⑤⑥⑧⑨ **未跑**（要 cargo / 真库 / 容器），**不作继承声明**，不得读成「全门通过」。
+
+### §293.2 DoD 是**三段读数**，不是用例数（`§283` 的教训照抄本片）
+
+「新增 89 个用例」**不是证据** —— `LUM-2604` 复跑发现「上一轮说它红」的用例实测三条全绿。
+本片当场做了两轮变异 + 复原：
+
+| 段 | 变异 | `scripts-tests` rc | 指名道姓的 `FAIL:` |
+|---|---|---|---|
+| 改前 | 无 | **0** | — |
+| 改后① | R4 恒真（`if d != l:` → `if False:`） | **1** | `test_a_file_side_duplicate_registered_once_is_red`、`test_r4_is_the_only_rule_that_catches_a_duplicate_with_no_count_column`、`test_a_count_larger_than_the_file_side_occurrences_is_red` 等 **6** 条 |
+| 改后② | R1 恒绿（`set(doc_counts) - set(ledger_declared)` → `set() - …`） | **1** | `test_a_section_in_the_file_with_no_ledger_row_is_red`、`test_removing_the_ledger_row_of_an_existing_section_flips_green_to_red` 等 **8** 条（含 `test_harvest_preflight.py` 的 `test_r1_r4_reused_from_gate_13_not_reimplemented`） |
+| 复原 | 原文件 | **0** | — |
+
+⇒ 四条判词（R1 / R2 / R3 / R4）**各有一条变异能被抓住**，不是「用例数是绿的」。
+
+### §293.3 登记的 5 条已知缺陷（只登记，**不**改判定器）
+
+| 号 | 一句话 | 今天实测 |
+|---|---|---|
+| KD-1 | 代码围栏里的 `## §NNN` 被读成真段号 | 围栏内孤立示例行 ⇒ `sections=1`、台账那一行反而判绿 |
+| KD-2 | **第 4 列可以把一次新增撞号洗成绿** | 文件里 `## §300` 两次 + 台账 `300…2` ⇒ 四条判词全绿；无「次数>1 白名单」可区分它与 §226 |
+| KD-3 | 段号写法不规范化（`0300` / `0`）不是格式缺陷 | `isdigit()` 放行 ⇒ 同一次漂移被报成 R1+R2 两条「段不存在」；`0` 号段被完全接受 |
+| KD-4 | R4 的消息不指名它比较的那一行 | 同号两行分别登记 1 与 5 ⇒ 消息说「台账行 1,2 登记 5 次」 |
+| KD-5 | **门不判段号单调** | 四条判词全是集合/计数比较，顺序被丢弃；**仓库现状就不单调**（`## §226` 第二处在 `docs/37:20884`） |
+
+5 条各由一个 `@unittest.expectedFailure` 钉住 ⇒ 门 ⑫ 仍绿，但谁修好实现就 `UNEXPECTED SUCCESS`
+⇒ 门红 ⇒ 必须同时删装饰器并改 `KNOWN_DEFECTS` 表。
+
+### §293.4 承重：**「谁在看我这一轮写的号段」与「谁在跑门」是两个集合**
+
+本片落地之前：**没有任何东西执行** `section_alloc_check.py` 的代码（门 ⑫ 的 manifest 里没有它），
+**也没有任何东西检查它的健康度**（它不在 `file_size_baseline.tsv` 里 ⇒ 门 ⑩ 只能按行数判它），
+而它每天在 `.github/workflows/ci.yml:90` 的 **`fast` 必过 job** 里跑生产判词。
+⇒ 与 `§292.2` 同形：**「被门执行」和「被门保护」是两件事**，一个文件可以天天跑而不被任何判词覆盖。
+本族（`LUM-2606` / `LUM-2608` / `LUM-2617` / `LUM-2620` / `LUM-2621` / 本片）到此收口：
+`ci.yml` 直接引用的四个判定器现在**全部**有用例。
+>>>>>>> 909ee493 (T1-6-Q3: 门 ⑬ 判定器 section_alloc_check.py 补 89 个 unittest（只测不改，登记 KD-1..KD-5）)
+
 ## §295 【2026-09-30 14:00 cycle / `LUM-2622`】收割 **2 片**（#195 + #196）＋ 🔴 承重：**「用例数」可以是绿的 —— 判别式才是证据**（本轮实测两片都真判别，且逮到一个真缺口）
 
 起手 base `c3946cd5` → 收尾 **`874b7311`**；GH 收尾 **0 open PR**；daemon **3/3**
