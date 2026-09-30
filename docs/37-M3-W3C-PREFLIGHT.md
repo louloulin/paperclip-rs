@@ -28451,3 +28451,113 @@ crates/mc-conformance              base=head=e98c2d3c2b2cbf9e458cbae8d1129a982d9
 - 顺位：`LUM-2617` 终 ⇒ 判据链 ⇒ **T1-6-Q**（`slash_alias_audit.py` 376 行 / `schema_drift.py` 799 行，两者同族，⚠️ 后者**距门 ⑩ 硬上限只剩 1 行**，要动它必须先想拆法）。
 - **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮第 4 次实测，§289.3 给了零构建证法）；`mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 裁决；`LUM-2556` / `LUM-2545` 两个陈旧 cycle issue 的状态归属。
 - 积压 `todo` 的 autopilot cycle 单（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835/2012/…`）**只登记不动状态**。
+
+## §290 【LUM-2620 / T1-6-Q1】给门 ⑦ 的**第二条**判定器 `slash_alias_audit.py`（376 行 / 0 用例）补 68 例 —— 只测不改，登记 8 条有编号的已知缺陷
+
+零 Rust / 零 cargo / 零真库 / 零磁盘。门 ⑦ 第二条命令（`scripts/gates.sh:699`）每天都在跑这个
+判定器，而本片落地之前它 **0 用例、0 门执行**：`scripts/tests.manifest` 里没有对应行 ⇒
+没有任何东西执行它的代码，只消费它的退出码。`LUM-2606` / `LUM-2608` / `LUM-2617` 同族第三片。
+
+**交付**：`scripts/test_slash_alias_audit.py`（**756 行** ≤ 门 ⑩ 的 800 硬上限，**未**登记
+`file_size_baseline.tsv`，基线只减不增）+ `scripts/tests.manifest` **+1 行**（排在
+`test_route_parity_defects.py` 与 `test_t1_6_precondition_taxonomy.py` 之间，数据行 `sort -c` 通过，
+**与测试文件同一提交** ⇒ 不登记就是「文件存在但从不被门执行」）。门 ⑫ 的文件数 **10 → 11**。
+
+### §290.1 三条判词的方向（`EXTRA_ALIAS` 是本片最容易踩的坑）
+
+实测（合成树 + 合成上游表，走 `main()` 而不是直接调 `audit()`）：
+
+| 上游字面量 | 注册形态 | 判词 | rc |
+|---|---|---|---|
+| `/ma/`（双形态） | 只有 `/ma` | `MISSING_ALIAS` | **1** |
+| `/ma/`（双形态） | 只有 `/ma/` | `MISSING_ALIAS` | **1** |
+| `/ma/`（双形态） | 两个都注册 | 无 | 0 |
+| `/me`（单形态） | 只有 `/me/` | `MISSING_EXACT` | **1** |
+| `/me`（单形态） | 两个都注册 | `EXTRA_ALIAS` | **0** ← **warning，不是 defect** |
+| `/ok`（单形态） | 只有 `/ok` | 无 | 0 |
+
+🔴 `EXTRA_ALIAS` 按 docstring 是 warning（实测 `rc=0`、`stderr` 空、stdout 写
+`=> 0 defect(s) from findings, 1 warning(s)`）。**本文件把它钉成 rc=0**；若照字面把它当
+defect 断言，就会写出一个「钉住错误行为」的绿用例 —— 这正是工单点名的那一坑。
+另注：上游表的键**必须**是折叠过的（`load_upstream` 折叠、`audit` 也按折叠键查）；第一版探针
+拿原始字面量当键，整张表返回空 findings —— **那是夹具错误，不是判据行为**。
+
+### §290.2 白名单双向读数
+
+- **登记的 key 不再触发 ⇒ rc=1**（docstring 的自指负向判据）。且缺陷数**单独**进 `=>` 行：
+  `=> 0 defect(s) from findings, 1 stale allowlist row(s), 0 warning(s)`（§19.6 那次
+  「stdout 绿 / stderr 红」的修法在）。
+- **🔴 仓库里那份 `docs/fixtures/slash-alias-allowlist.tsv` 只有表头、0 条数据行**
+  （`grep -v '^#'` 只剩 `METHOD<TAB>PATH<TAB>OWNER<TAB>WHY`）⇒ **今天门 ⑦ 的 allowlist 是空的**，
+  `--json` 读数 `allowlist_rows=0`。凡「名单机制是否生效」的结论都不能拿今天这份文件推。
+- 缺列/空列/空格分隔的读数见 KD-4；坏名单行是 **rc=2**（`SystemExit(2)`，经 `main()` 同样是 2），
+  不是静默跳过 —— 读错名单等于没读，而跳过会放行。
+
+### §290.3 `--declared` 与 `--tree` 的读入格式**不同构**（可交付读数，非阻塞）
+
+| | `--tree` 的上游表 | `--declared` 的声明表 |
+|---|---|---|
+| 分隔 | `line.split("\t")`，**逐列**取 | `line.split()`，**整行**切词 |
+| 列数 | `<2` 跳过；`parts[0]` 不校验 | `<2` ⇒ **rc=2**；METHOD 须 `[A-Za-z]+` |
+| 空 path 列 | **进得来**（KD-7） | 进不来（`split()` 至少 2 段） |
+| METHOD 大小写 | **不归一**（KD-5） | `.upper()` |
+
+两边的注释行（`#`）、空行、`METHOD` 表头跳过规则一致。`--declared` 不是玩具：
+`docs/61-M8-PLAN.md:34` 记的就是一次真实的 `--declared` 实测（`declared 25 / dual-form required: 0`）。
+
+### §290.4 `--base-ref`：旧键的缺陷确实被滤掉（钉成读数）
+
+合成 git 树（base commit 只有 `/old/`，worktree 多出 `/new/`）：
+
+- 不给 `--base-ref`：`registered upstream-key literals: 2` ⇒ `=> 2 defect(s)`；
+- 给 `--base-ref <base>`：`registered upstream-key literals: 1` ⇒ `=> 1 defect(s)`，
+  报告里 `/old` **完全不出现**（不是被折叠，是真的不在集合里），标题行写 `added vs <sha>`。
+- `--base-ref` **只改集合、不放松判词**：陈旧名单行仍然 rc=1。
+- ⚠️ ref 不存在时**不报错**，而是静默变成审全树（KD-6）。
+
+### §290.5 已知缺陷登记表（8 条，**只登记不修**，交回 owner 裁决）
+
+`KNOWN_DEFECTS` + `@unittest.expectedFailure` ⇒ 门 ⑫ 仍绿（`OK (expected failures=8)`），
+但用例**每天都跑**；谁修好实现 ⇒ `UNEXPECTED SUCCESS` ⇒ 门红 ⇒ 必须同时删装饰器并改本表。
+登记表与装饰器**双向**机器校验（少一个方向，删掉登记就没人再看它）。
+
+| 号 | 一句话 | 实测现象 |
+|---|---|---|
+| KD-1 | `--no-allowlist` + 显式 `--allowlist` ⇒ 报「文件不存在」 | 同一棵树上单给 `--allowlist` 是 rc=0，同给变 **rc=2** + `allowlist not found: <真实存在的路径>`；而 `gates.sh:82` 把 `--no-allowlist` 写成**查缺口的正规手段** |
+| KD-2 | `--declared` 不判陈旧名单行 | 同一份名单：tree 模式 rc=1、declared 模式 rc=0；`--json` 报告里连 `stale_allowlist` 键都没有 |
+| KD-3 | `load_upstream` 静默合并同键的两种尾斜杠写法 | 2 行输入得 1 条，**且顺序决定判词**（留 `/x` ⇒ 无发现；留 `/x/` ⇒ `MISSING_ALIAS`） |
+| KD-4 | 名单行空字段导致整行左移 | `GET\t/x/\t\twhy` ⇒ owner=`why`、why=`""`；空格分隔行把整段尾巴塞进 owner。**判红判绿不变** ⇒ 门绿而名单不再自解释 |
+| KD-5 | `load_upstream` 是三个 loader 里唯一不 `.upper()` METHOD 的 | 上游写 `get` ⇒ 键 `('get','/x')` 与任何 `GET` 注册永不相交 ⇒ **静默漏审** |
+| KD-6 | `--base-ref` 写错不报错 | `w3b_premerge_audit.git()` 失败返回 `""` ⇒ 基准清单为空 ⇒ `routes = 全树 − ∅` ⇒ 1 处缺陷变 2 处，无任何提示 |
+| KD-7 | 空 path 与根路径 `/` 折叠成同一个键 | `fold("") == fold("/") == "/"`；`len(parts) < 2` 挡得住少列、**挡不住空列**（与 KD-3 相乘） |
+| KD-8 | 树扫描每读一个 `.rs` 漏一个文件句柄 | `w3b_premerge_audit.py:177` 是 `open(p,…).read()`（无 `with`）⇒ 每次扫描都抛 `ResourceWarning`；**本片一开始有 4 条「stderr 为空」断言就是被它顶红的** |
+
+🔴 **KD-8 是本片最便宜的一条**：它不在本脚本里，而在**共享抽取器**里，所以
+「`slash_alias_audit.py` 静默」这个前提在库内调用时**不成立**（门 ⑦ 跑的是 `--quiet` 子进程，
+默认不打印 `ResourceWarning`，所以门是绿的）。本文件因此把 stderr 断言从「逐字节为空」改成
+「**不含判词**」（`FAIL` / `error:`），而不是把警告藏起来。
+
+### §290.6 三段读数验收（**不是**用例数 —— `§283` 的教训）
+
+| 段 | 手法 | 读数 |
+|---|---|---|
+| **P-A** | 改前 | `4/4 PASS`，门 ⑫ `11 file(s)`，`OK (expected failures=8)` |
+| **P-B1** | **整块删** manifest 登记行（不是改名） | `GATE_SCRIPTS_TESTS_EXIT=1`，`+ scripts/test_slash_alias_audit.py [discovered, NOT in scripts/tests.manifest]`，`仅在树上=['scripts/test_slash_alias_audit.py']` |
+| **P-B2** | **整块删** 测试文件本体 | `GATE_SCRIPTS_TESTS_EXIT=1`，`仅在清单里=['scripts/test_slash_alias_audit.py']` |
+| **P-C** | 逐字节复原 | `4/4 PASS`，门 ⑫ `11 file(s)` |
+
+两段红的**失败原因都是目标守卫**（集合身份），**不是** `NameError` / import 错 / 用例数变化 ——
+`test_gate_scripts_tests.py`（第二来源，不过 `gates.sh`）与门内的比对逻辑**两处同时报同一个键**。
+
+### §290.7 夹具纪律与边界
+
+- 🔴 `file_size_check.py` 扫 `git ls-files`（**只扫已跟踪**）⇒ 新建的测试文件**先 `git add`**
+  再跑探针，否则会得出「更严重的绿/红」这种假读数（`§289` 记的镜像形态）。本片两次探针
+  之前都 `git add` 过。
+- 所有探针改动逐字节复原（`cp` 备份 / 复原），收尾 `git status` 干净。
+- **不改**：`scripts/slash_alias_audit.py` 本体、`scripts/w3b_premerge_audit.py`（KD-8 的修法
+  在那里，**不在本片写集**）、`scripts/gates.sh`、`docs/fixtures/**`、`contracts/**`、任何 `crates/**`。
+- **门 ②③④⑤⑥⑧⑨ 本片一律不跑**（需 cargo / 真库 / 容器），**不作继承声明**，**不得**据此写「全门通过」。
+  收尾 base 当场重跑的只有 `--only route-parity,file-size,scripts-tests,section-alloc` 四道零编译门。
+- 待 owner 裁决：上表 8 条缺陷的修法（其中 KD-8 修在 `w3b_premerge_audit.py`，会影响
+  `route_parity.py` 与 `harvest_preflight.py` 的共用路径 ⇒ **需要独立一片**，不能顺手改）。
