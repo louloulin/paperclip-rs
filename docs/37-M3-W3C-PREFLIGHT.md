@@ -29322,6 +29322,9 @@ M4 是本轮最有信息量的一条：**被测对象在变异下仍然说 `OK`�
 ## §300 【`LUM-2629` / `T1-6-R1`】门 ⑭ 的判词形状有**两个**真缺陷（一个假红、一个假绿）—— 修 `judge_stem()` 的包形态 + 把 `-m` 模块形态纳入引用面
 
 **起手 base `9b86e8c2`**（工单写的 base 当场 `git rev-parse` 实测命中，**不是**抄的）。
+**收尾 base 已前进到 `671befcd`**（并发 cycle 取了 §299）⇒ 本片已 rebase，
+**下表全部读数是在 rebase 后的 head `28d03e33` 上**当场重跑、**base 那一列在
+`671befcd` 的副本上**当场重跑的。§300.8 记了这次撞号与一次差点造成的后果。
 **零编译**：不跑 cargo、不碰数据库、不碰 `crates/**`。写集 = 4 个文件
 （`scripts/judge_test_coverage_check.py` / `scripts/test_judge_test_coverage_check.py` /
 `scripts/gates.sh` 仅 ⑭ 段注释 / `docs/37` + `docs/section-alloc.tsv`）。
@@ -29449,15 +29452,17 @@ python3 scripts/judge_test_coverage_check.py
 
 ### §300.6 与 base 逐字对照的读数（硬约束，**当场实测**，不是抄的）
 
-| 读数 | base `9b86e8c2` | 本片 head | 判定 |
+| 读数 | base `671befcd` | 本片 head `28d03e33` | 判定 |
 |---|---|---|---|
 | ⑦ `upstream / local / baseline` | `456 / 546 / 546` | `456 / 546 / 546` | ✔ 逐字 |
 | ⑦ `implemented real+placeholder` | `455 + 1 = 456` | `455 + 1 = 456` | ✔ 逐字 |
 | ⑦ `known_gap / unclaimed / regression / local_only` | `0 / 0 / 0 / 8` | `0 / 0 / 0 / 8` | ✔ 逐字 |
-| ⑬ `sections / numbers / ledger` | `227 / 226 / 226` | `228 / 227 / 227` | **+1/+1/+1**（新增的**正是本片** §300） |
+| ⑬ `sections / numbers / ledger` | `228 / 227 / 227` | `229 / 228 / 228` | **+1/+1/+1**（新增的**正是本片** §300） |
 | ⑬ `R1 / R2 / R3 / R4 / defects` | `0 / 0 / 0 / 0 / 0` | `0 / 0 / 0 / 0 / 0` | ✔ 逐字 |
 | ⑭ `surfaces / judges / covered / gaps` | `2 / 6 / 6 / 0` | `2 / 6 / 6 / 0` | ✔ 逐字（多一个 `dry=0`） |
+| 门 ⑫ 发现集合 | `15 file(s)` | `15 file(s)` | ✔ 逐字（未新增/删除任何 `test_*.py`） |
 | 门 ⑭ `GATE_JUDGE_TEST_COVERAGE_EXIT` | `0` | `0` | ✔ |
+| 门 ⑩ `GATE_FILE_SIZE_EXIT` | `0` | `0` | ✔ |
 
 ⚠️ **⑬ 的 `+1` 是本片自己**（§300 段 + 台账 300 行），不是回归：文档段与台账行**成对**
 插入 ⇒ `R1`（file→ledger）与 `R2`（ledger→file）**同时**保持 0。
@@ -29494,6 +29499,22 @@ python3 scripts/judge_test_coverage_check.py
    `regressed`），不要只看 `VIOLATIONS (1)` 就去猜。
 
 ### §300.8 本片**没有**做的事（留给 owner）
+
+🔴 **让号第三次撞上「收尾前 base 才前进」**（`§293` 已记过前两次）：起手 `9b86e8c2`
+逐字命中，**收尾时 base 已到 `671befcd`**（并发 15:00 cycle 直接取了 §299，跳过 297）
+⇒ rebase 时 `docs/37` 与 `docs/section-alloc.tsv` **双文件**冲突（双方各自在末尾追加）。
+工单只要求「落盘前 fetch」，**不够**。本片的教训多一条：
+
+> 🔴 **解冲突脚本不得假设 `<<<<<<<` 只出现在真冲突处。** `docs/37:20959` 与 `:21067`
+> 有两处**写在 ``` 围栏代码块里的 `<<<<<<< / ======= / >>>>>>>`** —— 它们是
+> §161 那次合并冲突形状的**文档示例**，是 base 自带的**合法内容**。
+> 我第一版解冲突脚本「两边都保留」，它把这两处的 `=======` 当成了冲突分隔行
+> ⇒ **静默删掉了 6 行真实文档**（`sed -n` 逐段 diff 才看出来，`git status` 全程绿）。
+> 判据：**解完之后必须 `diff` 每一段被改写区域与 base，逐字为零**，
+> 而不是只看「冲突标记清零了」。`git status` 绿 ≠ 内容对。
+> （第二次用「按 base 原文回填围栏块」才修回来。）
+
+**不重复 @ 的待办**：
 
 * **`scripts/t1_6_realm_diff_taxonomy/` 的测试改名**（§300.2 末尾那条真缺口）：
   `test_realm_diff_taxonomy.py` → `test_t1_6_realm_diff_taxonomy.py`。
