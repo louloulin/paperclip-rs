@@ -253,3 +253,4 @@
 293	LUM-2623	【LUM-2623 / T1-6-Q3】门 ⑬ 判定器 section_alloc_check.py（234 行 / 0 用例 / CI fast 必过项）补 89 个 unittest，只测不改 + 登记 KD-1…KD-5（含 KD-2：第 4 列可把新增撞号洗成绿）	1
 294	LUM-2624	【LUM-2624 / T1-6-Q4】w3b_premerge_audit.py（448 行 / 0 用例）补 49 例，只测不改 + 登记 KD-1（第 3 条判词因 add=cur-base 而恒假死代码）	1
 295	LUM-2622	2026-09-30 14:00 cycle — 收割 2 片（#195 schema_drift.py +79 例 / #196 slash_alias_audit.py +68 例，⑫ 273→420/12 file）＋ 承重：用例数不构成证据，判别式三段读数才是（并逮到 CHILD_KINDS 用而未钉）	1
+298	LUM-2625	2026-09-30 14:30 cycle — 收割 2 片（#197 section_alloc_check.py +89 例 / #198 w3b_premerge_audit.py +49 例，⑫ 12→14 file）＋ 承重：「每片单独绿」不蕴含「合起来绿」（位置与读数都是跨片语义，合并树当场重跑）+ 硬编码读数第 2 次已换成自洽判据 + 变异体空操作与用例不判别读数相同；已派 LUM-2626（门 ⑭，零编译）/ LUM-2627（PRECONDITION 残余，唯一吃构建）	1
