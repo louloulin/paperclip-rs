@@ -36,7 +36,7 @@ env:
 jobs:
   # ①–⑤ + ⑩：不需要数据库，每次 push 都跑。
   fast:
-    name: fast — fmt / build / clippy / test / file-size / scripts-tests
+    name: fast — fmt / build / clippy / test / file-size / scripts-tests / section-alloc
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -82,6 +82,13 @@ jobs:
       # 依然只调 gates.sh，不在 yml 里写 `python3 scripts/test_*.py`（本仓纪律：命令唯一实现）。
       - name: "⑫ scripts-tests — python3 scripts/**/test_*.py（递归，含包内测试）"
         run: bash scripts/gates.sh --only scripts-tests
+
+      # ⑬ 纯标准库、亚秒级、不需要数据库/编译：`docs/37` 号段台账的双向校验 + 撞号判据。
+      # 存在的理由：号段一直是手工、先到先得、无校验的分配，撞号此前只在**合并时**以
+      # `docs/37` 的 CONFLICT 暴露（PR #168 至今被它卡住）。同样只调 gates.sh，
+      # 不在 yml 里写 `python3 scripts/section_alloc_check.py`（本仓纪律：命令唯一实现）。
+      - name: "⑬ section-alloc — python3 scripts/section_alloc_check.py --quiet"
+        run: bash scripts/gates.sh --only section-alloc
 
   # ⑥：真 PostgreSQL 16 service 容器；**先建表**再跑 DB e2e（测试自己不做迁移）。
   db:

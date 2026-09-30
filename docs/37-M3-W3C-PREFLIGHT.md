@@ -26458,7 +26458,590 @@ $ bash scripts/gates.sh --only scripts-tests > log 2>&1; grep GATE_SCRIPTS_TESTS
 不删 PR #184 那 97 个真实用例中的任何一个（只把 4 条**守门**用例从包内迁到顶层）；
 不用「用例数 ≥ 101」当判据（那正是探针 ① 塌到 45 却仍然绿的那类指标）。
 
-## §278 【LUM-2606 / T1-6-K】门 ⑦ 的判定器 `route_parity.py`（779 行）**0 测试** —— 决定「谁该被派工」的那道门无人看守（零 Rust / 零 cargo / 零真库 / 零磁盘）
+## §277 【LUM-2605 10:30 cycle】收割 `LUM-2604`（**第二个无 PR 的分支**，手工解号段冲突第二次）＋ 派 2 片零磁盘切片
+
+起手 base `e854c32a` → 收尾 **`a5facad4`**。**1 收割 / 0 回收 / 派 2 片。**
+
+### §277.1 收割判据链：`LUM-2604` / T1-6-J（分支 `agent/devbox4/81019adcfb12` @ `9aba5cfe`，**至今没有 PR**）
+
+GitHub 上 open PR 只有 **#168** 一个；`LUM-2604` 交付时**只推了分支、没开 PR** ⇒ 它不在收割队列里，
+是本轮**从远端分支列表里翻出来的**（`git branch -r --sort=-committerdate` 的第二行就是它）。
+**新形态：分支先到、PR 后补，而 PR 一直没补 ⇒ 收割队列按 `pulls?state=open` 枚举会漏掉已交付的片。**
+
+| 判据 | 读数 |
+|---|---|
+| 写集（`--numstat`） | `docs/37 +155/−0` / `gates.sh +138/−12` / `test_realm_diff_taxonomy.py +11/−44` / `test_gate_scripts_tests.py +138/−0` / `tests.manifest +30/−0` |
+| `merge-base` vs base tip | `dbfc0307` ≠ `e854c32a` ⇒ **base 已前进，必须真合** |
+| `merge-tree --write-tree` | **`rc=1`**，CONFLICT 只在 `docs/37-M3-W3C-PREFLIGHT.md`；4 个代码文件自动合干净 |
+| head 的 `check-runs` | **`total_count = 0`** —— 无 PR ⇒ 无 CI ⇒ **收割侧没有任何流水线证据** |
+| 手工解冲突 | 两侧都是**纯追加**：base 侧 §275（含 §275.1/2/3）全量保留 + 追加分支侧 §276（152 行） |
+| 落地树 vs 预演树 | 预演 `322cb042` vs 落地 `1e1ff6a3`，**差异只有 `docs/37`（+1/−3）** ⇒ 4 个代码文件逐字一致 |
+
+**合并树当场重跑（零编译 0.96s）**：
+
+```
+⑦  route-parity    0  PASS   456/546/546 · 455 real + 1 placeholder · gap 0 / unclaimed 0 / regression 0 / local_only 8
+⑩  file-size       0  PASS
+⑫  scripts-tests   0  PASS   5 file(s) / 104 用例（52 + 6 + 7 + 25 + 14）
+```
+
+### §277.2 🔴 承重一：**上一轮的「假判别式」和这一轮的「真判别式」是同一族，两族都在同一条代码路径上**
+
+`§275` 记的承重一是：`LUM-2602` 自报三条「改了就红」，收割复跑**实测三条全绿**。
+本轮复跑 `LUM-2604`（**同一族、同一道门 ⑫**）自报的三条：
+
+| 探针 | 结果 |
+|---|---|
+| ① 改文件名（`test_t1_6_precondition_taxonomy.py` → `probe_renamed.py`） | **`rc=1`**，`4 file(s), discovery-identity mismatch` |
+| ② `tests.manifest` 少一行 | **`rc=1`** |
+| ③ 整个删掉 `tests.manifest` | **`rc=1`** |
+| 全部复原 | **`rc=0`** |
+
+⇒ **同一族里既有全绿的假判别式，也有全红的真判别式。** 区分它们的**唯一**办法是**当场复跑**，
+因为「上一轮说它红」和「这一轮说它红」都不构成证据。**推论：门禁护栏的验收条件必须是「三段读数」，
+而不是「用例数」或「我加了 N 个测试」** —— 后两者在 `§275` 里都已被证明可以是绿的。
+
+### §277.3 🔴 承重二：**收割队列的枚举口径漏掉了「已交付但没开 PR」的片**
+
+`curl .../pulls?state=open` 只能看到开了 PR 的片。`LUM-2604` 全套交付（3 commit、155+138+11+138+30 行、
+含新门判据、新基线文件、152 行文档）**且通过了全部复跑**，却因为没开 PR 而**不在收割队列里**。
+**这与 `§275` 承重一（派发成功≠起跑成功）是同一个家族：平台上的「完成态」读数不等于工作流真的走完了。**
+**收割纪律补一条：每轮除枚举 open PR 外，还要 `git fetch` 后按 `-committerdate` 扫远端分支，
+把「有交付物但无 PR」的片挑出来判。** 本片就是靠这一步捡回来的。
+
+### §277.4 🔴 承重三：**「无 workdir」不是死亡信号 —— 第三次实测，这次有反例**
+
+`§275.3` 已订正「第六类形态不存在」，理由是观测选错了。本轮给出**可核对反例**：
+
+- `LUM-2604` 的 run `01a0f017-847c-7144-a070-81019adcfb12` **正常完成**（02:14 → 02:28），
+  交出 3 个 commit 的分支 `agent/devbox4/81019adcfb12`；
+- 而 `/home/devbox/multica_workspaces/lumos-659117e3ca3d/` 下 **不存在 `lum-2604-*` 目录**（103 个 `lum-*` 目录里没有它）。
+
+⇒ **同一个 agent（`3df1a3e8`）的一次成功 run，可以完全没有 workdir。**
+本轮派出的 `LUM-2606` / `LUM-2607` 在 135 秒内同样无 workdir，而
+`multica agent tasks 3df1a3e8` 里两条 run 都是 `running`（`01a0f02a-1573` / `01a0f02a-24a6`）⇒ 判**在飞**。
+**判据：run 表的 `running` 是可用读数；「无 workdir」不是。** 两者都不是时请读分支/提交，不要改派。
+
+### §277.5 磁盘：6.3G，**只够 0 磁盘类**，本轮零回收
+
+`avail 6.3G`（`LUM-2592` 的 `target/debug` **20G**）。四判据复核 ⇒ **活物禁动**：
+pid `6121` 的 `pi` 在 `lum-2592-d35a7000b9a0` 里活着（`ELAPSED 54:19`），
+`find -newermt '-30 minutes'` 在其 `scripts/` / `docs/` / `.github/` 里命中新鲜文件，
+远端 `agent/devbox5/rescue-2592` @ `08649ba3` 已有提交 ⇒ **在飞**。
+`target/debug` 内部也无可回收项：`incremental/` 已空、`deps/` 3308 个文件**零个** `mtime +2d`（全是今天新build的）。
+**算式**：`6.3G` vs 冷建下限 18–22G ⇒ **本轮只派 0 磁盘类**。顺位里的 Rust 面（`/v1` 装置、`plugins_v1=false`、
+`STILL_404`、`PRECONDITION 25`）**全部因磁盘被挡，不是因不存在**。
+其余 102 个 workdir 各约 36M，无可回收对象 ⇒ **收割/回收两步本轮一收割一空转，顺位纪律照走。**
+
+### §277.6 派发（槽位 1/3 占用 ⇒ 可派 2，磁盘 ⇒ 只能派 0 磁盘类，**两片都派满**）
+
+| 片 | 号段 | 为什么是它 |
+|---|---|---|
+| `LUM-2606` / T1-6-K | §278 | 门 ⑦ 的判定器 `scripts/route_parity.py`（**779 行**）**0 测试** —— 每一轮 cycle 都在报的**那八个数**就是它算的，而它的输出决定「哪条缺口派给谁」。与 §270（`SEED_404` 判据被证伪）、§274（分类器 0 门执行）**同族第三次** |
+| `LUM-2607` / T1-6-L | §279 | `docs/37` 号段纯手工分配 ⇒ **#168 至今 open 且 `merge-tree rc=1`**（一个真修复被号段冲突永久卡死）、#182、#2604 **连三轮实际合并成本**。把「分配空号」变成受检动作 |
+
+**写集不相交**：`2606` = 新测试文件 + `scripts/tests.manifest` + `docs/37`；
+`2607` = 新脚本 + 台账 + `scripts/gates.sh` + `docs/37`。
+唯一重叠面是 `docs/37`，**号段已当场分配（§278/§279）** ⇒ 这正是 `2607` 要机械化的那件事，先按手工做一次。
+
+**本轮自己犯的错（当场改正）**：两张工单在正文里**互相引用对方的号时写反了**
+（`2606` 正文写「`gates.sh` 写集留给 `LUM-2607`」是对的，但 `2607` 正文把并行片写成了 `LUM-2607` 自己），
+已用 `multica issue update --description-file` 双向改正并复查。**记这一条是因为：并行片的交叉引用
+是纯文本、0 机器校验，正是 `2607` 要消灭的那一族。**
+
+### §277.7 下一轮开局
+
+1. **收割队列要扫远端分支**（§277.3），不只 `pulls?state=open`。
+2. **PR #168 单独处理**：它已连续多轮 `merge-tree rc=1` + head `fast` **failure**。
+   `§277.3` 派了号段机械化，但**那条片明确被禁止顺手改 #168**（重新分配号段是收割动作，由 cycle 判）。
+   下一轮要么给它重排号段后合，要么**明确记为放弃**并把它代表的修复重新派片 —— 不要再无限期挂着。
+3. `LUM-2592` 一旦 run 终态 ⇒ 立刻回收那 20G（收割/回收的顺位，见 §167 与本文件既往结论）。
+4. 磁盘恢复到 ≥ 18G 之前，**不要派任何 Rust 面**。
+## §278 【LUM-2592 / T1-6-G1】行为面 3 条 —— **3 条全修好**，`REALM_DIFF 15→12`；抢救产物**从未编译过**，补了三处断裂
+
+🔴 **号段：本片连撞五次，最终取 `§278`**（工单派的号**全部作废**）：
+
+| 工单派的 | 实际结局 |
+|---|---|
+| `§268` | 已被 **§268（LUM-2595 cycle）** 占用 |
+| `§273` | 本 run 跑门的 20 分钟里被 `LUM-2601` 抢走（`6dfbd76b`） |
+| `§274` | §273 **明文预约**给 `LUM-2602`，果然落地（PR #184） |
+| `§275` | 写完落盘后 rebase 时发现 **`LUM-2603` 刚落地同名 `§275`**（`61b03f2a`）⇒ 改号 |
+| `§276` | 改到 `§276` 后**又一次** rebase，发现 **`LUM-2604` 刚落地同名 `§276`**（`a5facad4`）⇒ 改号 |
+| `§277` | 改到 `§277` 后**又一次** rebase，发现 **`LUM-2605` 刚落地同名 `§277`**（`ec08a3c9`）⇒ 改号 |
+
+🔴 **这五次的根因不是「有人算错」，是「base 在本 run 的 50 分钟里前进了三次」**
+（`49c3d025` → `6dfbd76b` → `61b03f2a` → `a5facad4` → `ec08a3c9`），
+而每次前进都伴随一个 cycle 落一段。**五次里有四次是在 rebase 之后才发现被抢。**
+
+⇒ **「以 base 末号 + 1」取号，在一个 cycle 节奏快于本片的仓库里是结构性失效的**：
+它假设 base 在「取号 → rebase → 提交」这段窗口内不动，
+而实测该窗口长达 **50 分钟**、base 前进了 **3 次**。
+**可操作的替代（二选一）**：
+① **取号推迟到 rebase 之后** —— rebase 会把 base 带到最新 tip，那时再读末号；
+② **rebase 后必查一次** —— 本片四次都是这么发现的。
+
+⚠️ 另一条仍然成立：**append-only 文档的同锚点冲突（本片第二次手工解，见 §272）
+只删得掉冲突标记，删不掉双重占用。** `merge-tree` 报 `rc=1` 只说明「要人动手」，
+动手解完**必须**再 `grep -o "^## §27[0-9]" | sort | uniq -c` 确认**没有两个同名**。
+
+- **起手**：`multica repo checkout` + `git fetch origin agent/devbox5/rescue-2592`
+  → `git checkout -B <br> FETCH_HEAD`（父 = 当轮 base `49c3d025`，**无需 rebase**）。
+- **base 在跑门期间前进**：`49c3d025` → `6dfbd76b`（只动 `docs/37`）⇒ 收尾前 rebase，
+  `merge-tree` rc=0 无冲突，Rust 代码树逐字未变。
+- **base 在收尾期间又前进两次**（`a5facad4` / `ec08a3c9`，均只动 `docs/37`）⇒ 两次 rebase，
+  每次都要重解 `docs/37` 同锚点（见号段表）。
+
+### §278.1 🔴 承重一：**抢救分支 ≠ 已编译** —— 「产物在树上」不等于「产物能编译」
+
+§273 记的第五类死亡形态给了判别式「`git status` 非空 ⇒ 救援成本 = 一次 commit」。
+本 run 把那条判别式的**适用边界补齐**：`08649ba3` 树是干净的、四个依赖点也都在位，
+**但它编译不过**。三处断裂，**全部是编译期错误、全部零运行时症状**：
+
+| # | 位置 | 断裂 | 为什么 §273 的四判据没抓到 |
+|---|---|---|---|
+| 1 | `routes/issues/list.rs` | `decode_query_body` 声明 `Result<_, Error>`，该文件**从未 import `Error`**（E0425） | 依赖点实测只查了 `from_pairs` / `classify_actor_source` **在不在**，没查新符号**可见不可见** |
+| 2 | `routes/workspaces.rs` | 声明 `Result<_, Error>` 却调了本文件那个返回 **`ApiError`** 的 `validation(...)`；且 `ApiError` **不转发 `http_status()`**，新加的双向单测根本没法断言状态码 | 同名 helper 在**两个 crate 里各有一份**（`routes/issues/helpers.rs::validation → Error` vs `routes/workspaces.rs::validation → ApiError`），看着能编其实不能 |
+| 3 | `routes/workspaces.rs` | 该文件起手 **756 行**，加校验 + 单测后 `cargo fmt` 顶到 **816 行** ⇒ 门 ⑩ R7（单文件 800 行硬上限）**rc=1** | 门 ⑩ 只在 `--with-db` 集合里；抢救 run 死在 build 阶段，**从没跑到门 ⑩** |
+
+⇒ **判别式升级（第六条）**：`git apply --check` 干净 + 依赖点在位，**只证明「可打补丁」，
+不证明「可编译」**。抢救之后**必须**至少跑一次 `--only build,file-size`（本 run 实测
+**75s + 1s**，零 DB、零磁盘代价），否则会把「三个编译期断裂」当成「一片已完成的工作」往下传。
+
+⇒ **同型更狠的一层**：`workspaces.rs` 756 → 加完 800（**零余量**）⇒ `cargo fmt` 一跑就
+**816**。**`cargo fmt` 本身会撞红线**，而 R7 说「基线只许变短」。**凡在红线附近改文件，
+先算 `fmt` 之后的行数，不是改之前的。** 本片把 issue_prefix 整块（常量 + 校验 + 单测）
+搬进子模块 `routes/workspaces/issue_prefix.rs`，`workspaces.rs` 落到 **768 行**，
+形状沿用本仓既有惯例（`agents.rs`+`agents/`、`auth.rs`+`auth/`、`issues.rs`+`issues/`）。
+
+### §278.2 三条的前后对照（⑨ db-mode 回放，库 `mc_c2592b` 当轮新建、角色带 `CREATEDB`）
+
+| 子族 | 成员 fixture | 改前 | 改后 | 修法（代码位置） |
+|---|---|---|---|---|
+| `BEHAVIOR_MACHINE_ACTOR_GATE` | `properties/TestPropertyAdminGate@…/property_test.go:230#2` | `403 ← 201` | **pass** | `properties.rs::require_property_admin_actor`（新增）＋ `create_property` / `update_property` 各加一行调用 |
+| `BEHAVIOR_JSON_DECODE_STATUS` | `issues/TestQueryIssues_PostTwinMatchesGet@…/issue_table_filters_test.go:274#81` | mismatch（**422**） | **pass**（**400**） | `list.rs::query_issues` 由 `Json<HashMap<..>>` 改收 `Bytes` ＋ 新增 `decode_query_body` |
+| `BEHAVIOR_ISSUE_PREFIX_UNPORTED` | `workspaces/TestUpdateWorkspace_RejectsInvalidIssuePrefix@…/workspace_test.go:1508#35` | `400 ← 200` | **pass** | `workspaces/issue_prefix.rs::normalize_issue_prefix`（新增子模块）＋ `update_workspace` 调用点 |
+
+**totals**：`fixtures 365`（不变）/ `pass 304→307`（**+3，一族一条**）/ `mismatch 35→32` /
+`unmounted 1` / `placeholder 0` / `unevaluable 25` —— 后三者**逐字不变**。
+**待清 `61 → 58`**。
+
+**五族前后（判据 ③）**：
+
+| 族 | before | after | Δ | authoritative |
+|---|---|---|---|---|
+| `UNMOUNTED` | 1 | 1 | 0 | true |
+| `PRECONDITION` | 25 | 25 | 0 | true |
+| `AUTH_401` | 7 | 7 | 0 | true |
+| `AUTHZ_404` | 0 | 0 | 0 | true |
+| `SEED_404` | 13 | 13 | 0 | **false**（§270 已证伪其判据，本片不碰） |
+| `REALM_DIFF` | 15 | **12** | **−3** | true |
+| 合计 `bad_total` | 61 | **58** | −3 | — |
+
+**对账式**：工单写 `61 − (pass_after − 304)` ⇒ `61 − (307 − 304) = ` **`58`**，与实测
+`bad_total = 58` **逐字相符**。⚠️ §273 交接里把底数写成了 **`279`**
+（`61 − (pass_after − 279)`）⇒ 那式子给出 `33`，与实测差 25，**是交接的笔误**；
+`304` 才是本轮正确的底（= 合并 PR #181 后的 `pass`）。**跨片对账式必须写明以哪一轮读数为底。**
+
+**`REALM_DIFF` 内部**：12 = `EXTRACT_REQUEST_SHAPE_STALE` 2 + `EXTRACT_WORKSPACE_BINDING_WRONG_DELETE` 1
++ `DEVICE_QUEUED_TASK_ROW` 1 + `DEVICE_INTRA_TEST_SEQUENCING` 1 + `DEVICE_DB_FAULT_INJECTION` 1
++ `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 1 + 未归类 4 + `claimed_elsewhere` 1。
+⚠️ 工单判据 ③ 写的「另外 14 条（`EXTRACT_*` 5 + `DEVICE_*` 9）」是**旧轮底数**，
+本轮实测 `EXTRACT_*` 3 + `DEVICE_*` 3。**该判据的数不可抄，只可重取**；
+可判定的是 **Δ = −3 且那 3 条正是本片三个目标 fixture**（逐条 `outcome=pass` 已核）。
+
+### §278.3 判据 ⑧：PR #178 留的半截工程补完了，**且可机械复跑**
+
+`report.py::verdict()` 三档：`serial` / `parallel` / `undetermined`。
+`undetermined` 的触发条件是**「lane 内有子族的 `owner_files` 是空串」**。
+`BEHAVIOR_OWNER_FILES` 在 base `49c3d025` 上把 `BEHAVIOR_JSON_DECODE_STATUS` 留空 ⇒
+行为面 lane 必然降级为「未定」。本片填上 ⇒ 升级。**逐字对照（当场实测，非推断）**：
+
+```
+BASE 49c3d025 : BEHAVIOR_JSON_DECODE_STATUS -> []            <== 空串 ⇒ lane「未定」
+本片          : BEHAVIOR_JSON_DECODE_STATUS -> [routes/issues/list.rs, routes/issues/query.rs]
+```
+
+**据以填写的那处代码位置**（判据 ⑧ 要求写进交付评论，此处落盘）：
+
+- **`crates/mc-http/src/routes/issues/list.rs:80-92`** —— `query_issues` 的**提取器就在那儿**。  改前签名 `Json(body): Json<HashMap<String, JsonValue>>`，解码失败被 axum 的
+  `JsonRejection` 在**进入 handler 体之前**短路成 **422**；上游 `QueryIssues`
+  （`issue.go:1153`）是 `json.NewDecoder(..).Decode(&params)`，失败即
+  `writeError(w, 400, "invalid request body")` ⇒ **400**。
+  ⚠️ **这就是为什么 handler 体当初「看不到」这个失败** —— 状态码词汇不同，
+  由提取器决定，不是由 handler 里的任何一行决定。
+- **`crates/mc-http/src/routes/issues/query.rs:79`** —— `ListIssuesQuery::from_pairs`
+  （`fn` 起点），**未知键静默忽略在 `:118`（`_ => {}`）**、`metadata` 这个**已知** key
+  在 `:117` 显式拾取。同请求的另一半。
+  两个文件**必须一起登记**：「只把畸形值挪到 400、不动良构路径」这条**双向**判据，
+  只读 `list.rs` 验不了。
+
+`BEHAVIOR_NUL_PAYLOAD` **仍然不填**（本轮只派了 JSON 解码这一族；NUL 那条要读
+`routes/chat/**` 的 task-messages 回调 handler，没读就填等于编）。
+但它**当前 0 成员** ⇒ 不进 `subfamily_owner_files` ⇒ 不触发 `undetermined`。
+**这条「0 成员就不降级」的性质是运气不是设计**：它一旦在某轮回放里重新长出成员，
+lane 会**立刻**退回「未定」并点名它。
+
+### §278.4 by-design 登记表（本片**刻意不做**的三条，逐条写「什么实现下它才可判定」）
+
+1. **`BEHAVIOR_MACHINE_ACTOR_GATE` 的 ② 号路** —— 上游 `resolveActor`（`handler.go:847`）
+   判 `"agent"` 有两条路：① `X-Actor-Source == "task_token"` 服务端盖章头**直接信**
+   （**本片已接上**）；② `X-Agent-ID` + `X-Task-ID` + **两次查库**（agent 在本 workspace、
+   task 属于该 agent）。
+   **② 仍不可实现**：本仓 mc-http 的请求上下文里**没有 agent / task 实体**
+   （只有 `X-Multica-User-Id` + `Authorization`）。**什么实现下可判定**：请求管线接上
+   agent/task 解析（`mc-agent` / `mc-task` 进 authn 上下文）**之后**。
+   已登记在 `properties.rs` 模块头的已知偏差段。
+2. **`issue_prefix` 合法值** —— 本片**只做到「拒」**。`normalize_issue_prefix`
+   逐字复刻 `workspace.go:84-96`（`ToUpper(TrimSpace(raw))`；空 ⇒ 回落默认、**不** 400）。
+   但**合法值仍不落库**：`mc_core::WorkspaceUpdate` **没有** `issue_prefix` 字段。
+   ⚠️ 工单与 `WorkspaceResponse` 的旧注释都说「`issue_prefix` 列不在 M0 schema」——
+   **实测为错**：列在 `migrations/upstream/020_issue_number.up.sql` 里**存在**
+   （`mc-repos/src/squad.rs:680` 在读）。**缺的是 DTO 字段，不是列。**
+   **什么实现下可判定**：`mc_core::WorkspaceUpdate` 加该字段 ＋ `WorkspaceRepo::update` 透传。
+3. **`SEED_404` 13 条** —— §270 已用本仓代码证伪其判据（`classify()` 从不读 body）。
+   **不属于本片写集**（`mc-conformance/**`），本片**不碰、不改口径**。
+
+### §278.5 门禁（base `6dfbd76b` 跑门 / rebase 后 `61b03f2a`，最终树，库 `mc_c2592b` 当轮新建、角色带 `CREATEDB`）
+
+`bash scripts/gates.sh --with-db` ⇒ **11 门 10 绿**，579s：
+
+| 门 | exit | | 门 | exit | |
+|---|---|---|---|---|---|
+| ① fmt | 0 | | ⑦ route-parity | 0 | |
+| ② build | 0 | | ⑧ schema-drift | 0 | |
+| ③ clippy | 0 | | ⑨ conformance | **1** | **存量红** |
+| ④ clippy-test-util | 0 | | ⑩ file-size | 0 | |
+| ⑤ test | 0 | | ⑫ scripts-tests | 0 | |
+| ⑥ db | 0 | `migrate=0,e2e=0` | ⑪ image | — | 不在集合内（docker 卡 `LUM-2111`） |
+
+- **门 ⑦ 八数字（第 58 轮，逐字不变）**：`upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、
+  `455 real + 1 placeholder = 456`、`known_gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+  **0 路由片 ⇒ ⑦ 本来就不该动；它动不了也说明没偷加路由。**
+  ⚠️ 门 **⑦b（`slash_alias_audit.py`）已在本 base 折进 ⑦ 的单条命令**
+  （`gates.sh:486`）⇒ 不再是独立门，rc 随 ⑦。
+- **门 ⑨ `--no-db --check` 存量红，签名逐字不变**：`first difference at line 17` /
+  `committed "unevaluable": 13` vs `fresh: 12`；blob **`db01d842` 未动**
+  （根因是 PR #167 从未同步 `report.json`，非本片回归）。
+- **门 ⑤ 含本片 5 个新双向单测**，全绿（`718 passed / 0 failed`）：
+  `malformed_query_body_is_400_not_422`、`well_formed_query_body_still_decodes`、
+  `task_token_actor_is_rejected_with_403`、`non_task_token_actors_pass_the_property_gate`、
+  `issue_prefix_validation_is_bidirectional`。
+- **门 ⑩**：`workspaces.rs` **768**（起手 756）／ `issue_prefix.rs` 76 ⇒ rc=0，**红线解除**。
+
+### §278.6 双向面（本仓反复踩的坑，本片每族都跑了）
+
+- `BEHAVIOR_JSON_DECODE_STATUS`：**只补「畸形 → 400」会让良构体变成假通过**。
+  ⚠️ **工单给的那条坑在本 base 上已经过期，不要照抄**：工单写
+  「`query.rs:27` **根本没有 `metadata` 字段**，加字段时别踩这个坑」。
+  **实测**：`metadata` **已经存在**（`query.rs:73` 字段声明、`:117` 在 `from_pairs` 里
+  显式拾取、`:174` 有 `parse_metadata_filter`）。真正的坑剩下**一半**，仍然要测：
+  `from_pairs` 对**真正未知**的键**静默忽略**（`:118` 的 `_ => {}`）⇒ 良构体里带
+  无关键必须**照样通过**。
+  ⇒ 两个方向都在（畸形 6 例 ⇒ 400；良构 4 例 ⇒ 解出且过 `from_pairs`，
+  其中一例就是 `{"unknown_key":"ignored"}`）。
+- `BEHAVIOR_MACHINE_ACTOR_GATE`：🔴 **最容易写错的一半是「`cloud_pat` 必须放行」**。
+  `actor_guard::is_machine_credential_actor` 的 denylist **含 `cloud_pat`**，
+  拿它当这条闸会把 `cloud_pat` 误判成 agent（**比上游更严**）。
+  上游 `resolveActor` 的第一分支是 `X-Actor-Source == "task_token"` 的**字面比较**，
+  `cloud_pat` 落不到任何分支 ⇒ 返 `"member"` ⇒ 过闸。
+  ⇒ 只取 `ActorSource::TaskToken` 一态；反向用例覆盖 `cloud_pat` / 未知值 /
+  大小写不同 / 空串 / 缺头。
+- `BEHAVIOR_ISSUE_PREFIX_UNPORTED`：反向用例覆盖 10 字符**压线通过**（`A1B2C3D4E5`）、
+  `trim` 在 `upper` **之前**（`" ab1 "` → `AB1`）、空/纯空白**不 400**。
+  正向 4 例（超长 / 含 `-` / 11 字符 / 含空格）⇒ 400 + 逐字文案。
+
+### §278.7 磁盘证据链（起手 / 峰值 / 回收）
+
+| 时点 | `avail` | 备注 |
+|---|---|---|
+| workdir 起手 | **27G** | 旧 `LUM-2592` workdir 的 `target/` 已被 §273 整删（2.6G）⇒ **本 run 冷建** |
+| 首次 `--with-db` 前 | 26G | — |
+| 首次 `--with-db` 后（**失败**，build 红） | 20G | — |
+| 二次 `--with-db` 前 | 18G | 已 `rm -rf target/debug/incremental` |
+| 二次 `--with-db` 后 | **5.8G**（峰值） | `target/` = 21G |
+| `rm -rf target/debug/incremental` 后 | 6.7G | — |
+| 交付前 | 6.6G | `target/` = 20G |
+
+⚠️ **本片实测「单片冷建 ≈20G」而非工单估的 18–19G** ⇒ §273 的磁盘准入式
+（`avail − 可回收 ≥ 18G`）**对本机偏松**。与 `LUM-2602`（零 Rust）不叠加，
+收尾后本片 `target/` 整删（§278.8）。
+
+### §278.8 下一 cycle 起点
+
+- **base = `61b03f2a`**（跑门时的 base 是 `6dfbd76b`；收尾 rebase 前进到 `61b03f2a`，
+  上游只动 `docs/37`，Rust 树逐字未变，`merge-tree` 无冲突）；本片 2 个 commit 在 `agent/devbox5/d35a7000b9a0`。
+- **回收**：本片 `target/` **20G**，四判据齐（run 终态 ∧ PR 已在远端 ∧
+  `/proc` 逐 PID 零命中 ∧ `git status` 空）⇒ 整删。
+- **顺位**：① `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 1 条（`pats.rs` + `authn.rs`，
+  写集与本片**零交集** ⇒ 前置已解除，**可派**）；② `EXTRACT_*` 3 条（`scripts/extract_*.py`
+  ＋ `contracts/golden/**`，与本片零交集）；③ `DEVICE_*` 3 条（`mc-conformance/**`）。
+  ⚠️ 三者的**实测计数以 §278.2 为底**（`EXTRACT_*` 3、`DEVICE_*` 3），
+  **不要抄工单里的 5 / 9**。
+
+### §278.8b ⚠️ 门 ⑥ 的一次**假红**：`pool timed out`，换新库即绿
+
+收尾的第四次 `--with-db` 里门 ⑥ 由 `e2e=0` 转 `e2e=101`，13 条失败**全在
+`routes::attachments::tests::db*`**，panic 逐字是
+
+```
+MULTICA_TEST_DATABASE_URL is set but connect failed:
+  database connection error: pool timed out while waiting for an open connection
+```
+
+**不是本片回归**（本片写集与 `attachments` 零文件交集），**按 §273 交接的指示
+「换新库重跑再判」**：`mc_c2592c`（全新库）上单独重跑门 ⑥ ⇒ **`migrate=0, e2e=0`，rc=0**。
+
+⇒ **可复用的判别式**：门 ⑥ 的失败签名是 `pool timed out` **且**失败集合**全部**落在
+某一个 `routes::<x>::tests::db*` 模块 ⇒ 那是**库被上一轮跑干了**，不是代码坏了。
+判别成本 = 换新库重跑一次 65s，**远低于**去逐条读那 13 个 panic。
+⚠️ 与本片撞上的另一族**签名相同但成因不同**：`SEED_404` 那条判据被证伪（§270）——
+**同一个 `pool timed out` 也可能是装置面造不出数据**。⇒ 判别时**两个假设都要排**，
+顺序是「换新库」（排库）→「失败集合是否单一模块」（排连接池）→ 才轮到读代码。
+
+### §278.9 🔴 承重二：**「填上负责面」这个动作本身会撞上一条钉死旧状态的断言**
+
+本片 rebase 到 `61b03f2a`（含 PR #184 / `LUM-2602`）之后，门 **⑫ `scripts-tests` 由绿转红**：
+
+```
+test_unfilled_subfamilies_are_the_two_documented_ones ... FAIL
+  两道「故意不填」必须仍然空着（填了也要知道为什么改）。
+```
+
+上游 `LUM-2602` 刚把决定 T1-6 归因的分类器接进门 ⑫，其中一条断言
+`BEHAVIOR_JSON_DECODE_STATUS` 与 `BEHAVIOR_NUL_PAYLOAD` **两道都必须空着**。
+而**判据 ⑧ 恰好要求填其中一道** ⇒ **本片把一个 4 小时前刚绿的门弄红了**。
+
+**处置**：该断言的 docstring 自己写着「**填了也要知道为什么改**」⇒ 按它的意图改，
+**不是删掉、不是 `@unittest.skip`、不是加白名单**：
+
+- 拆成两条。`test_nul_payload_is_still_deliberately_unfilled` 保留原意，并点明它是
+  **唯一**剩下的「故意不填」（NUL 那条要读 `routes/chat/**`，本轮没派）。
+- `test_json_decode_status_is_now_filled_with_two_files_that_exist` 改成**正向**断言，
+  钉住两个文件逐字，并**补一条原断言没有的**：列进负责面的文件必须**真的在磁盘上**
+  （`os.path.isfile`）—— 否则「负责面」又是一列编出来的路径，而 `verdict()`
+  会拿它去判「可并行：是」。**原断言只验「该空的空着」，从不验「填的对不对」。**
+
+**可证伪性当场实测**（不是声称）：把那行改回空 ⇒ 该用例立刻
+`KeyError: 'BEHAVIOR_JSON_DECODE_STATUS'` 红；改回 ⇒ 绿。门 ⑫ 回到 rc=0（4 file(s)）。
+
+⇒ **承重**：**「补齐证据」与「钉住证据缺失状态的断言」是同一枚硬币的两面。**
+本仓的门禁越来越擅长钉「**还没做**」（这是好事，它挡住了一大批编造），
+但**每一条这样的断言，在有人真把它做掉的那天都会转红**。
+⇒ 处置顺序必须是「**读那句断言自己的 docstring** → 按它声明的意图改」，
+而不是「让它变绿」。本片若只追求门全绿，正确做法会退化成 `--skip`，
+而那句 docstring 恰好把正确做法写在了原地。
+## §279 【LUM-2607 / T1-6-L】**零 Rust / 零磁盘**：把 `docs/37` 的号段分配从「手工先到先得」变成受检动作（台账 + 双向校验 + 撞号判据 = 门 ⑬ `section-alloc`）；🔴 承重一：起手 base 里**已经有一个真实撞号**（`## §226` 出现两次）
+
+起手 base **`a5facad4`**（`git fetch` 后当场 `git reset --hard` 复核 = `a5facad4`，即 `origin/feat/multica-rs-initial` 的 tip；`origin/main` 是另一条线，与本片无关）。
+零 `cargo` / 零真库 / 零磁盘：本片不写 Rust、不跑 ⑥/⑧/⑨/`--with-db`、不碰 `target/`。
+**不改 `docs/37` 既有任何一段的号**（不删 / 不重排 / 不合并），只**新增** §279 这一段，外加
+`docs/section-alloc.tsv` + `scripts/section_alloc_check.py` + 门 ⑬（+ `ci.yml` 的 `fast` job 追加一个 step）。
+
+### §279.1 交付物、四条判据与复算命令
+
+| 写面 | 内容 | 复算命令 |
+|---|---|---|
+| `docs/section-alloc.tsv` | 号段台账，格式 `<段号>\t<持有者 issue>\t<一句话摘要>\t<docs/37 出现次数>`（第 4 列缺省 1） | `python3 scripts/section_alloc_check.py` |
+| `scripts/section_alloc_check.py` | R1–R4 的**唯一实现**；纯标准库、只读、**没有** `--write-*` 模式 | 同上 |
+| `scripts/gates.sh` | 新增门 ⑬ `section-alloc`（文件顶部说明 + 已知坑、`ALL_GATES`、默认集合、`gate_label`、`gate_env_name`、`run_section_alloc_gate`、dispatch；**既有 ①–⑫ 的判据一行未改**） | `bash scripts/gates.sh --only section-alloc` |
+| `.github/workflows/ci.yml` | `fast` job 追加一个 step，只调 `bash scripts/gates.sh --only section-alloc`（不在 yml 里写 python3 —— 本仓纪律：命令唯一实现） | 同上 |
+
+四条判据（脚本 `--help` 与 docstring 里逐字相同）：
+
+- **R1 文件 → 台账**：`docs/37` 里出现的**每个** `## §NNN` 段号，台账必须有对应行。
+- **R2 台账 → 文件**：台账**每一行**的段号，必须在 `docs/37` 里真实存在（**双向**；单向的话台账自己会漂成散文）。
+- **R3 台账段号唯一**：同一段号在台账里出现两次 ⇒ 红。**这是「撞号」的判据**：两片各自分配同一个空号 ⇒ 两行同号。
+- **R4 出现次数一致**：段号在 `docs/37` 里的**实际出现次数**必须等于台账登记的次数 ⇒ **任何新增的文件内重复段号都红**（连直推、没走分配的撞号也红）。
+
+起手生成台账（**一次性**，不是刷新手段）：
+
+```bash
+# 用 checker 自己的 SECTION_RE 抽，保证「抽」与「校验」是同一份规则（两份规则各自绿 = 查不出来）
+python3 - <<'PY'
+import re, sys; sys.path.insert(0, 'scripts')
+import section_alloc_check as sac
+lines = sac.DOC.read_text(encoding='utf-8').splitlines()
+head = {}
+for line in lines:
+    m = sac.SECTION_RE.match(line)
+    if m: head.setdefault(m.group(1), line)
+...  # 持有者 = 标题里第一个 LUM-####；摘要 = 标题去号后的前 72 字；次数 = 该号出现次数
+PY
+```
+
+台账**没有** `--write` 模式：台账是**分配动作**的产物，必须由分配者写下；「自动重生成台账」
+＝「自动把撞号合法化」，那正是本片要关掉的东西。
+
+### §279.2 台账读数（双向 + 四条判据）
+
+```text
+$ python3 scripts/section_alloc_check.py
+section-alloc: docs/37-M3-W3C-PREFLIGHT.md  vs  docs/section-alloc.tsv
+  readings: sections=207 distinct=206 ledger_rows=206  R1(file->ledger)=0 R2(ledger->file)=0 R3(ledger-dup)=0 R4(count)=0
+  既有重复段号（由台账第 4 列如实登记，不是缺陷）: §226
+section-alloc: OK — sections=207 numbers=206 ledger=206 defects=0
+$ echo $?
+0
+```
+
+读数的三个数**不是同一个数，且差值就是本片的承重一**：
+
+- `sections=207` = `## §NNN` 的**出现次数**（base 206 + 本片新增的 §279 一次）；
+- `numbers=206` = **不同段号**个数（207 − 1，因为 §226 占了两次）；
+- `ledger_rows=206` = 台账行数（**一个段号一行**，所以 §226 只占一行、第 4 列记 2）。
+
+双向与撞号的读数全为 0 缺陷。台账行数 206 = base 的 205（不同号）+ 本片 §279。
+
+### §279.3 探针：三段读数（装在本仓**真文件**上，照实记录）
+
+每条探针都取「**改前** rc=0 / **改后** rc≠0 / **复原** rc=0」三段；`checker` = `python3 scripts/section_alloc_check.py --quiet`，
+`gate` = `bash scripts/gates.sh --only section-alloc`。探针全程 `sha256sum` 三文件在**复原后逐字回到改前值**
+（`500e917a… / 66af3f4a… / c5e2186a…`，改前改后哈希相同）。
+
+| # | 探针（真文件上的动作） | 改前 | 改后 | 复原 | 改后命中的判据 |
+|---|---|---|---|---|---|
+| P1 | 台账里删掉 §276 那一行（`awk -F'\t' '$1!="276"'`） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | R1 |
+| P2 | `docs/37` 里把 §276 的号改成 §275（`sed 's/^## §276 /## §275 /'`） | checker 0 / gate 0 | checker **1**（2 defects）/ gate **1** | checker 0 / gate 0 | R2 + R4 |
+| P2b | `docs/37` 里**复制**一份 §275 标题（只多一个号，不删任何号） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | **只有 R4** |
+| P3 | 台账被**删空**（截成 0 字节） | checker 0 / gate 0 | checker **1**（207 defects）/ gate **1** | checker 0 / gate 0 | R1 + 空台账 |
+| P3b | 台账文件被**删掉**（不存在） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | 前置件缺失 |
+| P5 | 台账里**追加一行与 §276 同号**（两行同号） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | **只有 R3**（撞号判据本身） |
+| P4 | 校验器被**改名**（`section_alloc_check.py` → `.bak`） | gate 0 | gate **1** | gate 0 | 门自带的前置件判据 |
+| P4b | 校验器被**删除** | gate 0 | gate **1** | gate 0 | 同 P4（同一代码路径） |
+
+改后逐条缺陷原文（`--quiet` 只给退出码；门**红了会重跑一遍不带 `--quiet`** 把明细打出来，与 ⑧ 同款）：
+
+```text
+P1  error: R1 段号 276 出现在 docs/37-M3-W3C-PREFLIGHT.md（1 处）但台账没有对应行（分配动作没登记）
+P2  error: R2 台账行 236 登记了段号 276，但 docs/37-M3-W3C-PREFLIGHT.md 里没有 `## §276` 段
+    error: R4 段号 275：docs/37-M3-W3C-PREFLIGHT.md 里出现 2 次，台账行 235 登记 1 次
+P2b error: R4 段号 275：docs/37-M3-W3C-PREFLIGHT.md 里出现 2 次，台账行 235 登记 1 次
+P3  error: docs/section-alloc.tsv 是空的（0 行）—— 空台账必须判红，不能读成绿
+    error: R1 段号 37 出现在 docs/37-M3-W3C-PREFLIGHT.md（1 处）但台账没有对应行（分配动作没登记）   # 其后 205 条同族
+P3b error: 缺文件：docs/section-alloc.tsv 不存在（被校验的文件没了只能判红，不能读成绿）
+P5  error: R3 撞号：台账段号 276 出现 2 次（台账行 236,238；持有者 LUM-2604）
+P4  error: the section-alloc gate needs its checker, but it is missing
+P4b error: the section-alloc gate needs its checker, but it is missing
+```
+
+🔴 **P2b 是「第 4 列」的承重证据**（见 §279.6）：它**只新增**一个段号、**不删**任何号，
+所以 R1/R2/R3 三条全绿，**只有 R4 判红**。没有第 4 列，这条探针会绿 —— 而它正是 §226 的成因形态。
+
+🔴 **P5 是「撞号判据」本身的独立证据**：台账里两行同号（同持有者）⇒ **只有 R3 判红**（1 defect），
+其余三条全绿 —— 即 R3 不是 R4 的复述。
+
+### §279.4 门级自指保护：脚本被删 / 被改名 / 台账被删 ⇒ 红（`§276` 的教训）
+
+`§276`（`LUM-2604`）钉死的形态是「判红条件只看**被检验的集合** ⇒ 丢掉检查器表现为绿」。
+本片把同一族防护建在**门**里（`run_section_alloc_gate`），三条都是显式判据：
+
+1. **校验器不存在 ⇒ 判红**（P4 / P4b 实测：`gate rc=1`、`GATE_SECTION_ALLOC_EXIT=1`、
+   `error: … needs its checker, but it is missing`），**不是**让 `python3` 的 `exit 2` 去当读数
+   —— 那样虽然也非 0，但读数看不出病因，而且「谁把检查删了」不会有独立的判据。
+2. **台账不存在 / 是空的 ⇒ 判红**（P3 / P3b；脚本里的「空台账必须判红，不能读成绿」）。
+3. **本门不在被检查的集合里**：判据的实现住在 `scripts/section_alloc_check.py`（**不是** `test_*.py`），
+   门的**发现规则不参与**本门的判红 ⇒ 不存在「收窄发现规则 ⇒ 门自己消失」的路径。
+   刻意避开 `test_*.py` 命名还有一个副作用：**不需要**动 `scripts/tests.manifest`
+   （与并行片 `LUM-2606` 的写集不重叠）。
+
+### §279.5 🔴 承重一：base 里已经有一个**真实撞号**，而且成因正是本片要关掉的那个动作
+
+实测（起手 `a5facad4`，脚本抽取，不是手抄）：
+
+```text
+$ python3 -c "…SECTION_RE…"        # 抽 ## §NNN
+sections: 206   distinct: 205   numeric dups: {'226': 2}
+```
+
+两处都在 `docs/37` 里，且**第二处是乱序插入**的：
+
+```text
+20250  ## §226 【2026-09-29 14:30 cycle / LUM-2534】收割 PR #157（门 ⑩ 第 6 批 a）…
+20829  ## §230 【2026-09-29 17:00 cycle / LUM-2545】…
+20884  ## §226 【2026-09-29】派发面缺口：未指派创建的 issue 绕过了 runtime 在线前置筛…   ← 撞号 + 乱序
+20925  ## §231 【2026-09-29 18:30 cycle / LUM-2548】…
+```
+
+`§231.1` 自己记了它的来历：起手 base `12fb3728` 是「**§226 docs 直推**」——
+即这一段是**一次没走号段分配的直推**，而它选中的号 `226` **已经被占**。
+这正是任务书 §一 那张表里「两片都能合法地拿到同一个空号」的**活标本**，
+只不过这里的「另一片」是一段直推的 docs。
+
+⇒ 本片对它**什么都不做**（任务书 §四：不删 / 不重排 / 不合并；「要不要给 #168 重新分配号段是收割动作」）：
+只能**如实登记**成台账第 4 列的 `2`。**但本片保证：下一个这样的撞号会在提交前就红**（R4，见 P2b）。
+
+**同族的第二个观测（只登记，不判红）**：`§205` 也是**乱序**插入的（`docs/37:18344`，落在 §207 与 §208 之间），
+但它**没有被复用**（205 只出现一次）⇒ 不是撞号，本门不判。号段**顺序**不在本片范围内（任务书只要求「不得重复」）。
+
+**第三个观测**：段标题有三种真实写法 —— `## §173 `（空格）、`## §173. `（句点，共 3 处：173/174/176）、
+`## §173、`。抽取规则 `^##\s*§\s*(\d+)(?=[\s.、:：]|$)` 三种都覆盖，且 `## §1730` 不会被误读成 `§173`。
+
+### §279.6 🔴 承重二：台账第 4 列（出现次数）是对任务书 3 列格式的**唯一**偏离 —— 理由是实测出来的
+
+任务书 §二.1 指定的行格式是 `<段号>\t<持有者 issue>\t<一句话摘要>`。本片加了第 4 列。
+
+理由是 P2b：在一个**已经有撞号**的 base 上（§226），只用 3 列时，R1–R3 的判据都是
+「**存在性**」+「**台账行内唯一性**」，于是
+
+- R3（台账段号唯一）对「文件里出现两次、台账只登记一行」**永远判绿**（台账那一行是唯一的）；
+- 要让它红，只能是「两片**各自都去登记**」—— 而 §226 的成因恰恰是**根本没登记**（直推）。
+
+⇒ 3 列版的门会对**它自己的历史失败模式失明**，而且是**带着一个看起来很严谨的门**失明（比没有门更坏）。
+第 4 列把「文件里的实际出现次数」变成台账的**登记项**：既有撞号被显式写死为 2，
+任何**新增**撞号（多出一次、台账没跟着改）⇒ R4 立刻红。P2b 就是这条判据的独立实测。
+
+第 4 列会不会变成「把撞号合法化」的开关？—— 它需要一次**显式编辑**（把 1 改成 2 并在台账里写明谁占了两次），
+而不是一个可以自动发生的过程；且 R3 仍然禁止**两行同号**（两个分配者登记同一个号）。
+
+### §279.7 判据清单（七条）与「明确不做」
+
+七条判据（逐条都有本次实测读数）：
+
+1. **门 ⑬ 存在且绿**：`bash scripts/gates.sh --list` ⇒ 13 个门，`section-alloc` 在**末尾**（追加号不重编旧号）；
+   `bash scripts/gates.sh --only section-alloc` ⇒ `rc=0` / `GATE_SECTION_ALLOC_EXIT=0` / `⑬ section-alloc … PASS`。
+2. **R1 双向之一（文件→台账）**：删台账一行 ⇒ 红（P1：1 defect）。
+3. **R2 双向之二（台账→文件）**：把 `docs/37` 里某段号改掉 ⇒ 台账那行变成孤儿 ⇒ 红（P2：R2 一条）。
+4. **R3 撞号判据**：台账两行同号 ⇒ 红。实测 P5（追加一行与 §276 同号）⇒ **只有 R3 判红**（1 defect），
+   R1/R2/R4 全绿 —— 即 R3 不是 R4 的复述。这正是「两个片各自分配同一个空号」的机器判据。
+5. **R4 出现次数一致**：只新增一个重复段号、不删任何号 ⇒ **只有 R4** 判红（P2b：1 defect）。
+6. **门自带的前置件判据**：校验器被改名 / 被删除 ⇒ 红；台账被删空 / 被删掉 ⇒ 红（P4 / P4b / P3 / P3b）。
+7. **⑨ 未跑、不作继承声明**（本片零真库；不拿合成输入冒充 ⑨ 的真库读数）。
+
+现场复算（零编译、~1s）：
+
+```text
+$ bash scripts/gates.sh --only route-parity,file-size,scripts-tests,section-alloc
+  ⑦  route-parity          0     1s  PASS
+  ⑩  file-size             0     0s  PASS
+  ⑫  scripts-tests         0     0s  PASS  (5 file(s))
+  ⑬  section-alloc         0     0s  PASS
+  overall: PASS — 4/4 gate(s) green in 1s
+```
+
+（复跑一次：⑬ 的 time 列记成 `1s`、整体 `2s` —— 时间列是**秒级取整**的抖动，与判据读数无关；两条复跑的 exit 列逐字相同。）
+
+**明确不做**：不改 `crates/**`；不跑 `cargo`；不碰真库；不跑 `--with-db` / `⑨`；不改门 ①–⑫ 的任何判据；
+不动 `docs/37` 既有段的号（§226 只登记）；不碰 PR #168；不改 `scripts/tests.manifest`
+（本片的校验器不叫 `test_*.py`，所以**不需要**改它，也就与并行片 `LUM-2606` 的写集不重叠）。
+
+**三条留给收割方的观测（本片不改，只报）**：
+
+- `ci.yml` 的 `fast` job 现在多了一个 ⑬ 的 step —— 不追加的话，新门在 CI 里**永远不会跑**
+  （每个门在 CI 里都是 `--only` 点名的一个 step），「撞号在提交前就红」就只能靠本地自觉。
+  若 cycle 认为 `ci.yml` 超出本片写集，撤销那一个 step 即可（门本身仍在 `gates.sh` 的默认集合里，
+  本地 `bash scripts/gates.sh` 会跑它）。
+- `scripts/stop_condition.sh` 的 T1-10 用 `gates.sh --list` 的数当 `GATE_COUNT`，本片把它从 **12 变成 13**；
+  而 `--with-db` 的日志里**没有 ⑪ image 的 GATE 行**（⑪ 不在任何默认集合里），所以「日志里门数 ≥ GATE_COUNT」
+  这条**本来就够不到**（`§204` 那一族的「判据恒 FAIL」）。本片**没有**改变这条的成立与否，
+  也没有去动它 —— 但它现在差 1 变成差 2。
+- `docs/24-W0-CI.md`（门 ↔ job 表）与 `docs/65-STOP-CONDITION.md`（`ALL_GATES` 恰 10 个的旧表）
+  写的是**旧数字**，本片未改（那两份文档不是本片的写面；`§207` 已记过「期望值应从 `gates.sh --list` 取」）。
+- ⑩ `file-size` 的读数：`scripts/gates.sh` **699 → 758 行**（本片 +59：门 ⑬ 的头注释、`run_section_alloc_gate`、
+  已知坑一条）。**仍在 800 的上限内**（⑩ 实测 rc=0），余量 42 行 —— 下一次再追加门时要先看这个数：
+  `gates.sh` 自己也在 ⑩ 的扫描集里（`scripts/**/*.sh`），它**没有**基线豁免。
+
+## §280 【LUM-2606 / T1-6-K】门 ⑦ 的判定器 `route_parity.py`（779 行）**0 测试** —— 决定「谁该被派工」的那道门无人看守（零 Rust / 零 cargo / 零真库 / 零磁盘）
 
 > 📌 **号段**：§277 是本 cycle 的记录、§279 归并行的 `LUM-2607`（号段台账）。本片**只 append §278**，
 > 不改任何既有段落、不碰 `docs/37` 以外的 `docs/*.md`。
