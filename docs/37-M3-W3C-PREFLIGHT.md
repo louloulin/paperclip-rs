@@ -25608,6 +25608,112 @@ python3 scripts/test_t1_6_taxonomy.py   ⇒  Ran 14 tests … OK   (0.002s)
 - `LUM-2111` 卡 docker ⇒ `report.json` 刷新权死锁 ⇒ 每个 PR 的 `contract` job 持续红（第四次实测复现）。
 - `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变）。
 
+## §271 【LUM-2600 / T1-6-H1】**零 Rust**：新增门 ⑫ `scripts-tests` —— 20 个 Python 用例曾全绿整整一个 cycle，而**没有任何门会执行它们**
+
+起手 base `2702c21a`（含已收割的 PR #182）；交 PR 时 base 已前进到 `91f968ca`（§272 直推），
+**本片是第二次在 `docs/37` 尾部解号段冲突**（第一次见 §272 记录的 PR #182）。
+写集 3 文件：`scripts/gates.sh`、`.github/workflows/ci.yml`、`docs/37`（本节）。
+冲突面**只在 `docs/37` 尾部**（§271 与 §272 都追加在 EOF），`gates.sh` / `ci.yml` 两侧零重叠
+⇒ 按 §272 承重一的两级判别式：`merge-tree rc=1` 回答「需不需要人动手」，答案是**需要**（解 docs/37），
+而**不需要否决**。解法仍按 §216 的安全形态：取 base 全文 → 把 §271 片段插到 §272 **之前**（不追加到 EOF，否则下一次直推还会再撞一次），**保留**正文里那 2 处 `<<<<<<< HEAD`（§232.3 实测它们是正文）。
+回读判据：`§265`–`§272` 各出现且**仅出现一次**，且顺序为 265→…→270→**271**→272。
+
+### §271.1 问题（实测，不是转述）
+
+`scripts/` 下有两个**纯标准库 `unittest`** 文件，共 20 个用例（6 + 14），全部通过，
+而**没有任何门会执行它们**。三条零编译判据：
+
+```
+$ grep -rl 'test_t1_6_taxonomy' --include='*.sh' --include='*.yml' --include='*.toml' .
+（空 —— 唯一命中是 docs/37 的散文提及，不是执行）
+
+$ bash scripts/gates.sh --list
+fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image
+（没有 scripts-tests 之类的门）
+
+$ grep -n 'gates.sh' .github/workflows/ci.yml
+每个 job 都只调 scripts/gates.sh --only <gate>，CI 不重写命令
+⇒ 只要门没进 gates.sh，CI 就永远不会跑它
+```
+
+**为什么这条值钱**：PR #182（§270）修的正是「**docstring 声明的判据，代码从来没执行**」——
+`classify()` 声明「`status_observed == 404` ⇒ 一定是已挂载的 handler 主动返回的」，
+而实现里 `classify()` 从不读 body。⇒ **一个不会被执行的测试，恰恰是这类缺陷的最后一道防线
+失效之后的样子。** 本片把 §270 刚写出来的 14 个用例接进门禁，就是把那道防线装回去。
+
+### §271.2 落法
+
+- 门名 `scripts-tests` = 编号 **⑫**（⑪ `image` 之后追加，**不重编旧号**；追加门只加号、不改旧号）。
+  文件顶部那句「十道门」改成「十二道门」，`ALL_GATES` / `gate_label` / `gate_env_name` /
+  默认 `SELECTED` 四处同步登记 —— **注释与实现不许漂移**（本仓反复吃过的亏）。
+- 逐字 `python3 <file>`，**不引入 pytest**（本机 `python3 -m pytest` → `No module named pytest`；
+  为两个测试文件给 CI 加依赖不划算）。
+- 挂进 CI 的 **`fast` job**，步骤逐字是 `bash scripts/gates.sh --only scripts-tests`
+  —— 门禁命令的唯一实现仍在 `gates.sh`，yml 里不出现 `python3`（本仓纪律）。
+- 进默认集合（与 ⑦ ⑨ ⑩ 同款离线确定性门，亚秒级、零编译、零库）。
+
+### §271.3 承重一：🔴 **「测试全绿」与「测试被跑过」是两件事，而门禁系统只记录后者**
+
+本仓带着 20 个全绿用例走了**一个完整 cycle**，每一轮的门读数都逐字正常、
+`--list` 都列得出 11 道门 —— 没有任何一处**红了**，因为「没有门会跑它」这件事
+在所有既有判据里都是**不可见的**（它不是一个失败，是一个缺席）。
+
+⇒ 可复用判据：**新增一个测试文件时，必须同时给它一个执行者**，
+且判据要写成「**新测试文件 ⇒ 某个既有判据的读数发生变化**」，不能写成「新测试通过」。
+后者对「没人跑它」完全免疫 —— 它测的是测试自己，不是门。
+
+### §271.4 承重二：门必须用 **glob**，不能逐个写死文件名
+
+`files=(scripts/test_*.py)`（`nullglob` + 排序）而不是
+`python3 scripts/test_a.py && python3 scripts/test_b.py`。写死的那天就是这个门开始骗人的那天：
+新增第三个文件时**没人会记得回来改门禁**，于是又回到 §271.3 的状态 ——
+而且是**带着一个看起来很严谨的门**回到那个状态，比没有门更坏（它会让人以为防线在）。
+⇒ glob 让「新增测试文件漏接进门禁」**结构上不可能**。
+
+### §271.5 承重三：🔴 **空 glob 必须判红，不能读成「无事发生 ⇒ 绿」**
+
+`shopt -s nullglob` 下无匹配时 `files` 为空数组。若此时按「循环零次 ⇒ combined=0」处理，
+这个门在**所有测试文件被误删 / 被 move 走**时会安静地判绿 ——
+**退化回 §271.1 的原始状态，而且是带门禁的原始状态**。
+本片实测把两个文件全部移走 ⇒ `GATE_SCRIPTS_TESTS_EXIT=1`、`no scripts/test_*.py found`。
+与 ⑥/⑧ 缺库 URL、⑪ 缺容器 CLI 同一族处置：让「没东西可跑」在退出码上可区分。
+
+### §271.6 判别式（当场跑，命令与输出逐字）
+
+**A. 故意失败探针 ⇒ 必须红**（`scripts/test_zzz_probe.py`，`assertEqual(1, 2)`）：
+
+```
+$ bash scripts/gates.sh --only scripts-tests
+FAILED (failures=1)
+  -> scripts/test_zzz_probe.py exit=1
+GATE_SCRIPTS_TESTS_EXIT=1
+  ⑫  scripts-tests         1     0s  FAIL  (3 file(s), at least one red)
+RC=1
+```
+
+**B. 删掉探针 ⇒ 必须恢复绿**：`RC=0`（`2 file(s)`，`GATE_SCRIPTS_TESTS_EXIT=0`）。
+
+**C. 空 glob ⇒ 必须红**（承重三）：`RC=1`，note = `no scripts/test_*.py found`。
+
+**D. 正常读数**：`--only scripts-tests` rc=0，逐文件打印 `-> <file> exit=0`，
+末尾 `GATE_SCRIPTS_TESTS_EXIT=0` + `PASS (2 file(s))`；`--list` 含 `scripts-tests`。
+
+**判别式零编译、亚秒级、不需要库** ⇒ 以后每个 cycle 都能顺手跑一遍。
+
+### §271.7 门读（base `2702c21a` + 本片写集，当场重跑）
+
+- ⑫ `scripts-tests` rc=0（`2 file(s)`）。
+- ⑦ `python3 scripts/route_parity.py --quiet` rc=0；⑦b `slash_alias_audit.py --quiet` rc=0；
+  ⑩ `file_size_check.py --quiet` rc=0。
+- ⑦ 八数字**逐字不变**：`456/546/546 / 455 real + 1 placeholder / gap0 unclaimed0 regression0 local_only 8`。
+- ⑨ `--with-db` **未跑**（本片零 Rust / 零真库 / 零磁盘，不作继承声明）。
+- `gates.sh` 477 → **544 行**，仍在 800 硬上限内（⑩ 门实测 rc=0 已覆盖这条）。
+
+### §271.8 明确未做（承接工单「明确不做」）
+
+未改 `scripts/t1_6_taxonomy.py` 分类逻辑（PR #182 成果）；未碰任何 `.rs` / `Cargo.toml` / `crates/**`；
+未跑门 ⑥ / ⑧ / ⑨ `--with-db`；未碰 PR #168；未删任何现存测试文件。
+
 ## §272 【LUM-2598 09:00 cycle】收割 PR #182（**首次手动解 `docs/37` 号段冲突**）＋ 派 `LUM-2600`（**20 个用例全绿，但没有任何门会执行它们**）
 
 起手 base `078205b9` → 收尾 **`2702c21a`**。**收割 1 片 / 回收 0 片 / 派 1 片**。GH 收割后 **1 open PR**（#168 第四次待议）。

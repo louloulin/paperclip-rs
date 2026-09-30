@@ -5,7 +5,8 @@
 # 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
 # （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 十道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应）：
+# 十二道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
+# ⑪ 与 ⑫ 是后续切片追加的，追加号不重编旧号）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -22,8 +23,12 @@
 #   ⑧ schema-drift     python3 scripts/schema_drift.py --quiet      （**需要** MULTICA_TEST_DATABASE_URL）
 #   ⑨ conformance      cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
 #   ⑩ file-size        python3 scripts/file_size_check.py --quiet    （R7 单文件 800 行硬上限）
+#   ⑪ image            docker build + 容器内非 root + 二进制存在     （**不在**默认/`--with-db` 集合）
+#   ⑫ scripts-tests    python3 scripts/test_*.py                    （纯标准库 `unittest`，**不需要**任何
+#                      第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
 #
-# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# ⑪ 刻意不在任何默认集合里（见「已知坑」⑪）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
 # 用法：
@@ -86,6 +91,17 @@
 #     不存在的文件 —— 那个二进制名叫 `multica-server`，**不叫 `mc-server`**，见
 #     `apps/mc-server/Cargo.toml` 的 `[[bin]] name`）。②③ 各花一次容器启动，
 #     比重新 build 便宜得多，所以放在 build 之后单独判。
+#   * ⑫（`scripts-tests`，T1-6-H1 / LUM-2600）执行 `scripts/test_*.py`：
+#     这些是**纯标准库 `unittest`** 文件，零第三方依赖（本机实测 `python3 -m pytest` →
+#     `No module named pytest`；因此门里逐字用 `python3 <file>`，**不引入 pytest**），
+#     不编译、不连库、不占磁盘，亚秒级，所以它在默认集合里。
+#     🔴 **它为什么值得存在**：PR #182 修的正是「docstring 声明的判据，代码从来没执行」，
+#     而本仓在**一个完整 cycle** 里带着两个全绿的 Python 测试文件（20 个用例），
+#     而**没有任何门会执行它们** —— 「测试全绿」与「测试被跑过」是两件事。
+#     ⇒ 文件名必须用 **glob**（`scripts/test_*.py`）而不是逐个写死：写死的那天
+#     就是这个门开始骗人的那天（新增第三个文件时没人会回来改门禁）。
+#     ⚠️ **glob 为空 ⇒ 判红（exit 1），不是「无事发生 ⇒ 绿」**：与 ⑥/⑧ 缺库 URL、
+#     ⑪ 缺容器 CLI 同一族处置 —— 让「没东西可跑」在退出码上可区分。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -107,7 +123,7 @@ cd "$SCRIPT_DIR/.." || exit 2
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
 # `image` 排在最后但**不在**任何默认集合里（默认集合在下方的 SELECTED 分支里逐字写出，
 # 不由 ALL_GATES 推导）—— 这样 `--list` / `--only image` 能点到它，而默认跑法碰不到它。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image"
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests"
 
 gate_label() {
     case "$1" in
@@ -122,6 +138,7 @@ gate_label() {
         conformance) echo "⑨" ;;
         file-size) echo "⑩" ;;
         image)      echo "⑪" ;;
+        scripts-tests) echo "⑫" ;;
         *) echo "?" ;;
     esac
 }
@@ -139,6 +156,7 @@ gate_env_name() {
         conformance) echo "CONFORMANCE" ;;
         file-size) echo "FILE_SIZE" ;;
         image)      echo "IMAGE" ;;
+        scripts-tests) echo "SCRIPTS_TESTS" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -219,8 +237,8 @@ if [ -n "$ONLY" ]; then
 else
     SELECTED=" fmt build clippy clippy-test-util test"
     [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
-    # ⑦ ⑨ ⑩ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
-    SELECTED="$SELECTED route-parity conformance file-size"
+    # ⑦ ⑨ ⑩ ⑫ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
+    SELECTED="$SELECTED route-parity conformance file-size scripts-tests"
 fi
 
 selected_gate() {
@@ -347,6 +365,54 @@ run_schema_drift_gate() {
 # 三条判据（见文件顶部「已知坑」⑪）：build 成功 / 容器内非 root / 二进制存在且可执行。
 # ② ③ 刻意不合并成一次容器启动：合并就少了一个可读的失败点，而分开时两次 `docker run
 # --rm --entrypoint` 各自只花几百毫秒，相对 build 的分钟级开销可以忽略。
+run_scripts_tests_gate() {
+    # ⑫ scripts-tests（LUM-2600 / T1-6-H1）—— 执行 `scripts/test_*.py`。
+    #
+    # 为什么单独写函数而不是 run_gate 一行：判据是「**每一个** `scripts/test_*.py` 都绿」，
+    # 文件数在运行时才确定（glob），而 run_gate 的形状是「name + 一条固定命令」。
+    #
+    # 为什么不逐个把文件名写死：写死的那天就是这个门开始骗人的那天 ——
+    # 新增第三个测试文件时没人会记得回来改这里，于是又变成「全绿但没人看得见」。
+    # glob 让「新增文件漏接进门禁」这件事**结构上不可能**（见文件顶部「已知坑」⑫）。
+    local start end rc combined f files=() note
+    printf '\n=== [⑫] gate scripts-tests ===\n'
+
+    # glob 必须排序，否则失败顺序随文件系统而变（不可复现）。nullglob 下无匹配时
+    # `scripts/test_*.py` 展开成空、`files` 为空数组。
+    shopt -s nullglob
+    files=(scripts/test_*.py)
+    shopt -u nullglob
+
+    # 一个测试文件都没有 ⇒ **判红**，不是「无事发生 ⇒ 绿」。
+    # 理由与 ⑥/⑧ 缺库 URL、⑪ 缺容器 CLI 同一族：让「没东西可跑」在退出码上可区分。
+    if [ "${#files[@]}" -eq 0 ]; then
+        printf 'error: the scripts-tests gate found no scripts/test_*.py to run\n' >&2
+        printf '  (an empty glob must never read as green: that is how 20 green cases\n' >&2
+        printf '   sat in this repo for a whole cycle with nothing executing them)\n' >&2
+        printf 'GATE_SCRIPTS_TESTS_EXIT=1\n'
+        record scripts-tests 1 0 "no scripts/test_*.py found"
+        return 0
+    fi
+
+    start="$(date +%s)"
+    combined=0
+    # 逐个文件都跑（不 fail-fast）：一个文件炸了不许掩盖另一个文件的读数。
+    for f in "${files[@]}"; do
+        printf '$ python3 %s\n' "$f"
+        python3 "$f"
+        rc=$?
+        printf '  -> %s exit=%s\n' "$f" "$rc"
+        [ "$rc" -ne 0 ] && combined=1
+    done
+    end="$(date +%s)"
+
+    note="${#files[@]} file(s)"
+    [ "$combined" -ne 0 ] && note="${note}, at least one red"
+    printf 'GATE_SCRIPTS_TESTS_EXIT=%s\n' "$combined"
+    record scripts-tests "$combined" "$((end - start))" "$note"
+    return 0
+}
+
 run_image_gate() {
     local start end rc tag
     tag="multica-server:image"
@@ -429,6 +495,7 @@ for gate in $SELECTED; do
         # 前置条件缺失（无容器 CLI）必须以 **exit 2** 终止整个脚本，而不是记成「没跑过这道门」
         # 后照样 exit 0 —— 那正是「静默判绿」，是本仓明令禁止的（与 ⑥/⑧ 缺库 URL 同款）。
         image)          run_image_gate; _img_rc=$?; [ "$_img_rc" -eq 2 ] && exit 2 ;;
+        scripts-tests)  run_scripts_tests_gate ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done
