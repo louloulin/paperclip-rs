@@ -23,13 +23,14 @@
 # 另有一条**独立**的第二来源：`scripts/test_gate_scripts_tests.py` 自己递归扫一遍
 # `scripts/**/test_*.py` 再与本文件比对（不经过 `gates.sh`）⇒ 门里的比对逻辑被删掉时
 # 它仍然红，本文件被删空时门仍然红。
-scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py
+scripts/t1_6_realm_diff_taxonomy/test_t1_6_realm_diff_taxonomy.py
 scripts/test_extract_borrowed_ids.py
 scripts/test_extract_requirements.py
 scripts/test_file_size_check.py
 scripts/test_gate_scripts_tests.py
 scripts/test_harvest_preflight.py
 scripts/test_judge_test_coverage_check.py
+scripts/test_realm_diff_taxonomy_wiring.py
 scripts/test_route_parity.py
 scripts/test_route_parity_defects.py
 scripts/test_schema_drift.py

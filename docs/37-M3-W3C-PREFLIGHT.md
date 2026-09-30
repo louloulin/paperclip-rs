@@ -29592,3 +29592,141 @@ python3 scripts/judge_test_coverage_check.py
 `LUM-2111` docker 死锁（`report.json` 刷新权，`contract` job 持续红，`#200` 的
 `mergeable_state=unstable` 即此存量、非本片引入）；`mc_t2492` 116 表仍在默认库；
 共享 `CARGO_TARGET_DIR` 的裁决。
+
+## §302 【`LUM-2631` / `T1-6-R2`】§293.4 / §292.2 / §301 那一族的**第三个方向**：判定器**零引用面** —— 改名 + 接进引用面（新门 ⑮）+ 护栏测试（零编译）
+
+起手 base `d41b97d1`（`git fetch` 确认 `feat/multica-rs-initial` **未再前进** ⇒ 无需 rebase，
+所有读数都是本片起手态实测）。**零编译**：全程未调用 `cargo`、未建 `target/`。
+
+### 1. 这一族的前两个方向与本片
+
+| 方向 | 形态 | 代价 |
+|---|---|---|
+| `§292.2` / `§293.4` | **被门执行 ≠ 被门保护**（在 `ci.yml` 必过 job 里跑，却不在 `tests.manifest`、也不在 `file_size_baseline.tsv`） | 判词可以静默腐烂 |
+| `§301` | 门 ⑭ **收得对但输入太少**：引用面只有 6 个 ⇒ 形状类修复读数必然 0 差 | 验收必须造 P1–P6 换形输入 |
+| **本片** | 🔴 **判定器存在、测试有 53 条、跑起来 rc=0，但没有任何一道门执行它** | 改了输出 / 坏了读数 / 把子族报成 0 条，**CI 全绿** |
+
+实测（起手 base 当场跑）：`python3 -m scripts.t1_6_realm_diff_taxonomy` rc=0、87 行输出
+（`抽取缺陷 13 条 / 行为面 15 条 / by-design 0 条`），而
+`grep -rn "t1_6_realm_diff_taxonomy" --include='*.sh' --include='*.yml'` **只命中 `gates.sh` 的两行注释**
+⇒ 零引用面 ⇒ 门 ⑭ 的 `judges=6` 不含它（`§300` 已记：形状修复读数不变，因为这个输入压根不在读数里）。
+
+### 2. 改名（硬约束：`§300` 预先警告过的那条）
+
+`scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py` → **`test_t1_6_realm_diff_taxonomy.py`**
+（`git mv`，656 行 / 53 例不变，`python3 <file>` 仍 `Ran 53 tests` + `OK`）。
+**理由不是好看**：门 ⑭ 对包入口的期望名是 `test_<包名>.py`（`judge_stem()` 的包形态那一支），
+`test_realm_diff_taxonomy.py` 少 `t1_6_` 前缀 ⇒ **按正确约定接线的人永远判红**。
+**没有改判词、也没有开豁免** —— 处置就是按约定改名。同步改：`scripts/tests.manifest`、
+`scripts/test_gate_scripts_tests.py` 的 `PACKAGE_TEST` 常量、包内测试自己的 docstring。
+
+### 3. 接线：新门 ⑮ `realm-diff-taxonomy`
+
+`gates.sh`：`ALL_GATES` / `gate_label`（⑮）/ `gate_env_name`（`REALM_DIFF_TAXONOMY`）/
+默认 `SELECTED` / `case` 分派 / 文件头的门表（并把「十四道门」改成「十五道门」）。
+`ci.yml`：`fast` 必过 job 里新增一步 `- name: "⑮ realm-diff-taxonomy …"` → `--only realm-diff-taxonomy`。
+
+🔴 **门 ⑮ 的判据不是「缺陷数」**：那个分类器的 `main()` **恒返回 0**（它是归因报告，不是判红工具）
+⇒ 只看 rc 只能逮住 traceback。所以判三件事：rc=0、输出非空、**每个小节标题都在**
+（`并行结论：` / `by-design：` / `判别式双向验证` / `静态面判不了…` / `负责面（文件集合）`）。
+⚠️ **不用 `--dry` 绕过**（那个 flag 门 ⑭ 记成 `[DRY]` 试跑、不要求有测试 ⇒ 等于「接了个不接的门」）。
+⚠️ **不用 `--json` 静默**：那会让人读不到结论面。
+「包入口被删 ⇒ 判红」**不需要**单独一条判据：`python3 -m` 找不到包/入口本身就是 rc=1
+（与 ⑫/⑬ 的「校验器必须在」不同源，但结论同一条 —— 这里不重复写一遍判据来假装更严）。
+
+### 4. 护栏测试 `scripts/test_realm_diff_taxonomy_wiring.py`（30 例，本片的核心价值）
+
+门 ⑮ 是**粗**判据（小节齐全），真正把「判词腐烂」变成红的是这个文件，而它由**门 ⑫ 执行**：
+
+| 组 | 判据 |
+|---|---|
+| 跑得起来 | 子进程 `-m` 形态 rc=0 / stderr 空 / 输出非空 / 9 个小节标题都在（带超时） |
+| 🔴 族名冻结 | `BASELINE_SUBFAMILIES`（15 条声明）与 `BASELINE_RENDERED`（静态面**实测报出 8 条**）是**外部基线** |
+| 🔴 并行结论 | 本文件**独立重写** `report.py::verdict()` 的三档规则，再与 JSON 读数、**人读那一行**三方对照 |
+| 形状 | 默认读法 / `--json` / **换 cwd + 绝对 `--golden`** / **空 golden 目录** / 目录里全是坏 json / `--help` / 拼错的 flag |
+
+🔴 **为什么必须是「外部基线」而不是「输出 == 声明」**：这个分类器是**单一数据源**（`rules.SUB_RULES`
+驱动渲染）⇒ 改 `rules.py` 的族名会**连带**改掉输出，于是「输出 == 声明」这类自洽断言**永远绿**。
+真正的判别式只能把声明面钉在一份**不参与运行**的基线上（与 `tests.manifest` 同族：判集合的**身份**）。
+
+### 5. 三段读数（变异实测，全部**语义**变异）
+
+| # | 变异 | 期望 | 实测 |
+|---|---|---|---|
+| 改前 | — | 全绿 | `Ran 30 tests` / `OK` |
+| M1 | `rules.py` 把 `BEHAVIOR_MACHINE_ACTOR_GATE` 改名成 `…_V2`（**不同步** `constants.BEHAVIOR_OWNER_FILES`） | 红 | **7 条红**（冻结基线 3 条 + 负责面 2 条 + 两个换形用例各 1 条） |
+| M2 | `__main__.render_human` 把 `print("并行结论：")` 换成别的 | 红 | **2 条红**；**门 ⑮ 同一变异下 `EXIT=1`**（小节缺失） |
+| M3 | `report.py::verdict()` 的「有空负责面 ⇒ 未定」那一支改成永假 | 红 | 首版**全绿**（见承重一）→ 补合成 lane 后 **1 条红** |
+| M3c | 同一函数的「写集相交 ⇒ 串行」那一支改成永假 | 红 | **2 条红**（含真实读数上的 `抽取缺陷` lane） |
+| M4 | 同一函数的 `serial_with` 优先判定改成永假 | 红 | **1 条红** |
+| 复原 | — | 全绿 | `Ran 30 tests` / `OK` |
+
+### 承重（本片新增，可复用）
+
+**承重一：「拿真实读数对照独立实现」这条判别式，只在输入恰好落在那一支时才有判别力。**
+M3 首版实测**全绿**：静态读数里行为面 lane 的 4 个子族负责面**都非空** ⇒
+`verdict()` 的「空 ⇒ 未定」那一支**根本没被执行到** ⇒ 把那一支改成永假对读数**零影响**。
+⇒ 这与 `§300` 的「用例照着实现写」同族但**方向相反**：`§300` 是输入照着实现写，这里是**实现里没被输入覆盖的分支**。
+处置不是加更多断言，是**换输入形状**：加 `TestVerdictRuleOnSyntheticLanes`，用**合成 lane**
+逐档打 `verdict()` 本身（`parallel` / `undetermined` / `serial` / `serial_with` 优先 / 空 lane）。
+**判别力的单位是「被覆盖的分支」，不是「断言条数」。**
+
+**承重二：引用面只收**字面量** —— 走变量会整条漏掉。**
+第一版把命令写成 `python3 -m "$REALM_DIFF_MODULE"`（和 `SECTION_ALLOC_CHECKER` 一样的风格），
+门 ⑮ 自己绿、`judges` 却**停在 6**：门 ⑭ 的 `MODULE_REF_RE` 是单行正则，`"$VAR"` 里没有模块名
+（它自己文档里的「已知边界 1」）。⇒ 门体里**必须写字面量**；变量只许出现在 `printf` 的回显里
+（而 `printf` 行门 ⑭ 本来就跳过）。
+
+**承重三：`gates.sh` 现在是 800/800，余量 0。**
+起手 **797** 行，离门 ⑩ 的硬上限只差 3 行；本片新增一道门（门体 +33 行）⇒ 门 ⑩ 当场判红，
+而基线**只减不增**、不允许把 `gates.sh` 写进白名单。处置：**只重排散文、零信息损失**
+（把头部「已知坑」与各门函数注释里被硬折行的段落**按段**合并成更长的行，共回收 30 行 ⇒ 800）。
+⇒ **下一片只要还想往 `gates.sh` 加门/加判据，先拆文件**（与 `§256` 那颗「800 行整、余量 0」的雷同形，
+只是这次余量真的用完了）。⚠️ 这次重排**只合并段落、不删任何一句话**，但它确实把折行宽度从 ~70 拉到了 ~115 ——
+下一个读这些注释的人会觉得「行变长了」，那是代价，不是信息丢失。
+
+**承重四：读数类断言会与「接线这件事」互斥，必须同一个提交里一起改。**
+`test_judge_test_coverage_check.py` 里有两条**关于当时状态**的不变量被本片直接作废：
+`EXPECTED_JUDGES = 6`（→ 7）与 `test_the_real_repo_has_no_module_form_references_today`
+（判词是「真仓库今天 **0** 条 `-m` 引用」，而本片的**全部内容**就是接进第一条）。
+处置：计数改 7 并说明来源；「0 条」那条**换成集合相等**（`EXPECTED_MODULE_REFS`）——
+它仍然钉住「`-m` 形态的引用必须被点名」，但不再与接线为敌。
+**为什么不用计数**：计数会在「又接了一个」时静默变成另一种错（多出来的那条没人看见）。
+（另有一条：manifest 里新文件插在中间，把「`i+1` 是谁」的断言顶掉了 —— 同样当场改，不删。）
+
+### 读数（本片合并树**当场**实测）
+
+| 门 | 读数 | 与 §301 比 |
+|---|---|---|
+| ⑦ route-parity | `456 / 546 / 546`、`455 real + 1 placeholder`、`gap 0 / unclaimed 0 / regression 0 / local_only 8` | **逐字不变**（第 60 轮） |
+| ⑩ file-size | `scanned=1419 baseline=1 violations=0`；`gates.sh` **800/800** | `violations=0`（红线，见承重三） |
+| ⑫ scripts-tests | `16 file(s)` / 全绿 | 15 → **16** |
+| ⑬ section-alloc | `sections=231 distinct=230 ledger_rows=230 defects=0` | 230/229/229 → **231/230/230**（本段） |
+| ⑭ judge-test-coverage | `surfaces=2 judges=7 covered=7 gaps=0 dry=0` | `judges` **6 → 7**（本片唯一的验收读数） |
+| ⑮ realm-diff-taxonomy（新） | `GATE_REALM_DIFF_TAXONOMY_EXIT=0` | 新增 |
+
+②③④⑤⑥⑧⑨ **未跑**（磁盘 `avail 5.2G`，冷建需 18–30G；且本片零 Rust 变更 ⇒ 按输入未变**不继承**声明）。
+
+### 6. 顺带实测到的两条小事（都已写进代码注释）
+
+* **`--help` 的 `prog` 是 `__main__.py`**，不是 `python3 -m scripts.t1_6_realm_diff_taxonomy`
+  —— `__main__.py` 顶部那段注释猜的是后者。⇒ 护栏测试不拿 `prog` 当身份证明，改断言选项面 + 描述行。
+* **族表 15 条 ≠ 输出 8 节**：6 条的静态投影是 `None`（要 db 读数），`EXTRACT_QUERY_LITERAL_MISBOUND`
+  静态**可判**但**当前 0 命中**（golden 里没有「query 值里带 `/`」的行）。这不是缺陷，但它是
+  「不要拿族表条数当输出节数」的证据，所以写进 `BASELINE_RENDERED` 的注释里。
+
+### 7. 写集
+
+`scripts/gates.sh`、`scripts/tests.manifest`、`scripts/test_gate_scripts_tests.py`、
+`scripts/test_judge_test_coverage_check.py`、`scripts/t1_6_realm_diff_taxonomy/test_t1_6_realm_diff_taxonomy.py`
+（改名）、`scripts/test_realm_diff_taxonomy_wiring.py`（新，490 行）、
+`.github/workflows/ci.yml`、`docs/37-M3-W3C-PREFLIGHT.md`、`docs/section-alloc.tsv`。
+与在飞的 `LUM-2627`（独占 `mc-conformance/**` 且吃构建）**零交集**。
+`scripts/file_size_baseline.tsv` **未动**（13 行 / 1 条 `scripts/` 条目，门 ⑩ 红时它的三条出路是
+「拆 / 缩回去 / 从基线删」——**没有**「写进白名单」这条，因为它只减不增）。
+
+### 待 owner（不重复 @）
+
+`LUM-2111` docker 死锁（`report.json` 刷新权，`contract` job 持续红）；`mc_t2492` 116 表仍在默认库；
+共享 `CARGO_TARGET_DIR` 的裁决；**新增**：`scripts/gates.sh` 已 800/800 —— 下一个要加门的片
+必须先拆它（可拆 `gates.sh` 的门体函数到 `scripts/gates/*.sh`，但那是**另一片**的写集）。

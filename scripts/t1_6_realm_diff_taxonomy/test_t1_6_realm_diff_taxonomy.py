@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Discriminant tests for the `t1_6_realm_diff_taxonomy` package (LUM-2602 / T1-6-I).
 
-Run: ``python3 scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py``
+Run: ``python3 scripts/t1_6_realm_diff_taxonomy/test_t1_6_realm_diff_taxonomy.py``
 — no cargo, no database, no ``target/``, no disk growth (pure stdlib ``unittest``).
 
 Why this file lives **inside** the package (and why it is named ``test_*.py``)
@@ -12,10 +12,17 @@ Two facts, both measured, both load-bearing:
    cases across top-level files would scatter a single rule table's invariants
    (`rules.SUB_RULES` ↔ `constants.BEHAVIOR_OWNER_FILES` ↔ `checks.KNOWN_*`) away
    from the code they constrain, and the next slice would not know where to look.
-2. It is named ``test_realm_diff_taxonomy.py`` and **not** ``tests.py`` because gate
+2. It is named ``test_t1_6_realm_diff_taxonomy.py`` and **not** ``tests.py`` because gate
    ⑫ discovers with the pattern ``test_*.py``: ``tests.py`` does **not** match it
    (``test_`` needs the underscore). Naming a test file so that it cannot be
    discovered is the same defect as not writing it at all — see
+
+   🔴 It was **renamed** to ``test_t1_6_realm_diff_taxonomy.py`` in `LUM-2631` / `T1-6-R2`
+   (`docs/37 §302`). The name is now a **judgement**, not a label: once this package's
+   ``__main__.py`` is wired into a gate, 门 ⑭ (`judge_test_coverage_check.py`) demands
+   ``scripts/**/test_<包名>.py`` for a package entry point — ``test___main__.py`` is a name
+   no human writes, so ``test_realm_diff_taxonomy.py`` made the correct wiring **permanently
+   red** (`§300`). The leading ``t1_6_`` is what makes "wire it up" possible at all.
    `TestGateDiscoveryAgrees` below, which fails if the two drift apart.
 
 Coverage: at least one discriminant per module —

@@ -2,11 +2,10 @@
 #
 # scripts/gates.sh — 本仓「每切片必须全绿」门禁的一键执行（plan1 §6.4）。
 #
-# 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
-# （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
+# 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本（`scripts/gates.sh --only <gate>`），
+# 因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 十四道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
-# ⑪ / ⑫ / ⑬ / ⑭ 是后续切片追加的，追加号不重编旧号）：
+# 十五道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；⑪ / ⑫ / ⑬ / ⑭ / ⑮ 是后续切片追加的，追加号不重编旧号）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -15,8 +14,7 @@
 #   ⑤ test             cargo test --workspace                      （**不带** MULTICA_TEST_DATABASE_URL）
 #   ⑥ db               mc-migrate run --dir migrations + cargo test -p mc-repos -p mc-http -p mc-scheduler -p mc-server
 #                      --features mc-http/test-util -- --ignored
-#                      （`mc-scheduler` = M5 内核的租约真库用例；`mc-server` = M5-9 两个生产端口的
-#                        真库用例 —— 它们在二进制 crate 里，只有这个包会跑）
+#                      （`mc-scheduler` = M5 内核的租约真库用例；`mc-server` = M5-9 两个生产端口的 真库用例 —— 它们在二进制 crate 里，只有这个包会跑）
 #   ⑦ route-parity     python3 scripts/route_parity.py --quiet
 #                      + python3 scripts/slash_alias_audit.py --quiet（尾斜杠形态：⑦ 折叠 `/x` 与 `/x/`，
 #                        所以「只注册了带斜杠那一形态」它看不见；⑨ 的 fixture 里 0/58 用尾斜杠，同样看不见）
@@ -24,14 +22,15 @@
 #   ⑨ conformance      cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
 #   ⑩ file-size        python3 scripts/file_size_check.py --quiet    （R7 单文件 800 行硬上限）
 #   ⑪ image            docker build + 容器内非 root + 二进制存在     （**不在**默认/`--with-db` 集合）
-#   ⑫ scripts-tests    python3 scripts/**/test_*.py                （纯标准库 `unittest`，**不需要**任何
-#                      第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
-#   ⑬ section-alloc    python3 scripts/section_alloc_check.py --quiet （`docs/37` 号段台账的双向校验 +
-#                      「撞号」判据；纯标准库、亚秒级，不需要数据库/编译/网络）
+#   ⑫ scripts-tests    python3 scripts/**/test_*.py                （纯标准库 `unittest`，**不需要**任何第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
+#   ⑬ section-alloc    python3 scripts/section_alloc_check.py --quiet （`docs/37` 号段台账的双向校验 + 「撞号」判据；纯标准库、亚秒级，不需要数据库/编译/网络）
 #   ⑭ judge-test-cov   python3 scripts/judge_test_coverage_check.py --quiet （`ci.yml` / `gates.sh`
 #                      真正执行的每个 `scripts/**/<name>.py` 必须有 `test_<name>.py`（**包入口取包名**：`scripts/<pkg>/__main__.py`/`__init__.py` ⇒ `test_<pkg>.py`，不是 `test___main__.py`；**`python3 -m scripts.foo` 也算引用**；`--dry` 行进读数打 `[DRY]` 但不判红 —— LUM-2629/T1-6-R1，docs/37 §300）；纯标准库、亚秒级）
+#   ⑮ realm-diff-tax   python3 -m scripts.t1_6_realm_diff_taxonomy （T1-6 `REALM_DIFF` 族归因分类器：静态面读
+#                      `contracts/golden`，不编译/不连库/亚秒级。**判据 = rc==0 且输出非空且小节齐全**
+#                      （不是「缺陷数」：它的 `main()` 恒返回 0，是归因报告而不是判红工具 —— LUM-2631/T1-6-R2，docs/37 §302））
 #
-# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬ + ⑭（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬ + ⑭ + ⑮（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # ⑪ 刻意不在任何默认集合里（见「已知坑」⑪）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
@@ -45,13 +44,11 @@
 #   bash scripts/gates.sh --list                   # 列出闸门名
 #   bash scripts/gates.sh --list-discovered        # 打印门 ⑫ **实际发现到**的测试文件清单
 #
-# 退出码：0 = 所有被选中的门全绿；1 = 至少一道门非 0；2 = 用法/前置条件错误
-# （例如选了 ⑥/⑧ 却没给库 URL）。注意 2 不是「门失败」，而是「根本没法开跑」。
+# 退出码：0 = 所有被选中的门全绿；1 = 至少一道门非 0；2 = 用法/前置条件错误 （例如选了 ⑥/⑧ 却没给库 URL）。注意 2 不是「门失败」，而是「根本没法开跑」。
 #
 # 已知坑（本仓实测，详见 docs/24-W0-CI.md §例外 与 docs/30-W0-DRIFT-GATE.md）：
 #   * ⑤ 绝不能带 `MULTICA_TEST_DATABASE_URL`：`crates/mc-http` 的 `smoke` 集成测试
-#     （target 指向根 `tests/smoke.rs`）拿到库就会对**同一个库重跑迁移** →
-#     `relation "user" already exists`。本脚本在 ⑤ 上用 `env -u` 显式剥掉该变量，
+#     （target 指向根 `tests/smoke.rs`）拿到库就会对**同一个库重跑迁移** → `relation "user" already exists`。本脚本在 ⑤ 上用 `env -u` 显式剥掉该变量，
 #     所以即使调用者已经 export 过它，⑤ 也是安全的。
 #   * ⑥ 的连接预算可以用 `MULTICA_TEST_THREADS` 显式压低（见 run_db_gate 与文件顶部说明）。
 #     🔴 **但实测证明它压不动**（`docs/37` §198.3，nproc=32 / PG max_connections=100）：
@@ -69,8 +66,7 @@
 #   * ⑥ 必须先建表：`mc-repos` / `mc-http` 的 DB 测试直接 INSERT，**自己不做迁移**。
 #   * ⑧ 与 ⑥ 的语义分工：⑥ 回答「迁移能跑 + e2e 能过」，⑧ 回答「跑出来的 schema 还是不是上游那份」。
 #     ⑧ 用 `--quiet`（判据是退出码），红了才补打完整报告 —— 绿的时候它有 767 行差异明细，
-#     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库
-#     `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
+#     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库 `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
 #     否则脚本 exit 2 → 本脚本记 FAIL（绝不静默跳过）。
 #     ✅ 那个 scratch 库名**默认带本进程 PID**（LUM-1463 修）⇒ 同一台 PG 上并发跑两个 ⑧ 各建各的库、不再互踩。
 #     ⚠️ 只有显式传同一个 `--db-name` 时才仍会互踩；写死名时代并发两片是 2/2 红（实测见 docs/37 §17）。
@@ -79,76 +75,57 @@
 #     已达标或已消失的条目必须从清单里删掉。刷新清单用 `--write-baseline`（基线只减不增）。
 #     拆分大文件时 **改动会同时打到 mc-http 的热点文件**：拆完先跑 `--only file-size` 确认。
 #   * ⑦ 第二条命令（`slash_alias_audit.py`）的欠账钉在 `docs/fixtures/slash-alias-allowlist.tsv`：
-#     名单里的键只报不红（都是已知欠账，理由写在行尾），名单外的缺陷（MISSING_ALIAS /
-#     MISSING_EXACT）直接判红；**条目对应的键修好后必须删行**，残留的行会被当缺陷（exit 1），
+#     名单里的键只报不红（都是已知欠账，理由写在行尾），名单外的缺陷（MISSING_ALIAS / MISSING_EXACT）直接判红；**条目对应的键修好后必须删行**，残留的行会被当缺陷（exit 1），
 #     否则它会掩盖同一键的下一次回归。查清单外的缺口用 `--no-allowlist`。
 #   * ⑪（`image`，M10-7 / LUM-2109）**刻意不进默认集合，也不进 `--with-db` 集合**：
 #     它需要本机有 docker（实测本机 `which docker` / `podman` / `buildah` 三者皆无），
-#     而把它塞进默认集合会让 `bash scripts/gates.sh` 从 8/8 变 9/9、让几十份文档与
-#     本波 13 个子 issue 的 DoD 全部失效。因此它**只能显式点名跑**
+#     而把它塞进默认集合会让 `bash scripts/gates.sh` 从 8/8 变 9/9、让几十份文档与 本波 13 个子 issue 的 DoD 全部失效。因此它**只能显式点名跑**
 #     （`--only image`），判它的 job 是 CI 的 `image` job（CI 的 runner 有 docker）。
-#     ⚠️ **缺 docker 时本门 exit 2（用法/前置条件错），绝不静默跳过、也绝不判绿** ——
-#     与 ⑥/⑧ 的库 URL 同款处置（见文件顶部退出码说明）。想让本门在没有 docker 的机器上
+#     ⚠️ **缺 docker 时本门 exit 2（用法/前置条件错），绝不静默跳过、也绝不判绿** —— 与 ⑥/⑧ 的库 URL 同款处置（见文件顶部退出码说明）。想让本门在没有 docker 的机器上
 #     「不算失败」，正确做法是**不选它**（`--only` 点名），不是让它自己假装通过。
 #   * ⑪ 判的是**三件事**，不是「镜像能不能 build」这一件：① `docker build` 成功；
 #     ② 容器内 `id -u` **不是 0**（非 root，`deploy/Dockerfile` 的 `USER 10001:10001`
 #     必须真的生效）；③ `/usr/local/bin/multica-server` 存在且可执行（防 ENTRYPOINT 指向
 #     不存在的文件 —— 那个二进制名叫 `multica-server`，**不叫 `mc-server`**，见
-#     `apps/mc-server/Cargo.toml` 的 `[[bin]] name`）。②③ 各花一次容器启动，
-#     比重新 build 便宜得多，所以放在 build 之后单独判。
+#     `apps/mc-server/Cargo.toml` 的 `[[bin]] name`）。②③ 各花一次容器启动， 比重新 build 便宜得多，所以放在 build 之后单独判。
 #   * ⑫（`scripts-tests`，T1-6-H1 / LUM-2600；覆盖面 LUM-2602 / T1-6-I）执行 `scripts/**/test_*.py`：
 #     这些是**纯标准库 `unittest`** 文件，零第三方依赖（本机实测 `python3 -m pytest` →
-#     `No module named pytest`；因此门里逐字用 `python3 <file>`，**不引入 pytest**），
-#     不编译、不连库、不占磁盘，亚秒级，所以它在默认集合里。
-#     🔴 **它为什么值得存在**：PR #182 修的正是「docstring 声明的判据，代码从来没执行」，
-#     而本仓在**一个完整 cycle** 里带着两个全绿的 Python 测试文件（20 个用例），
+#     `No module named pytest`；因此门里逐字用 `python3 <file>`，**不引入 pytest**）， 不编译、不连库、不占磁盘，亚秒级，所以它在默认集合里。
+#     🔴 **它为什么值得存在**：PR #182 修的正是「docstring 声明的判据，代码从来没执行」， 而本仓在**一个完整 cycle** 里带着两个全绿的 Python 测试文件（20 个用例），
 #     而**没有任何门会执行它们** —— 「测试全绿」与「测试被跑过」是两件事。
-#     ⇒ 发现规则让「新增文件漏接进门禁」**结构上不可能**：写死文件名的那天
-#     就是这个门开始骗人的那天（新增第三个文件时没人会回来改门禁）。
+#     ⇒ 发现规则让「新增文件漏接进门禁」**结构上不可能**：写死文件名的那天 就是这个门开始骗人的那天（新增第三个文件时没人会回来改门禁）。
 #     🔴 **覆盖面必须是递归的（LUM-2602 修）**：原规则 `scripts/test_*.py` 只匹配
 #     `scripts/` **顶层** ⇒ 包内测试全部漏接。实测 `scripts/t1_6_realm_diff_taxonomy/`
 #     （9 个模块 / 1053 行，决定 T1-6 全部缺口的归因）与 `scripts/t1_6_precondition_taxonomy.py`
 #     （339 行）在 PR #183 之后仍是「0 测试 + 0 门执行」（`docs/37 §274`）。
-#     ⚠️ **文件名形状是有语义的**：包内测试必须叫 `test_*.py` —— `tests.py` **不匹配**
-#     `test_*.py`（差一个下划线），写成那样就等于没写。
+#     ⚠️ **文件名形状是有语义的**：包内测试必须叫 `test_*.py` —— `tests.py` **不匹配** `test_*.py`（差一个下划线），写成那样就等于没写。
 #     ⚠️ **glob 为空 ⇒ 判红（exit 1），不是「无事发生 ⇒ 绿」**：与 ⑥/⑧ 缺库 URL、
 #     ⑪ 缺容器 CLI 同一族处置 —— 让「没东西可跑」在退出码上可区分。
 #     🔴 **exit 0 不等于「验证过」**：`python3 <file>` 对一个**没有用例**的文件
-#     exit 0 且什么都不打。所以绿的定义是「rc == 0 **且** 出现了 unittest 的 `OK` 行」——
-#     与本仓反复踩到的「跑过了就算验证过」同一族坑（`docs/37 §272/§274`）。
+#     exit 0 且什么都不打。所以绿的定义是「rc == 0 **且** 出现了 unittest 的 `OK` 行」—— 与本仓反复踩到的「跑过了就算验证过」同一族坑（`docs/37 §272/§274`）。
 #     LUM-2604 再补一条**与解释器版本无关**的同族判据：日志里出现 `Ran 0 tests` 就判红 ——
 #     实测（Python 3.12）`unittest.main()` 对 0 用例的文件打的是 `NO TESTS RAN` + **rc=5**，
-#     也就是说「有没有 OK 行」那一条靠的是解释器的退出码约定；一旦某个版本对 0 用例
-#     exit 0 且打 `OK`，它就当场失效。数用例数不依赖版本。
-#     🔴 **判红判的是集合的「身份」，不是「规模」（LUM-2604 修）**：上面两条只看**当次
-#     发现到的集合**，没有任何东西把它钉在基线上 ⇒ 少发现一个文件、改名、把发现规则收窄，
+#     也就是说「有没有 OK 行」那一条靠的是解释器的退出码约定；一旦某个版本对 0 用例 exit 0 且打 `OK`，它就当场失效。数用例数不依赖版本。
+#     🔴 **判红判的是集合的「身份」，不是「规模」（LUM-2604 修）**：上面两条只看**当次 发现到的集合**，没有任何东西把它钉在基线上 ⇒ 少发现一个文件、改名、把发现规则收窄，
 #     全都表现为「集合仍然非空」⇒ **绿**。实测（`docs/37 §276`）把包内那个 56 用例的文件
 #     **整个删掉**后，门仍是 `GATE_SCRIPTS_TESTS_EXIT=0` / `3 file(s)` / `PASS` ——
-#     即**一个门可以在少跑 56 个用例的情况下报绿**。现在发现集合要与
-#     `scripts/tests.manifest` **逐行一致**：多一个、少一个、改名、清单里重复一行，都判红；
+#     即**一个门可以在少跑 56 个用例的情况下报绿**。现在发现集合要与 `scripts/tests.manifest` **逐行一致**：多一个、少一个、改名、清单里重复一行，都判红；
 #     集合大小只进 note，**不作判据**（`用例数 >= N` 正是探针 ① 塔到 45 却仍然绿的那类指标）。
-#     ⚠️ **守门的检查必须住在集合之外**：任何「检查本门」的用例只能放在顶层
-#     `scripts/test_gate_scripts_tests.py`（非递归 glob 下仍可见，且它在基线清单里），
-#     或直接写进**本文件**（`gates.sh` 永不被发现）。把守门用例放进**包内**测试文件 =
-#     发现规则一收窄它自己就不跑 = 无人报警（PR #184 的 `TestGateDiscoveryAgrees`
+#     ⚠️ **守门的检查必须住在集合之外**：任何「检查本门」的用例只能放在顶层 `scripts/test_gate_scripts_tests.py`（非递归 glob 下仍可见，且它在基线清单里），
+#     或直接写进**本文件**（`gates.sh` 永不被发现）。把守门用例放进**包内**测试文件 = 发现规则一收窄它自己就不跑 = 无人报警（PR #184 的 `TestGateDiscoveryAgrees`
 #     4 条全在包内 ⇒ 探针 ①②③ 全绿，这正是本片要消灭的形态）。
-#     ⚠️ 检查门**不得断言本文件的源码文本**：实测 `assertIn("__pycache__", body)` 被本文件里
-#     一行**注释**满足了（LUM-2602）⇒ 那条断言什么也没钉住。所以本门提供
-#     `--list-discovered`（唯一实现 = `scripts_tests_discovered_files`），把门**实际算出的
-#     清单**打出来 ⇒ 守门用例断言的是门的**行为**，不是它的散文。
+#     ⚠️ 检查门**不得断言本文件的源码文本**：实测 `assertIn("__pycache__", body)` 被本文件里 一行**注释**满足了（LUM-2602）⇒ 那条断言什么也没钉住。所以本门提供
+#     `--list-discovered`（唯一实现 = `scripts_tests_discovered_files`），把门**实际算出的 清单**打出来 ⇒ 守门用例断言的是门的**行为**，不是它的散文。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
 #     所以 ⑨ 同时用 `env -u` 与 `--no-db` 两道保险（与 ⑤ 同理）。
 #   * ⑬（`section-alloc`，LUM-2607 / T1-6-L）执行 `python3 scripts/section_alloc_check.py --quiet`：
 #     校验 `docs/37` 的 `## §NNN` 段号与 `docs/section-alloc.tsv` **双向**一致（R1 文件→台账 /
-#     R2 台账→文件）、台账段号唯一（R3 = **撞号**判据）、每个段号在文件里的出现次数等于台账
-#     登记的次数（R4）。纯标准库、亚秒级、不连库不编译，所以它在默认集合里、也在 CI 的 `fast` job 里。
-#     🔴 **它为什么值得存在**：`docs/37` 的号段是**手工、先到先得、无校验**的分配 —— 两片都能
-#     合法地拿到同一个空号，撞号只在**合并时**以 `docs/37` 的 CONFLICT 暴露，连续三轮产生真实
+#     R2 台账→文件）、台账段号唯一（R3 = **撞号**判据）、每个段号在文件里的出现次数等于台账 登记的次数（R4）。纯标准库、亚秒级、不连库不编译，所以它在默认集合里、也在 CI 的 `fast` job 里。
+#     🔴 **它为什么值得存在**：`docs/37` 的号段是**手工、先到先得、无校验**的分配 —— 两片都能 合法地拿到同一个空号，撞号只在**合并时**以 `docs/37` 的 CONFLICT 暴露，连续三轮产生真实
 #     合并成本（`LUM-2596` 的 PR #168 至今被号段冲突卡住、不可合并）。本门把撞号提前到**提交前**。
-#     🔴 **它的判据里含它自己的前置件**：校验脚本被删/被改名 ⇒ 本门判红（`LUM-2604 / §276` 的
-#     教训：判红条件只看被检验的集合时，「删掉检查器」表现为「没有检查报错」⇒ 静默判绿）。台账同理。
+#     🔴 **它的判据里含它自己的前置件**：校验脚本被删/被改名 ⇒ 本门判红（`LUM-2604 / §276` 的 教训：判红条件只看被检验的集合时，「删掉检查器」表现为「没有检查报错」⇒ 静默判绿）。台账同理。
 #     ⚠️ **新增 `scripts/**/test_*.py` 仍然要求同步改 `scripts/tests.manifest`**（门 ⑫ 的基线）；
 #     本门的校验器特意叫 `section_alloc_check.py`（不匹配 `test_*.py`）⇒ **不需要**动那个基线。
 #     ⚠️ **台账第 4 列**（`docs/37 出现次数`）是判据 R4 的输入：起手 base 里已有一个**真实撞号**
@@ -171,7 +148,7 @@ cd "$SCRIPT_DIR/.." || exit 2
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
 # `image` 排在最后但**不在**任何默认集合里（默认集合在下方的 SELECTED 分支里逐字写出，
 # 不由 ALL_GATES 推导）—— 这样 `--list` / `--only image` 能点到它，而默认跑法碰不到它。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests section-alloc judge-test-coverage"
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests section-alloc judge-test-coverage realm-diff-taxonomy"
 
 gate_label() {
     case "$1" in
@@ -189,6 +166,7 @@ gate_label() {
         scripts-tests) echo "⑫" ;;
         section-alloc) echo "⑬" ;;
         judge-test-coverage) echo "⑭" ;;
+        realm-diff-taxonomy) echo "⑮" ;;
         *) echo "?" ;;
     esac
 }
@@ -209,6 +187,7 @@ gate_env_name() {
         scripts-tests) echo "SCRIPTS_TESTS" ;;
         section-alloc) echo "SECTION_ALLOC" ;;
         judge-test-coverage) echo "JUDGE_TEST_COVERAGE" ;;
+        realm-diff-taxonomy) echo "REALM_DIFF_TAXONOMY" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -338,8 +317,8 @@ if [ -n "$ONLY" ]; then
 else
     SELECTED=" fmt build clippy clippy-test-util test"
     [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
-    # ⑦ ⑨ ⑩ ⑫ ⑬ ⑭ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
-    SELECTED="$SELECTED route-parity conformance file-size scripts-tests section-alloc judge-test-coverage"
+    # ⑦ ⑨ ⑩ ⑫ ⑬ ⑭ ⑮ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
+    SELECTED="$SELECTED route-parity conformance file-size scripts-tests section-alloc judge-test-coverage realm-diff-taxonomy"
 fi
 
 selected_gate() {
@@ -435,8 +414,8 @@ run_db_gate() {
     return 0
 }
 
-# ⑧ 自带 scratch 库（默认 `schema_probe_w0b_drift`），不下 ⑥ 迁移出来的那个库，所以两个门用同一个库 URL 是安全的。
-# 平时 `--quiet`（判据是退出码）；红了才再跑一遍把完整报告打出来 —— 绿的时候那份报告有 700+ 行差异明细。
+# ⑧ 自带 scratch 库（默认 `schema_probe_w0b_drift`），不下 ⑥ 迁移出来的那个库，所以两个门用同一个库 URL 是安全的。平时
+# `--quiet`（判据是退出码）；红了才再跑一遍把完整报告打出来 —— 绿的时候那份报告有 700+ 行差异明细。
 run_schema_drift_gate() {
     local start end rc
     printf '\n=== [%s] gate schema-drift ===\n' "$(gate_label schema-drift)"
@@ -463,22 +442,20 @@ run_schema_drift_gate() {
 # 为什么单独写一个函数而不是 run_gate 一行：这条门要判三件事、且中间要复用同一个
 # 镜像 tag（build 一次、起两次容器），run_gate 的「name + 一条命令」形状装不下。
 #
-# 三条判据（见文件顶部「已知坑」⑪）：build 成功 / 容器内非 root / 二进制存在且可执行。
-# ② ③ 刻意不合并成一次容器启动：合并就少了一个可读的失败点，而分开时两次 `docker run
-# --rm --entrypoint` 各自只花几百毫秒，相对 build 的分钟级开销可以忽略。
+# 三条判据（见文件顶部「已知坑」⑪）：build 成功 / 容器内非 root / 二进制存在且可执行。② ③ 刻意不合并成
+# 一次容器启动：合并就少了一个可读的失败点，而分开时两次 `docker run --rm --entrypoint` 各自只花几百毫秒，
+# 相对 build 的分钟级开销可以忽略。
 run_scripts_tests_gate() {
     # ⑫ scripts-tests（LUM-2600 / T1-6-H1；覆盖面 LUM-2602 / T1-6-I）—— 执行 `scripts/**/test_*.py`。
     #
     # 为什么单独写函数而不是 run_gate 一行：判据是「**每一个** 测试文件都真跑了且都绿」，
     # 文件数在运行时才确定（发现规则），而 run_gate 的形状是「name + 一条固定命令」。
     #
-    # 为什么不逐个把文件名写死：写死的那天就是这个门开始骗人的那天 ——
-    # 新增第三个测试文件时没人会记得回来改这里，于是又变成「全绿但没人看得见」。
-    # ⇒ 发现规则让「新增测试文件漏接进门禁」**结构上不可能**（见文件顶部「已知坑」⑫）。
+    # 为什么不逐个把文件名写死：写死的那天就是这个门开始骗人的那天 —— 新增第三个测试文件时没人会记得回来改这里，
+    # 于是又变成「全绿但没人看得见」。⇒ 发现规则让「新增测试文件漏接进门禁」**结构上不可能**（见文件顶部「已知坑」⑫）。
     #
-    # 🔴 但「发现规则」本身也是**被检验的对象**（LUM-2604）：所以发现集合还要与
-    # `scripts/tests.manifest` 逐行比对，判的是集合的**身份**；而且检查这件事的用例
-    # 住在顶层 `scripts/test_gate_scripts_tests.py`（发现规则收窄时它仍会被执行）。
+    # 🔴 但「发现规则」本身也是**被检验的对象**（LUM-2604）：所以发现集合还要与 `scripts/tests.manifest` 逐行比对，判的是集合的**身份**；
+    # 而且检查这件事的用例住在顶层 `scripts/test_gate_scripts_tests.py`（发现规则收窄时它仍会被执行）。
     local start end rc combined f files=() note log no_tests
     local -a baseline=() only_tree=() only_manifest=() dup_entries=()
     local identity_red=0 _p
@@ -492,10 +469,9 @@ run_scripts_tests_gate() {
     # 「决定每条 T1-6 缺口归谁」的那套分类器（`docs/37 §274`）。
     mapfile -t files < <(scripts_tests_discovered_files)
 
-    # 🔴 判据一：发现集合的**身份**必须与基线逐行一致（LUM-2604）。
-    # 下面那条「集合非空」与「0 用例」都只看**当次**发现到的集合，因此**不够**：
-    # 丢文件 / 改名 / 收窄发现规则都表现为「集合仍然非空」⇒ 绿。
-    # 实测（`docs/37 §276`）删掉 56 个用例那个文件后，旧判据仍是 `exit=0 / 3 file(s) / PASS`。
+    # 🔴 判据一：发现集合的**身份**必须与基线逐行一致（LUM-2604）。下面那条「集合非空」与「0 用例」都只看**当次**
+    # 发现到的集合，因此**不够**：丢文件 / 改名 / 收窄发现规则都表现为「集合仍然非空」⇒ 绿。实测（`docs/37 §276`）
+    # 删掉 56 个用例那个文件后，旧判据仍是 `exit=0 / 3 file(s) / PASS`。
     if [ ! -f "$SCRIPTS_TESTS_MANIFEST" ]; then
         identity_red=1
         printf 'error: the scripts-tests gate needs its discovery baseline, but it is missing\n' >&2
@@ -593,10 +569,9 @@ run_scripts_tests_gate() {
 # ⑬ section-alloc（LUM-2607 / T1-6-L）—— `docs/37` 号段台账的**双向校验 + 撞号判据**。
 #
 # 为什么单独写函数而不是 `run_gate section-alloc python3 …` 一行：本门的**前置件也是判据**。
-# `run_gate` 在「校验脚本被删/被改名」时也会拿到非 0（python3 打不开文件 ⇒ 2），但那个读数
-# 看不出病因；而本片要钉的形态（`LUM-2604 / §276`）正是「判红条件只看被检验的集合 ⇒
-# 丢掉检查器表现为绿」。所以这里把「校验器存在」显式写成判据之一（与 ⑥/⑧ 缺库 URL、
-# ⑪ 缺容器 CLI、⑫ 空 glob 同族：**让「没东西可跑」在退出码上可区分**）。
+# `run_gate` 在「校验脚本被删/被改名」时也会拿到非 0（python3 打不开文件 ⇒ 2），但那个读数看不出病因；
+# 而本片要钉的形态（`LUM-2604 / §276`）正是「判红条件只看被检验的集合 ⇒ 丢掉检查器表现为绿」。所以这里把
+# 「校验器存在」显式写成判据之一（与 ⑥/⑧ 缺库 URL、⑪ 缺容器 CLI、⑫ 空 glob 同族：**让「没东西可跑」在退出码上可区分**）。
 # 台账缺失 / 空台账 / 双向不一致 / 撞号 / 出现次数不符 —— 全部由脚本自身的退出码给出。
 SECTION_ALLOC_CHECKER="scripts/section_alloc_check.py"
 run_section_alloc_gate() {
@@ -632,9 +607,9 @@ run_section_alloc_gate() {
 
 # ⑭ judge-test-coverage（LUM-2626 / T1-6-G1；判词形状 LUM-2629 / T1-6-R1，docs/37 §300）—— `ci.yml` / `gates.sh` 真正执行的每个 `scripts/**/<name>.py` 都必须有 `scripts/**/test_<name>.py`；§300 修了两条形状规则（包入口取**包名**而非 `__main__` = 假红；`-m` 模块形态**必须**进读数 = 旧版假绿）。
 #
-# 同样写成独立函数而不是 `run_gate … python3 … --quiet` 一行：门本体必须能**逐条点名**
-# 缺口（哪个引用面、哪个脚本、缺哪个 `test_`），而 `--quiet` 面只打一行总结（判词面）。
-# 与 ⑧ / ⑬ 同款：红了才再跑一遍不带 `--quiet`，把明细打出来。
+# 同样写成独立函数而不是 `run_gate … python3 … --quiet` 一行：门本体必须能**逐条点名**缺口（哪个引用面、
+# 哪个脚本、缺哪个 `test_`），而 `--quiet` 面只打一行总结（判词面）。与 ⑧ / ⑬ 同款：红了才再跑一遍不带
+# `--quiet`，把明细打出来。
 JUDGE_TEST_COVERAGE_CHECKER="scripts/judge_test_coverage_check.py"
 run_judge_test_coverage_gate() {
     local start end rc
@@ -661,6 +636,33 @@ run_judge_test_coverage_gate() {
     end="$(date +%s)"
     printf 'GATE_JUDGE_TEST_COVERAGE_EXIT=%s\n' "$rc"
     record judge-test-coverage "$rc" "$((end - start))" ""
+    return 0
+}
+
+# ⑮ realm-diff-taxonomy（LUM-2631 / T1-6-R2，`docs/37 §302`）—— T1-6 `REALM_DIFF` 族的归因
+# 分类器。🔴 判据**不是**「缺陷数」：那个分类器的 `main()` 恒返回 0（它是归因报告，不是判红工具）⇒
+# 光看 rc 只能逮住 traceback，逮不住「少打了一节结论」。所以判三件事：跑得起来、输出非空、**每个小节
+# 标题都在**（结论面，不是装饰）。⚠️ 不用 `--dry` 绕过（那个 flag 门 ⑭ 记成 `[DRY]` 试跑、不要求有测试
+# ⇒ 等于「接了个不接的门」）。⚠️ 下面是**字面量**命令而不是 `python3 -m "$VAR"`：门 ⑭ 只从字面量收
+# 引用面（它的「已知边界 1」），走变量会整条漏掉 ⇒ 实测 `judges` 会停在 6。「包入口被删 ⇒ 判红」不需要
+# 单独一条判据：`python3 -m` 找不到包/入口本身就是 rc=1。
+run_realm_diff_taxonomy_gate() {
+    local start end rc out missing=0
+    printf '\n=== [%s] gate realm-diff-taxonomy ===\n' "$(gate_label realm-diff-taxonomy)"
+    printf '$ python3 -m scripts.t1_6_realm_diff_taxonomy\n'
+    start="$(date +%s)"; out="$(mktemp)"
+    python3 -m scripts.t1_6_realm_diff_taxonomy >"$out" 2>&1; rc=$?
+    for section in "并行结论：" "by-design：" "判别式双向验证" "静态面判不了、必须看 db 读数的子族" "负责面（文件集合）"; do
+        if ! grep -qF "$section" "$out"; then
+            printf 'error: the classifier output is missing the section: %s\n' "$section" >&2; missing=1
+        fi
+    done
+    if [ ! -s "$out" ]; then printf 'error: the classifier printed nothing\n' >&2; missing=1; fi
+    [ "$missing" -eq 0 ] || rc=1
+    if [ "$rc" -ne 0 ]; then cat "$out"; fi
+    rm -f "$out"; end="$(date +%s)"
+    printf 'GATE_REALM_DIFF_TAXONOMY_EXIT=%s\n' "$rc"
+    record realm-diff-taxonomy "$rc" "$((end - start))" ""
     return 0
 }
 
@@ -749,6 +751,7 @@ for gate in $SELECTED; do
         scripts-tests)  run_scripts_tests_gate ;;
         section-alloc)  run_section_alloc_gate ;;
         judge-test-coverage) run_judge_test_coverage_gate ;;
+        realm-diff-taxonomy) run_realm_diff_taxonomy_gate ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done

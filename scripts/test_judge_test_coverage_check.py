@@ -48,16 +48,23 @@ CHECKER = HERE / "judge_test_coverage_check.py"
 
 # 真仓库今天的读数（**当场实测**，不是抄来的）：
 #   `bash scripts/gates.sh --only judge-test-coverage`
-#   ⇒ judge-test-coverage: OK — surfaces=2 judges=6 covered=6 gaps=0
-# 6 个 = `ci.yml` 直接引用的 4 个（file_size / section_alloc / schema_drift /
+#   ⇒ judge-test-coverage: OK — surfaces=2 judges=7 covered=7 gaps=0
+# 7 个 = `ci.yml` 直接引用的 4 个（file_size / section_alloc / schema_drift /
 # route_parity）+ `gates.sh` 单独调用的 `slash_alias_audit.py`
-#      + **门 ⑭ 自己**（`gates.sh` 的调度行引用了 `judge_test_coverage_check.py`）。
+#      + **门 ⑭ 自己** + `scripts/t1_6_realm_diff_taxonomy/__main__.py`（`LUM-2631` /
+#        `T1-6-R2`、`docs/37 §302`：新门 ⑮ 的**字面量** `python3 -m scripts.t1_6_realm_diff_taxonomy`）。
 # ⚠️ 别把它写成 5：5 是**接进 `gates.sh` 之前**的读数。门 ⑭ 把自己也纳进来了 ——
 # 这是**设计意图**（判定器不能豁免自己），但它意味着「本片改了引用面 ⇒ 读数必然 +1」。
 # ⚠️ 更早的一处：cycle 14:30 工单写的是「四条引用面」，那是**只数 `ci.yml`** 的口径；
 # 本门扫两个面，接线前就已经是 5。`§276` 的纪律：计数必须当场重数，不许抄。
-EXPECTED_JUDGES = 6
+# ⚠️ 6 → 7 的 +1 来自 `§302`，它同时把下面 `TestModuleFormReference` 里「真仓库今天
+# 0 条 `-m` 引用」那条不变量**作废**了 ⇒ 两条必须同一个提交里改，否则门 ⑫ 会红。
+EXPECTED_JUDGES = 7
 EXPECTED_SURFACES = 2
+
+#: 真仓库里 `-m scripts.*` 引用的**逐条**读数（`§302` 之后实测 = 恰好 1 条）。🔴 刻意
+#: 写成**集合**而不是计数：计数会在「又接了一个」时静默变成另一种错（没人看见多出来那条）。
+EXPECTED_MODULE_REFS = {"scripts/t1_6_realm_diff_taxonomy/__main__.py"}
 
 
 def run_gate(root: Path) -> tuple[int, str, str]:
@@ -584,18 +591,28 @@ class TestModuleFormReference(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("test_coolpkg.py", err)
 
-    def test_the_real_repo_has_no_module_form_references_today(self):
-        """真仓库今天 0 条 `-m` 引用 ⇒ 修解析规则**不得**动到 `EXPECTED_JUDGES` 的口径。
+    def test_the_real_repo_module_form_references_are_exactly_the_expected_ones(self):
+        """真仓库的 `-m` 引用**逐条**点名，而不是只数条数。
 
-        这条是「本片没有偷改读数」的证明：两条缺陷都是在**临时仓库**上复现的，
-        真仓库的引用面不该因为解析规则变宽而变化。
+        🔴 这条用例在 `§302` 之前的判词是「真仓库今天 **0** 条 `-m` 引用」—— 那是一条
+        **关于当时状态**的断言，而 `LUM-2631` / `T1-6-R2` 的**全部内容**就是接进第一条
+        `-m` 引用（门 ⑮）⇒ 旧判词与本片**互斥**。处置不是删掉它（删掉就少一条读数），
+        而是换成**集合相等**。为什么不用计数：计数会在「又接了一个」时静默变成另一种错。
         """
+        seen = set()
         for surface, lineno, line in jtc.reference_lines(ROOT):
-            if jtc.MODULE_REF_RE.search(line):
-                self.fail(
-                    "%s:%d 出现了 `-m scripts.*` 引用：%s —— 真仓库的读数会变，"
-                    "请当场重数并更新 EXPECTED_JUDGES" % (surface, lineno, line.strip())
-                )
+            m = jtc.MODULE_REF_RE.search(line)
+            if not m:
+                continue
+            ref = jtc.module_ref_to_path(ROOT, m.group(1))
+            seen.add(ref)
+            # 逐条留痕：出错时要能指出是哪一行，而不是只给一个集合差。
+            self.assertIn(
+                ref, EXPECTED_MODULE_REFS,
+                "%s:%d 出现了未登记的 `-m scripts.*` 引用：%s —— 请当场重数并把它"
+                "**点名**进 EXPECTED_MODULE_REFS" % (surface, lineno, line.strip()),
+            )
+        self.assertEqual(seen, EXPECTED_MODULE_REFS)
         self.assertEqual(jtc.read_judgement(ROOT)["numbers"], EXPECTED_JUDGES)
 
 
@@ -748,7 +765,10 @@ class TestManifestAndBaseline(unittest.TestCase):
         self.assertEqual(self.lines, sorted(self.lines), "manifest 必须 LC_ALL=C 有序")
         i = self.lines.index("scripts/test_judge_test_coverage_check.py")
         self.assertEqual(self.lines[i - 1], "scripts/test_harvest_preflight.py")
-        self.assertEqual(self.lines[i + 1], "scripts/test_route_parity.py")
+        # ⚠️ `i + 1` 在 `§302` 之后**不是** `test_route_parity.py`：T1-6-R2 新增的
+        # `test_realm_diff_taxonomy_wiring.py` 插在中间。这条断言的价值是「位置」，跟着改。
+        self.assertEqual(self.lines[i + 1], "scripts/test_realm_diff_taxonomy_wiring.py")
+        self.assertEqual(self.lines[i + 2], "scripts/test_route_parity.py")
 
     def test_both_new_files_stay_under_the_gate_ten_hard_limit(self):
         """门 ⑩ 的硬上限 800 行；`file_size_baseline.tsv` **只减不增**，所以不登记。"""
