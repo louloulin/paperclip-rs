@@ -14,6 +14,11 @@ chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+# `LUM-2591`：装置面要建「第二个成员」时必须能**指定** `"user"` 的主键
+# （fixture 里那是逐字字面量，`UserRepo` 的两个建号面都不给这个口子，见
+# `harness::seed_foreign_member` 的文档）。版本/特性与工作区其余 crate 逐字相同，
+# 因此 Cargo.lock 只多一条依赖边。
+sqlx = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true, features = ["util"] }
