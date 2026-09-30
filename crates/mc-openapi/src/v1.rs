@@ -416,6 +416,43 @@ pub fn operation_for(method: &str, path: &str) -> Option<&'static Operation> {
         .find(|operation| operation.method.eq_ignore_ascii_case(method) && operation.path == path)
 }
 
+/// 一次**具体请求**（方法 + 真实路径，`/v1/issues/PLUG-12/comments`）对应的台账条目。
+///
+/// [`operation_for`] 要求路径逐字等于模板（`/issues/{issue_ref}`），那是**声明侧**的用法；
+/// 中间件看到的是**具体**路径，所以这里做一次分段匹配：`{name}` 匹配**恰好一个**非空段。
+///
+/// **为什么不把它做成正则**：台账的 `{name}` 是本仓唯一的路径模板语法（`axum_path` 已经是
+/// 它的另一个消费点），再引入一套正则方言就多一份会漂移的语法。
+#[must_use]
+pub fn operation_for_request(method: &str, path: &str) -> Option<&'static Operation> {
+    let path = path.strip_prefix(BASE_PATH).unwrap_or(path);
+    let segments: Vec<&str> = path.split('/').collect();
+    OPERATIONS.iter().find(|operation| {
+        operation.method.eq_ignore_ascii_case(method) && template_matches(operation.path, &segments)
+    })
+}
+
+/// 模板分段匹配：`{…}` 是**单段通配**（非空），其余逐字。
+fn template_matches(template: &str, segments: &[&str]) -> bool {
+    let parts: Vec<&str> = template.split('/').collect();
+    parts.len() == segments.len()
+        && parts.iter().zip(segments).all(|(part, actual)| {
+            match part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) {
+                Some(_) => !actual.is_empty(),
+                None => *part == *actual,
+            }
+        })
+}
+
+/// 一次具体请求**被允许的凭据集合**（上游 `Operation.Credentials` 的查询口）。
+///
+/// 中间件用它决定「这条路径要插件令牌还是会话就够」—— 判据是**声明**，不是硬编码的
+/// 路径前缀白名单（后者会在台账加第 10 条 Operation 时静默漏掉）。
+#[must_use]
+pub fn credentials_for_request(method: &str, path: &str) -> Option<&'static [CredentialKind]> {
+    operation_for_request(method, path).map(|operation| operation.policy.credentials)
+}
+
 /// 契约形态 → axum 0.7 形态：`{name}` ⇒ `:name`（**唯一转换点**；多数调用点直接用
 /// [`Operation::axum_path`]）。
 ///
