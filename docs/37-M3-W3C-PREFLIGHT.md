@@ -29722,3 +29722,99 @@ python3 scripts/judge_test_coverage_check.py
 `LUM-2111` docker 死锁（`report.json` 刷新权，`contract` job 持续红，`#200` 的
 `mergeable_state=unstable` 即此存量、非本片引入）；`mc_t2492` 116 表仍在默认库；
 共享 `CARGO_TARGET_DIR` 的裁决。
+
+## §302
+
+【LUM-2633 / T1-6-S1】base `0b3bd4a2`。零编译片：给 `scripts/extract_upstream_fixtures.py`
+（**1862 行、零测试**）建判别式测试。交付 = `scripts/test_extract_upstream_fixtures.py`
+（**54 例 / 663 行**）+ `scripts/tests.manifest` 一行。**写集之外零改动**：
+`contracts/golden/**` 只读，抽取器本体**未改一行**（探针证实不需要改）。
+
+### 一、「谁执行它」——答案：门 ⑫，不是门 ⑭
+
+门 ⑫ `scripts-tests` 递归发现 `scripts/**/test_*.py` 并逐个执行，且发现集合与
+`scripts/tests.manifest` 逐行比对身份（`§276`）。所以新增测试文件 **必须**同时加基线行，
+否则门 ⑫ 自己红。读数：`15 file(s)` → **`16 file(s)`**，rc=0。
+
+门 ⑭ **不变**（`surfaces=2 judges=6 covered=6 gaps=0 dry=0`），且**这是正确读数**：
+⑭ 判的是「`ci.yml`/`gates.sh` 真正执行的每个 `scripts/**/<name>.py` 都要有
+`test_<name>.py`」，而抽取器**不在任何引用面里**（它需要一份上游 Go 检出，CI 跑不了）。
+本片把它的执行面**接到 ⑫ 上**（⑫ 收的是测试文件，不是脚本），不是把它塞进 ⑭ 的引用面 ——
+后者要伪造一个 CI 跑不了的引用。
+
+### 二、🔴 base 上当场实测出来的**真红**：`--check` 已经不逐字复现了
+
+按 `contracts/golden/PIN` 记的 **同一个** 上游 commit（`90e0bdf8`，blob 过滤浅检出）跑：
+
+```
+python3 scripts/extract_upstream_fixtures.py --upstream <checkout> --check   # rc=1
+error: 15 fixture-tree differences
+```
+
+逐条都是**抽错**，不是格式噪声：
+
+| 文件 | committed | fresh（当前抽取器） |
+|---|---|---|
+| `agents/023-TestUpdateAgent-…-L1423` | `path: "/api/agents/a runtime that this profile does not provide"` | `"/api/agents/{id}"` + `path_params{id:$testAgentID}` |
+| `workspaces/008-TestDingTalk…-L977` | `path: "/api/workspaces/d1474000-…-0001/dingtalk/groups"` | `"/api/workspaces/{testWorkspaceID}/dingtalk/groups"` |
+| `issues/071-TestListIssuesStatusSort…-L19` | `json_subset.status = "workspaces/"` | `"sort_custom_started"` |
+| `chat/002-TestChannelCommandVisibility…-L50` | 多带 `X-Workspace-ID` 身份 | 不带（与 `6946359a` 修的 actor 分类一致） |
+
+**根因可定位到提交**：`contracts/golden/` 最后一次重生成是 `6946359a`，而
+`scripts/extract_borrowed_ids.py` 在**其后**被 `a3905aad`（`#168` 的重新落地：
+「撞名的 package literal 不得成为 URL 段」）修过 —— **改了抽取器，没有重生成树**。
+`agents/023` 里那个 `/api/agents/a runtime that this profile does not provide`
+正是散文常量撞号进 URL 段的活标本，而 `test_extract_borrowed_ids.py` 早就把这条规则钉住了。
+
+⇒ 这就是本片要防的那件事的**实证**：门 ⑨ 在**抽错的输入**上回放，而 `report.json`
+与 fresh 结果仍然自洽 ⇒ ⑨ 绿、CI 绿、契约等价率的分母是错的。**这不是假设，是复现出来的。**
+
+### 三、本片**没有**做的事（写集 + 磁盘的硬边界）
+
+`contracts/golden/**` 在本片是**只读**，且重生成后必须重跑门 ⑨（要构建 `mc-conformance`，
+`avail 5.2G` 不够）⇒ **不在本片重生成**。这一条留给 owner 单独派片：
+重生成 ⇒ 365 个文件动 ⇒ ⑨ 的 `pass/mismatch/unevaluable/bad_total` **必然**变 ⇒ 必须逐条解释。
+
+### 四、造形状探针（9/9 全红 + 复原全绿）
+
+「用例数增加」不是证据（`§301` 已实测：53 条全绿的文件因为没门执行而腐烂）。
+所以逐个**突变**抽取器、跑测试、看三段读数（改前 rc=0 / 改后 rc≠0 / 复原 rc=0）：
+
+| # | 突变 | 读数 |
+|---|---|---|
+| P1 | 缺 `.Want(...)` 时**猜**一个 200 | rc=1 ✔ 复原 0 ✔ |
+| P2 | 多个状态断言时**取第一个** | rc=1 ✔ 复原 0 ✔ |
+| P3 | path 参数**不**按 url-param 命名（退回符号名） | rc=1 ✔ 复原 0 ✔ |
+| P3b | query 里的 marker **不**替换 | rc=1 ✔ 复原 0 ✔ |
+| P4 | 单站点崩溃**静默吞掉** | rc=1 ✔ 复原 0 ✔ |
+| P5 | slug 序号改成全局（同一条 site 的多张 fixture 会撞名覆盖） | rc=1 ✔ 复原 0 ✔ |
+| P6 | 空 `requires` 也写成 `[]`（`--check` 会把 365 个文件全推动） | rc=1 ✔ 复原 0 ✔ |
+| P7 | path 里的符号**不**命名成 `{name}` | rc=1 ✔ 复原 0 ✔ |
+| P8 | 不折叠重复斜杠 | rc=1 ✔ 复原 0 ✔ |
+
+**一条诚实的负面结果**：`extract_site` 里那句 `if MARK in path …` 的兜底判据，
+本片**造不出**任何能让它成立的输入（marker 在 `canonicalise` 里必然被命名，
+真出问题的输入会更早被 `value_unresolved` 拦下）⇒ **没有为它造用例**，也不假装它被覆盖了。
+
+### 五、读数（本片分支当场实测，不继承）
+
+| 门 | 读数 | 与 base 比 |
+|---|---|---|
+| ⑦ route-parity | `456 / 546 / 546`、`455 real + 1 placeholder`、`gap 0 / unclaimed 0 / regression 0 / local_only 8` | **逐字不变**（第 62 轮） |
+| ⑩ file-size | rc=0（663 行 < 800 硬上限） | 不变 |
+| ⑫ scripts-tests | `16 file(s)` rc=0 | `15 → 16`（本片新增文件） |
+| ⑬ section-alloc | `sections=231 numbers=230 ledger=230 defects=0` | +1（本段） |
+| ⑭ judge-test-coverage | `surfaces=2 judges=6 covered=6 gaps=0 dry=0` | **逐字不变**（见 §一） |
+
+① fmt / ② build / ③④⑤ / ⑥ db / ⑧ / ⑨ **未跑**（本片零编译，⑨ 要构建 `mc-conformance`，
+`avail 5.2G`）—— 不继承任何上一轮声明。
+
+### 六、顺位与在飞
+
+* daemon 3/3 = cycle ∥ `LUM-2627`（PR #201 已收割，13/13 门绿）∥ `LUM-2631`（`LUM-2631` 与本片写集不相交：`scripts/**` vs `scripts/**` 的不同文件）。
+* **下一个零编译候选的形状已经用完**（本片 + `LUM-2631` 之后，`§301` 记的两个待办都落地了）。
+
+### 待 owner（不重复 @）
+
+`LUM-2111` docker 死锁；`mc_t2492` 116 表；共享 `CARGO_TARGET_DIR`；**新增：`contracts/golden/**`
+已陈旧（§二），需要一次「重生成 + 逐条解释 ⑨ 读数变化」的独立切片**。
