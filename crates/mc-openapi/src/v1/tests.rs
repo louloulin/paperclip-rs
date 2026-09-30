@@ -698,3 +698,43 @@ fn idempotency_and_paging_limits_are_the_upstream_values() {
     assert_eq!(DEFAULT_PAGE_SIZE, 50);
     assert_eq!(MAX_PAGE_SIZE, 200);
 }
+
+#[test]
+fn request_lookup_matches_templates_segment_by_segment() {
+    // 共享资源面：会话是被声明接受的凭据。
+    for (method, path) in [
+        ("GET", "/v1/issues/PLUG-12"),
+        ("PATCH", "/v1/issues/6f1a-uuid"),
+        ("GET", "/v1/issues/PLUG-12/comments"),
+        ("POST", "/v1/issues/PLUG-12/comments"),
+    ] {
+        let credentials = credentials_for_request(method, path)
+            .unwrap_or_else(|| panic!("no operation for {method} {path}"));
+        assert!(
+            credentials.contains(&CredentialKind::UserOAuth),
+            "{method} {path} 是共享资源面，声明里必须有 user_oauth"
+        );
+    }
+    // 插件扩展面：只有两族插件令牌。
+    for (method, path) in [
+        ("GET", "/v1/context"),
+        ("GET", "/v1/storage/scope"),
+        ("GET", "/v1/storage/scope/key"),
+        ("PUT", "/v1/storage/scope/key"),
+        ("DELETE", "/v1/storage/scope/key"),
+    ] {
+        let credentials = credentials_for_request(method, path)
+            .unwrap_or_else(|| panic!("no operation for {method} {path}"));
+        assert_eq!(credentials, PLUGIN_CREDENTIALS, "{method} {path}");
+    }
+
+    // 方法、段数、段内容都必须对上；`{…}` 只吃一个非空段。
+    assert!(operation_for_request("DELETE", "/v1/issues/x").is_none());
+    assert!(operation_for_request("GET", "/v1/issues/x/y").is_none());
+    assert!(operation_for_request("GET", "/v1/issues/").is_none());
+    assert!(operation_for_request("GET", "/v1/nope/x").is_none());
+    // 不带 `/v1` 前缀的相对形态同样查得到（台账自身用相对路径）。
+    assert!(operation_for_request("GET", "/issues/x").is_some());
+    // 段数相同但字面量段不同 ⇒ 不是这一条。
+    assert!(operation_for_request("GET", "/v1/context/x").is_none());
+}
