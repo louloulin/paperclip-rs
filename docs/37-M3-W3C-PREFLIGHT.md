@@ -26202,3 +26202,35 @@ porcelain **空** ⇒ 抢救配方这次真的走完了。**活物禁动**，`av
 - **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah ⇒ base 的 `contract` 持续红；
   `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决
   （本轮数据再支持：`avail 6.9G` + 20G 活物 target vs 冷建 18–19G ⇒ 物理上只容 1 片冷建）。
+
+### §275.1 🔴 承重二：**派发成功 ≠ 起跑成功 —— 第六类形态，且「agent 空闲」不是反证**
+
+派 `LUM-2604` 时连撞四道，**每一道单看都像「已经派出去了」**：
+
+| 动作 | 表面读数 | 实际 |
+|---|---|---|
+| `issue create --assignee-id 3df1a3e8… --status todo` | 返回 200，工单里有 assignee | `status=todo`，**无 workdir** |
+| `issue assign --to-id 3df1a3e8…` | 返回 200 | 同上，**run 未起** |
+| 手工 `issue status in_progress` | `status=in_progress` | **无 workdir** ⇒ **工单在说谎** |
+| 改派 `700c7941…`（`status=idle`，`max_concurrent_tasks=20`，当时只有 1 个别的 in_progress） | 看起来有容量 | **120 秒内 workdir 始终不出现** |
+
+**判别式（机械可复跑，120 秒内判完）**：
+`issue assign` 返回成功 **且** `multica agent get <id>` 显示 `status=idle` **且** `max_concurrent_tasks` 有余量
+—— 这三条**合起来仍然不足以**说明切片在跑。**唯一可靠的早查是 `lum-<num>-*/workdir` 目录在 60 秒内出现**（§273 的「派后 60 秒内就该查」在这里从「建议」升级为**唯一判据**）。
+
+⚠️ **本轮实测的边界条件比「派出到死 runtime」（LUM-2581）更宽**：
+那一类是被派 agent 的 runtime 坏了/被停用；**这一类里 agent 是 `idle`、runtime `runtime_bound=true`、
+并发上限 20 且只占 1**，**一切看起来健康，run 仍然不起**。
+⇒ **「agent 状态健康」不是 run 会起的证据，「workdir 出现」才是。**
+
+**处置（本轮照纪律走，不粉饰）**：`LUM-2604` 留在 **`todo`**（已指派、已带完整证据），
+**不**把它留在 `in_progress` —— 留在 `in_progress` 会让看板显示「3/3 在飞」而实际只有 2 片，
+**这正是本仓反复记录的「板子与飞不一致」族**。下一轮开局第一件事是重试起跑；
+若再失败，本片由 cycle 亲手做（它是零磁盘片，slot 2/3 有余量）。
+
+### §275.2 顺位更新（**在飞实为 2/3，不是 3/3**）
+
+- `LUM-2592`（T1-6-G1）：**活物**，⑨ db-mode 回放正在跑，已 2 个提交（`f26b64d4` + `3ab1a06a`），porcelain 空。
+- `LUM-2604`（T1-6-J）：**已派未起跑**，停在 `todo`，证据与验收条件齐备。
+- `cycle`（本片）：收割 + 门读 + 记录，已完成。
+⇒ **下一轮开局动作（固定）**：① 重试 `LUM-2604` 起跑，60 秒无 workdir 即接手；② 判活 `LUM-2592` 并收割其 PR。
