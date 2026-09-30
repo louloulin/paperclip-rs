@@ -68,12 +68,15 @@ pub mod device_shape;
 mod fixture;
 pub mod harness;
 pub mod pat_token;
+pub mod precondition;
 mod replay;
 pub mod report;
 mod request_plan;
 pub mod requirements;
 pub mod seed;
 pub mod seed_catalog;
+pub mod seed_symbols;
+pub mod task_token;
 pub mod upstream_facts;
 mod verdict;
 

@@ -51,7 +51,7 @@
 //! 要种几个分组由 [`groups_for`] 从 fixture 面算出 —— **只有**真的引用了那五类符号
 //! 的测试才被种，不是给 300 个测试各建一套。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
 use axum::body::{to_bytes, Body};
@@ -63,22 +63,13 @@ use uuid::Uuid;
 
 use crate::Fixture;
 
+// 分组判据（符号扫描）搬到 `crate::seed_symbols`：门 ⑩ 的 800 行硬上限。
+// 这里 re-export 是为了让 `seed::GROUP_SYMBOLS` / `seed::groups_for` 的对外路径不变。
+pub use crate::seed_symbols::{groups_for, groups_referencing, GROUP_SYMBOLS};
+
 /// 兜底分组的键。它不是任何测试的名字，只用来承载 `Bindings` 的默认 workspace /
 /// 默认令牌 —— 不引用任何种子符号的 fixture 从不落到别的分支上。
 pub const DEFAULT_GROUP: &str = "";
-
-/// 会让一个分组需要**自己那套行**的符号：四类实体，加上 workspace。
-///
-/// `$testWorkspaceID` 与那四类的解析面不同（它由 `Bindings` 直接持有，不是本文件种
-/// 出来的行），但**它同样是「被 `DELETE` 摧毁的共享行」** —— C 桶里 5 条
-/// `workspaces/…` 就是它，所以它也必须按组分。
-pub const GROUP_SYMBOLS: [&str; 5] = [
-    "$testAgentID",
-    "$testIssueID",
-    "$testChatSessionID",
-    "$testTaskID",
-    "$testWorkspaceID",
-];
 
 /// 一个[分组](groups_for)独占的那几行。
 ///
@@ -92,6 +83,9 @@ pub struct GroupSeed {
     pub issue: Uuid,
     pub chat_session: Uuid,
     pub task: Uuid,
+    /// 该分组**自己的**任务令牌行（`agent` 档身份那枚 `X-Task-ID` 指向的那一行，
+    /// 见 [`crate::task_token`]）。没声明的分组是 `None`。
+    pub task_token_task: Option<Uuid>,
 }
 
 impl std::fmt::Debug for GroupSeed {
@@ -103,6 +97,7 @@ impl std::fmt::Debug for GroupSeed {
             .field("issue", &self.issue)
             .field("chat_session", &self.chat_session)
             .field("task", &self.task)
+            .field("task_token_task", &self.task_token_task)
             .finish()
     }
 }
@@ -189,6 +184,16 @@ impl Seed {
             .map(|rows| rows.daemon_token.as_str())
     }
 
+    /// 该分组的**任务令牌行**（`agent` 档身份那枚 `X-Task-ID` 该指向哪一行）。
+    ///
+    /// 与 [`Self::get`] 的 `$testTaskID` 是**两行**：后者是 chat 发送面顺带派出来的那条
+    /// 任务（恒带会话），而这一行是 `crate::task_token` 按上游当时的形态单独建的
+    /// （`TestGetChatHistory_NonChatTask` 那一组要的是 `chat_session_id IS NULL` 的那行）。
+    #[must_use]
+    pub fn task_token_task(&self, group: &str) -> Option<Uuid> {
+        self.groups.get(group).and_then(|rows| rows.task_token_task)
+    }
+
     /// 种了几个分组（含兜底的那一个）。
     #[must_use]
     pub fn group_count(&self) -> usize {
@@ -234,93 +239,6 @@ impl Seed {
 #[must_use]
 pub fn group_of(fx: &Fixture) -> &str {
     &fx.source.test
-}
-
-/// 需要**自己一套行**的分组键，按字典序。
-///
-/// 判据是「这条 fixture 在 [`crate::plan`] 会解析到的位置里引用了 [`GROUP_SYMBOLS`]
-/// 之一」。刻意扫得比 `plan()` 宽（连 `body` 与 `path` 一起扫）：多算一个分组只会
-/// 多建一套行，少算一个分组则会让那批 fixture 静默变成 `unbound symbol` →
-/// `unevaluable`（§205.5 纪律：不可判定与判定为过在总数里长得一样）。
-#[must_use]
-pub fn groups_for(fixtures: &[Fixture]) -> Vec<String> {
-    let mut out: BTreeSet<String> = BTreeSet::new();
-    for fx in fixtures {
-        let used = referenced_symbols(fx);
-        if GROUP_SYMBOLS.iter().any(|sym| used.contains(*sym)) {
-            out.insert(fx.source.test.clone());
-        }
-    }
-    out.into_iter().collect()
-}
-
-/// 引用了某个符号的分组键集合（[`groups_for`] 的单符号版本）。
-///
-/// 只给 [`seed`] 的**前置守卫**用：解绑形态会连带取消在飞任务，而「声明了该形态又
-/// 引用 `$testTaskID`」的分组会因此静默少掉一行任务 —— 那比明确报错糟得多。
-#[must_use]
-pub fn groups_referencing(fixtures: &[Fixture], symbol: &str) -> BTreeSet<String> {
-    fixtures
-        .iter()
-        .filter(|fx| referenced_symbols(fx).contains(symbol))
-        .map(|fx| fx.source.test.clone())
-        .collect()
-}
-
-/// `plan()` 会送去 [`crate::Bindings::resolve`] 的全部取值位置。
-fn referenced_symbols(fx: &Fixture) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    collect_symbols(&fx.path, &mut out);
-    for raw in fx.path_params.values() {
-        collect_symbols(raw, &mut out);
-    }
-    for raw in fx.query.values() {
-        collect_symbols(raw, &mut out);
-    }
-    for raw in fx.headers.values() {
-        collect_symbols(raw, &mut out);
-    }
-    for raw in fx.actor.upstream_identity.values() {
-        collect_symbols(raw, &mut out);
-    }
-    collect_json_symbols(fx.body.as_ref(), &mut out);
-    out
-}
-
-/// 扫出一个字符串里所有 `$name` 形态的符号（`$` + `[A-Za-z0-9_]*`）。
-fn collect_symbols(raw: &str, out: &mut BTreeSet<String>) {
-    let bytes = raw.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'$' {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        i += 1;
-        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-            i += 1;
-        }
-        out.insert(raw[start..i].to_string());
-    }
-}
-
-/// `body` 是任意 JSON：逐层走到字符串上再扫符号。
-fn collect_json_symbols(value: Option<&serde_json::Value>, out: &mut BTreeSet<String>) {
-    match value {
-        Some(serde_json::Value::String(s)) => collect_symbols(s, out),
-        Some(serde_json::Value::Array(items)) => {
-            for item in items {
-                collect_json_symbols(Some(item), out);
-            }
-        }
-        Some(serde_json::Value::Object(map)) => {
-            for item in map.values() {
-                collect_json_symbols(Some(item), out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// 给 `groups` 里每个分组各建一套行（workspace + `mdt_` 令牌 + 四行实体）。
@@ -397,6 +315,13 @@ async fn seed_group(
     let issue = seed_issue(router, user, workspace_id).await?;
     let chat_session = seed_chat_session(router, user, workspace_id, agent).await?;
     let task = seed_task(router, user, workspace_id, agent, chat_session).await?;
+    // 任务令牌装置（`§297`）：`agent` 档身份的那一枚 `X-Task-ID` 必须在库里真有那一行，
+    // 且形态要与上游那条测试当时一致（带会话 / 不是 chat 任务）。声明与理由见
+    // `crate::task_token`；排在 `seed_task` 之后是因为它依赖该分组自己的 agent / 会话。
+    let task_token_task =
+        crate::task_token::seed_for_group(db, group, agent, runtime_id, chat_session)
+            .await
+            .with_context(|| format!("seed the acting task rows for seed group {group:?}"))?;
     // 装置形态：在**通用世界之上**再改形态，不是从零搭 —— 顺序是语义（见
     // [`crate::device_shape`] 模块文档的「顺序在这里是语义」）。
     crate::device_shape::apply(router, user, workspace_id, agent, runtime_id, group)
@@ -423,6 +348,7 @@ async fn seed_group(
         issue,
         chat_session,
         task,
+        task_token_task,
     })
 }
 
@@ -684,28 +610,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// 造一条最小 fixture：只填 `groups_for` 会看的那些字段，以及 `Fixture::verify`
-    /// 会看的那几个。用它来验分组键，不必依赖 `contracts/golden/**` 的具体内容。
-    fn fx(test: &str, path_params: &[(&str, &str)]) -> Fixture {
-        let mut value = json!({
-            "schema_version": crate::SCHEMA_VERSION,
-            "id": format!("dom/{test}@a.go:1#1"),
-            "method": "GET",
-            "path": "/api/things/{id}",
-            "actor": { "kind": "anonymous" },
-            "expect": { "status": 200 },
-            "source": { "file": "a.go", "line": 1, "test": test, "site": "handler" },
-        });
-        if !path_params.is_empty() {
-            let mut map = serde_json::Map::new();
-            for (k, v) in path_params {
-                map.insert((*k).to_string(), json!(v));
-            }
-            value["path_params"] = serde_json::Value::Object(map);
-        }
-        serde_json::from_value(value).expect("minimal fixture")
-    }
-
     #[test]
     fn every_emitted_symbol_maps_to_exactly_one_seed_field() {
         // 承重：抽取器 `SEEDED_COLLECTIONS` 发出的符号必须一个不漏地在这里落到字段上。
@@ -722,6 +626,7 @@ mod tests {
                 issue: Uuid::from_u128(2),
                 chat_session: Uuid::from_u128(3),
                 task: Uuid::from_u128(4),
+                task_token_task: None,
             },
         );
         for sym in Seed::SYMBOLS {
@@ -735,31 +640,6 @@ mod tests {
         assert_eq!(seed.get("TestNotSeeded", "$testIssueID"), None);
         assert_eq!(seed.workspace("TestNotSeeded"), None);
         assert_eq!(seed.group_count(), 1);
-    }
-
-    #[test]
-    fn groups_for_picks_exactly_the_tests_that_reference_a_group_symbol() {
-        // 承重：分组多算一个只是多建一套行，少算一个会让那批 fixture 静默变 unevaluable。
-        // 所以这条钉住**两个方向**：引用了的必须进，没引用的必须不进。
-        let fixtures = vec![
-            fx("TestUsesIssue", &[("id", "$testIssueID")]),
-            fx("TestUsesIssueAgain", &[("id", "$testIssueID")]),
-            fx("TestUsesWorkspace", &[("id", "$testWorkspaceID")]),
-            fx("TestUsesTaskEmbedded", &[("id", "api/$testTaskID/tail")]),
-            fx("TestUsesNothing", &[("id", "not-a-uuid")]),
-        ];
-        assert_eq!(
-            groups_for(&fixtures),
-            vec![
-                "TestUsesIssue".to_string(),
-                "TestUsesIssueAgain".to_string(),
-                "TestUsesTaskEmbedded".to_string(),
-                "TestUsesWorkspace".to_string(),
-            ]
-        );
-        // 分组键是 `source.test` 而不是 `id`：同一条上游测试的多次请求（CRUD 链）必须
-        // 落到**同一组**，否则 delete-then-get 会变成 get-200。
-        assert_eq!(group_of(&fixtures[0]), "TestUsesIssue");
     }
 
     #[test]

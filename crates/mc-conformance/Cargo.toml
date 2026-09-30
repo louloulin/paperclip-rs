@@ -31,3 +31,7 @@ mc-feature-flags = { path = "../mc-feature-flags" }
 mc-http = { path = "../mc-http" }
 mc-realtime = { path = "../mc-realtime" }
 mc-repos = { path = "../mc-repos" }
+# `§297`：任务令牌装置要用 `TaskRepo::create_task` 建「主键由装置指定、
+# `chat_session_id` 可空」的那一行任务（见 `task_token.rs` 模块头），
+# 而 `NewTask::budget` 的类型来自 mc-task。纯路径依赖、零新增外部包。
+mc-task = { path = "../mc-task" }

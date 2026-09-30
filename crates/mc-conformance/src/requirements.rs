@@ -93,12 +93,20 @@ pub const REQUIREMENTS: &[Requirement] = &[
                  has no pool to register into and cannot decide it",
     },
     Requirement {
+        // `§297` 实测回退：曾试过把它改成 `[Database]` 并在 `plan` 里注入真会话，
+        // 结果那条 fixture 落到 **404 空 body（unmounted）** —— `/users/me` 这条路由
+        // 在本仓**根本没挂**（⑦ `local_only` 面之外的上游路由）。那不是装置能补的：
+        // 补它要新增一条注册路由，而 ⑦ `known_gap = 0` ⇒ 本仓不许加。
+        // 保留这条实测记录，是为了不让下一个人再走一遍「改前提表 + 改 plan」才发现
+        // 真正的缺口在路由面。
         id: "browser_session_cookie",
         satisfied_by: &[],
         detail: "upstream authenticated this request with a signed session cookie / JWT through \
-                 middleware.Auth, which is not a header the extractor can replay; this repo's session \
-                 middleware takes X-Multica-Session, and forging a cookie would assert nothing about \
-                 this repo",
+                 middleware.Auth, which is not a header the extractor can replay; this repo's \
+                 session middleware takes X-Multica-Session. §297 measured the alternative \
+                 (inject the seeded user's real session): the fixture then lands on an \
+                 `unmounted` 404 because `/users/me` is not routed in this repo at all — the gap \
+                 is the route, not the credential",
     },
     Requirement {
         id: "db_fault_injection",
@@ -182,9 +190,27 @@ pub fn requirement(id: &str) -> Option<&'static Requirement> {
 /// [`actor_credential_detail`] 与 `crate::plan` 必须给出**同一个** `detail`
 /// （不是「`supports` 松口、由 `plan` 的 `Err` 兜底」）。
 ///
-/// 🔴 修法不许是「把 `satisfied_by` 放宽」：给 `ActorKind::Agent` 补上 `Tier::Database`
-/// 会把 13 条 `agent` 的 `unevaluable` 变成**假 `mismatch`** —— 这一档没有签发面，
-/// 回放只能拿到 401/500，而那与「实现写错了」在报告里长得一样。
+/// 🔴 **本条在 `§297` 被改写了，先读完再改。** 原文写的是「修法不许是把 `satisfied_by`
+/// 放宽」：`ActorKind::Agent` 当时两层都是 `&[]`，因为本仓**没有任何解析面**，
+/// 而放宽它会把 11 条 `unevaluable` 变成**假 `mismatch`** —— 那一档拿不到凭据，
+/// 回放只能拿到 401/500，与「实现写错了」在报告里长得一样。
+///
+/// `§297` 的实测结论是：那个前提**错了**，不是修法错了。agent 档的凭据是**任务作用域
+/// 令牌**（`X-Actor-Source: task_token` + `X-Task-ID`），而本仓**有**解析面 ——
+/// `routes/chat/task/history.rs::chat_history_scope` 逐字复刻了上游那道 actor 闸，
+/// 它把 `X-Task-ID` 当主键去查 `agent_task_queue`。缺的不是能力，是**那一行**：
+/// 装置用 `TaskRepo::create_task`（主键由装置指定）把它种出来，见 `crate::task_token`。
+///
+/// 所以放宽的**前提条件**仍然成立，只是当初的判据没看见解析面：
+/// * 签发面**真的存在**（不是伪造一个注定 401 的头）；
+/// * `crate::plan` 的 `Agent` 分支**真的**发得出请求（`credential_table_is_symmetric_
+/// with_the_replay_planner` 继续双向钉着这一条）；
+/// * 🔴 **仍有一条真实落差没补**：本仓没有上游 `resolveActor` 那一面，
+///   所以这一族 fixture 断言的只是状态码。登记在 `crate::task_token` 模块头，
+///   补它要动 `mc-http`（本片写集之外）。
+///
+/// 仍然**不许**做的事没变：给一个**没有**解析面的档放宽 `satisfied_by`。
+/// 同一条判断对 [`ActorKind::System`] 继续成立（它恒 `&[]`）。
 ///
 /// 🔴 同一句话对 [`ActorKind::Token`] **只成立到 `LUM-2552` 为止**：那一档当时是「枚举
 /// 里有、注释写明了语义、凭据表也有条目」的**死变体**（366 条 golden 里 0 条用它），
@@ -206,10 +232,18 @@ pub const ACTOR_CREDENTIALS: &[ActorCredential] = &[
                  so there is nothing to resolve X-User-ID against",
     },
     ActorCredential {
+        // `§297`：这一档的凭据是**任务作用域令牌**（`X-Actor-Source: task_token` +
+        // `X-Task-ID`），本仓的解析面在 `routes/chat/task/history.rs::chat_history_scope`
+        // —— 它按主键查 `agent_task_queue`，所以装置只要把那一行种出来（`crate::task_token`）
+        // 就能**真的**判这一族，而不是发一个注定 401 的假头。
+        // stateless 层无池 ⇒ 既种不出也查不了 ⇒ 仍只登记 Database。
         kind: ActorKind::Agent,
-        satisfied_by: &[],
-        detail: "actor kind Agent needs a real credential; this runner does not fabricate one — \
-                 the database tier does not mint one either",
+        satisfied_by: &[Tier::Database],
+        detail: "agent identity is a task-scoped token: the database tier seeds the \
+                 `agent_task_queue` row the fixture's `X-Task-ID` names (crate::task_token) and \
+                 forwards `X-Actor-Source` verbatim, so the handler's own actor gate decides; \
+                 the stateless tier has no pool to seed or look the row up in. NOTE: this repo \
+                 has no `resolveActor` validation, so that family only asserts status codes",
     },
     ActorCredential {
         kind: ActorKind::Token,
@@ -329,7 +363,12 @@ pub fn missing_requirements(fx: &Fixture, tier: Tier) -> Result<Vec<&'static str
     for id in fx.requirement_ids() {
         match requirement(id) {
             None => return Err(format!("{}: unknown requirement id {id:?}", fx.id)),
-            Some(r) if !r.satisfied_by.contains(&tier) => out.push(r.id),
+            Some(r) if !r.satisfied_by.contains(&tier) => {
+                if crate::precondition::is_naturally_reproduced(&fx.source.test, r.id) {
+                    continue;
+                }
+                out.push(r.id);
+            }
             Some(_) => {}
         }
     }
@@ -483,10 +522,28 @@ mod tests {
             assert!(!missing_st.is_empty(), "{}: stateless 层不应判定它", fx.id);
         }
         // 防止「缺口只是从 daemon_token 换成了别的 id」这种平移被当成进展。
+        //
+        // 🔴 `§297`：仍不可判定的那几条**从表里数**，不写死数字 —— 因为
+        // `NATURALLY_REPRODUCED` 逐场景地放行了一部分（那条「查不到行 ⇒ 404」在真池
+        // 形态下自然复现），而那条「瞬时 DB 错误 ⇒ 500」仍不可判定。写死 `2` 会在
+        // 有人合法登记新一行时红，而那正是这张表该做的事。
+        let still_blocked = daemon_token_fixtures()
+            .iter()
+            .filter(|fx| {
+                !missing_requirements(fx, Tier::Database)
+                    .expect("known requirement id")
+                    .is_empty()
+            })
+            .count();
         assert_eq!(
             only_daemon_token,
-            daemon_token_fixtures().len() - 2,
-            "预期只有那 2 条与 db_fault_injection 并存的仍不可判定"
+            daemon_token_fixtures().len() - still_blocked,
+            "只有「一条前提都不缺」的那些才算被 database 层判定"
+        );
+        assert!(
+            still_blocked > 0,
+            "`db_fault_injection` 若一条都不再阻塞，那这张表就等于按 id 放宽了 \
+             `satisfied_by` —— 见 NATURALLY_REPRODUCED 的纪律段"
         );
     }
 

@@ -144,6 +144,19 @@ impl Bindings {
             .unwrap_or(self.workspace_id)
     }
 
+    /// **该分组**的任务令牌行（`agent` 档那枚 `X-Task-ID` 该指向哪一行）。
+    ///
+    /// 为什么要单独一个入口而不是把它登记成一个 `$test…` 符号：抽取器发出来的
+    /// `X-Task-ID` 是**逐字字面量**（借来的行 id，不是符号），而装置按分组各建一行
+    /// （主键全局唯一，12 个分组不可能共用一个字面量）。所以这里做的是一次**绑定**：
+    /// 「fixture 点名的那枚令牌 ⇒ 该分组装置真的种出来的那一行」。
+    /// 拿不到（stateless 层没种子 / 该分组没声明）时返回 `None`，由 `plan` 保留
+    /// 字面量原样 —— 那样得到的是 handler 自己判出来的 404，而不是装置编的。
+    #[must_use]
+    pub fn task_token_task_for(&self, group: &str) -> Option<Uuid> {
+        self.seed.as_ref().and_then(|s| s.task_token_task(group))
+    }
+
     /// **该分组**的 `mdt_` 明文。
     ///
     /// 令牌按分组而不是全局一枚：`daemon_token.workspace_id` 有指向 workspace 的外键，
@@ -235,6 +248,7 @@ mod tests {
                     issue: Uuid::from_u128(10),
                     chat_session: Uuid::from_u128(11),
                     task: Uuid::from_u128(12),
+                    task_token_task: None,
                 },
             ),
         )
@@ -331,6 +345,7 @@ mod tests {
                 issue: Uuid::from_u128(10),
                 chat_session: Uuid::from_u128(11),
                 task: Uuid::from_u128(12),
+                task_token_task: None,
             },
         );
         let b = Bindings::with_seeded(
