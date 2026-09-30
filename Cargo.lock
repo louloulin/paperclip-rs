@@ -2658,6 +2658,7 @@ dependencies = [
  "mc-http",
  "mc-realtime",
  "mc-repos",
+ "mc-task",
  "serde",
  "serde_json",
  "sqlx",

@@ -29166,6 +29166,136 @@ scripts/section_alloc_check.py
 **起手 base `c8172327` 逐字命中，收尾时 base 已前进到 `87bf702d`**（§7 第三次撞上「收尾前 base 才前进」）。新 base 上 §296 仍空，但**最大号已从 295 跳到 298** ⇒ 本节的 §296 必须**排在 §298 之前**，台账行 296 同理排在 298 之前（`docs/37` 的 `## §` 单调 + 台账首列升序，是 `test_section_alloc_check.py::TestRealRepoInvariant` 钉着的**真仓库不变式**）。
 
 ⚠️ **本片自己踩的一个坑（已修）**：rebase 前我为了暂存而先跑了 `git checkout -- scripts/`，把 `gates.sh` 与 `tests.manifest` 的改动**一并丢弃**了（只有未跟踪的新文件与 `ci.yml` 活下来）—— 是「改完必须当场重跑门」把它逮住的。rebase 后**三段读数与 31 个用例全部重跑**，不继承 rebase 前的任何读数。
+## §297 【`LUM-2627` / T1-6-P1】门 ⑨ `PRECONDITION` **25 → 12**：`agent` 档身份的任务令牌装置（0 路由）＋ 🔴 承重：**「这条 fixture 点名的 id」不是「那一行的主键」**
+
+起手 base **`c8172327`**（`git rev-parse HEAD` 与 `git ls-remote origin feat/multica-rs-initial`
+当场对齐；`multica repo checkout` 不带 `--ref` 落 `main` 线这件事本仓已复现 29 次）。
+磁盘两次采样 **26G/26G**，5432 `online`。**0 路由** ⇒ ⑦ 的八个数逐字不变。
+
+### §297.1 起手读数：把「25」变成清单（`scripts/t1_6_taxonomy.py`，判据只读）
+
+`PRECONDITION 25` 按**机制**拆开是 **6 组**，不是 25 个开关（承重三的实测结论）：
+
+| 组 | 条数 | 机制 | 本片 |
+|---|---|---|---|
+| **A `agent` 档身份** | **12** | 请求发不出来（`plan` 报「不伪造凭据」）⇒ **根本没进判定** | ✅ **全做完** |
+| B `cloud_runtime_stub` | 5 | 期望值是**假 cloud proxy 录下来的应答** | ❌ 见 §297.4 |
+| C `db_fault_injection`（daemon 404） | 1 | mockDB 的 `ErrNoRows` 在真池形态下**自然复现** | ✅ |
+| D `db_fault_injection` + `bare_handler_no_wiring`（daemon 500 / ws 500） | 2 | 裸 `&Handler{}` 的「没接线」状态在本仓**不存在** | ❌ |
+| E `external_oauth` / `browser_session_cookie` / `webhook_rate_limiter_denying` | 3 | OAuth 往返 / cookie / 拒绝一切的限流器替身 | ❌（其中一条**试过并撤回**，见 §297.4） |
+| F 抽取器字面量面（`agents/TestUpdateAgent_…`、`comments/TestRemoveReaction…`） | 2 | 路径里逐字是 `a runtime that this profile does not provide` | ❌ 属**契约面**，本片写集外 |
+
+族判据的第一刀是 `outcome` 而不是 `requires`（`t1_6_taxonomy.py` 模块头）——
+所以 A 组那 12 条**在装置面**，不在任何 handler；派给 handler 的人会白干。
+
+### §297.2 A 组：`agent` 档的凭据**在本仓是有解析面的**（本片唯一的认知修正）
+
+那 12 条里有 **10 条**打 `/api/chat/history` 与 `/api/chat/thread`。上游的凭据是**任务作用域
+令牌**（`X-Actor-Source: task_token` + `X-Task-ID`，`chat_history_test.go:104-110`
+`taskActorReq` 的注释逐字写着 "as the Auth middleware would leave it for a mat_ task token"）。
+
+🔴 **而本仓把同一道门逐字复刻了**：`routes/chat/task/history.rs::chat_history_scope`
+（403 非任务令牌 → 400 缺/坏 id → 404 任务不存在 → 400 不是 chat 任务 → 404 会话不存在
+→ 403 workspace 不匹配 → 404 代际不存在），它把 `X-Task-ID` 当**主键**去查 `agent_task_queue`。
+
+⇒ **`requirements.rs` 里那条「`Agent` 档没有解析面，修法不许是放宽 `satisfied_by`」的前提是错的**
+（不是修法错）。缺的不是能力，是**那一行**。本片：
+
+1. **新增 `crates/mc-conformance/src/task_token.rs`（声明 + 兑现）**：
+   * `TASK_TOKEN_TASKS` 逐条登记 12 个分组：点名的是哪个 `X-Task-ID`、它当时**是不是**
+     一个 chat 任务（上游 `newChatHistoryTask(t, chatSession bool)` 那个 bool）、
+     上游 `文件:行` 证据。判据是「上游那条测试当时处于什么世界」，**一个字节都不读 `expect`**。
+   * `seed_for_group` 用 `TaskRepo::create_task` 建那一行。**这是本文件唯一的非路由种子**，
+     理由写死：`mc-http` 里唯一会插 `agent_task_queue` 的路由（chat 发送面）**恒**写
+     `chat_session_id`，建不出「不是 chat 任务」那一行 —— 与 `seed_runtime` 同一类例外
+     （缺的不是仓储能力，是把这一面暴露成一条路由；而 ⑦ `known_gap = 0` ⇒ 本仓不许加路由）。
+2. **`Bindings::task_token_task_for` + `plan` 的 `Agent` 分支**：把那枚**字面量**绑到
+   该分组真种出来的那一行；其余身份头（`X-Actor-Source` / `X-Agent-ID` / `X-Workspace-ID`）
+   **原样转发** —— 那道 actor 闸必须是**被 handler 判出来的**（`TestGetChatHistory_RejectsForgedTaskID`
+   的 403 就是它判的，装置替它答就等于把那条洗成绿）。写面另按 session 成员身份注入。
+3. **`ACTOR_CREDENTIALS[Agent].satisfied_by = [Database]`**，`plan` 的 Agent 分支同步放行 ——
+   `credential_table_is_symmetric_with_the_replay_planner` 继续**双向**钉着这两者。
+
+### §297.3 🔴 承重一：**fixture 点名的 id 不是那一行的主键 —— 主键全局唯一，种子必须按分组**
+
+第一版照字面把 fixture 里的 `5c57b65b-ee7a-4603-a72d-b659c34a1dc3` 当主键种下去，
+第一次回放就炸：
+
+```
+seed the acting task rows for seed group "TestGetChatChannelHistory_Success":
+seed the acting task row for group "TestGetChatChannelHistory_Success":
+conflict: 该 issue/agent/thread 上已有未决任务（部分唯一索引）
+```
+
+那 12 条 fixture 的 `X-Task-ID` **逐字相同**（抽取器的 `package_literals` 是全仓扫描 +
+`setdefault`，同一个 UUID 被借给全部分组 —— `seed.rs` 模块头记的同一个病）。
+而种子的粒度**必须**回到「每分组一行」（否则一条 `DELETE` 会摧毁别的分组）⇒
+12 个分组要 12 行，主键却只有一个。
+
+⇒ 修法是**绑定**而不是**改主键**：装置铸造主键，回放时把那枚字面量绑到该分组自己那一行
+（`Bindings::task_token_task_for`）。这与抽取器侧 `extract_borrowed_ids.seeded_symbol_for`
+把借来的行 id 判成 `$test<Kind>ID` 是**同一件事的两端**：字面量不是行 id，
+装置得把它绑到它真的种出来的那一行。**拿不到绑定时保留字面量**（得到的是 handler 自己判的
+404），装置不编、也不静默换一个 id。
+
+### §297.4 逐条：哪些没做，以及**为什么不该由本片修**
+
+* **B 组 `cloud_runtime_stub`（5 条）** —— 期望值是假 proxy **录下来的应答**，装置能造的
+  只有一个中性的 stub：它要么回一个通用体（于是 5 条变成 5 条 `mismatch`，而验收要求
+  `mismatch` 不增），要么**按 fixture 逐条调**（那就是 `requirements.rs` 模块头禁止的
+  「造个假货去迎合断言」）。⇒ 本片**不做**，登记为待裁。
+* **D 组（2 条）** —— 期望的是裸 `&Handler{}` 的「协作方从未构造」状态；回放器驱动的永远是
+  完整装配的 router，那个状态在本仓**不存在**。同组的「瞬时 DB 错误 ⇒ 500」真池也给不出。
+* **E 组（3 条）** —— OAuth 往返 / cookie / 限流器替身。**其中 `browser_session_cookie`
+  本片试过并撤回**：把它改成 `[Database]` 并在 `plan` 里注入**真的那个种子用户的会话**之后，
+  那条 fixture 进了判定，然后落到 **`unmounted`（404 空 body）** ——
+  `/users/me` 在本仓**根本没挂**。⇒ 缺口在**路由面**，不在凭据；
+  而 ⑦ `known_gap = 0` ⇒ 本仓不许新增注册路由。那次实测的注释留在了代码里（`plan` 的
+  `Anonymous` 分支与 `REQUIREMENTS` 的 `browser_session_cookie`），免得下一个人再走一遍。
+* **F 组（2 条）** —— 路径里逐字是 `a runtime that this profile does not provide`
+  （抽取器把一句 Go 错误信息写进了 `path`）。修法在**契约/抽取面**，本片写集外，
+  且 `contracts/golden/**` 是禁写的。⇒ **不改**。
+
+### §297.5 承重二：`db_fault_injection` 是**按场景**不成立，不是按 id 不成立
+
+`db_fault_injection.satisfied_by = &[]` 的理由是「真池没法被要求按需失败」——
+这句话对**「瞬时 DB 错误 ⇒ 500」**完全成立。但同一个 id 下还有一条：mockDB 返回
+`pgx.ErrNoRows`、期望 **404**，而「这一行查不到」在真池形态下**自然发生**，
+本仓的 handler 会照上游 `GetTaskStatus` 的判定顺序回同一个 404。
+
+🔴 若把整个 id 放宽，那条 500 会一起进判定并变成一条**假 `mismatch`**。
+⇒ 新增 `crates/mc-conformance/src/precondition.rs::NATURALLY_REPRODUCED`，
+按 **(分组, 前提)** 登记而不是动 `REQUIREMENTS`，并钉住**两个方向**：
+每行必须点名一条真实 fixture + 写清「真池里的哪个自然形态顶上了那个替身」；
+**同一个 id 下别的 fixture 必须仍不可判定**（`the_override_does_not_silently_widen_the_requirement`
+—— 没有这条，这张表就是「按 id 放宽」的同义词）。
+
+### §297.6 承重三：本仓与上游的**残留落差**（装置补不了，写在这里以免被当成等价）
+
+上游 `resolveActor` 会校验 (agent, task) 这一对之后才信任 `X-Task-ID`；本仓**没有**这一面
+（`/api/issues` 只认 session 成员身份）⇒ `issues/TestCreateIssue_AgentCreate_StampsActingTaskOrigin`
+被放行之后，**它断言的仍然只是状态码**，测不出「少了一道 agent 身份校验」。
+补它要动 `mc-http`，本片写集之外。同族：渠道阅读器（M7）未补 ⇒ 渠道那几条只能判到 200 这一层。
+
+### §297.7 门读数（base `c8172327`，全部当场跑）
+
+- ⑨ `--db-url`：`PRECONDITION 25 → 12`；`pass 307 → 320`、`mismatch 32 → 32`（**不增**）、
+  `unmounted 1 → 1`、`unevaluable 25 → 12`；`bad_total`（`365 − pass`）`58 → 45`，
+  对账式 `45 == 58 − 13` ✔（Δpass = 13 = 12 条 agent + 1 条 daemon 404）。
+  其余族：`UNMOUNTED 1 / AUTH_401 2 / AUTHZ_404 0 / SEED_404 13 / REALM_DIFF 17` **逐字不变**。
+- ⑨ `--no-db --check`：**起手 base 就是红的**（`committed unevaluable 13 / fresh 12`）。
+  实测**与本片无关**：base 上 `git stash` 后原样复跑得到**逐字相同**的差异 ——
+  `agents/TestGetAgent_RejectsForgedAgentIDHeader@…:520#13` 的 `actor` 在语料里已是
+  `member`，而 `report.json` 还记着 `agent`（有人改了 fixture 的 actor 档位没刷新报告）。
+  按门自己的判词「重新运行 `--write` 并解释差异」处理，**只改了 `by_actor` 的两个数字**
+  （`agent 13→12` / `member 285→286`），`totals` 逐字不变。
+- ⑦ 八个数逐字不变：`456 / 546 / 546 / 455 real + 1 placeholder = 456 / gap 0 /
+  unclaimed 0 / regression 0 / local_only 8`（本片 0 路由）。
+- ⑩ `0 violation`：**拆了两个文件**才过 —— `requirements.rs` 834 → 750（新表搬进
+  `precondition.rs`）、`seed.rs` 823 → 678（符号扫描搬进 `seed_symbols.rs`，按「判据 vs 执行」划）。
+  对外路径逐字不变（`seed` re-export）。`file_size_baseline.tsv` 未动。
+- ⑬ `sections=226 numbers=225 ledger=225 defects=0`。
+
 ## §298 【2026-09-30 14:30 cycle / `LUM-2625`】收割 **2 片**（#197 + #198）＋ 🔴 承重：**「每片单独绿」不蕴含「合起来绿」—— 位置是跨片语义**
 
 ### §298.0 收割

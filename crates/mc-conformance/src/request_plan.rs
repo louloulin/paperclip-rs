@@ -47,6 +47,9 @@ impl RequestPlan {
 /// 才能让同一个 `member` fixture 同时覆盖这两条链路。
 const SESSION_HEADER: &str = "x-multica-session";
 const DEV_USER_HEADER: &str = "x-multica-user-id";
+/// `agent` 档身份的任务令牌头（上游 `taskActorReq`；本仓解析面见
+/// `routes/chat/task/history.rs::chat_history_scope`）。
+const TASK_ID_HEADER: &str = "X-Task-ID";
 
 /// 把 fixture 变成一次真实请求。`Err` ⇒ 这次回放是 `unevaluable`（附原因）。
 ///
@@ -98,6 +101,12 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
 
     let mut identity = fx.actor.upstream_identity.clone();
     match fx.actor.kind {
+        // 🔴 `§297` 实测回退：这里曾有一段「`browser_session_cookie` ⇒ 注入种子用户的真
+        // 会话」的注入（与 `Agent` 分支同形）。它让那条 fixture 进了判定，**然后落到
+        // `unmounted`**：`/users/me` 在本仓根本没挂。⇒ 注入本身无害也无用，真正的缺口在
+        // 路由面（而 ⑦ `known_gap = 0` ⇒ 本仓不许新增注册路由）。
+        // 保留这条注释是承重：没有它，下一个人会以为「agent 那族能注入，cookie 这族只是
+        // 忘了写」—— 而两者的差别在**路由是否存在**，不在凭据。
         ActorKind::Anonymous => {}
         ActorKind::Member => {
             let session = bindings.resolve(
@@ -107,14 +116,7 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
                     .as_deref()
                     .unwrap_or("$testUserID"),
             )?;
-            headers.push((
-                HeaderName::from_bytes(SESSION_HEADER.as_bytes()).unwrap(),
-                session.clone(),
-            ));
-            headers.push((
-                HeaderName::from_bytes(DEV_USER_HEADER.as_bytes()).unwrap(),
-                session,
-            ));
+            push_session_identity(&mut headers, session);
             notes.push("actor member: 以 X-Multica-Session + X-Multica-User-Id 注入身份".into());
         }
         // 令牌（`mk_pat_`）与 daemon 是**同一个形态**：上游确实把它放上了线
@@ -144,9 +146,45 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
                 "actor token: 以 Authorization: Bearer mk_pat_… 注入本次回放现场签发的身份".into(),
             );
         }
-        // agent 身份在本仓没有解析面（`X-Agent-ID` 只是上游的 context 注入）。
-        // 没有任何层有签发面的档：`supports` 已在它那一侧答了否。
-        ActorKind::Agent | ActorKind::System => {
+        // `§297`：agent 身份在本仓**有**解析面 —— 任务作用域令牌
+        // （`X-Actor-Source: task_token` + `X-Task-ID`，上游 `taskActorReq`），
+        // 解析面在 `routes/chat/task/history.rs::chat_history_scope`，它会去查
+        // `agent_task_queue`。所以这一档要做的不是「伪造一枚凭据」，而是
+        // （a）让 `X-Task-ID` 指向**本仓种出来的那一行**（`crate::task_token`），
+        // （b）把上游逐字写下的其余身份头（`X-Actor-Source` / `X-Agent-ID` /
+        // `X-Workspace-ID`）原样转发 —— 那道 actor 闸必须是**被 handler 判出来的**，
+        // 装置替它答了就等于把 `TestGetChatHistory_RejectsForgedTaskID` 的 403 洗成绿。
+        //
+        // `X-User-ID` 走与 `member` 同一套装配：写面（`POST /api/issues` 等）在本仓
+        // 只认 session 成员身份。🔴 这是本仓与上游的一处**真实落差**，登记在
+        // `crate::task_token` 模块头：本仓没有 `resolveActor` 那一面，
+        // 所以这一族 fixture 断言的仍然只是状态码。
+        ActorKind::Agent => {
+            // `X-Task-ID` 在 fixture 里是**逐字字面量**（借来的行 id），而装置按分组
+            // 各建一行 —— 所以这里做一次绑定：点名的那枚令牌 ⇒ 该分组真种出来的那一行。
+            // 拿不到绑定就**保留字面量**：那时得到的是 handler 自己判出来的 404
+            // （装置不编，也不静默换一个 id）。
+            if let Some(task) = bindings.task_token_task_for(group) {
+                if let Some(slot) = identity.get_mut(TASK_ID_HEADER) {
+                    *slot = task.to_string();
+                    notes.push(format!(
+                        "actor agent: X-Task-ID 的字面量绑到本分组的任务令牌行 {task} \
+                         (crate::task_token)"
+                    ));
+                }
+            }
+            if let Some(raw) = identity.remove("X-User-ID") {
+                let session = bindings.resolve(group, &raw)?;
+                push_session_identity(&mut headers, session);
+            }
+            notes.push(
+                "actor agent: 任务作用域令牌原样转发（X-Task-ID 指向本仓种出的那一行任务，\
+                 见 crate::task_token）；写面另按 session 成员身份注入"
+                    .into(),
+            );
+        }
+        // system 是内部专用档，本仓没有任何解析面。
+        ActorKind::System => {
             let c = actor_credential(fx.actor.kind)?;
             return Err(if c.satisfied_by.is_empty() {
                 c.detail.to_string()
@@ -213,6 +251,16 @@ pub fn plan(fx: &Fixture, bindings: &Bindings) -> Result<RequestPlan, String> {
         body,
         notes,
     })
+}
+
+/// 把一个用户 id 装成**两个**身份头（本仓两条链路都要：见上面那个常量对的注释）。
+///
+/// 抽成函数是因为它现在有**两个**调用点（`member` 与 `§297` 的 `agent`），而两个常量
+/// 都是编译期已知的合法 header 名 ⇒ 用 [`HeaderName::from_static`] 而不是
+/// `from_bytes(..).unwrap()`：前者把「这个名字合法吗」变成编译期事实。
+fn push_session_identity(headers: &mut Vec<(HeaderName, String)>, session: String) {
+    headers.push((HeaderName::from_static(SESSION_HEADER), session.clone()));
+    headers.push((HeaderName::from_static(DEV_USER_HEADER), session));
 }
 
 /// 极简 percent-encode：只编码会破坏 URL 结构的字符（id 是 UUID，query 里可能出现
