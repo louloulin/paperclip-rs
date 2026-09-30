@@ -1,0 +1,30 @@
+# 门 ⑫ (`bash scripts/gates.sh --only scripts-tests`) 的**发现集合基线**。
+#
+# 判红判的是集合的**身份**，不是**规模**（LUM-2604 / T1-6-J，`docs/37 §276`）。
+# 门把 `find scripts -type d -name '__pycache__' -prune -o -type f -name 'test_*.py' -print`
+# 的**实际输出**与本文件逐行比对：多一个、少一个、改名、本文件里重复一行，**都判红**。
+#
+# 为什么需要它：在加本文件之前，门只有两条判红规则（集合非空 / 文件里 0 用例），
+# 两条都只看**当次发现到的集合**，没有任何东西把这个集合钉在基线上 ⇒
+# 丢文件、改名、把发现规则收窄，全都表现为「集合仍然非空」⇒ 绿。实测删掉下面那个
+# 56 用例的文件后，门仍是 `GATE_SCRIPTS_TESTS_EXIT=0` / `3 file(s)` / `PASS`。
+#
+# 将来**合法地**新增一个测试文件时怎么让门重新变绿：
+#   1. 把新文件的仓库相对路径按本文件的排序（`LC_ALL=C sort`）加进来；
+#   2. 与测试文件本身放在**同一个提交**里 —— 门是 CI 的必过项（`.github/workflows/ci.yml`
+#      调 `scripts/gates.sh --only scripts-tests`），所以「新文件 + 基线行」必须一起进，
+#      否则这个 PR 自己就红。
+#   3. 删除 / 改名同理：同步删改对应那一行（门会在 stderr 上逐条列出 `+`/`-` 差异）。
+#
+# 它为什么不退化成「散文提及」：本文件被门的**机器比对**读，而不是被人读 ——
+# 过期一天就红一天，没有「提到了但没人执行」的中间状态。这一点与 LUM-2602 那条
+# `assertIn("__pycache__", gates.sh 源码)` 相反：那条断言被门体里的一行**注释**满足了。
+#
+# 另有一条**独立**的第二来源：`scripts/test_gate_scripts_tests.py` 自己递归扫一遍
+# `scripts/**/test_*.py` 再与本文件比对（不经过 `gates.sh`）⇒ 门里的比对逻辑被删掉时
+# 它仍然红，本文件被删空时门仍然红。
+scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py
+scripts/test_extract_requirements.py
+scripts/test_gate_scripts_tests.py
+scripts/test_t1_6_precondition_taxonomy.py
+scripts/test_t1_6_taxonomy.py

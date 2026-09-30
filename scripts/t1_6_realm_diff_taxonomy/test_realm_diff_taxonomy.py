@@ -37,7 +37,6 @@ package never claims to know *why* it was a 404.
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -616,49 +615,17 @@ class TestPackageReexports(unittest.TestCase):
         self.assertFalse(hasattr(pkg_init, "BEHAVIOR_OWNER_FILES"))
 
 
-class TestGateDiscoveryAgrees(unittest.TestCase):
-    """🔴 本片的核心：让「测试写了但没门跑」这个家族在**结构上**不可复发。
-
-    门 ⑫（LUM-2600 / PR #183）用 `scripts/test_*.py` 这个 glob，而该模式**只匹配顶层** ——
-    所以本包此前 1053 行归因代码 0 测试、0 门执行。修法是把发现规则改成递归。
-    这几条判别式把「门的发现规则」与「测试文件的实际位置」钉在一起：
-    把门改回非递归 glob、或把本文件改名成不匹配 `test_*.py` 的形状 ⇒ 这里立刻红。
-    """
-
-    @staticmethod
-    def _discovered():
-        out = subprocess.run(
-            ["find", "scripts", "-type", "d", "-name", "__pycache__", "-prune", "-o",
-             "-type", "f", "-name", "test_*.py", "-print"],
-            cwd=REPO_ROOT, check=True, capture_output=True, text=True,
-        )
-        return sorted(line.strip() for line in out.stdout.splitlines() if line.strip())
-
-    def test_this_file_is_itself_discovered(self):
-        rel = os.path.relpath(PKG_DIR + "/test_realm_diff_taxonomy.py", REPO_ROOT)
-        self.assertIn(rel, self._discovered())
-
-    def test_the_old_top_level_glob_would_have_missed_this_file(self):
-        """承重一的证法：同一个文件在旧 glob 下不可见，在新规则下可见。"""
-        rel = os.path.relpath(__file__, REPO_ROOT)
-        top_level = {p for p in self._discovered() if os.path.dirname(p) == "scripts"}
-        self.assertIn(rel, self._discovered())
-        self.assertNotIn(rel, top_level)
-
-    def test_every_discovered_file_actually_declares_test_cases(self):
-        """`python3 <file>` 对一个没有用例的文件 **exit 0** ⇒ 「跑过了」与「验证过」不是一件事。"""
-        for rel in self._discovered():
-            with self.subTest(file=rel):
-                with open(os.path.join(REPO_ROOT, rel), encoding="utf-8") as fh:
-                    self.assertIn("unittest.TestCase", fh.read(), rel)
-
-    def test_gate_uses_the_recursive_discovery_rule(self):
-        """门 ⑫ 必须仍用递归发现（`find`）⇒ 有人改回 `scripts/test_*.py` 时这里红。"""
-        with open(os.path.join(REPO_ROOT, "scripts", "gates.sh"), encoding="utf-8") as fh:
-            gates = fh.read()
-        body = gates.split("run_scripts_tests_gate() {", 1)[1]
-        self.assertIn("find scripts", body)
-        self.assertIn("__pycache__", body)
+# 🔴 `TestGateDiscoveryAgrees`（4 条）原本就住在这里 —— **本片把它搬走了**
+# （LUM-2604 / T1-6-J，`docs/37 §276`）。
+#
+# 为什么必须搬：这个文件在**包里**，而门 ⑫ 的发现规则一旦收窄回顶层非递归 glob，
+# 它就不在集合里 ⇒ 这 4 条**自己也不跑** ⇒ 无人报警（自指、而且方向是错的 ——
+# PR #184 声称的三条可证伪判别式实测全绿）。
+#
+# 它们现在住在 `scripts/test_gate_scripts_tests.py`（**顶层**，非递归 glob 下仍可见，
+# 且在 `scripts/tests.manifest` 里），并且**不再断言 `gates.sh` 的源码文本**
+# （`assertIn("__pycache__", body)` 被门体里的一行**注释**满足过），而是断言门的
+# **实际输出**：`bash scripts/gates.sh --list-discovered` 与 `scripts/tests.manifest`。
 
 
 if __name__ == "__main__":

@@ -26304,3 +26304,156 @@ porcelain **空** ⇒ 抢救配方这次真的走完了。**活物禁动**，`av
   代价是「owner 栏与实际执行者不符」，**这个错比多烧一个 run 便宜**，已在该单留交接评论说明。
 - **下一轮开局**：若 `01a0f017` 仍 `running` 而无 workdir，**不要再改派**，
   改为 `multica agent tasks 3df1a3e8` 取读数后再判。
+
+## §276 【LUM-2604 / T1-6-J】门 ⑫ 的守门用例**自指失效** —— 判红条件是「集合非空」，而集合本身就是被检验的对象
+
+> 📌 **号段**：§275 是本 cycle 收割 PR #184（LUM-2602）的记录，由并行的那条切片持有；
+> 本片**不写 §275、不改任何既有段落**，只 append 本段。
+
+### §276.0 一句话
+
+门 ⑫ 原来的判红条件是「发现到的集合**非空**」，而**这个集合本身就是被检验的对象** ⇒
+丢文件、改名、把发现规则收窄，全都表现为「集合仍然非空」⇒ **绿**。
+本片把判红改成「集合与基线**逐行一致**」（判的是集合的**身份**，不是**规模**），
+并把守门检查搬到**不会被发现规则丢掉**的位置，且只断言门的**行为**、不断言它的源码文本。
+
+### §276.1 前提：本片当场复跑 base `dbfc0307` 上的**旧门**，三条判别式实测全绿（逐字）
+
+工单说 PR #184 自报的三条可证伪判别式「逐条复跑，三条全部为假」。本片没有转述，
+而是在**独立工作树**（`git worktree add --detach /tmp/… dbfc0307`）上把这三条**自己复跑了一遍**
+（不在交付树上跑；零编译、零真库、零磁盘；跑完 `git worktree remove`）：
+
+```
+$ bash scripts/gates.sh --only scripts-tests      # base dbfc0307 原状
+GATE_SCRIPTS_TESTS_EXIT=0
+  ⑫  scripts-tests         0     1s  PASS  (4 file(s))     # Ran 56 / 6 / 25 / 14 = 101
+```
+
+| # | 探针（装在 base 的旧门上） | 旧门的逐字读数 | 用例数 |
+|---|---|---|---|
+| ① | `find scripts … -print` 改回 `find scripts -maxdepth 1 -type f -name 'test_*.py' -print` | `GATE_SCRIPTS_TESTS_EXIT=0` / `PASS` / `3 file(s)` | 6+25+14 = **45** |
+| ② | 包内测试改名成 `scripts/t1_6_realm_diff_taxonomy/tests.py`（不匹配 `test_*.py`） | `GATE_SCRIPTS_TESTS_EXIT=0` / `PASS` / `3 file(s)` | **45** |
+| ③ | **整个删掉** `scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py` | `GATE_SCRIPTS_TESTS_EXIT=0` / `PASS` / `3 file(s)` | **45** |
+
+⚠️ 探针 ① 的旧门日志里，`TestGateDiscoveryAgrees` 出现 **0 次** —— 守门类住在被丢掉的那个
+文件里，**它自己也不跑**。⇒ 「一个门可以在少跑 56 个用例的情况下报绿」与根因二当场成立。
+
+### §276.2 根因（三条，都可机械复跑）
+
+**根因一：判红的条件是「集合非空」，而集合本身就是被检验的对象。**
+旧门的两条判红规则是「一个测试文件都没有 ⇒ 红」和「文件里 0 个用例 ⇒ 红」。两条都只看
+**当次发现到的集合**，没有任何东西把这个集合**钉在基线上** ⇒ 探针 ③ 删掉 56 个用例那个
+文件后集合里还剩 3 个文件 ⇒ 非空 ⇒ 绿。
+
+**根因二：守住这条门的用例，住在会被这条门丢掉的那个文件里。**
+`TestGateDiscoveryAgrees` 全部 4 条住在 `scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py`。
+发现规则一收窄，这个文件就不在集合里 ⇒ 这 4 条**自己也不跑** ⇒ 无人报警。**自指，方向错。**
+
+**根因三：钉的是门源码的**子串**，不是门的**实际行为**。**
+`assertIn("find scripts", body)` 对**非递归**的 `find` 也成立；
+`assertIn("__pycache__", body)` 在门体里**只出现在注释里**（第 18 行 `#   \`-prune -o\` 排除 …`）。
+⇒ **一条断言被注释满足**，这两条断言因此**没有钉住任何东西**。
+
+### §276.3 交付（三件，对应工单三）
+
+1. **发现集合钉基线**：新增 `scripts/tests.manifest`（**数据**文件，不是散文）。
+   门在跑之前把 `scripts_tests_discovered_files()` 的**实际输出**与基线**逐行比对**
+   （`comm -23` / `comm -13`）：**多一个、少一个、改名、以及「把同一行再抄一遍」都判红**。
+   「空集合仍判红」与「0 用例仍判红」两条**保留**，但它们**不再足够**。
+   判词逐字写明：`this gate pins the IDENTITY of the discovered set, NOT its SIZE`
+   （集合大小只进 note，**不作判据**）。
+   ⚠️ 身份不匹配时门**仍然把发现到的文件都跑一遍**（不早退）—— 否则「哪些文件真的被跑了」
+   这个读数就没了，而工单 §四.2 的判据正需要它。
+2. **守门检查搬出集合**：新增顶层 `scripts/test_gate_scripts_tests.py`（7 条）。
+   顶层 `scripts/test_*.py` 在**非递归** glob 下仍可见 ⇒ **发现规则收窄时它仍会被执行**
+   （探针 ① 的读数里 `$ python3 scripts/test_gate_scripts_tests.py` 与 `Ran 7 tests` 都在）。
+   包内那个文件里的 `TestGateDiscoveryAgrees` **整体迁走**（4 条），
+   包内 97 个真实用例**一个未删**（56 → 52）。
+3. **钉行为，不钉源码子串**：本文件**不读 `gates.sh` 的源码文本**。
+   断言的对象是门**实际算出来的发现清单** —— 为此给门加了唯一的只读自省面
+   `bash scripts/gates.sh --list-discovered`（唯一实现 = `scripts_tests_discovered_files`，
+   与门本体同一条规则）。把清单打出来，`assertIn(<某个路径>, 门的输出)` 就不可能被注释满足。
+
+### §276.4 判别式：**每个探针都要有「它确实红过」的读数**（逐字）
+
+```
+$ bash scripts/gates.sh --only scripts-tests > log 2>&1; grep GATE_SCRIPTS_TESTS_EXIT log
+```
+
+改前（= 本片交付、工作树干净）：`GATE_SCRIPTS_TESTS_EXIT=0` / `PASS` / `5 file(s)` /
+`Ran 52 / 6 / 7 / 25 / 14 = 104`。
+
+| # | 探针 | 本片实测（逐字） |
+|---|---|---|
+| ① | 发现规则改回顶层非递归 glob | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (4 file(s), discovery-identity mismatch, at least one red)`；`- …test_realm_diff_taxonomy.py [in scripts/tests.manifest, NOT discovered]`；守门用例**仍被执行**（`Ran 7 tests`）并红 2 条 |
+| ② | 包内测试改名成不匹配 `test_*.py` | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (4 file(s), discovery-identity mismatch, …)`；同上那条 `-` 判词 |
+| ③ | **新增**一个 `test_*.py`（不改基线） | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (6 file(s), discovery-identity mismatch, …)`；`+ scripts/test_probe_new_file.py [discovered, NOT in scripts/tests.manifest]` |
+| ④a | 删掉一个在基线里的**顶层**测试文件 | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (4 file(s), discovery-identity mismatch, …)`；`- scripts/test_t1_6_taxonomy.py [in scripts/tests.manifest, NOT discovered]` |
+| ④b | 删掉包内那个 52 用例的文件（= §276.1 表格第 ③ 行的场景） | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (4 file(s), discovery-identity mismatch, …)`；`- …test_realm_diff_taxonomy.py [in scripts/tests.manifest, NOT discovered]` |
+| ⑤ | 在册测试文件里塞一个必然失败的断言 | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (5 file(s), at least one red)`（**没有** identity 判词 ⇒ 这条与集合身份无关，PR #184 已有，保持） |
+| ⑥ | 塞一个 0 用例的 `test_*.py`（**同步基线**，隔离这条判据） | `GATE_SCRIPTS_TESTS_EXIT=1` / `FAIL (6 file(s), at least one red, 1 with zero test cases)`；`!! scripts/test_probe_zero_cases.py 报 \`Ran 0 tests\` ⇒ 判红` |
+| ⑦ | 全部复原 | `GATE_SCRIPTS_TESTS_EXIT=0` / `PASS (5 file(s))` / 用例数 **104**（≥ 101）；`git status --short` 空 |
+
+④a / ④b 的价值：那两次里**剩余文件全部绿**（83 / 52 用例），门仍然红 ——
+唯一红因就是集合身份。这正是探针 ① 塌到 45 却仍然绿的那类指标**不再成立**的证据。
+
+**⑥ 顺手挖出 PR #184 那条 0 用例判红是「形状依赖」的**：本机 Python **3.12.3** 下
+`unittest.main()` 对 0 用例的文件打的是 `NO TESTS RAN` + **rc=5**（**不是** `OK`），
+所以旧规则 `rc == 0 && !grep '^OK'` 是靠**解释器的退出码约定**才红的；
+一旦某个版本对 0 用例 `exit 0` 且打 `OK`，那条当场失效。
+本片补一条**与版本无关**的判据：日志里出现 `Ran 0 tests` 就判红
+（`!! … 报 \`Ran 0 tests\` ⇒ 判红（0 个用例 = 没验证过）`）。
+**只增强判红条件，未放松任何一条既有判据**。
+
+### §276.5 工单四要求当场回答的问题：**「基线清单」本身怎么防止它悄悄过期？**
+
+**答（三层，逐层可机械检验）：**
+
+1. **它不可能「悄悄」过期，因为过期 = 红，而且是每一次运行都红。**
+   门在本地与 CI 跑的是**逐字同一批命令**（`.github/workflows/ci.yml` 只调
+   `scripts/gates.sh --only scripts-tests`，不重写命令）。清单与树一旦不一致，
+   下一次运行当场红，并逐条打出 `+` / `-` 差异 ⇒ **没有「过期但无人知道」的中间态**。
+2. **合法新增测试文件时，要做的事是「改一**行数据**」，而不是「改一段散文」。**
+   步骤：① 把新文件的仓库相对路径按 `LC_ALL=C sort` 加进 `scripts/tests.manifest`；
+   ② 与测试文件本身放在**同一个提交**。因为门是 CI 的必过项，这个 PR 自己就红，
+   所以「新文件 + 基线行」**不可能**分两次进。
+   ⚠️ 反过来说：把同一行**再抄一遍**不是修好 —— 门显式检测重复行并判红
+   （`= … [listed more than once]`），守门用例里也有一条同款断言。
+3. **它为什么不会退化成又一个「散文提及」**：本仓栽过的那类坑是**「提到了，但没有任何东西执行它」**
+   —— PR #182 的 docstring 声明、LUM-2602 的 `assertIn("__pycache__", body)`。
+   区分点不在「这段字写在哪里」（写在 `gates.sh` 里的字面量清单同样可以是**数据**），
+   而在**有没有一个独立的机器读它**：
+   * `scripts/tests.manifest` 被门的 `comm` 比对读 ⇒ 过期一天红一天；
+   * 它还被**第二个来源**独立读一遍：`scripts/test_gate_scripts_tests.py` 自己用 `os.walk`
+     递归扫 `scripts/**/test_*.py` 再与清单比对（**不经过 `gates.sh`**）⇒
+     **门里的比对逻辑被删掉时它仍然红，清单被删空时门仍然红**（两个来源互为对照）。
+   ⇒ 「散文提及」与「基线清单」的差别是：前者**没有执行语义**，后者**每一次运行都被执行**。
+
+### §276.6 覆盖面（改前 → 改后，逐条）
+
+| 项 | 改前（base `dbfc0307`） | 改后（本片） |
+|---|---|---|
+| 门 ⑫ 判红的依据 | 集合**非空** + 文件里 0 用例 | 集合与 `scripts/tests.manifest` **逐行一致** + 0 用例（两条既有判红**保留**） |
+| 丢掉一个文件会不会红 | **不会**（实测 3 条探针全绿） | 会（`- … [in …manifest, NOT discovered]`） |
+| 改名会不会红 | **不会** | 会（同上） |
+| 多一个文件会不会红 | 会（只靠「基线未同步」—— 但基线当时不存在） | 会（`+ …`） |
+| 守门用例住哪 | `scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py`（**包内**） | `scripts/test_gate_scripts_tests.py`（**顶层**，非递归 glob 也可见）+ `gates.sh` |
+| 守门用例断言什么 | `gates.sh` 的**源码子串**（可被注释满足） | 门的**实际输出**（`--list-discovered`）与基线清单 |
+| 测试文件 / 用例数 | 4 / 101 | **5 / 104** |
+
+### §276.7 门读（base `dbfc0307` + 本片写集，零编译）
+
+- ⑦ `bash scripts/gates.sh --only route-parity` ⇒ rc=0，八数字**逐字不变**
+  `456/546/546 / 455 real + 1 placeholder / known_gap 0 unclaimed 0 regression 0 local_only 8`
+- ⑦b `python3 scripts/slash_alias_audit.py --quiet` ⇒ rc=0
+- ⑩ `bash scripts/gates.sh --only file-size` ⇒ rc=0（新增两文件 138 / 30 行，均 < 800）
+- ⑫ `bash scripts/gates.sh --only scripts-tests` ⇒ rc=0，`5 file(s)`，
+  `Ran 52 / 6 / 7 / 25 / 14 = 104`（≥ 101）
+- ⑨ **未跑、不作继承声明**（本片零真库；不拿合成输入冒充 T1-6 真库读数）
+
+### §276.8 明确未做
+
+不改任何 `crates/**`；不跑 `cargo`；不碰真库；不跑 `--with-db` / `--write-baseline`；
+不动 `crates/mc-conformance/report.json`；不改门 ①–⑪ 的判据；
+不删 PR #184 那 97 个真实用例中的任何一个（只把 4 条**守门**用例从包内迁到顶层）；
+不用「用例数 ≥ 101」当判据（那正是探针 ① 塌到 45 却仍然绿的那类指标）。
