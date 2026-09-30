@@ -28772,3 +28772,128 @@ PASS（6s，**11 file(s)**）、⑬ `section-alloc` PASS。
 
 **门 ②③④⑤⑥⑧⑨ 未跑**（要 cargo / 真库 / 容器），**不作继承声明**，不得读成「全门通过」。
 
+## §295 【2026-09-30 14:00 cycle / `LUM-2622`】收割 **2 片**（#195 + #196）＋ 🔴 承重：**「用例数」可以是绿的 —— 判别式才是证据**（本轮实测两片都真判别，且逮到一个真缺口）
+
+起手 base `c3946cd5` → 收尾 **`874b7311`**；GH 收尾 **0 open PR**；daemon **3/3**
+= cycle ∥ `LUM-2623`（T1-6-Q3）∥ `LUM-2624`（T1-6-Q4）。磁盘起手 26G/45% → 收尾 26G/45%
+（本轮回收 10.4G = cycle 自己三棵门禁 worktree，全是死物）。
+
+### §295.1 收割：两片都是「0 路由 / 0 Rust / 0 真库」的判定器补测试
+
+| PR | 片 | 头 | 形态 | 结果 |
+|---|---|---|---|---|
+| **#195** | `LUM-2621` / T1-6-Q2 | `3b385e65` | ①（`merge-base == base`） | merge `57b54812` |
+| **#196** | `LUM-2620` / T1-6-Q1 | `6ca85fac` → `d873d632` | ③（#195 先合后 base 前进） | merge `874b7311` |
+
+- ⑫ 用例数：base **273**（10 file）→ #195 **352**（+79，11 file）→ #196 **341**（+68）
+  ⇒ 合入后 **420 / 12 file**，**逐字等于 273+79+68**。
+- ⑦ 八个数字**第 62 轮逐字不变**（两片都 0 路由）：
+  `456 / 546 / 546 / 455 real + 1 placeholder = 456 / gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+- ⑬ `sections=222 numbers=221 ledger=221 defects=0`；⑩ rc=0。
+- **两片都在同一个提交里给 `scripts/tests.manifest` 加了 1 行** ⇒ 门 ⑫ 的发现集合与基线逐行一致，
+  新测试文件**确实被门执行**（不是「文件存在但从不被执行」）。实测合入后
+  `find … test_*.py` 的输出与 manifest **逐行相等**（12 行）。
+
+### §295.2 🔴 承重一：**「新增 N 个用例」不构成交付证据 —— 判别式才是**
+
+本仓已两次吃过这个亏（`LUM-2604` 复跑发现「上一轮说它红」的用例**实测三条全绿**）。
+本轮因此对两片各做了一次**三段读数**（改前 rc=0 / 改后 rc≠0 / 复原 rc=0），把判别式**当场跑出来**：
+
+| 片 | 变异 | 读数 | 结论 |
+|---|---|---|---|
+| #195 | `CATEGORIES` 加第 5 项 | **rc=1** | ✅ `test_the_constants_the_loaders_validate_against_are_still_the_five_and_four` 精确命中 |
+| #195 | `merged_migrations` 的 stem 折叠改成不折叠 | **rc=0** | ⚠️ **没抓到**（该分支的等价性未被钉） |
+| #195 | `CHILD_KINDS` 删掉 `"trigger"` | **rc=0** | 🔴 **真缺口**（见 §295.3） |
+| #196 | 把 `EXTRA_ALIAS` 从 warning 改成 defect | **rc=1** | ✅ `test_extra_alias_alone_exits_0_because_it_is_a_warning` 精确命中 |
+| #196 | 把 stale 白名单行的判词置空 | **rc=1** | ✅ 3 条用例同时命中 |
+
+四次复原全部 rc=0。⇒ **两片都是真判别式，不是凑数**；而且**「我在工单里点名的那个坑」
+（`EXTRA_ALIAS` 是 warning 不是 defect）确实被正确避开了** —— 工单里写「照字面把它当 defect
+断言，就会写出一个钉住错误行为的绿用例」，这一条被 heed 了。
+
+### §295.3 🔴 承重二（**唯一登记的缺口**）：`CHILD_KINDS` 被用但没被钉
+
+`scripts/schema_drift.py:100` 定义 `CHILD_KINDS = ("column","constraint","index","trigger")`，
+`:406` 用它做 kind 合法性判断；`test_schema_drift.py:494` 的 docstring **提到了** `CHILD_KINDS`
+（「`function` 不在 `CHILD_KINDS` 里 ⇒ …」），**但没有任何用例断言这个元组的值**。
+实测删掉 `"trigger"` ⇒ ⑫ 仍 **rc=0**。
+
+⇒ **判据链的一条新纪律**：判「一个常量有没有被钉住」，唯一办法是
+**把元组改掉再看 rc**，不是读 docstring 里有没有出现过它。
+**docstring 里提到 ≠ 被断言**（与 §276 那条「注释里出现 ≠ 被门执行」同形，只是载体从注释换成 docstring）。
+
+处置：**不**在本轮临时改（`LUM-2621` 已合、已 `in_review`；`test_schema_drift.py` 现在是
+`LUM-2623` 同族的共享面）⇒ 登记为待补，随下一个碰 `schema_drift` 的片一起带上。
+
+### §295.4 冲突：`docs/37` 同锚点 + **两处「冲突标记在正文里」的老坑第 N 次复现**
+
+#196 与 #195 都在 `docs/37` 的 **EOF append**、都在 `docs/section-alloc.tsv` 的**同一插入点**、
+都在 `scripts/tests.manifest` 的**同一相邻位置**加内容 ⇒ 三文件冲突。机械解（保留双方 + 按 `## §N` 排序）：
+
+- 号段**无碰撞**：`§290` = `LUM-2620`、`§291` = `LUM-2621`，本就都排在 `§292` 之前。
+- `tests.manifest`：两侧各加 1 行，**必须**按 `LC_ALL=C sort` 排（`sec` < `sch` < `slh`），
+  否则门 ⑫ 判红。实测合入后「发现集合 ≡ manifest」逐行相等。
+- 🔴 **`docs/37` 里有 2 处 `<<<<<<< HEAD` 是 base 的正文，不是冲突**（20959 / 21067 —— 有人把
+  冲突贴进了笔记）。**真冲突只有最后一个块**。若按「`grep -c '<<<<<<<'` = 3」去「修」，
+  会把那两段笔记毁掉。⇒ 判据 = **最后一个块**，不是计数。
+- 🔴 合并后 `docs/37` 的段序是 `§292, §290, §291`（因为 `§292` 是 13:30 cycle 先落在 EOF 的）
+  ⇒ 重排成 `§290, §291, §292`。**重排必须带断言**：`∑len(块) == len(原切片)` ∧ 前后段号集合相等
+  ∧ 落盘 `grep -c '^## §'` 复核。**本轮断言当场抓到我自己一个绝对/相对下标混用的 bug**
+  （文件未被写入）⇒ 这条断言不是形式主义，它今天救了一次 28k 行文档。
+
+### §295.5 `contract` job 红：**第 N 次证明是 base 存量，且这次 1 秒出结论**
+
+两片 head 的 `contract`（route parity + conformance）都红。用**最便宜的判别**（不是 `--with-db`）：
+在 base 与两个 head 上各跑一次 `bash scripts/gates.sh --only conformance`（**各 1 秒**），
+三侧 rc **同为 1**、签名**逐字相同**（`first difference at line 17` / `committed 13` / `fresh 12`），
+且三棵树 `report.json` 的 blob **同为 `db01d842`**。
+
+⇒ 由构造推出：两片对 stateless/conformance 层**零影响**；红源是 base（`#167` 未同步 `report.json`）。
+**「哪个 job 红」是随时间变的存量状态，每轮重取** —— 本轮 `fast` / `db` / `image` 三绿，只有 `contract` 红。
+
+### §295.6 派发 2 片（这一族**收官**）
+
+族「判定器 0 测试」的现状普查（`gates.sh` 直接调用的 4 个 + CI 直接引用的 4 个）：
+
+| 判定器 | 行数 | 用例 | 状态 |
+|---|---|---|---|
+| `route_parity.py` | 779 | ✅ | 由 `LUM-2606`/`2608` 收 |
+| `file_size_check.py` | 329 | ✅ | 由 `LUM-2617` 收 |
+| `slash_alias_audit.py` | 376 | ✅ | **本轮 #196 收** |
+| `schema_drift.py` | 799 | ✅ | **本轮 #195 收** |
+| **`section_alloc_check.py`** | **234** | **❌ 0** | ⇒ **`LUM-2623`（门 ⑬，CI 必过）** |
+| `w3b_premerge_audit.py` | 448 | ❌ 0 | ⇒ **`LUM-2624`**（收割判据链自己在用） |
+
+⇒ **`LUM-2623` 是 CI 必过项里最后一个 0 测试的判定器**（`gates.sh:172` 的 `ALL_GATES`、
+`gates.sh:338` 自动选中、`ci.yml:90` 的 `fast` job），且它**不在 `file_size_baseline.tsv`** ⇒
+门 ⑩ 只能按行数判它。它判的正是「cycle 自己写的号段对不对」。
+
+两片都是 **0 Rust / 0 cargo / 0 真库 / 0 磁盘** ⇒ 与磁盘准入（26G 可用、冷建下限 19G）**无冲突**，
+本轮可同时派满。**写入面重叠**（`tests.manifest` + `section-alloc.tsv` + `docs/37`）⇒
+必冲突，规则已写进两片工单：各自只加自己那一行/那一段，后合者基于最新 base 重做。
+
+### §295.7 本轮门读（base `874b7311` 当场重跑，零编译 <10s）
+
+- ⑫ `12 file(s)` / **420** 用例（rc=0）
+- ⑬ `sections=222 numbers=221 ledger=221 defects=0`（rc=0）
+- ⑦ `456 / 546 / 546 / 455r+1ph=456 / gap 0 / unclaimed 0 / regression 0 / local_only 8`（rc=0）
+- ⑩ rc=0
+- ⑨ **未跑，且不作继承声明** —— 门 ⑨ 要 ~14G 冷建，且 `contract` 的红已由 §295.5 的
+  1 秒判别**归因完毕**（不需要重跑 ⑨ 来证明同一件事）。
+
+### §295.8 下一 cycle 起点
+
+- base **`874b7311`**（树 `4f66c479`）—— 起手仍一律 `git rev-parse` 实测。
+- GH **0 open PR**；daemon **3/3** = cycle ∥ `LUM-2623` ∥ `LUM-2624` ⇒ **空位 0**。
+- **第一动作**：`df -h /` 连采两次 → `git rev-parse` 对 `ls-remote` → 认证 GH `pulls?state=open`
+  → 逐 PID `/proc/*/cwd`（**先读 `cmdline` 是不是 `pi`**）→ 逐片「run 终态 ∧ 形态判定」。
+- **槽位一空即派**：`2623` 终 ⇒ 判据链（预期 ⑫ `13 file(s)` / 420+其新增数；⑦ **逐字不变**）
+  ⇒ 合后 `LUM-2624`（同写集，必须等 2623 终态或至少等其合入）⇒ **该族即收官**。
+- **下一族候选**（需预飞后定）：`LUM-2567`（PRECONDITION，**卡等在飞片终态**）、
+  `/v1` 装置面、行为面剩余子族。**注意**：`PRECONDITION` 需真库且与 `/v1` 装置面**同写集**
+  ⇒ 必须串行，且卡在 `LUM-2111` 的 `report.json` 刷新权 + 共享 `CARGO_TARGET_DIR` 裁决。
+- **号段**：`docs/37` 下一空号 **`§296`**（293 = `LUM-2623` / 294 = `LUM-2624` 已预约）。
+  `docs/section-alloc.tsv` 下一空号 **295**（同）。
+- **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无 ⇒ `report.json`
+  刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮又见一次）；`mc_t2492` 116 表仍在默认库；
+  共享 `CARGO_TARGET_DIR`（26G 可用 vs 冷建 18–19G ⇒ 只容 1 片吃构建）。
