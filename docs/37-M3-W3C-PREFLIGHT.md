@@ -26557,3 +26557,277 @@ pid `6121` 的 `pi` 在 `lum-2592-d35a7000b9a0` 里活着（`ELAPSED 54:19`）�
    下一轮要么给它重排号段后合，要么**明确记为放弃**并把它代表的修复重新派片 —— 不要再无限期挂着。
 3. `LUM-2592` 一旦 run 终态 ⇒ 立刻回收那 20G（收割/回收的顺位，见 §167 与本文件既往结论）。
 4. 磁盘恢复到 ≥ 18G 之前，**不要派任何 Rust 面**。
+## §278 【LUM-2592 / T1-6-G1】行为面 3 条 —— **3 条全修好**，`REALM_DIFF 15→12`；抢救产物**从未编译过**，补了三处断裂
+
+🔴 **号段：本片连撞五次，最终取 `§278`**（工单派的号**全部作废**）：
+
+| 工单派的 | 实际结局 |
+|---|---|
+| `§268` | 已被 **§268（LUM-2595 cycle）** 占用 |
+| `§273` | 本 run 跑门的 20 分钟里被 `LUM-2601` 抢走（`6dfbd76b`） |
+| `§274` | §273 **明文预约**给 `LUM-2602`，果然落地（PR #184） |
+| `§275` | 写完落盘后 rebase 时发现 **`LUM-2603` 刚落地同名 `§275`**（`61b03f2a`）⇒ 改号 |
+| `§276` | 改到 `§276` 后**又一次** rebase，发现 **`LUM-2604` 刚落地同名 `§276`**（`a5facad4`）⇒ 改号 |
+| `§277` | 改到 `§277` 后**又一次** rebase，发现 **`LUM-2605` 刚落地同名 `§277`**（`ec08a3c9`）⇒ 改号 |
+
+🔴 **这五次的根因不是「有人算错」，是「base 在本 run 的 50 分钟里前进了三次」**
+（`49c3d025` → `6dfbd76b` → `61b03f2a` → `a5facad4` → `ec08a3c9`），
+而每次前进都伴随一个 cycle 落一段。**五次里有四次是在 rebase 之后才发现被抢。**
+
+⇒ **「以 base 末号 + 1」取号，在一个 cycle 节奏快于本片的仓库里是结构性失效的**：
+它假设 base 在「取号 → rebase → 提交」这段窗口内不动，
+而实测该窗口长达 **50 分钟**、base 前进了 **3 次**。
+**可操作的替代（二选一）**：
+① **取号推迟到 rebase 之后** —— rebase 会把 base 带到最新 tip，那时再读末号；
+② **rebase 后必查一次** —— 本片四次都是这么发现的。
+
+⚠️ 另一条仍然成立：**append-only 文档的同锚点冲突（本片第二次手工解，见 §272）
+只删得掉冲突标记，删不掉双重占用。** `merge-tree` 报 `rc=1` 只说明「要人动手」，
+动手解完**必须**再 `grep -o "^## §27[0-9]" | sort | uniq -c` 确认**没有两个同名**。
+
+- **起手**：`multica repo checkout` + `git fetch origin agent/devbox5/rescue-2592`
+  → `git checkout -B <br> FETCH_HEAD`（父 = 当轮 base `49c3d025`，**无需 rebase**）。
+- **base 在跑门期间前进**：`49c3d025` → `6dfbd76b`（只动 `docs/37`）⇒ 收尾前 rebase，
+  `merge-tree` rc=0 无冲突，Rust 代码树逐字未变。
+- **base 在收尾期间又前进两次**（`a5facad4` / `ec08a3c9`，均只动 `docs/37`）⇒ 两次 rebase，
+  每次都要重解 `docs/37` 同锚点（见号段表）。
+
+### §278.1 🔴 承重一：**抢救分支 ≠ 已编译** —— 「产物在树上」不等于「产物能编译」
+
+§273 记的第五类死亡形态给了判别式「`git status` 非空 ⇒ 救援成本 = 一次 commit」。
+本 run 把那条判别式的**适用边界补齐**：`08649ba3` 树是干净的、四个依赖点也都在位，
+**但它编译不过**。三处断裂，**全部是编译期错误、全部零运行时症状**：
+
+| # | 位置 | 断裂 | 为什么 §273 的四判据没抓到 |
+|---|---|---|---|
+| 1 | `routes/issues/list.rs` | `decode_query_body` 声明 `Result<_, Error>`，该文件**从未 import `Error`**（E0425） | 依赖点实测只查了 `from_pairs` / `classify_actor_source` **在不在**，没查新符号**可见不可见** |
+| 2 | `routes/workspaces.rs` | 声明 `Result<_, Error>` 却调了本文件那个返回 **`ApiError`** 的 `validation(...)`；且 `ApiError` **不转发 `http_status()`**，新加的双向单测根本没法断言状态码 | 同名 helper 在**两个 crate 里各有一份**（`routes/issues/helpers.rs::validation → Error` vs `routes/workspaces.rs::validation → ApiError`），看着能编其实不能 |
+| 3 | `routes/workspaces.rs` | 该文件起手 **756 行**，加校验 + 单测后 `cargo fmt` 顶到 **816 行** ⇒ 门 ⑩ R7（单文件 800 行硬上限）**rc=1** | 门 ⑩ 只在 `--with-db` 集合里；抢救 run 死在 build 阶段，**从没跑到门 ⑩** |
+
+⇒ **判别式升级（第六条）**：`git apply --check` 干净 + 依赖点在位，**只证明「可打补丁」，
+不证明「可编译」**。抢救之后**必须**至少跑一次 `--only build,file-size`（本 run 实测
+**75s + 1s**，零 DB、零磁盘代价），否则会把「三个编译期断裂」当成「一片已完成的工作」往下传。
+
+⇒ **同型更狠的一层**：`workspaces.rs` 756 → 加完 800（**零余量**）⇒ `cargo fmt` 一跑就
+**816**。**`cargo fmt` 本身会撞红线**，而 R7 说「基线只许变短」。**凡在红线附近改文件，
+先算 `fmt` 之后的行数，不是改之前的。** 本片把 issue_prefix 整块（常量 + 校验 + 单测）
+搬进子模块 `routes/workspaces/issue_prefix.rs`，`workspaces.rs` 落到 **768 行**，
+形状沿用本仓既有惯例（`agents.rs`+`agents/`、`auth.rs`+`auth/`、`issues.rs`+`issues/`）。
+
+### §278.2 三条的前后对照（⑨ db-mode 回放，库 `mc_c2592b` 当轮新建、角色带 `CREATEDB`）
+
+| 子族 | 成员 fixture | 改前 | 改后 | 修法（代码位置） |
+|---|---|---|---|---|
+| `BEHAVIOR_MACHINE_ACTOR_GATE` | `properties/TestPropertyAdminGate@…/property_test.go:230#2` | `403 ← 201` | **pass** | `properties.rs::require_property_admin_actor`（新增）＋ `create_property` / `update_property` 各加一行调用 |
+| `BEHAVIOR_JSON_DECODE_STATUS` | `issues/TestQueryIssues_PostTwinMatchesGet@…/issue_table_filters_test.go:274#81` | mismatch（**422**） | **pass**（**400**） | `list.rs::query_issues` 由 `Json<HashMap<..>>` 改收 `Bytes` ＋ 新增 `decode_query_body` |
+| `BEHAVIOR_ISSUE_PREFIX_UNPORTED` | `workspaces/TestUpdateWorkspace_RejectsInvalidIssuePrefix@…/workspace_test.go:1508#35` | `400 ← 200` | **pass** | `workspaces/issue_prefix.rs::normalize_issue_prefix`（新增子模块）＋ `update_workspace` 调用点 |
+
+**totals**：`fixtures 365`（不变）/ `pass 304→307`（**+3，一族一条**）/ `mismatch 35→32` /
+`unmounted 1` / `placeholder 0` / `unevaluable 25` —— 后三者**逐字不变**。
+**待清 `61 → 58`**。
+
+**五族前后（判据 ③）**：
+
+| 族 | before | after | Δ | authoritative |
+|---|---|---|---|---|
+| `UNMOUNTED` | 1 | 1 | 0 | true |
+| `PRECONDITION` | 25 | 25 | 0 | true |
+| `AUTH_401` | 7 | 7 | 0 | true |
+| `AUTHZ_404` | 0 | 0 | 0 | true |
+| `SEED_404` | 13 | 13 | 0 | **false**（§270 已证伪其判据，本片不碰） |
+| `REALM_DIFF` | 15 | **12** | **−3** | true |
+| 合计 `bad_total` | 61 | **58** | −3 | — |
+
+**对账式**：工单写 `61 − (pass_after − 304)` ⇒ `61 − (307 − 304) = ` **`58`**，与实测
+`bad_total = 58` **逐字相符**。⚠️ §273 交接里把底数写成了 **`279`**
+（`61 − (pass_after − 279)`）⇒ 那式子给出 `33`，与实测差 25，**是交接的笔误**；
+`304` 才是本轮正确的底（= 合并 PR #181 后的 `pass`）。**跨片对账式必须写明以哪一轮读数为底。**
+
+**`REALM_DIFF` 内部**：12 = `EXTRACT_REQUEST_SHAPE_STALE` 2 + `EXTRACT_WORKSPACE_BINDING_WRONG_DELETE` 1
++ `DEVICE_QUEUED_TASK_ROW` 1 + `DEVICE_INTRA_TEST_SEQUENCING` 1 + `DEVICE_DB_FAULT_INJECTION` 1
++ `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 1 + 未归类 4 + `claimed_elsewhere` 1。
+⚠️ 工单判据 ③ 写的「另外 14 条（`EXTRACT_*` 5 + `DEVICE_*` 9）」是**旧轮底数**，
+本轮实测 `EXTRACT_*` 3 + `DEVICE_*` 3。**该判据的数不可抄，只可重取**；
+可判定的是 **Δ = −3 且那 3 条正是本片三个目标 fixture**（逐条 `outcome=pass` 已核）。
+
+### §278.3 判据 ⑧：PR #178 留的半截工程补完了，**且可机械复跑**
+
+`report.py::verdict()` 三档：`serial` / `parallel` / `undetermined`。
+`undetermined` 的触发条件是**「lane 内有子族的 `owner_files` 是空串」**。
+`BEHAVIOR_OWNER_FILES` 在 base `49c3d025` 上把 `BEHAVIOR_JSON_DECODE_STATUS` 留空 ⇒
+行为面 lane 必然降级为「未定」。本片填上 ⇒ 升级。**逐字对照（当场实测，非推断）**：
+
+```
+BASE 49c3d025 : BEHAVIOR_JSON_DECODE_STATUS -> []            <== 空串 ⇒ lane「未定」
+本片          : BEHAVIOR_JSON_DECODE_STATUS -> [routes/issues/list.rs, routes/issues/query.rs]
+```
+
+**据以填写的那处代码位置**（判据 ⑧ 要求写进交付评论，此处落盘）：
+
+- **`crates/mc-http/src/routes/issues/list.rs:80-92`** —— `query_issues` 的**提取器就在那儿**。  改前签名 `Json(body): Json<HashMap<String, JsonValue>>`，解码失败被 axum 的
+  `JsonRejection` 在**进入 handler 体之前**短路成 **422**；上游 `QueryIssues`
+  （`issue.go:1153`）是 `json.NewDecoder(..).Decode(&params)`，失败即
+  `writeError(w, 400, "invalid request body")` ⇒ **400**。
+  ⚠️ **这就是为什么 handler 体当初「看不到」这个失败** —— 状态码词汇不同，
+  由提取器决定，不是由 handler 里的任何一行决定。
+- **`crates/mc-http/src/routes/issues/query.rs:79`** —— `ListIssuesQuery::from_pairs`
+  （`fn` 起点），**未知键静默忽略在 `:118`（`_ => {}`）**、`metadata` 这个**已知** key
+  在 `:117` 显式拾取。同请求的另一半。
+  两个文件**必须一起登记**：「只把畸形值挪到 400、不动良构路径」这条**双向**判据，
+  只读 `list.rs` 验不了。
+
+`BEHAVIOR_NUL_PAYLOAD` **仍然不填**（本轮只派了 JSON 解码这一族；NUL 那条要读
+`routes/chat/**` 的 task-messages 回调 handler，没读就填等于编）。
+但它**当前 0 成员** ⇒ 不进 `subfamily_owner_files` ⇒ 不触发 `undetermined`。
+**这条「0 成员就不降级」的性质是运气不是设计**：它一旦在某轮回放里重新长出成员，
+lane 会**立刻**退回「未定」并点名它。
+
+### §278.4 by-design 登记表（本片**刻意不做**的三条，逐条写「什么实现下它才可判定」）
+
+1. **`BEHAVIOR_MACHINE_ACTOR_GATE` 的 ② 号路** —— 上游 `resolveActor`（`handler.go:847`）
+   判 `"agent"` 有两条路：① `X-Actor-Source == "task_token"` 服务端盖章头**直接信**
+   （**本片已接上**）；② `X-Agent-ID` + `X-Task-ID` + **两次查库**（agent 在本 workspace、
+   task 属于该 agent）。
+   **② 仍不可实现**：本仓 mc-http 的请求上下文里**没有 agent / task 实体**
+   （只有 `X-Multica-User-Id` + `Authorization`）。**什么实现下可判定**：请求管线接上
+   agent/task 解析（`mc-agent` / `mc-task` 进 authn 上下文）**之后**。
+   已登记在 `properties.rs` 模块头的已知偏差段。
+2. **`issue_prefix` 合法值** —— 本片**只做到「拒」**。`normalize_issue_prefix`
+   逐字复刻 `workspace.go:84-96`（`ToUpper(TrimSpace(raw))`；空 ⇒ 回落默认、**不** 400）。
+   但**合法值仍不落库**：`mc_core::WorkspaceUpdate` **没有** `issue_prefix` 字段。
+   ⚠️ 工单与 `WorkspaceResponse` 的旧注释都说「`issue_prefix` 列不在 M0 schema」——
+   **实测为错**：列在 `migrations/upstream/020_issue_number.up.sql` 里**存在**
+   （`mc-repos/src/squad.rs:680` 在读）。**缺的是 DTO 字段，不是列。**
+   **什么实现下可判定**：`mc_core::WorkspaceUpdate` 加该字段 ＋ `WorkspaceRepo::update` 透传。
+3. **`SEED_404` 13 条** —— §270 已用本仓代码证伪其判据（`classify()` 从不读 body）。
+   **不属于本片写集**（`mc-conformance/**`），本片**不碰、不改口径**。
+
+### §278.5 门禁（base `6dfbd76b` 跑门 / rebase 后 `61b03f2a`，最终树，库 `mc_c2592b` 当轮新建、角色带 `CREATEDB`）
+
+`bash scripts/gates.sh --with-db` ⇒ **11 门 10 绿**，579s：
+
+| 门 | exit | | 门 | exit | |
+|---|---|---|---|---|---|
+| ① fmt | 0 | | ⑦ route-parity | 0 | |
+| ② build | 0 | | ⑧ schema-drift | 0 | |
+| ③ clippy | 0 | | ⑨ conformance | **1** | **存量红** |
+| ④ clippy-test-util | 0 | | ⑩ file-size | 0 | |
+| ⑤ test | 0 | | ⑫ scripts-tests | 0 | |
+| ⑥ db | 0 | `migrate=0,e2e=0` | ⑪ image | — | 不在集合内（docker 卡 `LUM-2111`） |
+
+- **门 ⑦ 八数字（第 58 轮，逐字不变）**：`upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、
+  `455 real + 1 placeholder = 456`、`known_gap 0 / unclaimed 0 / regression 0 / local_only 8`。
+  **0 路由片 ⇒ ⑦ 本来就不该动；它动不了也说明没偷加路由。**
+  ⚠️ 门 **⑦b（`slash_alias_audit.py`）已在本 base 折进 ⑦ 的单条命令**
+  （`gates.sh:486`）⇒ 不再是独立门，rc 随 ⑦。
+- **门 ⑨ `--no-db --check` 存量红，签名逐字不变**：`first difference at line 17` /
+  `committed "unevaluable": 13` vs `fresh: 12`；blob **`db01d842` 未动**
+  （根因是 PR #167 从未同步 `report.json`，非本片回归）。
+- **门 ⑤ 含本片 5 个新双向单测**，全绿（`718 passed / 0 failed`）：
+  `malformed_query_body_is_400_not_422`、`well_formed_query_body_still_decodes`、
+  `task_token_actor_is_rejected_with_403`、`non_task_token_actors_pass_the_property_gate`、
+  `issue_prefix_validation_is_bidirectional`。
+- **门 ⑩**：`workspaces.rs` **768**（起手 756）／ `issue_prefix.rs` 76 ⇒ rc=0，**红线解除**。
+
+### §278.6 双向面（本仓反复踩的坑，本片每族都跑了）
+
+- `BEHAVIOR_JSON_DECODE_STATUS`：**只补「畸形 → 400」会让良构体变成假通过**。
+  ⚠️ **工单给的那条坑在本 base 上已经过期，不要照抄**：工单写
+  「`query.rs:27` **根本没有 `metadata` 字段**，加字段时别踩这个坑」。
+  **实测**：`metadata` **已经存在**（`query.rs:73` 字段声明、`:117` 在 `from_pairs` 里
+  显式拾取、`:174` 有 `parse_metadata_filter`）。真正的坑剩下**一半**，仍然要测：
+  `from_pairs` 对**真正未知**的键**静默忽略**（`:118` 的 `_ => {}`）⇒ 良构体里带
+  无关键必须**照样通过**。
+  ⇒ 两个方向都在（畸形 6 例 ⇒ 400；良构 4 例 ⇒ 解出且过 `from_pairs`，
+  其中一例就是 `{"unknown_key":"ignored"}`）。
+- `BEHAVIOR_MACHINE_ACTOR_GATE`：🔴 **最容易写错的一半是「`cloud_pat` 必须放行」**。
+  `actor_guard::is_machine_credential_actor` 的 denylist **含 `cloud_pat`**，
+  拿它当这条闸会把 `cloud_pat` 误判成 agent（**比上游更严**）。
+  上游 `resolveActor` 的第一分支是 `X-Actor-Source == "task_token"` 的**字面比较**，
+  `cloud_pat` 落不到任何分支 ⇒ 返 `"member"` ⇒ 过闸。
+  ⇒ 只取 `ActorSource::TaskToken` 一态；反向用例覆盖 `cloud_pat` / 未知值 /
+  大小写不同 / 空串 / 缺头。
+- `BEHAVIOR_ISSUE_PREFIX_UNPORTED`：反向用例覆盖 10 字符**压线通过**（`A1B2C3D4E5`）、
+  `trim` 在 `upper` **之前**（`" ab1 "` → `AB1`）、空/纯空白**不 400**。
+  正向 4 例（超长 / 含 `-` / 11 字符 / 含空格）⇒ 400 + 逐字文案。
+
+### §278.7 磁盘证据链（起手 / 峰值 / 回收）
+
+| 时点 | `avail` | 备注 |
+|---|---|---|
+| workdir 起手 | **27G** | 旧 `LUM-2592` workdir 的 `target/` 已被 §273 整删（2.6G）⇒ **本 run 冷建** |
+| 首次 `--with-db` 前 | 26G | — |
+| 首次 `--with-db` 后（**失败**，build 红） | 20G | — |
+| 二次 `--with-db` 前 | 18G | 已 `rm -rf target/debug/incremental` |
+| 二次 `--with-db` 后 | **5.8G**（峰值） | `target/` = 21G |
+| `rm -rf target/debug/incremental` 后 | 6.7G | — |
+| 交付前 | 6.6G | `target/` = 20G |
+
+⚠️ **本片实测「单片冷建 ≈20G」而非工单估的 18–19G** ⇒ §273 的磁盘准入式
+（`avail − 可回收 ≥ 18G`）**对本机偏松**。与 `LUM-2602`（零 Rust）不叠加，
+收尾后本片 `target/` 整删（§278.8）。
+
+### §278.8 下一 cycle 起点
+
+- **base = `61b03f2a`**（跑门时的 base 是 `6dfbd76b`；收尾 rebase 前进到 `61b03f2a`，
+  上游只动 `docs/37`，Rust 树逐字未变，`merge-tree` 无冲突）；本片 2 个 commit 在 `agent/devbox5/d35a7000b9a0`。
+- **回收**：本片 `target/` **20G**，四判据齐（run 终态 ∧ PR 已在远端 ∧
+  `/proc` 逐 PID 零命中 ∧ `git status` 空）⇒ 整删。
+- **顺位**：① `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 1 条（`pats.rs` + `authn.rs`，
+  写集与本片**零交集** ⇒ 前置已解除，**可派**）；② `EXTRACT_*` 3 条（`scripts/extract_*.py`
+  ＋ `contracts/golden/**`，与本片零交集）；③ `DEVICE_*` 3 条（`mc-conformance/**`）。
+  ⚠️ 三者的**实测计数以 §278.2 为底**（`EXTRACT_*` 3、`DEVICE_*` 3），
+  **不要抄工单里的 5 / 9**。
+
+### §278.8b ⚠️ 门 ⑥ 的一次**假红**：`pool timed out`，换新库即绿
+
+收尾的第四次 `--with-db` 里门 ⑥ 由 `e2e=0` 转 `e2e=101`，13 条失败**全在
+`routes::attachments::tests::db*`**，panic 逐字是
+
+```
+MULTICA_TEST_DATABASE_URL is set but connect failed:
+  database connection error: pool timed out while waiting for an open connection
+```
+
+**不是本片回归**（本片写集与 `attachments` 零文件交集），**按 §273 交接的指示
+「换新库重跑再判」**：`mc_c2592c`（全新库）上单独重跑门 ⑥ ⇒ **`migrate=0, e2e=0`，rc=0**。
+
+⇒ **可复用的判别式**：门 ⑥ 的失败签名是 `pool timed out` **且**失败集合**全部**落在
+某一个 `routes::<x>::tests::db*` 模块 ⇒ 那是**库被上一轮跑干了**，不是代码坏了。
+判别成本 = 换新库重跑一次 65s，**远低于**去逐条读那 13 个 panic。
+⚠️ 与本片撞上的另一族**签名相同但成因不同**：`SEED_404` 那条判据被证伪（§270）——
+**同一个 `pool timed out` 也可能是装置面造不出数据**。⇒ 判别时**两个假设都要排**，
+顺序是「换新库」（排库）→「失败集合是否单一模块」（排连接池）→ 才轮到读代码。
+
+### §278.9 🔴 承重二：**「填上负责面」这个动作本身会撞上一条钉死旧状态的断言**
+
+本片 rebase 到 `61b03f2a`（含 PR #184 / `LUM-2602`）之后，门 **⑫ `scripts-tests` 由绿转红**：
+
+```
+test_unfilled_subfamilies_are_the_two_documented_ones ... FAIL
+  两道「故意不填」必须仍然空着（填了也要知道为什么改）。
+```
+
+上游 `LUM-2602` 刚把决定 T1-6 归因的分类器接进门 ⑫，其中一条断言
+`BEHAVIOR_JSON_DECODE_STATUS` 与 `BEHAVIOR_NUL_PAYLOAD` **两道都必须空着**。
+而**判据 ⑧ 恰好要求填其中一道** ⇒ **本片把一个 4 小时前刚绿的门弄红了**。
+
+**处置**：该断言的 docstring 自己写着「**填了也要知道为什么改**」⇒ 按它的意图改，
+**不是删掉、不是 `@unittest.skip`、不是加白名单**：
+
+- 拆成两条。`test_nul_payload_is_still_deliberately_unfilled` 保留原意，并点明它是
+  **唯一**剩下的「故意不填」（NUL 那条要读 `routes/chat/**`，本轮没派）。
+- `test_json_decode_status_is_now_filled_with_two_files_that_exist` 改成**正向**断言，
+  钉住两个文件逐字，并**补一条原断言没有的**：列进负责面的文件必须**真的在磁盘上**
+  （`os.path.isfile`）—— 否则「负责面」又是一列编出来的路径，而 `verdict()`
+  会拿它去判「可并行：是」。**原断言只验「该空的空着」，从不验「填的对不对」。**
+
+**可证伪性当场实测**（不是声称）：把那行改回空 ⇒ 该用例立刻
+`KeyError: 'BEHAVIOR_JSON_DECODE_STATUS'` 红；改回 ⇒ 绿。门 ⑫ 回到 rc=0（4 file(s)）。
+
+⇒ **承重**：**「补齐证据」与「钉住证据缺失状态的断言」是同一枚硬币的两面。**
+本仓的门禁越来越擅长钉「**还没做**」（这是好事，它挡住了一大批编造），
+但**每一条这样的断言，在有人真把它做掉的那天都会转红**。
+⇒ 处置顺序必须是「**读那句断言自己的 docstring** → 按它声明的意图改」，
+而不是「让它变绿」。本片若只追求门全绿，正确做法会退化成 `--skip`，
+而那句 docstring 恰好把正确做法写在了原地。
