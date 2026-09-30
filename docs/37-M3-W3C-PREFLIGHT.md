@@ -27944,18 +27944,18 @@ $ find /home/devbox -maxdepth 5 -name go.mod
 本片的证据全部**不依赖**那棵树：12 条新用例（`scripts/test_extract_borrowed_ids.py`）
 ＋ 门 ⑫ `scripts-tests` rc=0（`9 file(s)`，新文件已登记进 `scripts/tests.manifest`）。
 
-## §286 【LUM-2610 / T1-6-J2】`/v1/issues/**` 全回 401 —— 根因在**凭据门**，不在 handler；但这一族**修不到 200**（装置面缺 `plugin_installation` 种子）
+## §287 【LUM-2610 / T1-6-J2】`/v1/issues/**` 全回 401 —— 根因在**凭据门**，不在 handler；但这一族**修不到 200**（装置面缺 `plugin_installation` 种子）
 
 > 📌 **号段**：本片起手时 base 是 `ee910c46`，实测下一个空号 = **§282**；**交付前 base 前进到
-> `a6973906`（并发 cycle 已取走 §281–§285）** ⇒ 本段**改号 §286**（`docs/section-alloc.tsv`
+> `a6973906`（并发 cycle 已取走 §281–§285）** ⇒ 本段**改号 §287**（`docs/section-alloc.tsv`
 > 同步）。这就是 `LUM-2607` 那道门要挡的东西：改号在**提交前**完成，而不是等合并冲突。
 > 门 ⑬ 按 R1–R4 复核：文件 ↔ 台账双向一致、段号唯一、出现次数一致。
 
 **起手** base **`ee910c46`**（PR #186 → #185 → #187 合并树 `96afa1f9`；`git fetch` 后
 `git log --oneline -1 origin/feat/multica-rs-initial` 实测复核 == `ee910c46`）。
-**交付 base `a6973906`**（rebase 上去；本片 0 路由、0 fixture 改动，重跑门读数见 §286.6）。
+**交付 base `a6973906`**（rebase 上去；本片 0 路由、0 fixture 改动，重跑门读数见 §287.6）。
 
-### §286.1 工单的根因描述**对**，但「修好这 6 条 ⇒ `bad_total 58 − 6 = 52`」**不成立**
+### §287.1 工单的根因描述**对**，但「修好这 6 条 ⇒ `bad_total 58 − 6 = 52`」**不成立**
 
 工单写的根因是「`/v1` 挂载点没有接上 issue 面的会话鉴权，于是所有 `/v1/issues*` 一律回 401」。
 这句**实测为真**，且落点比工单写的写集更靠里：
@@ -27971,9 +27971,9 @@ $ find /home/devbox -maxdepth 5 -name go.mod
   `/v1/storage/**` 那 5 条是 `ContractKind::PluginExtension`，`credentials = PLUGIN_CREDENTIALS`
   （**只有两族插件令牌**）。**声明说会话合法，实现说会话非法** —— 这才是「同一个根因」。
 
-⇒ 本片把凭据门改成**按台账声明分流**（§286.2）。
+⇒ 本片把凭据门改成**按台账声明分流**（§287.2）。
 
-### §286.2 改了什么（写集：`routes/v1/policy.rs` + `mc-openapi/src/v1.rs`）
+### §287.2 改了什么（写集：`routes/v1/policy.rs` + `mc-openapi/src/v1.rs`）
 
 1. `mc_openapi::v1::operation_for_request(method, concrete_path)`：**分段**模板匹配
    （`{name}` 吃**恰好一个非空段**；`axum_path` 是同一个 `{…}` 语法的另一个消费点，所以不引入正则）。
@@ -27987,14 +27987,14 @@ $ find /home/devbox -maxdepth 5 -name go.mod
 **判据取自声明而不是路径前缀白名单** —— 台账加第 10 条 Operation 时这道门自动跟随，
 不需要在 `mc-http` 里维护第二份会漂移的路径副本。
 
-### §286.3 🔴 写集与工单声明**不一致**（已实测，不是推测）
+### §287.3 🔴 写集与工单声明**不一致**（已实测，不是推测）
 
 工单写集列的是 `crates/mc-http/src/routes/issues/`（`/api/issues` 那套），而缺陷点
 `routes/v1/policy.rs` **不在**声明的写集里；反过来，`routes/issues/**` 与本族**完全无关**。
 ⇒ 本片改了 `routes/v1/policy.rs`（+ 门 ⑬ 要的 `docs/37` 与 `docs/section-alloc.tsv`），
 **没有碰** `routes/issues/**`、`routes/mod.rs`、`mount.rs`，也**没有碰** `mc-conformance/**`。
 
-### §286.4 🔴 这一族**修不到 200**：`X-Multica-Plugin-Installation` 是**空串**，且装置面零 `plugin_installation` 种子
+### §287.4 🔴 这一族**修不到 200**：`X-Multica-Plugin-Installation` 是**空串**，且装置面零 `plugin_installation` 种子
 
 过了凭据门之后，请求停在 `policy::session_caller` 的安装解析上：
 
@@ -28020,7 +28020,7 @@ $ find /home/devbox -maxdepth 5 -name go.mod
 | `session_credential_is_still_refused_on_the_plugin_extension_face` | 401 | **401**（`/v1/context` 不因这次分流而放宽） |
 | `anonymous_is_still_refused_on_the_shared_resource_face` | 401 | **401** |
 
-### §286.5 ⑨ db-mode 前后对比（**当轮新建两个库**，角色带 `CREATEDB`）
+### §287.5 ⑨ db-mode 前后对比（**当轮新建两个库**，角色带 `CREATEDB`）
 
 `multica_c2610_before` / `multica_c2610_after`，同一个 `mc_c2610` 角色；两次跑的是**同一个
 base 的同一份 fixture**，只有服务端这三处不同。
@@ -28045,14 +28045,14 @@ base 的同一份 fixture**，只有服务端这三处不同。
 | PATCH | `/v1/issues/{issue_ref}` | 403 | 401 | **400** |
 
 **按实测报，不做对账式凑数**：`bad_total` 仍是 **58**，不是工单预测的 52。
-差 6 条的全部原因在 §286.4（装置面缺安装种子 + fixture 头是空串），**不在**本片写集内。
+差 6 条的全部原因在 §287.4（装置面缺安装种子 + fixture 头是空串），**不在**本片写集内。
 
 🔴 **为什么 401 → 400 仍然是「修对了」**：401 = 认证层说「你没带我能认的凭据」，
 400 = 请求**已经过了认证门**、被资源层按上游逐字拒绝。工单自己的「已知坑」第 2 条
 （`401` vs `403` 的归属要看认证层还是授权层）就是这条判别式；同一个判别式在这里说
 **401 → 400 是往上游方向挪了一格**，而不是「换个数字继续错」。
 
-### §286.6 门读数（当轮实测，base `ee910c46` + 本片）
+### §287.6 门读数（当轮实测，base `ee910c46` + 本片）
 
 - `bash scripts/gates.sh --with-db` = **11/12 绿**（814s）。唯一红 = 门 ⑨ `conformance`，
   **base 存量**：`first difference at line 17: committed 13 / fresh 12`，红点**不在**本片写集内
@@ -28066,9 +28066,9 @@ base 的同一份 fixture**，只有服务端这三处不同。
   ⇒ **`101` 在本仓要先看 `df` 再看代码**。本片的最终读数是 `cargo clean` +
   `CARGO_INCREMENTAL=0` 重跑一轮拿到的（`incremental/` 单独就 11G）。
 
-### §286.7 本片**明确不做**
+### §287.7 本片**明确不做**
 
-不改 `crates/mc-conformance/**`（装置面，§286.4 的种子缺口归它）；不跑 `--write-baseline`；
+不改 `crates/mc-conformance/**`（装置面，§287.4 的种子缺口归它）；不跑 `--write-baseline`；
 不碰 `routes/issues/**`、`routes/mod.rs`、`mount.rs`；不动 `crates/mc-conformance/report.json`；
 不为了凑 `58 → 52` 去放宽 `session_caller` 的安装头要求（那是上游逐字的安全判据：
 workspace 只能来自安装行，否则调用方能把安装指向它从未被安装过的 workspace）。
