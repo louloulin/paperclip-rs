@@ -24,7 +24,7 @@
 #   ⑨ conformance      cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
 #   ⑩ file-size        python3 scripts/file_size_check.py --quiet    （R7 单文件 800 行硬上限）
 #   ⑪ image            docker build + 容器内非 root + 二进制存在     （**不在**默认/`--with-db` 集合）
-#   ⑫ scripts-tests    python3 scripts/test_*.py                    （纯标准库 `unittest`，**不需要**任何
+#   ⑫ scripts-tests    python3 scripts/**/test_*.py                （纯标准库 `unittest`，**不需要**任何
 #                      第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
 #
 # 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
@@ -91,17 +91,26 @@
 #     不存在的文件 —— 那个二进制名叫 `multica-server`，**不叫 `mc-server`**，见
 #     `apps/mc-server/Cargo.toml` 的 `[[bin]] name`）。②③ 各花一次容器启动，
 #     比重新 build 便宜得多，所以放在 build 之后单独判。
-#   * ⑫（`scripts-tests`，T1-6-H1 / LUM-2600）执行 `scripts/test_*.py`：
+#   * ⑫（`scripts-tests`，T1-6-H1 / LUM-2600；覆盖面 LUM-2602 / T1-6-I）执行 `scripts/**/test_*.py`：
 #     这些是**纯标准库 `unittest`** 文件，零第三方依赖（本机实测 `python3 -m pytest` →
 #     `No module named pytest`；因此门里逐字用 `python3 <file>`，**不引入 pytest**），
 #     不编译、不连库、不占磁盘，亚秒级，所以它在默认集合里。
 #     🔴 **它为什么值得存在**：PR #182 修的正是「docstring 声明的判据，代码从来没执行」，
 #     而本仓在**一个完整 cycle** 里带着两个全绿的 Python 测试文件（20 个用例），
 #     而**没有任何门会执行它们** —— 「测试全绿」与「测试被跑过」是两件事。
-#     ⇒ 文件名必须用 **glob**（`scripts/test_*.py`）而不是逐个写死：写死的那天
+#     ⇒ 发现规则让「新增文件漏接进门禁」**结构上不可能**：写死文件名的那天
 #     就是这个门开始骗人的那天（新增第三个文件时没人会回来改门禁）。
+#     🔴 **覆盖面必须是递归的（LUM-2602 修）**：原规则 `scripts/test_*.py` 只匹配
+#     `scripts/` **顶层** ⇒ 包内测试全部漏接。实测 `scripts/t1_6_realm_diff_taxonomy/`
+#     （9 个模块 / 1053 行，决定 T1-6 全部缺口的归因）与 `scripts/t1_6_precondition_taxonomy.py`
+#     （339 行）在 PR #183 之后仍是「0 测试 + 0 门执行」（`docs/37 §274`）。
+#     ⚠️ **文件名形状是有语义的**：包内测试必须叫 `test_*.py` —— `tests.py` **不匹配**
+#     `test_*.py`（差一个下划线），写成那样就等于没写。
 #     ⚠️ **glob 为空 ⇒ 判红（exit 1），不是「无事发生 ⇒ 绿」**：与 ⑥/⑧ 缺库 URL、
 #     ⑪ 缺容器 CLI 同一族处置 —— 让「没东西可跑」在退出码上可区分。
+#     🔴 **exit 0 不等于「验证过」**：`python3 <file>` 对一个**没有用例**的文件
+#     exit 0 且什么都不打。所以绿的定义是「rc == 0 **且** 出现了 unittest 的 `OK` 行」——
+#     与本仓反复踩到的「跑过了就算验证过」同一族坑（`docs/37 §272/§274`）。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -366,48 +375,68 @@ run_schema_drift_gate() {
 # ② ③ 刻意不合并成一次容器启动：合并就少了一个可读的失败点，而分开时两次 `docker run
 # --rm --entrypoint` 各自只花几百毫秒，相对 build 的分钟级开销可以忽略。
 run_scripts_tests_gate() {
-    # ⑫ scripts-tests（LUM-2600 / T1-6-H1）—— 执行 `scripts/test_*.py`。
+    # ⑫ scripts-tests（LUM-2600 / T1-6-H1；覆盖面 LUM-2602 / T1-6-I）—— 执行 `scripts/**/test_*.py`。
     #
-    # 为什么单独写函数而不是 run_gate 一行：判据是「**每一个** `scripts/test_*.py` 都绿」，
-    # 文件数在运行时才确定（glob），而 run_gate 的形状是「name + 一条固定命令」。
+    # 为什么单独写函数而不是 run_gate 一行：判据是「**每一个** 测试文件都真跑了且都绿」，
+    # 文件数在运行时才确定（发现规则），而 run_gate 的形状是「name + 一条固定命令」。
     #
     # 为什么不逐个把文件名写死：写死的那天就是这个门开始骗人的那天 ——
     # 新增第三个测试文件时没人会记得回来改这里，于是又变成「全绿但没人看得见」。
-    # glob 让「新增文件漏接进门禁」这件事**结构上不可能**（见文件顶部「已知坑」⑫）。
-    local start end rc combined f files=() note
+    # ⇒ 发现规则让「新增测试文件漏接进门禁」**结构上不可能**（见文件顶部「已知坑」⑫）。
+    local start end rc combined f files=() note log no_tests
     printf '\n=== [⑫] gate scripts-tests ===\n'
 
-    # glob 必须排序，否则失败顺序随文件系统而变（不可复现）。nullglob 下无匹配时
-    # `scripts/test_*.py` 展开成空、`files` 为空数组。
-    shopt -s nullglob
-    files=(scripts/test_*.py)
-    shopt -u nullglob
+    # 🔴 **递归**发现（LUM-2602）。原来的 `files=(scripts/test_*.py)` 只匹配 `scripts/`
+    # **顶层** ⇒ 包内测试（如 `scripts/t1_6_realm_diff_taxonomy/test_*.py`）全部漏接，
+    # 而那 1053 行正是「决定每条 T1-6 缺口归谁」的那套分类器（`docs/37 §274`）。
+    # 用 `find` 而不是 `shopt -s globstar` + `**`：globstar 是 **shell 选项**，
+    # 语义依赖调用者的 shell 状态；`find` 在任何 bash 下逐字一致。
+    #   `-prune -o`  排除 `__pycache__`（否则上一次的字节码目录会进清单）。
+    #   `LC_ALL=C sort` 失败顺序不随文件系统而变（可复现）。
+    mapfile -t files < <(
+        find scripts -type d -name '__pycache__' -prune -o \
+            -type f -name 'test_*.py' -print | LC_ALL=C sort
+    )
 
     # 一个测试文件都没有 ⇒ **判红**，不是「无事发生 ⇒ 绿」。
     # 理由与 ⑥/⑧ 缺库 URL、⑪ 缺容器 CLI 同一族：让「没东西可跑」在退出码上可区分。
     if [ "${#files[@]}" -eq 0 ]; then
-        printf 'error: the scripts-tests gate found no scripts/test_*.py to run\n' >&2
+        printf 'error: the scripts-tests gate found no scripts/**/test_*.py to run\n' >&2
         printf '  (an empty glob must never read as green: that is how 20 green cases\n' >&2
         printf '   sat in this repo for a whole cycle with nothing executing them)\n' >&2
         printf 'GATE_SCRIPTS_TESTS_EXIT=1\n'
-        record scripts-tests 1 0 "no scripts/test_*.py found"
+        record scripts-tests 1 0 "no scripts/**/test_*.py found"
         return 0
     fi
 
     start="$(date +%s)"
     combined=0
+    no_tests=0
+    log="$(mktemp)"
     # 逐个文件都跑（不 fail-fast）：一个文件炸了不许掩盖另一个文件的读数。
     for f in "${files[@]}"; do
         printf '$ python3 %s\n' "$f"
-        python3 "$f"
+        # 输出重定向到文件再打：`python3 ... | tee` 遇上 SIGPIPE 会把本轮日志截断。
+        python3 "$f" >"$log" 2>&1
         rc=$?
+        cat "$log"
+        # 🔴 **exit 0 不等于「验证过」**（LUM-2602）。`python3 <file>` 对一个没有用例的
+        # 文件 **exit 0** 且什么都不打（若它调了 `unittest.main()` 则打 `Ran 0 tests`）。
+        # ⇒ 绿的定义收紧为「rc == 0 **且** unittest 打了 `OK` 行」。
+        if [ "$rc" -eq 0 ] && ! grep -Eq '^OK' "$log"; then
+            printf '  !! %s exit=0 但没有 unittest 的 OK 行 ⇒ 判红（0 个用例 = 没验证过）\n' "$f"
+            combined=1
+            no_tests=$((no_tests + 1))
+        fi
         printf '  -> %s exit=%s\n' "$f" "$rc"
         [ "$rc" -ne 0 ] && combined=1
     done
+    rm -f "$log"
     end="$(date +%s)"
 
     note="${#files[@]} file(s)"
     [ "$combined" -ne 0 ] && note="${note}, at least one red"
+    [ "$no_tests" -ne 0 ] && note="${note}, ${no_tests} with zero test cases"
     printf 'GATE_SCRIPTS_TESTS_EXIT=%s\n' "$combined"
     record scripts-tests "$combined" "$((end - start))" "$note"
     return 0
