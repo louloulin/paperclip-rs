@@ -5,8 +5,8 @@
 # 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
 # （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 十三道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
-# ⑪ / ⑫ / ⑬ 是后续切片追加的，追加号不重编旧号）：
+# 十四道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
+# ⑪ / ⑫ / ⑬ / ⑭ 是后续切片追加的，追加号不重编旧号）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -28,8 +28,10 @@
 #                      第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
 #   ⑬ section-alloc    python3 scripts/section_alloc_check.py --quiet （`docs/37` 号段台账的双向校验 +
 #                      「撞号」判据；纯标准库、亚秒级，不需要数据库/编译/网络）
+#   ⑭ judge-test-cov   python3 scripts/judge_test_coverage_check.py --quiet （`ci.yml` / `gates.sh`
+#                      真正执行的每个 `scripts/**/<name>.py` 必须有 `test_<name>.py`；纯标准库、亚秒级）
 #
-# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬ + ⑭（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # ⑪ 刻意不在任何默认集合里（见「已知坑」⑪）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
@@ -169,7 +171,7 @@ cd "$SCRIPT_DIR/.." || exit 2
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
 # `image` 排在最后但**不在**任何默认集合里（默认集合在下方的 SELECTED 分支里逐字写出，
 # 不由 ALL_GATES 推导）—— 这样 `--list` / `--only image` 能点到它，而默认跑法碰不到它。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests section-alloc"
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests section-alloc judge-test-coverage"
 
 gate_label() {
     case "$1" in
@@ -186,6 +188,7 @@ gate_label() {
         image)      echo "⑪" ;;
         scripts-tests) echo "⑫" ;;
         section-alloc) echo "⑬" ;;
+        judge-test-coverage) echo "⑭" ;;
         *) echo "?" ;;
     esac
 }
@@ -205,6 +208,7 @@ gate_env_name() {
         image)      echo "IMAGE" ;;
         scripts-tests) echo "SCRIPTS_TESTS" ;;
         section-alloc) echo "SECTION_ALLOC" ;;
+        judge-test-coverage) echo "JUDGE_TEST_COVERAGE" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -334,8 +338,8 @@ if [ -n "$ONLY" ]; then
 else
     SELECTED=" fmt build clippy clippy-test-util test"
     [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
-    # ⑦ ⑨ ⑩ ⑫ ⑬ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
-    SELECTED="$SELECTED route-parity conformance file-size scripts-tests section-alloc"
+    # ⑦ ⑨ ⑩ ⑫ ⑬ ⑭ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
+    SELECTED="$SELECTED route-parity conformance file-size scripts-tests section-alloc judge-test-coverage"
 fi
 
 selected_gate() {
@@ -626,6 +630,41 @@ run_section_alloc_gate() {
     return 0
 }
 
+# ⑭ judge-test-coverage（LUM-2626 / T1-6-G1）—— `ci.yml` / `gates.sh` 真正执行的每个
+# `scripts/**/<name>.py` 都必须有 `scripts/**/test_<name>.py`。
+#
+# 同样写成独立函数而不是 `run_gate … python3 … --quiet` 一行：门本体必须能**逐条点名**
+# 缺口（哪个引用面、哪个脚本、缺哪个 `test_`），而 `--quiet` 面只打一行总结（判词面）。
+# 与 ⑧ / ⑬ 同款：红了才再跑一遍不带 `--quiet`，把明细打出来。
+JUDGE_TEST_COVERAGE_CHECKER="scripts/judge_test_coverage_check.py"
+run_judge_test_coverage_gate() {
+    local start end rc
+    printf '\n=== [%s] gate judge-test-coverage ===\n' "$(gate_label judge-test-coverage)"
+    printf '$ python3 %s --quiet\n' "$JUDGE_TEST_COVERAGE_CHECKER"
+    start="$(date +%s)"
+
+    # 🔴 判据一：判定器必须在。删掉 / 改名它 ⇒ 红，而不是「无事发生 ⇒ 绿」（§276）。
+    if [ ! -f "$JUDGE_TEST_COVERAGE_CHECKER" ]; then
+        end="$(date +%s)"
+        printf 'error: the judge-test-coverage gate needs its checker, but it is missing\n' >&2
+        printf '  expected: %s\n' "$JUDGE_TEST_COVERAGE_CHECKER" >&2
+        printf 'GATE_JUDGE_TEST_COVERAGE_EXIT=1\n'
+        record judge-test-coverage 1 "$((end - start))" "checker missing"
+        return 0
+    fi
+
+    python3 "$JUDGE_TEST_COVERAGE_CHECKER" --quiet
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '$ python3 %s   # 红了重跑一遍，把逐条缺口打出来\n' "$JUDGE_TEST_COVERAGE_CHECKER"
+        python3 "$JUDGE_TEST_COVERAGE_CHECKER" || true
+    fi
+    end="$(date +%s)"
+    printf 'GATE_JUDGE_TEST_COVERAGE_EXIT=%s\n' "$rc"
+    record judge-test-coverage "$rc" "$((end - start))" ""
+    return 0
+}
+
 run_image_gate() {
     local start end rc tag
     tag="multica-server:image"
@@ -710,6 +749,7 @@ for gate in $SELECTED; do
         image)          run_image_gate; _img_rc=$?; [ "$_img_rc" -eq 2 ] && exit 2 ;;
         scripts-tests)  run_scripts_tests_gate ;;
         section-alloc)  run_section_alloc_gate ;;
+        judge-test-coverage) run_judge_test_coverage_gate ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done
