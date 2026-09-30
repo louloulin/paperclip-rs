@@ -28452,6 +28452,102 @@ crates/mc-conformance              base=head=e98c2d3c2b2cbf9e458cbae8d1129a982d9
 - **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮第 4 次实测，§289.3 给了零构建证法）；`mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 裁决；`LUM-2556` / `LUM-2545` 两个陈旧 cycle issue 的状态归属。
 - 积压 `todo` 的 autopilot cycle 单（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835/2012/…`）**只登记不动状态**。
 
+## §292 【2026-09-30 13:30 cycle / `LUM-2619`】收割 **1 片**（#194）＋ 🔴 承重：**门 ④ 的判定器 `schema_drift.py` 是 799 行、离 800 上限差 1 行、且 0 测试 —— 门 ⑩ 只看行数，看不见「0 测试」**
+
+起手 base `c2edcad2` → 收尾 `5bb06fbb`。GH 收尾 **0 open PR**。daemon 收尾 **3/3**
+（cycle 自身 ∥ `LUM-2620` ∥ `LUM-2621`）。磁盘起手 26G/45% ⇒ **只派零磁盘切片**。
+
+### §292.1 收割 #194（`LUM-2617` / T1-6-P）—— 形态①，六条判据链零门禁重跑
+
+| 判据 | 读数 |
+|---|---|
+| ① 预检 numstat（`merge-base..head`） | 4 文件 `+746/−0` == PR API **逐字** |
+| ② 形态 | `merge-base == base == c2edcad2` ⇒ **祖先形态①** |
+| ③ 三读数 | `merge-tree --write-tree` rc=**0**，树 `e8e80847` |
+| ④ 证据 | head CI `db`✓ `image`✓ `fast`✓，`contract`✗（§292.4 存量红） |
+| ⑤ 号段 | `§288`，base 空号；对 **230 条**远端分支扫 `^## §288` ⇒ **只有它自己**命中 |
+| ⑥ 候选树门读数 | `fmt` `route-parity` `file-size` `scripts-tests` `section-alloc` **5/5 rc=0** |
+
+**候选树的门是在 `git commit-tree` 出来的合成 commit 上跑的**，不是 base 上跑的 ——
+先在 base 上跑一遍（也 5/5 绿）再在候选树上跑一遍，**两次都绿才算收割**。
+`scripts-tests` 的 `Ran` 合计从 **53+12+6+7+36+66+9+25+14**（228）升到 **53+12+6+45+7+36+66+9+25+14**（239），
+门体读数 `10 file(s)` ⇒ 新文件**确实被门执行了**（`LUM-2614` 的教训：漏登记 = 存在但从不被执行）。
+`section-alloc` = `sections=219 numbers=218 ledger=218 defects=0`（+1 段 +1 台账行，两侧对齐）。
+
+### §292.2 🔴 承重一：**门 ⑩ 的四条判词里没有「0 测试」，所以「离上限 1 行且 0 测试」是绿的**
+
+`scripts/schema_drift.py` = **799 行**，`scripts/file_size_baseline.tsv` 里**没有**它
+（清单里只有 `extract_upstream_fixtures.py` 1863）⇒ 按门 ⑩ 的判词它是**合规新代码**（≤800）；
+按门 ⑫ 的发现规则它**没有**对应的 `test_*.py` ⇒ 门 ⑫ 也绿。
+而它**每天被门 ④ 执行**（`gates.sh:442`，需要 `MULTICA_TEST_DATABASE_URL`）。
+
+⇒ **两条门都绿，而一个 799 行、明天必然撞 800 的判定器在跑生产判词。**
+这与 `LUM-2608` 的承重（762 行的文件离 800 只剩 38）是同一个形状，但**这次连「登记基线」这条
+合法出口都没有** —— 基线只减不增 ⇒ **唯一合法出口是拆文件**。
+⇒ **「一个文件的健康度」至少有三道判词：行数（门 ⑩）、有无测试（门 ⑫）、有没有被登记进基线。**
+三道都绿**不等于**它健康。已派 `LUM-2621` 收它，并要求**测试放新文件、一行不加到本体上**。
+
+### §292.3 🔴 承重二：**「已合并的一侧比未合并的一侧贵」这条让号判据，本轮第二次派发就撞上**
+
+起手 `LUM-2610` 声明 §286 时它已被 `LUM-2615`（=#192，本 cycle 前 30 分钟合入）占掉 ⇒ 让号取 §287。
+本轮把 §290 / §291 派给两片、§292 留给 cycle。**派发前对 230 条远端分支扫过，3 个号全 0 命中。**
+⇒ 但 §289 已经记过「派发后开工前就失效」这一次 ⇒ 本轮工单正文里**再写一遍**：
+**开工前和收尾前各重取一次号段**。规则本身没变，**变的是它被执行得太频繁**。
+
+### §292.4 「`contract` 红了」这条读数的第四次归因：base 存量，且**零构建**即可判
+
+#194 的 `contract` check 红。但本片写集 = 4 个文件、**零 Rust / 零 `contracts/**` / 零 golden** ⇒
+按 §289.1 的判据（**比三个门输入 blob 全等就不必花 14G 冷编去跑**），
+**由构造即可推出这是 base 存量红**，本轮**不跑门 ⑨、不作继承声明**。
+
+### §292.5 其它实测（都是当场读数，不是继承）
+
+- 🔴 **「派发成功 ≠ 起跑成功」第 3 次，但形态换了一个**：同一批
+  `multica issue create --assignee-id … --status todo` 的两个工单，
+  `LUM-2621` 立刻 `in_progress` + `running`，
+  **`LUM-2620` 却是 `todo` 且 `runs` 0 条** ⇒ `rerun` 后 45 秒内 `running`。
+  ⇒ **同一批派发的结果必须逐个查 `runs`，不能因为「另一个起来了」就推断这另一个也起来了。**
+- 🔴 **纯文本回合零 tool call 族（§2613）第 4 次实测**：`LUM-2620` 的第一个 run 在
+  **45 秒内 `completed`**，`result.output` 逐字是 `I'll start by reading the issue.`
+  ⇒ 复核三判据（`runs[].status` / `result.output` 是否只有一句 / workdir 有 repo 且 ≳36M）
+  在**本轮再次全部必要**：`rerun` 后 90 秒 workdir 才出现。
+- **陈旧分支不必逐一看内容，用 `git cherry` 先分流**：
+  `d35a7000b9a0`（LUM-2592）6 个提交里 **4 个 `-`**（patch 已进 base）＋ 2 个 `+` 是纯 docs 号段改号
+  （§276→§277、§276.9），而 base 的 §276/§277 **已被别的片按新号占掉** ⇒ 那 2 个是**永久过期的号段记录**，不是待收割内容；
+  `rescue-2592` 全 `-`；`8e61c45406b5`（`272acce6`）虽 `+` 但**逐文件比对**显示两个脚本
+  `md5` **逐字相同**、其余是 base 已前进 ⇒ 已由 §285 作为 #191 收割；
+  `15a881f26c55` 的 `stop_condition.sh` 是 **646 行而 base 已是 776 行** ⇒ 是**旧版本**，不是待收割。
+  ⇒ **判据：`git cherry` 只判「patch 在不在」，判不了「旧版本 vs 新版本」；后者的唯一判据是逐文件大小 / md5。**
+- 🔴 **`git merge-tree --write-tree` 返回的是**树对象**，不是 commit** ⇒ 直接 `git checkout <tree>`
+  会报 `Cannot switch branch to a non-commit`。正解：
+  `git commit-tree <tree> -p <base> -m "candidate"` 再 checkout。
+  这条以前每次都用对了（推的是 commit），但**从没把它当成门禁对象单独 checkout 过** ⇒ 本轮才撞到。
+- **磁盘本轮全程 26G/45%**，零回收（无 `target/` 活物）：§289 记的「合并就是最大的回收开关」本轮不适用
+  —— 本轮合并的片**不含 Rust**，所以合并没带来回收量。**回收判据要绑定「被回收的是什么」，
+  不能只绑定「合并发生了」。**
+
+### §292.6 派片（3/3，两片都是零 Rust / 零 cargo / 零真库 / 零磁盘）
+
+| 工单 | 判定器 | 行数 | 号段 | 与门的关系 |
+|---|---|---|---|---|
+| `LUM-2620` / T1-6-Q1 | `scripts/slash_alias_audit.py` | 376 | §290 | 门 ⑦ 的**第二条**命令（`gates.sh:699`） |
+| `LUM-2621` / T1-6-Q2 | `scripts/schema_drift.py` | 799 | §291 | 门 ④ 的唯一命令（`gates.sh:442`，需真库） |
+
+两片写集**不相交**（各自的测试文件），但**都写** `scripts/tests.manifest` 与 `docs/section-alloc.tsv`
+（按段号/排序插入 ⇒ 可自动合并）与 `docs/37`（**EOF 追加 ⇒ 必冲突，结构性**）。
+两片都给了「派发后/收尾前各重取一次号段」与「从 stage blob 按行号拼」的解法。
+
+**门 ⑦ 的 `EXTRA_ALIAS` 是 warning 不是 defect**（其 docstring 明写 exit 0）
+⇒ 工单里把「先实测 exit code 再写断言」列为本片最可能踩的坑：
+**把 warning 当 defect 断言 = 写出一个钉住错误行为的绿用例。**
+
+### §292.7 收尾门读数（base `5bb06fbb` 当场重跑，零编译）
+
+`fmt` `route-parity` `file-size` `scripts-tests` `section-alloc` **5/5 rc=0**；
+`section-alloc` = `sections=219 numbers=218 ledger=218 defects=0`。
+
+**门 ②③④⑤⑥⑧⑨ 未跑**（要 cargo / 真库 / 容器），**不作继承声明**，不得读成「全门通过」。
+
 ## §290 【LUM-2620 / T1-6-Q1】给门 ⑦ 的**第二条**判定器 `slash_alias_audit.py`（376 行 / 0 用例）补 68 例 —— 只测不改，登记 8 条有编号的已知缺陷
 
 零 Rust / 零 cargo / 零真库 / 零磁盘。门 ⑦ 第二条命令（`scripts/gates.sh:699`）每天都在跑这个
