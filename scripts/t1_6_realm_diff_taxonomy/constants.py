@@ -64,7 +64,18 @@ BEHAVIOR_OWNER_FILES = {
     "BEHAVIOR_ISSUE_PREFIX_UNPORTED": [
         "crates/mc-http/src/routes/workspaces.rs",
     ],
-    # `BEHAVIOR_JSON_DECODE_STATUS`（422 vs 400）与 `BEHAVIOR_NUL_PAYLOAD`（NUL 字节）
-    # **故意不填**：这两族只有 db 读数才能划出成员，而在静态面定位它们的修法需要先知道
-    # 成员落在哪些 handler —— 没读就填等于编。`report.py` 会把 lane 判成「未定」并点名。
+    # `query_issues`（`routes/issues/list.rs`）用 axum 的 `Json<HashMap<..>>` 提取器，
+    # 解码失败被 `JsonRejection` 短路成 **422**；上游 `QueryIssues`（`issue.go:1153`）
+    # 是 `json.NewDecoder(..).Decode(&params)` 失败即 **400**。
+    # `list.rs` 是**唯一**落点（提取器就在那儿）；`query.rs` 是**同请求的另一半** ——
+    # 它持有 `ListIssuesQuery::from_pairs`，畸形值与未知键的逐键语义都在那里判定，
+    # 「只把畸形值挪到 400、不动良构路径」这条双向判据要同时读这两个文件才验得了。
+    "BEHAVIOR_JSON_DECODE_STATUS": [
+        "crates/mc-http/src/routes/issues/list.rs",
+        "crates/mc-http/src/routes/issues/query.rs",
+    ],
+    # `BEHAVIOR_NUL_PAYLOAD`（NUL 字节）**仍然不填**：本轮只派了 JSON 解码这一族，
+    # NUL 那条要读的是 `routes/chat/**` 的 task-messages 回调 handler，与上面 4 条
+    # 无文件交集；没读就填等于编（同段开头的纪律）。`report.py` 会把 lane 判成「未定」
+    # 并点名这一条。
 }

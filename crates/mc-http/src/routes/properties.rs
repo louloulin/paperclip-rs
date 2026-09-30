@@ -26,8 +26,12 @@
 //!   不带 `omitempty` 一致。
 //!
 //! 已知偏差（详见 `docs/59-M2-E-LABEL-PROPERTY.md` §6）：
-//! - 上游对 `actor == "agent"` 的管理请求回 403 `agents cannot manage property definitions`；
-//!   本仓 mc-http 没有 agent 身份的请求上下文（只有 `X-Multica-User-Id`）⇒ 不可实现。
+//! - 上游对 `actor == "agent"` 的管理请求回 403 `agents cannot manage property definitions`。
+//!   上游 `resolveActor`（`handler.go:847`）判 "agent" 有**两条**路：
+//!   ① `X-Actor-Source == "task_token"` ⇒ **直接信**这枚服务端盖章的头返 "agent"；
+//!   ② `X-Agent-ID` + `X-Task-ID` + 两次查库（agent 在本 workspace、task 属于该 agent）。
+//!   **①已接线**（见 [`require_property_admin_actor`]，本片补）；**②仍不可实现** ——
+//!   本仓 mc-http 没有 agent / task 的请求上下文 ⇒ 保留在本段登记表里。
 //! - 上游 `ListProperties` / `GetProperty` 不校验成员（workspace 来自 session）；本仓
 //!   显式解析 workspace ⇒ 补成员门。
 //! - 404 体是 `not found: property`（本仓 `Error::NotFound` 渲染），不是上游自由文本。
@@ -50,6 +54,7 @@ use mc_repos::RepoError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
+use crate::actor_guard::{classify_actor_source, ActorSource};
 use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
 use crate::routes::invitations::{not_found, require_workspace_admin, require_workspace_member};
@@ -213,6 +218,29 @@ async fn list_properties(
     ))
 }
 
+/// 403 的**唯一**文本（上游 `requirePropertyAdmin` 逐字，`property.go:412`）。
+const AGENT_CANNOT_MANAGE_MESSAGE: &str = "agents cannot manage property definitions";
+
+/// 管理面的 **agent 闸**（上游 `requirePropertyAdmin` 的第一道，`property.go:411-414`）。
+///
+/// 🔴 **只拦 `task_token`，不拦 `cloud_pat`** —— 这与 [`crate::actor_guard`] 的
+/// `is_machine_credential_actor` **故意不同**。上游判 "agent" 的是 `resolveActor`
+/// （`handler.go:847`），它的第一分支是 `X-Actor-Source == "task_token"` 字面比较；
+/// `cloud_pat` 落不到任何分支 ⇒ 返 **"member"** ⇒ 过闸。这里复用
+/// `classify_actor_source` 的三态分类（`actor_guard.rs`），但**只**取 `TaskToken`
+/// 那一态 —— 拿机器凭据谓词直接用会把 `cloud_pat` 误判成 agent（比上游更严）。
+///
+/// 上游 `resolveActor` 的第二分支（`X-Agent-ID` + `X-Task-ID` + 两次查库）在本仓
+/// **仍不可实现**，登记在模块头的已知偏差里。
+fn require_property_admin_actor(headers: &HeaderMap) -> Result<(), Error> {
+    if classify_actor_source(headers) == ActorSource::TaskToken {
+        return Err(Error::Forbidden {
+            message: AGENT_CANNOT_MANAGE_MESSAGE.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// `POST /api/properties`（上游 `CreateProperty`；owner/admin，成功 201）。
 async fn create_property(
     State(state): State<Arc<AppState>>,
@@ -222,6 +250,7 @@ async fn create_property(
     body: Bytes,
 ) -> ApiResult<Response> {
     let workspace_id = resolve_workspace(&state, &headers, &query).await?;
+    require_property_admin_actor(&headers)?;
     require_workspace_admin(&state, workspace_id, user.id()).await?;
     let req: CreatePropertyRequest = parse_body(&body)?;
 
@@ -287,6 +316,7 @@ async fn update_property(
     let property_id = parse_target_id("property id", &raw_id)?;
     let req: UpdatePropertyRequest = parse_body(&body)?;
     let workspace_id = resolve_workspace(&state, &headers, &query).await?;
+    require_property_admin_actor(&headers)?;
     require_workspace_admin(&state, workspace_id, user.id()).await?;
 
     let repo = property_repo(&state);
@@ -373,4 +403,49 @@ fn clean_description(raw: &str) -> String {
 /// body 解码（上游 `json.Decoder` 失败 ⇒ 400 `invalid request body`）。
 fn parse_body<T: serde::de::DeserializeOwned>(body: &Bytes) -> Result<T, Error> {
     serde_json::from_slice::<T>(body).map_err(|_| validation("invalid request body"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderName;
+
+    fn headers_with_actor_source(value: &str) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        map.insert(
+            HeaderName::from_static("x-actor-source"),
+            value.parse().expect("header value"),
+        );
+        map
+    }
+
+    /// 双向判据（`BEHAVIOR_MACHINE_ACTOR_GATE`）：`task_token` 盖章 ⇒ **403**（上游
+    /// `requirePropertyAdmin` 的 agent 分支逐字，`property.go:412`）。
+    #[test]
+    fn task_token_actor_is_rejected_with_403() {
+        let e = require_property_admin_actor(&headers_with_actor_source("task_token"))
+            .expect_err("task_token must be denied");
+        assert_eq!(e.http_status(), 403);
+        assert_eq!(e.to_string(), format!("forbidden: {AGENT_CANNOT_MANAGE_MESSAGE}"));
+    }
+
+    /// 双向的**另一半**，且是本片最容易写错的一半：🔴 **`cloud_pat` 必须放行**。
+    /// 上游 `resolveActor`（`handler.go:847`）判 "agent" 的第一分支是
+    /// `X-Actor-Source == "task_token"` 的**字面比较**；`cloud_pat` 落不到任何分支
+    /// ⇒ 返 "member" ⇒ 过 `requirePropertyAdmin`。拿 `is_machine_credential_actor`
+    /// （denylist 含 `cloud_pat`）当这条闸会把 `cloud_pat` 误判成 agent（比上游更严）。
+    #[test]
+    fn non_task_token_actors_pass_the_property_gate() {
+        for raw in [
+            "cloud_pat",     // 机器凭据，但上游 resolveActor 判它是 "member" ⇒ 放行
+            "service_account", // 未知值：上游有意当人类
+            "TASK_TOKEN",    // 大小写不同 ⇒ 字面比较不命中
+            "",              // 空串 ⇒ 人类
+        ] {
+            require_property_admin_actor(&headers_with_actor_source(raw))
+                .unwrap_or_else(|e| panic!("{raw:?} must pass, got {e}"));
+        }
+        // 缺头（最常见的人类路径）也必须放行。
+        require_property_admin_actor(&HeaderMap::new()).expect("no header = human");
+    }
 }
