@@ -28191,6 +28191,160 @@ base 的同一份 fixture**，只有服务端这三处不同。
 不为了凑 `58 → 52` 去放宽 `session_caller` 的安装头要求（那是上游逐字的安全判据：
 workspace 只能来自安装行，否则调用方能把安装指向它从未被安装过的 workspace）。
 
+## §288 【LUM-2617 / T1-6-P】门 ⑩ 的判定器 `file_size_check.py`（329 行）0 测试，且 `--write-baseline` 能把「基线内文件变长」静默洗成绿
+
+> 📌 **号段**：本片起手 base **`686ac0b3`**，实测下一个空号 = **§288**。
+> 派发前已对**全部 `origin/agent/*` 远端分支**扫 `^## §288` ⇒ **0 命中**（`LUM-2613` 就是漏了
+> 这一步才和 `LUM-2608` 撞号）。`docs/section-alloc.tsv` 同步登记 ⇒ 门 ⑬ R1–R4 绿。
+> 📌 **交付时 base 前进到 `c2edcad2`（cycle `LUM-2616` 落地 §289）** —— 那一段记录的正是
+> **本片这个缺陷**（四段读数逐字相同）并写着「已派 `LUM-2617`」；它跳过了 §288，**没占用**
+> ⇒ 本段仍取 §288，并按**号段顺序**插在 §289 **之前**（不是 EOF 追加），
+> 台账行同样插在 289 之前。两侧都往末尾追加 ⇒ `rebase` 必冲突，机械解法见下。
+> ⚠️ 起手时 `multica repo checkout` 落的分支**不在**最新 base 上（实测落在 `origin/main`
+> `4fc96f30`，那条线上**没有** `scripts/file_size_check.py`、也没有 `docs/37`）⇒
+> **必须 `git rev-parse` + `git cat-file -e <ref>:scripts/file_size_check.py` 实测 base**，
+> 不能信 checkout 落点。
+
+### §288.0 触发：三个门判定器 0 测试，本片收第三个
+
+`scripts/gates.sh` 实际调用的脚本逐个对 `scripts/test_*.py` 做覆盖比对：
+
+| 脚本 | 行数 | 决定什么 | 覆盖 |
+|---|---|---|---|
+| `scripts/schema_drift.py` | **799** | 门 ④ | **0**（留给后续片） |
+| `scripts/slash_alias_audit.py` | 376 | 门 ⑦ 的一部分 | **0**（留给后续片） |
+| `scripts/file_size_check.py` | **329** | **门 ⑩** | **0** ← 本片 |
+
+`grep -rIl` 全仓复核：三者只出现在 `.github/workflows/ci.yml`、`contracts/*.tsv` 与
+`docs/**` 里 ⇒ **被运行，从未被测试**。`route_parity.py`（779 行）已由 `LUM-2606` 覆盖，
+`section_alloc_check.py` 由 `LUM-2613` 复用覆盖。
+
+### §288.1 🔴 承重：门 ⑩ 有一个能把回归洗成绿的缺陷（本轮当场实测，四段读数）
+
+`file_size_check.py` 的 docstring 写着不变式「**基线只减不增，新增违规不得写进白名单**」，
+`--help` 的 rule 2 是「在基线里且**超过**记录行数 ⇒ 它变长了 ⇒ 失败（只允许变短）」。
+
+`/tmp` 一次性 git 仓库（`--limit` 默认 800，文件逐字节可复原）：
+
+| 步 | 动作 | 门 | stderr |
+|---|---|---|---|
+| P0 | 干净树，`crates/legacy.rs` 850 行、基线记 850 | `rc=0` | — |
+| P1 | `legacy.rs` **长到 900** | **`rc=1`**（rule 2 正确判红） | — |
+| P2 | 操作员跑 `--write-baseline` | `rc=0` | **0 字节（无任何警告）** |
+| P3 | **同一棵树**再跑门 | **`rc=0`** | — |
+
+⇒ **一条 50 行的真实回归，被一条命令静默洗成绿。**
+
+**根因**在 `main()` 的 `changes` 计算与 `write_baseline()` 的告警条件之间：
+
+- `added = set(over) - set(previous)`，且 `write_baseline` 对 `added and had_previous`
+  **有 WARNING**（措辞即「基线只减不增，新增违规不得写进白名单」）；
+- `updated = {p for p in set(over) & set(previous) if over[p] != previous[p]}`
+  —— **只看「值变了」，不看方向**，而 `updated` 只被 `print` 成一行 `  updated: <path>`，
+  **没有任何告警、不检查方向、不改退出码**。
+
+⇒ **同一个不变式，在「新增」路径上被强制，在「变长」路径上只是被打印。**
+这与 `LUM-2606` 找 `route_parity.py` 缺陷时是**同一个形状**：docstring 声明的判据，
+代码只执行了一半。
+
+**本仓的暴露面**：`scripts/file_size_baseline.tsv` 当前只有一条
+`scripts/extract_upstream_fixtures.py  1863`（实测当前文件 1862 行，即仍在收缩）。
+该脚本近几轮在 1858 / 1862 / 1863 之间移动过 ⇒ 任何一次「变长」都可以被一条
+`--write-baseline` 洗掉，且不留痕迹。
+
+**为什么这条特别贵**：`§283`（`LUM-2608`）的承重一整条都在讲 rule 2 挡人：762 行的
+`test_route_parity.py` 追加即红、登记基线被规则禁止，**唯一合法出口是拆文件**。
+也就是说这条规则**本轮刚产生过真实成本**，而它的执行器自己有一个一键绕过口。
+
+### §288.2 本片交付：只测不改
+
+`scripts/test_file_size_check.py`（**587 行**，`unittest` 纯标准库；≤800 行是门 ⑩ 硬上限 ——
+`LUM-2608` 就是被这条挡的，**本片没有登记基线、没有拆文件**）。45 用例：
+
+- **scope**（7）：`crates/` `apps/` `scripts/` `.github/workflows/` 四个前缀、嵌套不豁免、
+  `docs/**.md` 有意不查、**未 `git add` 的文件不进读数**（扫描源是 `git ls-files`）。
+- **四条规则**（rule 1 ×2 / rule 2 ×4 / rule 3 ×2 / rule 4 ×2），含边界：恰好等于记录行数 ⇒ 绿、
+  恰好等于上限 ⇒ 绿；「文件读不到大小」这一个分支的**两个来源**（已不在 git / 仍在 git 但
+  不在范围内）判词必须区分。
+- **基线解析**（6）：缺失 ⇒ rc=1 且给创建命令（docstring 明说这是 violation 不是 usage error）、
+  注释/空行忽略、坏行带行号、重复条目、`--baseline` 自定义路径。
+- **行数口径**（3）：直接 import 门模块调 `count_lines` —— `wc -l` 会少算的
+  「末行无换行」必须算进去，空文件算 0。
+- **CLI**（3）：`--limit 0` ⇒ rc=2；`--limit` 可调；`--quiet` 绿时**零输出**。
+- **`--write-baseline`**（7）：文档头 + 按 path 排序、added/removed/updated 逐条打印、
+  **新增有 WARNING**、首次生成（`had_previous=False`）不告警、收缩无告警、
+  非默认 limit 写出的基线在默认 limit 下**大声**判红（docstring 的自我保护）。
+- **本仓基线只读断言**（1）：每条 `recorded >= actual`，被洗白就红。
+
+### §288.3 缺陷登记：`KNOWN_DEFECTS` + `expectedFailure`，**双向**受检
+
+照抄 `scripts/test_route_parity_defects.py` 的做法（`KD-1`，四字段 `case/claim/observed/close`）：
+
+- `test_kd1_write_baseline_refuses_to_launder_a_grown_entry` 带 `@unittest.expectedFailure`
+  ⇒ 门 ⑫ 仍绿（`OK (expected failures=1)`），但用例**每天都跑**；修好 ⇒
+  `UNEXPECTED SUCCESS` ⇒ rc=1 ⇒ **修好的人必须同时删装饰器并改登记表**。
+- 本条断言的是**不变式**而不是某一种修法：「洗白」这一步必须**留下痕迹** ——
+  要么退出码非零（方案 a：拒绝写入），要么 stderr 点名该变大的条目（方案 b：告警）。
+  ⚠️ 本条**不**断言「P3 门仍然红」：方案 b 下基线照样被写成 900、门照样转绿 ——
+  那是 `§288.5` 明确留给 owner 裁决的取舍，**cycle 不自行选**。
+  （第一版把 P3 写进了这条用例，当场探针 P-A 就把它揭穿了：方案 b 永远翻不动它。）
+- **反向守卫同时在**：登记表里每条都有 xfail 用例 / 每个 xfail 都已登记 / 四字段非空 /
+  登记表 JSON 可序列化（`docs/37` 的表格与它同源）。
+- 对照面（绿）：`test_kd1_today_…` 钉住**今天的行为**（rc=0 + stderr 0 字节 + 只 print
+  `updated:` + 基线被改成 900 + 门转绿），以及
+  `test_the_contrast_added_is_enforced_while_updated_is_only_printed`
+  —— **同一次调用里 `added` 被点名、`updated`（变长）不在 stderr** ⇒ 不对称本身被钉成读数。
+
+### §288.4 验收：三段探针（不是用例数）
+
+`LUM-2608` 的教训：用例数不构成证据，要「改前 rc=0 / 改后 rc≠0 / 复原 rc=0」，
+且**红必须是因为目标原因红**（它的 P2 第一次是坏的：删掉一行 ⇒ `NameError` ⇒ 27 errors）。
+
+- **P-A**：`main()` 里加一行「`updated` 中变大的条目 ⇒ 打 WARNING」（方案 b 的最小实现）
+  ⇒ 门 ⑫ **`rc=1`**，失败的是 `UNEXPECTED SUCCESS: test_kd1_write_baseline_…`
+  ＋ 两条「今天行为」绿用例（`test_kd1_today_…` 与 `test_the_contrast_…`）——
+  **这正是「修好的人必须同时改本文件」的可执行读数**。✅ 因目标原因红。
+- **P-B**：**整块删掉** `KNOWN_DEFECTS` 的 `KD-1` 登记 ⇒ 门 ⑫ **`rc=1`**，
+  失败的是 `test_nothing_is_marked_xfail_without_being_registered` 与
+  `test_the_registry_covers_exactly_the_one_defect_of_288`，**`NameError` 计数 = 0**。✅
+- **P-C**：复原 ⇒ 门 ⑫ **`rc=0`**（`OK (expected failures=1)`）。
+- **P-D（本轮追加实测）**：只把 `KD-1` **改名**为 `KD-9` ⇒ 只红**一条**
+  （`test_the_registry_covers_exactly_the_one_defect_of_288`），**两条双向守卫都不红**
+  —— 因为它们比的是 `case` 字段（那串方法名），而方法名没变。
+  ⇒ **改名要靠那条硬编码 id 的断言才被抓住**，不是靠双向守卫。文档写「改名不触发守卫」
+  只对**双向守卫**成立，对整条门不成立；`LUM-2608` 踩的坑是**整块删**（P-B）。
+
+### §288.5 交回 owner 的待裁决点（本片**只登记，不动手**）
+
+`--write-baseline` 的 `updated` 变长路径，三种修法代价差别很大：
+
+- **a.** 检测到 `updated` 里存在「变大」就 `return 1` + 报错（最严；「合法的大幅重构后刷新基线」
+  也要两步走）；
+- **b.** 变大时打 WARNING（与 `added` 对称；最省，但**门仍然绿** —— 洗白仍发生，只是留痕）；
+- **c.** 不动，把不变式写进 `docs/37` 当纪律（最省，但就是现状）。
+
+**cycle 不自行选。** 本片只把缺陷变成会叫的读数。
+
+### §288.6 门读数（本片交付 base 当场重跑，零编译）
+
+`bash scripts/gates.sh --only route-parity,file-size,scripts-tests,section-alloc` ⇒ **4/4 绿**，
+⑫ `10 file(s)`。**门 ②③④⑤⑨ 未跑**（需 cargo / 真库 / 容器，本机磁盘不足）
+⇒ **不作继承声明**，不得读成「全门通过」。
+
+**登记必须与文件同一个提交**（`LUM-2614` 实测：漏登记 ⇒ 门 ⑫
+`discovery-identity mismatch` rc=1 ⇒ **不登记 = 测试文件存在但从不被门执行**），
+插在 `scripts/test_extract_requirements.py` 之后、`scripts/test_gate_scripts_tests.py` 之前
+（`LC_ALL=C sort` 位置，已 `sort -c` 复核）。
+
+### §288.7 冲突解法的实测（base 前进到 `c2edcad2`）
+
+两个 docs 文件都冲突，**与 §285 / §289.2 记录的形态完全一致**。仍按那条纪律解：
+**从 git 的 stage blob 按行号拼**，不用 `(.*?)=======\n` 非贪婪切块
+—— 本仓 `docs/37` 正文里有**围栏内的历史冲突示例**，base blob 里
+`<<<<<<<` **2** 个 / `=======` **2** 个全是 pre-existing 的，非贪婪切块会在错误的分隔符上切开。
+复核断言：**解完后冲突标记数与 base 逐个相同（2 / 2，未新增）**；台账行按段号插入而非 append
+（否则 288 会落到 289 之后）；正文按段号插入，文件读起来是 §285 → §286 → §287 → **§288** → §289。
+
 ## §289 【2026-09-30 12:30 cycle / `LUM-2616`】收割 **2 片**（#192 / #193）＋ 🔴 承重：**门 ⑩ 的判定器有一条「把回归洗成绿」的一键绕过口，且它自己 0 测试**
 
 起手 base `a6973906` → 收尾 `686ac0b3`。GH 收尾 **0 open PR**。daemon 收尾 **2/3**（cycle 自身 ∥ `LUM-2617`）。磁盘起手 **6.3G/87%**、收尾 **26G/46%**。
