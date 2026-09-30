@@ -25814,3 +25814,158 @@ base **`2702c21a`**；GH **1 open PR = #168**（第四次待议，`merge-tree rc
 - `LUM-2111` docker 死锁 ⇒ base 的 `contract` 持续红（`report.json` 刷新权）；
 - `mc_t2492` 116 表仍在默认库；
 - 共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变：`avail 24G` vs 冷建 18–22G ⇒ 物理上只容 1 片冷建）。
+
+## §273 【LUM-2601 09:30 cycle】收割 PR #183 ＋ **抢救第五类死亡形态**（产物在树上、run 交出轮次后唤醒没来）＋ 派 `LUM-2602`（门 ⑫ 的 glob 覆盖面**比它的动机窄**）
+
+起手 base `91f968ca` → 收尾 **`49c3d025`**。**收割 1 片 / 回收 1 片 / 派 1 片 / 抢救 1 片**。
+GH 收割后 **1 open PR**（#168 第五次待议，head `272acce6` 六轮未动 ⇒ 维持 §243 不合并裁定，不重判）。
+
+### 收割 PR #183（`LUM-2600` / T1-6-H1）—— 零门禁重跑的完整形态
+
+判据链六条全过，**其中两条是本轮第一次用**：
+
+| # | 判据 | 读数 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API **逐文件逐字** | `8/1` + `106/0` + `72/5` —— 3/3 相等 |
+| ② | 形态判定 | `merge-base == base == PR base sha == 91f968ca`，`base IS ancestor` ⇒ **形态②（可 FF）** |
+| ③ | **三读数等式** | `head^{tree}` == `refs/pull/183/merge^{tree}` == `merge-tree --write-tree` == **`3ea5078f0ad8e4e9b3fd2afbd7bae0a20c20603c`** |
+| ④ | 证据两条路任一 | 见下 |
+| ⑤ | API 钉 40 位 sha + `merge_method=merge` | `a16518fb…` → `49c3d025` |
+| ⑥ | 落地树 ≡ 预演树 + `git diff` 空 | 落地 `^{tree}` = `3ea5078f`（**逐字命中**），非 docs 路径 diff **空** |
+
+**④ 走的是「门输入恒等」这条路（第 11 次生效），但这次恒等的是 ⑨ 的三个输入**：
+`crates/mc-conformance/report.json`（`db01d842`）/ `crates/mc-conformance`（`e98c2d3c`）/ `contracts/golden`（`fe7fd48a`）
+在 `91f968ca` 与 `a16518fb` 上**逐一 SAME** ⇒ **由构造推出 ⑨ 的读数不可能变**，
+不需要跑 `cargo run -p mc-conformance`（冷建 ≈14G）。
+⇒ 本 PR 改了 `scripts/gates.sh`，所以**必须**单独验证新门本身：本机
+`bash scripts/gates.sh --only scripts-tests` ⇒ **2 file(s) / exit=0**（14 + 6 = 20 个用例），
+且 ⑫ 仍在 `gates.sh --list` 里、编号未变、**空 glob 仍判红**的规矩未被放松。
+
+**CI**：head `a16518fb` 上 `fast` ✅ / `db` ✅ / `image` ✅ / **`contract` ❌**。
+`contract` 只跑 ⑦ + ⑨，而本片写集是 `docs/37` + `ci.yml` + `gates.sh`、**零 Rust**、
+且 ⑨ 三输入 blob 恒等 ⇒ 红的成因**在定义上**与本片无关（存量：PR #167 未同步 `report.json`）。
+⚠️ 附带一个可复用的判别式：**`fast` 从 §243 记录的「真回归红」已恢复为绿，
+`contract` 仍是唯一红** ⇒ 「哪个 job 红」本身是**随时间变化**的存量状态，
+**每次收割都要重取，不能沿用上一轮记的「唯一红是 contract」**。
+
+### 🔴 承重一：**第五类死亡形态 —— 「交出轮次后，唤醒没来」**
+
+`LUM-2592`（T1-6-G1，行为面 3 条）run `01a0efab`：00:16 起、00:36 **`completed`**、`error=null`，
+但**最后一条评论**是
+
+> "The build is still running. Ending this turn so its terminal notification can wake me with the result."
+
+⇒ **零交付评论、零提交、零远端分支**，而工作树里躺着 **4 个文件 / +200 −9** 的**成片产物**。
+
+与前四类的区别是**关键**：
+
+| 族 | 特征 | 有产物吗 |
+|---|---|---|
+| 触发期 ENOSPC | 死在建 task root，`skills_ready` 后 ~100ms | **零**（连 checkout 都没有） |
+| provider `525` | run `failed`，error 非空 | 取决于时点 |
+| 秒级静默死亡 | assistant 消息**无 `tool_use` 块** | **零** |
+| 跑完没写回工单 | 有交付分析，issue 仍挂 | 有（评论里） |
+| **本轮：交出轮次后唤醒没来** | 最后一条评论是**「Ending this turn…」型**，`error=null`、`completed` | **有，且已成形** |
+
+**判别式（可机械复跑，不依赖回忆）**：
+`multica issue comment list <id>` 最后一条是「Ending this turn…」型
+∧ `git status --porcelain` **非空** ∧ `git log` 停在 base
+⇒ **产物在树上，救援成本 = 一次 commit**。
+⇒ **派后 60 秒内就该查这一条**（与「秒级静默死亡」同属早查族，但**处置相反**：那一族零产物、只能重派；这一族有产物、**必须先抢救**）。
+
+**抢救已执行**：分支 `agent/devbox5/rescue-2592`，提交 `08649ba3`，**父 = 当轮 base `49c3d025`**。
+`git apply --check` 对当轮 base **干净**；四个依赖点逐个实测在位
+（`actor_guard::classify_actor_source` / `ActorSource` / `mc_core::WorkspaceUpdate` / `ListIssuesQuery::from_pairs`）。
+**父取当轮 base ⇒ 下一个 run 不需要 rebase、不需要解冲突**（这是抢救配方里唯一可以「偷懒」的地方，
+也是让救援成本保持在一次 commit 的关键）。
+
+### 🔴 承重二：**抢救本身会撞上「工单里的读数已经过期」**
+
+救援代码落进当轮 base 后当场发现：`crates/mc-http/src/routes/workspaces.rs` 落点 **恰好 800 行**
+= 门 ⑩ R7 **硬上限**，**零余量**（base 756 + 本片 48 − 4；`file_size_check.py --quiet` rc=0，压线通过）。
+⚠️ 这条**在死工作树里是查不出来的** —— 那里 base 落后 8 个提交，行数完全不同。
+⇒ **纪律：抢救产物落到新 base 之后，门 ⑩ 必须当场重跑**，
+而且**「压线通过」比「余量充足」更需要写进交接**（余量充足是常态，压线是必须交接的异常）。
+
+### 🔴 承重三（派 `LUM-2602` 的理由）：**门 ⑫ 的 glob 覆盖面比它的动机窄**
+
+PR #183 立的门 ⑫ 用 `scripts/test_*.py` 做 glob，`gates.sh` 顶部写的理由是
+「新增测试文件漏接进门禁**结构上不可能**」。**这句话对它自己的 glob 是真的**，
+但它**静默地把一整类文件排除在外**。当场实测：
+
+```
+$ bash -c 'shopt -s nullglob; f=(scripts/test_*.py); echo "⑫ 命中 ${#f[@]} 个: ${f[@]}"'
+⑫ 命中 2 个: scripts/test_extract_requirements.py scripts/test_t1_6_taxonomy.py
+```
+
+`scripts/` 下共 **19 个 `.py`**，其中**决定每条缺口归谁**的那套分类器：
+
+| 单元 | 体量 | 测试 | 被任何门执行？ |
+|---|---|---|---|
+| `scripts/t1_6_realm_diff_taxonomy/`（9 个模块） | **1053 行** | **0** | **否** |
+| `scripts/t1_6_precondition_taxonomy.py` | **339 行** | **0** | **否** |
+
+判「否」的两条可复跑判据：`grep -n 't1_6' scripts/gates.sh` ⇒ **空**；
+`grep -n 't1_6' .github/workflows/ci.yml` ⇒ **空**。⇒ 它们的唯一引用者**是彼此**
+（`t1_6_precondition_taxonomy.py` import `t1_6_taxonomy`；包 `__main__.py` / `rules.py` import 两者），
+外加 `docs/37` 里的**散文提及** —— **这正是 §272 承重二点名的那一族：散文提及被当成了「有人会跑」的证据。**
+
+**为什么这 1392 行比那 287 行更该有测试**：它们的输出**是后续每一次派工决策的输入**。
+`bad_total` 61 条按族拆成 `UNMOUNTED 1 / PRECONDITION 29 / AUTH_401 6 / SEED_404 17 / REALM_DIFF 19`，
+再由包把 `REALM_DIFF` 拆成子族 + **负责面文件集合**，由 `t1_6_precondition_taxonomy` 把
+`PRECONDITION` 拆成可逐条派工的子族。⇒ **分类器判错一次，后面每一轮都跟着错，而且错了不会变红。**
+
+**这个缺陷家族在本仓已被实证过一次，不是假想**：§267 里 `t1_6_taxonomy.py` 的 docstring 声明
+「`status_observed == 404` ⇒ 一定是已挂载 handler 主动返回的 404」，而 `classify()` **从不读 body**；
+本仓 `routes/agents.rs` 的 `workspace_role` 对非成员返 `not_found("workspace")` =
+**body 非空的 404、路由挂着、handler 根本没执行到** ⇒ 声明的判据被本仓代码证伪，
+**13 条鉴权面缺口一直被当装置面派工**。**修它的是 PR #182，靠的是 cycle 人工发现，不是靠测试发现的。**
+⇒ 本仓既有结论：**「全绿」在缺覆盖时不是质量证据**。本片把这句话从「两个文件」推广到「决定归因的那套工具」。
+
+`LUM-2602`（T1-6-I，**零 Rust / 零 cargo / 零真库 / 零磁盘**）工单里给了**三条候选方案**
+（顶层加文件 / glob 改递归 / 「跑得起来的都跑」）、**各自的代价**、以及一条硬约束
+**可证伪判别式**（造失败探针 ⇒ 门必须红 ⇒ 删掉 ⇒ 门必须绿，**两次读数原样贴出**）
+—— 只跑一次绿不算数，**一个从没被观测到变红的门无法区分「在跑」与「什么都没跑」**。
+
+### 门读（base `49c3d025` 当场重跑，零编译门 0.6s）
+
+- ⑦ **八数字第 59 轮逐字不变**：`upstream 456 / local 546 / baseline 546 /
+  implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 / local_only 8` rc=0
+- ⑦b `slash_alias_audit --quiet` rc=0
+- ⑩ `file_size_check --quiet` rc=0
+- ⑫ `scripts-tests` **2 file(s) exit=0**（PR #183 刚落的门，本轮首次在 base 上执行）
+- ⑨ **继承不冷编**：本轮 base 前进段只有 `docs/37` + `ci.yml` + `gates.sh`，
+  ⑨ 三输入 blob 逐一 SAME（见上表）⇒ **不冷编**（第 11 次）。
+
+### 回收：1 片 / **2.6G**（四判据齐，整删 `target/`）
+
+`lum-2592-009cb67d247e` 的 `target/` **2.6G**。上一轮（§272）它因「run 终态」不满足而**活物禁动**；
+本轮 run 确已终态，且四判据全齐：**run 终态（`completed` 00:36）∧ 产物已在远端
+（`rescue-2592@08649ba3`）∧ `/proc` 逐 PID 零命中 ∧ 未提交面已全部进那个提交** ⇒ 整删。
+`avail 24G → 27G`。
+
+⇒ **「收割 / 回收」两步本轮都是非空的，但顺序不可换**：如果先派发再回收，
+`LUM-2592` 的重跑冷建（18–19G）与 `LUM-2602` 的零磁盘片会一起挤在 24G 里。
+**回收排在派发之前**，这个顺序本轮是硬约束而不是习惯。
+
+### 顺位与纪律
+
+- **在飞 3/3** = cycle ∥ `LUM-2592`（重跑 run `01a0eff4`，起手点 = 抢救分支 `agent/devbox5/rescue-2592`）
+  ∥ `LUM-2602`（T1-6-I，run `01a0eff5`，workdir `lum-2602-39ee9849f53b`）。
+- **派发三数并排写**（§167，永久）：**槽位** 1 空（派 `LUM-2602` 前当场重读 daemon = 2/3）
+  / **`avail − 可回收` = 27G** / **本片冷建下限 = ≈0（零 Rust）** ⇒ 第三个数不构成障碍才派。
+  `LUM-2592` 的 18–19G 冷建由那 27G 承担，**两片不叠加**。
+- **`LUM-2592` 交 PR 走 §273 的六条**；预期 ⑦ **八数字逐字不变**（0 路由片），
+  验收证据**只能来自 ⑨ db-mode 回放的三族读数**（`REALM_DIFF` 降、`mismatch` **不增**），
+  **不能来自 ⑦**。对账式 `bad_total_after == 61 − (pass_after − 279)`，**不预设目标值**。
+- **`LUM-2602` 终** ⇒ 它是纯 Python 片，收尾后 `docs/32`/`docs/37` 无冲突面
+  （与 `LUM-2592` 只共享 `docs/37` 的不同 § 号 ⇒ 仍按 §272 的同锚点冲突预案走）。
+- **号段**：`docs/37` 末号 `§273` ⇒ 下一轮 **`§274`**（已预约给 `LUM-2602`）。
+  `docs/32` 本轮无新增。
+- **PR #168**：head `272acce6` **六轮未动**，维持 §243 不合并裁定，**不重判**。
+  §272 承重一已把判别式升级为两级：`rc=1` 只回答「需不需要人动手」，
+  需不需要动手由**① 冲突文件集合是否 ⊆ append-only 文档** ＋ **② 代码面是否无重叠** 决定 ——
+  #168 的冲突面含 `extract_upstream_fixtures.py`（**代码**）⇒ 仍判不合并。
+- **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah ⇒ base 的 `contract` 持续红；
+  `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决（本轮数据再支持：`avail 27G` vs 冷建 18–19G
+  ⇒ 物理上只容 1 片冷建片）。
