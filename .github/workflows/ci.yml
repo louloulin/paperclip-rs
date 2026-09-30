@@ -91,9 +91,11 @@ jobs:
         run: bash scripts/gates.sh --only section-alloc
 
       # ⑭ 纯标准库、亚秒级、不需要数据库/编译：`ci.yml` / `gates.sh` 真正执行的每个
-      # `scripts/**/<name>.py` 都必须有 `test_<name>.py`。存在的理由：`LUM-2606`/`2608`/
-      # `2617`/`2620`/`2621`/`2623`/`2624` 七个 cycle 都在给「被门执行的判定器」补测试，
-      # 那一族靠**人记得补**收官（`docs/37 §292.2` / `§293.4`）。同样只调 gates.sh，
+      # `scripts/**/<name>.py` 都必须有 `test_<name>.py`（**包入口取包名**：
+      # `scripts/<pkg>/__main__.py` ⇒ `test_<pkg>.py`；**`python3 -m scripts.foo` 也算引用**）。
+      # 存在的理由：`LUM-2606`/`2608`/`2617`/`2620`/`2621`/`2623`/`2624` 七个 cycle 都在给
+      # 「被门执行的判定器」补测试，那一族靠**人记得补**收官（`docs/37 §292.2` / `§293.4`）。
+      # 判词形状由 `LUM-2629` / `T1-6-R1` 修（`docs/37 §300`）。同样只调 gates.sh，
       # 不在 yml 里写 `python3 scripts/judge_test_coverage_check.py`（命令唯一实现）。
       - name: "⑭ judge-test-coverage — python3 scripts/judge_test_coverage_check.py --quiet"
         run: bash scripts/gates.sh --only judge-test-coverage

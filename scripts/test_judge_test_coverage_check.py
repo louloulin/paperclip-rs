@@ -6,22 +6,23 @@ r"""`scripts/judge_test_coverage_check.py` 的 `unittest`（`LUM-2626` / `T1-6-G
 今天那件事做完了（cycle 14:30 实测四条**全部**有 `test_<同名>.py`），
 **但没有任何东西保证下一个人还记得补**。本文件 + 门 ⑭ 把那句散文变成会红的门。
 
-所以本文件的核心价值不是「测覆盖率」而是**测两个不变量**：
+所以本文件的核心价值不是「测覆盖率」而是**测三个不变量**：
 
 1. **真仓库不变式**：今天 `ci.yml` / `gates.sh` 真正执行的那 N 个判定器全都有测试
    （`TestRealRepoInvariant`）。下一个人加了新判定器而忘了补测试 ⇒ 门 ⑭ 红。
 2. **判别式本身真判别**：把某个 `test_*.py` 拿掉，门必须 rc=1 并**指名**它
    （`TestDiscrimination`）。这一族历史上被证伪过一次 —— `docs/37 §295`
    「用例数可以是绿的」。
+3. **判词的形状是对的**（`LUM-2629` / `T1-6-R1` / `§300`）：包入口的期望测试名是**包名**
+   （`TestPackageEntryShape`），`-m` 模块形态**进读数**（`TestModuleFormReference`）。
+   这两条是 cycle 15:00 收割时当场复跑逮到的真缺陷（一个假红、一个假绿）。
 
 🔴 本文件**不断言 `scripts/gates.sh` / `ci.yml` 的源码文本**
 （`LUM-2602` 实测：`assertIn("__pycache__", gates.sh 的源码)` 被一行**注释**满足，
 什么也没钉住）。门是否接好了，一律用**子进程跑门**看它的**输出 / 退出码**来判。
-
-🔴 本文件也**不断言判定器里没有写死那四个文件名** —— 断言「源码里没有某个字符串」
-是散文断言：把名字挪进一个字符串常量就绕过。真正的判别用**行为**：
-`TestNoHardcoding` 在临时仓库里把 `route_parity.py` 改名成 `zzz_renamed.py`，
-断言门跟着改名走 ⇒ 证明输入来自**解析**而不是**写死的名字**。
+🔴 也不**不断言判定器里没有写死那四个文件名** —— 断言「源码里没有某个字符串」是散文断言：
+把名字挪进一个字符串常量就绕过。真正的判别用**行为**：`TestNoHardcoding` 在临时仓库里把
+`route_parity.py` 改名成 `zzz_renamed.py`，断言门跟着改名走。
 
 零 Rust / 零 cargo / 零真库 / 零容器 / 零磁盘，纯标准库。
 Run: ``python3 scripts/test_judge_test_coverage_check.py``
@@ -67,18 +68,30 @@ def run_gate(root: Path) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
+def ref_paths(rd: dict) -> list[str]:
+    """`read_judgement()["refs"]` 的路径部分。
+
+    `refs` 的元素是 `(ref, surface, lineno, is_dry)` —— 4 元组。`§300` 给它加了第 4 项
+    （`--dry` 试跑标记），所以这里给一个具名提取器：**不要在用例里写 `[r for r, _, _ in …]`**，
+    那种写法会在元组一变宽时抛 `ValueError`（本片就撞到了一次）。
+    """
+    return [r for r, _, _, _ in rd["refs"]]
+
+
 def make_repo(
     tmp: Path,
     *,
     judges: dict[str, str] | None = None,
     tested: tuple[str, ...] = (),
+    packages: dict[str, tuple[str, ...]] | None = None,
     yml_extra: str = "",
     gates_body: str = "",
 ) -> Path:
     """搭一个最小「仓库」：引用面 + 若干 `scripts/**/<name>.py` + 若干测试文件。
 
-    `judges`  = {脚本名: 该名字出现在 gates.sh 里的那一行}
-    `tested`  = 需要存在 `scripts/test_<name>.py` 的名字
+    `judges`   = {脚本名: 该名字出现在 gates.sh 里的那一行}
+    `tested`   = 需要存在的测试；带 `/` 时当作**包内**路径（`"pkg/test_pkg"`）
+    `packages` = {包名: 包内文件名列表}，用来造 `scripts/<pkg>/__main__.py` 这类包入口
     """
     root = tmp
     (root / "scripts").mkdir(parents=True, exist_ok=True)
@@ -88,7 +101,14 @@ def make_repo(
     for name in judges or {}:
         (root / "scripts" / f"{name}.py").write_text("# judge\n", encoding="utf-8")
     for name in tested:
-        (root / "scripts" / f"test_{name}.py").write_text("# test\n", encoding="utf-8")
+        f = root / "scripts" / f"{name if name.startswith('test_') else 'test_' + name}.py"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# test\n", encoding="utf-8")
+    for pkg, entries in (packages or {}).items():
+        d = root / "scripts" / pkg
+        d.mkdir(parents=True, exist_ok=True)
+        for entry in entries:
+            (d / entry).write_text("# pkg\n", encoding="utf-8")
 
     yml_lines.append("      # 注释里提到 scripts/commented_out.py —— 不算引用")
     for name in judges or {}:
@@ -139,7 +159,9 @@ class TestRealRepoInvariant(unittest.TestCase):
 
     def test_every_judge_resolves_to_a_real_test_file(self):
         for ref in self.rd["judged"]:
-            stem = ref.rsplit("/", 1)[-1][:-3]
+            # 必须用**同一个** `judge_stem()`：这一行自己就曾是 `§300` 缺陷 1 的第二个现场
+            #（读数面自己拿 basename 算 `test_<name>`，而判词面要 `test_<包名>`）。
+            stem = jtc.judge_stem(ref)
             self.assertTrue(
                 list(HERE.rglob(f"test_{stem}.py")),
                 "%s 声称有测试，但 scripts/**/test_%s.py 不存在" % (ref, stem),
@@ -241,7 +263,7 @@ class TestParserRejectsProse(unittest.TestCase):
             gates_body="    printf '$ python3 scripts/shown_only.py\\n'\n",
         )
         rd = jtc.read_judgement(root)
-        self.assertNotIn("scripts/shown_only.py", [r for r, _, _ in rd["refs"]])
+        self.assertNotIn("scripts/shown_only.py", ref_paths(rd))
         self.assertEqual(run_gate(root)[0], 0)
 
     def test_the_real_gates_sh_does_not_treat_its_own_printf_as_a_judge(self):
@@ -304,7 +326,7 @@ class TestParserShape(unittest.TestCase):
             ),
         )
         rd = jtc.read_judgement(root)
-        self.assertIn("scripts/blocked.py", [r for r, _, _ in rd["refs"]])
+        self.assertIn("scripts/blocked.py", ref_paths(rd))
         self.assertEqual(run_gate(root)[0], 0)
 
     def test_test_prefixed_files_are_exempt(self):
@@ -320,17 +342,261 @@ class TestParserShape(unittest.TestCase):
 
     def test_a_test_in_a_subdirectory_satisfies_the_requirement(self):
         """`scripts/**/test_<name>.py`（任意层子目录）—— 与门 ⑫ 的递归发现规则同族。"""
-        root = make_repo(
-            self.tmp,
-            judges={"nested": "python3 scripts/nested.py"},
-            tested=(),
-        )
+        root = make_repo(self.tmp, judges={"nested": "python3 scripts/nested.py"})
         pkg = root / "scripts" / "some_pkg"
         pkg.mkdir(parents=True, exist_ok=True)
         (pkg / "test_nested.py").write_text("# test\n", encoding="utf-8")
         rc, out, _ = run_gate(root)
         self.assertEqual(rc, 0, "包内的 test_nested.py 没有被认出来")
         self.assertIn("gaps=0", out)
+
+
+class TestPackageEntryShape(unittest.TestCase):
+    """缺陷 1（**假红** / 不可满足）：包入口被要求一个没人会写的测试文件名。
+
+    `LUM-2629` / `T1-6-R1` / `docs/37 §300`。cycle 15:00 当场复现：往 `gates.sh` 追加
+    `python3 scripts/t1_6_realm_diff_taxonomy/__main__.py` ⇒ 判词是
+    `expected scripts/**/test___main__.py` / rc=1。一个**不可满足**的判词比没有判词更糟：
+    它训练所有人忽略这道门。修法 = 期望名取**包名**。
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="jtc-pkg-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _repo(self, *, tested=(), entries=("__main__.py",), line=None):
+        line = line or "python3 scripts/coolpkg/__main__.py"
+        return make_repo(
+            self.tmp, tested=tested, packages={"coolpkg": entries}, gates_body=line + "\n"
+        )
+
+    def test_main_entry_expects_the_package_name_not_the_basename(self):
+        """包入口 ⇒ `test_<包名>.py`。这条直接钉住「不能退回 basename」。"""
+        self.assertEqual(
+            jtc.judge_stem("scripts/coolpkg/__main__.py"), "coolpkg",
+            "包入口的期望测试名必须是**包名**，不是 `__main__`（否则要求 test___main__.py）",
+        )
+        self.assertEqual(
+            jtc.judge_stem("scripts/coolpkg/__init__.py"), "coolpkg",
+            "`__init__.py` 与 `__main__.py` 描述的是同一个包，期望名必须一致",
+        )
+
+    def test_a_package_with_a_correctly_named_test_is_green(self):
+        """按**本仓正确约定**（`test_<包名>.py`）接线 ⇒ 绿。这是缺陷 1 的正面。"""
+        root = self._repo(tested=("coolpkg",))
+        rc, out, err = run_gate(root)
+        self.assertEqual(rc, 0, "按正确约定接线却判红 —— 这就是缺陷 1：%s" % err)
+        self.assertIn("gaps=0", out)
+        self.assertNotIn("test___main__.py", out + err)
+
+    def test_a_test_inside_the_package_also_satisfies_it(self):
+        """`scripts/coolpkg/test_coolpkg.py`（包内）与平铺同等 —— 与「同级已有该名测试」一致。"""
+        root = self._repo(tested=("coolpkg/test_coolpkg",))
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 0, "包内同名测试没有被认出来：%s" % err)
+
+    def test_a_package_with_no_test_is_red_and_names_the_package(self):
+        """缺测试仍然要红 —— 但红的时候必须叫**包名**，不能叫 `test___main__.py`。"""
+        root = self._repo(tested=())
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 1, "包入口没测试却判绿 ⇒ 判词被修成了「包名也豁免」")
+        self.assertIn("test_coolpkg.py", err)
+        self.assertNotIn("test___main__.py", err)
+
+    def test_init_entry_is_judged_not_exempt(self):
+        """`__init__.py` **不豁免**（工单点名要判词）。
+
+        豁免它 = 开一个洞：只写 `python3 scripts/coolpkg/__init__.py` 就能让整个包
+        逃出这道门。而它与 `__main__.py` 本来就是同一个包。
+        """
+        root = self._repo(
+            entries=("__main__.py", "__init__.py"),
+            line="python3 scripts/coolpkg/__init__.py",
+        )
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 1, "`__init__.py` 被豁免了 —— 那是工单明令不给的洞")
+        self.assertIn("test_coolpkg.py", err)
+        self.assertNotIn("test___init__.py", err)
+
+    def test_a_toplevel_init_is_exempt_because_it_is_not_a_package_entry(self):
+        """**唯一**的豁免：`scripts/__init__.py` 没有包名可取（父目录就是 scripts）。"""
+        root = make_repo(self.tmp, gates_body="python3 scripts/__init__.py\n")
+        (root / "scripts" / "__init__.py").write_text("# x\n", encoding="utf-8")
+        self.assertIsNone(jtc.judge_stem("scripts/__init__.py"))
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 1)
+        # 红是因为「一条可判的引用都没解析到」，而**不是**因为 `__init__.py` 缺测试。
+        self.assertIn("no scripts/**/<name>.py reference", err)
+        self.assertNotIn("test_scripts.py", err)
+
+    def test_a_plain_module_inside_a_package_is_still_judged_by_its_own_name(self):
+        """包里的**非入口**模块仍按 basename 判：`pkg/checks.py` ⇒ `test_checks.py`。"""
+        root = self._repo(
+            entries=("__main__.py", "checks.py"),
+            line="python3 scripts/coolpkg/checks.py",
+        )
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 1)
+        self.assertIn("test_checks.py", err)
+
+
+class TestModuleFormReference(unittest.TestCase):
+    """缺陷 2（**假绿** / 更贵）：`-m` 模块形态被静默忽略（`LUM-2629` / `§300`）。
+
+    cycle 15:00 当场复现：往 `gates.sh` 追加 `python3 -m scripts.t1_6_realm_diff_taxonomy`
+    ⇒ 仍然打 `OK — judges=6 gaps=0` / rc=0。**它被执行，却完全没进读数**。
+    这就是 `§293.4` / `§292.2` 那一族：「被门执行」≠「被门保护」。假红只是吵，
+    假绿是**门声称覆盖了引用面而实际漏了最常见的引用形态**。
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="jtc-mod-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_module_ref_resolves_to_the_package_entry_on_disk(self):
+        """`-m scripts.coolpkg` ⇒ `scripts/coolpkg/__main__.py`（包优先于同名 `.py`）。"""
+        root = make_repo(self.tmp, packages={"coolpkg": ("__main__.py",)})
+        self.assertEqual(
+            jtc.module_ref_to_path(root, "scripts.coolpkg"), "scripts/coolpkg/__main__.py"
+        )
+
+    def test_module_ref_falls_back_to_a_plain_module(self):
+        """没有 `__main__.py` 时按普通模块：`scripts/foo/bar.py`。"""
+        root = make_repo(self.tmp, judges={"bar": "unused"})
+        (root / "scripts" / "foo").mkdir(parents=True, exist_ok=True)
+        (root / "scripts" / "foo" / "bar.py").write_text("# m\n", encoding="utf-8")
+        self.assertEqual(jtc.module_ref_to_path(root, "scripts.foo.bar"), "scripts/foo/bar.py")
+
+    def test_a_module_reference_enters_the_reading(self):
+        """核心判别：`-m` 引用必须让 `judges` 读数 **+1**（假绿的直接反面）。"""
+        base = make_repo(self.tmp, judges={"real": "python3 scripts/real.py"}, tested=("real",))
+        self.assertEqual(jtc.read_judgement(base)["numbers"], 1)
+        # 同一个包：再按 `-m` 接线（**不**给测试）⇒ 旧版在这里是绿的。
+        (base / "scripts" / "coolpkg").mkdir(parents=True, exist_ok=True)
+        (base / "scripts" / "coolpkg" / "__main__.py").write_text("# p\n", encoding="utf-8")
+        with (base / "scripts" / "gates.sh").open("a", encoding="utf-8") as fh:
+            fh.write("python3 -m scripts.coolpkg\n")
+        rd = jtc.read_judgement(base)
+        self.assertIn("scripts/coolpkg/__main__.py", ref_paths(rd), "-m 引用没进读数 ⇒ 假绿")
+        self.assertEqual(rd["numbers"], 2, "被执行的判定器数量没变 ⇒ `-m` 被静默忽略了")
+        rc, _, err = run_gate(base)
+        self.assertEqual(rc, 1, "被门执行的 `-m` 目标没测试却判绿 ⇒ 缺陷 2 还在")
+        self.assertIn("test_coolpkg.py", err)
+
+    def _mod_repo(self, gates_body, **kw):
+        """一个「真跑 + 一个 `-m` 目标包」的公共夹具（`_m` 用例全靠它）。"""
+        kw.setdefault("judges", {"real": "python3 scripts/real.py"})
+        kw.setdefault("tested", ("real",))
+        kw.setdefault("packages", {"coolpkg": ("__main__.py",)})
+        return make_repo(self.tmp, gates_body=gates_body, **kw)
+
+    def test_a_module_reference_with_a_test_is_green(self):
+        """同一形态，补上 `test_<包名>.py` 后变绿 ⇒ 判红原因确实是「缺测试」。"""
+        root = make_repo(
+            self.tmp, tested=("coolpkg",), packages={"coolpkg": ("__main__.py",)},
+            gates_body="python3 -m scripts.coolpkg\n",
+        )
+        rc, out, err = run_gate(root)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("gaps=0", out)
+
+    def test_a_module_and_a_path_reference_to_the_same_entity_are_not_double_counted(self):
+        """两种形态指向同一个 `__main__.py` ⇒ 一个实体、一条缺口（`rd["judged"]` 去重）。"""
+        root = make_repo(
+            self.tmp, packages={"coolpkg": ("__main__.py",)},
+            gates_body="python3 -m scripts.coolpkg\npython3 scripts/coolpkg/__main__.py\n",
+        )
+        rd = jtc.read_judgement(root)
+        self.assertEqual(rd["judged"], ["scripts/coolpkg/__main__.py"])
+        self.assertEqual(len(rd["gaps"]), 1, "同一个实体被当成两个缺口")
+        self.assertEqual(run_gate(root)[0], 1)
+
+    def test_a_non_scripts_module_is_not_a_reference(self):
+        """`python3 -m pytest` / `-m unittest` / `-m pip` 不在本仓管辖面内。"""
+        root = self._mod_repo("python3 -m pytest\npython3 -m unittest discover -s scripts\n")
+        self.assertEqual(
+            sorted(set(ref_paths(jtc.read_judgement(root)))), ["scripts/real.py"],
+            "非 scripts.* 的模块被收进来了",
+        )
+        self.assertEqual(run_gate(root)[0], 0)
+
+    def test_c_dash_c_is_not_a_reference(self):
+        """`python3 -c "import scripts.coolpkg"` 导入 ≠ 执行，没有进程跑那个实体。"""
+        root = self._mod_repo("python3 -c 'import scripts.coolpkg; print(1)'\n")
+        self.assertNotIn("scripts/coolpkg/__main__.py", ref_paths(jtc.read_judgement(root)))
+        self.assertEqual(run_gate(root)[0], 0)
+
+    def test_a_commented_out_module_reference_is_not_a_reference(self):
+        """注释行仍然整行丢弃（工单硬约束）。"""
+        root = self._mod_repo("    # python3 -m scripts.coolpkg   # 只是注释\n")
+        self.assertNotIn("scripts/coolpkg/__main__.py", ref_paths(jtc.read_judgement(root)))
+        self.assertEqual(run_gate(root)[0], 0)
+
+    def test_a_printf_display_line_showing_a_module_is_not_a_reference(self):
+        """`printf '$ python3 -m scripts.coolpkg'` 是**显示**，不是执行。"""
+        root = self._mod_repo("    printf '$ python3 -m scripts.coolpkg\\n'\n")
+        self.assertNotIn("scripts/coolpkg/__main__.py", ref_paths(jtc.read_judgement(root)))
+        self.assertEqual(run_gate(root)[0], 0)
+
+    def test_a_dry_run_reference_is_parsed_but_never_judged(self):
+        """`--dry` 行**不要求**有测试（工单硬约束）—— 但它**进读数**，不被静默丢弃。
+
+        「不静默丢弃」是这一条里自己加的：若 `--dry` 行直接被忽略，那「加个 `--dry`」
+        就成了一个绕过这道门的开关，而那道门的存在意义就是堵这种洞。
+        """
+        # 刻意**不**带真跑判定器：这样 rc=1 的**原因**只能是「一条可判的引用都没有」，
+        # 而不是「缺测试」—— 两者的区别正是本用例要钉的东西。
+        root = make_repo(
+            self.tmp, packages={"coolpkg": ("__main__.py",)},
+            gates_body="python3 -m scripts.coolpkg --dry\n",
+        )
+        rd = jtc.read_judgement(root)
+        self.assertIn("scripts/coolpkg/__main__.py", ref_paths(rd))
+        self.assertEqual(
+            [d[0] for d in rd["dry_refs"]], ["scripts/coolpkg/__main__.py"],
+            "--dry 引用没有进 dry_refs",
+        )
+        self.assertEqual(rd["gaps"], [], "--dry 试跑被判成了缺口")
+        self.assertEqual(rd["judged"], [], "--dry 试跑混进了 judged 读数")
+        rc, out, _ = run_gate(root)
+        self.assertEqual(rc, 1)  # 红是因为「一条可判的引用都没有」—— 不是因为缺测试
+        self.assertIn("[DRY]", out)
+
+    def test_the_dry_count_reaches_the_quiet_summary_when_the_gate_is_green(self):
+        """`--dry` 计数必须出现在 `--quiet` 总结行里 ⇒ 它没被静默丢弃。
+
+        单独一条用例：上一条里门是红的（前置判据），而总结行在判红时打的是 `FAIL` 那一行，
+        两条断言塞在一条用例里就永远只能看到一半。
+        """
+        root = self._mod_repo("python3 -m scripts.coolpkg --dry\n")
+        rc, out, err = run_gate(root)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("gaps=0", out)
+        self.assertIn("dry=1", out)
+
+    def test_a_real_reference_beside_a_dry_one_still_gets_judged(self):
+        """同一个脚本在**真跑**的那行上被引用 ⇒ 照常判红（`--dry` 不能给它撑伞）。"""
+        root = make_repo(
+            self.tmp, packages={"coolpkg": ("__main__.py",)},
+            gates_body="python3 -m scripts.coolpkg --dry\npython3 scripts/coolpkg/__main__.py\n",
+        )
+        rc, _, err = run_gate(root)
+        self.assertEqual(rc, 1)
+        self.assertIn("test_coolpkg.py", err)
+
+    def test_the_real_repo_has_no_module_form_references_today(self):
+        """真仓库今天 0 条 `-m` 引用 ⇒ 修解析规则**不得**动到 `EXPECTED_JUDGES` 的口径。
+
+        这条是「本片没有偷改读数」的证明：两条缺陷都是在**临时仓库**上复现的，
+        真仓库的引用面不该因为解析规则变宽而变化。
+        """
+        for surface, lineno, line in jtc.reference_lines(ROOT):
+            if jtc.MODULE_REF_RE.search(line):
+                self.fail(
+                    "%s:%d 出现了 `-m scripts.*` 引用：%s —— 真仓库的读数会变，"
+                    "请当场重数并更新 EXPECTED_JUDGES" % (surface, lineno, line.strip())
+                )
+        self.assertEqual(jtc.read_judgement(ROOT)["numbers"], EXPECTED_JUDGES)
 
 
 class TestPreconditions(unittest.TestCase):

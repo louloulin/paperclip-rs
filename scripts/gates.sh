@@ -29,7 +29,7 @@
 #   ⑬ section-alloc    python3 scripts/section_alloc_check.py --quiet （`docs/37` 号段台账的双向校验 +
 #                      「撞号」判据；纯标准库、亚秒级，不需要数据库/编译/网络）
 #   ⑭ judge-test-cov   python3 scripts/judge_test_coverage_check.py --quiet （`ci.yml` / `gates.sh`
-#                      真正执行的每个 `scripts/**/<name>.py` 必须有 `test_<name>.py`；纯标准库、亚秒级）
+#                      真正执行的每个 `scripts/**/<name>.py` 必须有 `test_<name>.py`（**包入口取包名**：`scripts/<pkg>/__main__.py`/`__init__.py` ⇒ `test_<pkg>.py`，不是 `test___main__.py`；**`python3 -m scripts.foo` 也算引用**；`--dry` 行进读数打 `[DRY]` 但不判红 —— LUM-2629/T1-6-R1，docs/37 §300）；纯标准库、亚秒级）
 #
 # 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬ + ⑭（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # ⑪ 刻意不在任何默认集合里（见「已知坑」⑪）。
@@ -630,8 +630,7 @@ run_section_alloc_gate() {
     return 0
 }
 
-# ⑭ judge-test-coverage（LUM-2626 / T1-6-G1）—— `ci.yml` / `gates.sh` 真正执行的每个
-# `scripts/**/<name>.py` 都必须有 `scripts/**/test_<name>.py`。
+# ⑭ judge-test-coverage（LUM-2626 / T1-6-G1；判词形状 LUM-2629 / T1-6-R1，docs/37 §300）—— `ci.yml` / `gates.sh` 真正执行的每个 `scripts/**/<name>.py` 都必须有 `scripts/**/test_<name>.py`；§300 修了两条形状规则（包入口取**包名**而非 `__main__` = 假红；`-m` 模块形态**必须**进读数 = 旧版假绿）。
 #
 # 同样写成独立函数而不是 `run_gate … python3 … --quiet` 一行：门本体必须能**逐条点名**
 # 缺口（哪个引用面、哪个脚本、缺哪个 `test_`），而 `--quiet` 面只打一行总结（判词面）。

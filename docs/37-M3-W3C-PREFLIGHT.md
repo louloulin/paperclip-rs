@@ -29319,3 +29319,186 @@ M4 是本轮最有信息量的一条：**被测对象在变异下仍然说 `OK`�
   刷新权死锁 ⇒ 每个 PR 的 `contract` job 持续红（#199 合并时 `mergeable_state=unstable` 即此）；
   `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 仍**未裁定**；
   `SEED_404` 分类判据是否该改。
+## §300 【`LUM-2629` / `T1-6-R1`】门 ⑭ 的判词形状有**两个**真缺陷（一个假红、一个假绿）—— 修 `judge_stem()` 的包形态 + 把 `-m` 模块形态纳入引用面
+
+**起手 base `9b86e8c2`**（工单写的 base 当场 `git rev-parse` 实测命中，**不是**抄的）。
+**零编译**：不跑 cargo、不碰数据库、不碰 `crates/**`。写集 = 4 个文件
+（`scripts/judge_test_coverage_check.py` / `scripts/test_judge_test_coverage_check.py` /
+`scripts/gates.sh` 仅 ⑭ 段注释 / `docs/37` + `docs/section-alloc.tsv`）。
+**门 ①–⑬ 的命令一个字没动。**
+
+### §300.1 起点：cycle 15:00 的做法是对的，而且**必须**继续这么做
+
+门 ⑭ 刚由 `LUM-2626` 合并（PR #199）。cycle 15:00 收割时**当场复跑**，而不是读它的交付评论，
+逮到两个判词缺陷。方向相反：一个**吵**，一个**贵**。
+
+### §300.2 缺陷 1（**假红** / 不可满足）：包入口被要求一个没人会写的测试文件名
+
+`judge_stem()` 旧版只取 basename：
+
+```python
+name = ref.rsplit("/", 1)[-1]   # scripts/t1_6_realm_diff_taxonomy/__main__.py -> __main__.py
+stem = name[:-3]                # -> __main__
+```
+
+于是门 ⑭ 要求 `scripts/**/test___main__.py`。**当场复现**（base `9b86e8c2` 的副本）：
+
+```
+printf '\npython3 scripts/t1_6_realm_diff_taxonomy/__main__.py\n' >> scripts/gates.sh
+python3 scripts/judge_test_coverage_check.py
+# error: scripts/gates.sh:800: scripts/t1_6_realm_diff_taxonomy/__main__.py is executed
+#        but has no test — expected scripts/**/test___main__.py
+# judge-test-coverage: FAIL — 1 gap(s) / 1 defect(s)   rc=1
+```
+
+🔴 **承重：一个「不可满足」的判词比没有判词更糟。** 它不是漏报，是**训练所有人忽略这道门** ——
+而这道门存在的全部意义就是「不要靠人记得补测试」。本仓对包的**正确**约定是
+`test_<包名>.py`（`scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py` 那种
+包内平铺）。**按正确约定接线的人永远判红** ⇒ 门不是太松，是**形状写错了**。
+
+**修法**：`judge_stem()` 增加一支 —— basename 是 `__main__` / `__init__` 时，
+期望名取**父目录名（包名）**，不是 basename。
+
+**`__init__.py` 单独被引用要不要豁免？—— 判词：不豁免**（工单点名要判词）：
+
+| 引用形态 | 解析出的实体 | 期望测试名 |
+|---|---|---|
+| `python3 scripts/foo/__main__.py` | `scripts/foo/__main__.py` | `scripts/**/test_foo.py` |
+| `python3 -m scripts.foo` | 同上（包优先） | `scripts/**/test_foo.py` |
+| `python3 scripts/foo/__init__.py` | `scripts/foo/__init__.py` | `scripts/**/test_foo.py`（**不豁免**） |
+| `scripts/__init__.py`（顶层） | —— | **豁免**（父目录就是 `scripts`，没有包名可取 ⇒ 它根本不是包入口） |
+
+**不豁免 `__init__.py` 的理由**：豁免它 = 开一个洞 —— 只写
+`python3 scripts/foo/__init__.py` 就能让整个包逃出这道门，而它与 `__main__.py`
+本来就是同一个包。三个形态判成三种期望名（`test___main__.py` / `test_foo.py` /
+`test___init__.py`）等于给同一个东西开三扇门，其中两扇**没人会满足**。
+所以只保留**一条**规则：**包入口 ⇒ 期望测试名 = 包名**。
+
+⚠️ **顺带查出来的一个真缺口（不在本片写集，未擅自改）**：
+`scripts/t1_6_realm_diff_taxonomy/` 现在的测试叫 **`test_realm_diff_taxonomy.py`**，
+而按上面这条规则它应该叫 **`test_t1_6_realm_diff_taxonomy.py`**（包名）。
+今天门 ⑭ 绿是因为**那个包还没被接进任何引用面**（`gates.sh` / `ci.yml` 里 0 条引用）。
+一旦有人按 §262 把它接进门，它会**立刻判红**。改名会动 `tests.manifest` + 门 ⑫ 的发现集合，
+超出本片 4 文件写集 ⇒ **只记录、只提请 owner**，不自行处理。
+
+### §300.3 缺陷 2（**假绿** / 更贵）：`-m` 模块形态被**静默忽略**
+
+同一个包，idiomatic 接法是 `python3 -m scripts.t1_6_realm_diff_taxonomy`：
+
+```
+printf '\npython3 -m scripts.t1_6_realm_diff_taxonomy\n' >> scripts/gates.sh
+python3 scripts/judge_test_coverage_check.py
+# judge-test-coverage: OK — surfaces=2 judges=6 covered=6 gaps=0   rc=0
+```
+
+**它被执行，却完全没进读数**（`judges` 仍是 6）。根因：`SCRIPT_REF_RE` 要求路径里有 `.py`，
+而 `-m` 形态给的是点号路径，**一个字都匹配不上**。
+
+🔴 这正是 `§293.4` / `§292.2` 那一族：**「被门执行」≠「被门保护」**。
+缺陷 1 是假红（吵，会被人发现并绕过）；**缺陷 2 是假绿 —— 门声称覆盖了引用面，
+实际漏掉了最常见的一种引用形态，而门自己的读数还写着 `judges=6` 给自己背书。**
+
+**修法**：新增 `MODULE_REF_RE = (?:^|\s)-m\s+(scripts(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`
+（**必须** `scripts.` 开头，否则 `python3 -m pytest` / `-m unittest` 会被收进来；
+前导 `(?:^|\s)` 防止把 `--rootdir` / `-mtime` 的尾巴切下来），解析成磁盘上真正被执行的实体：
+`module_ref_to_path()` **包优先**（`scripts/foo/bar/__main__.py`），
+否则按普通模块（`scripts/foo/bar.py`）。两者都不存在时**不猜**，仍按普通模块形态进读数 ——
+静默丢弃一条引用就是缺陷 2 那种假绿。
+
+### §300.4 `--dry` / 注释行 / `-c`：工单三条硬约束的处置
+
+| 形态 | 处置 | 为什么 |
+|---|---|---|
+| `# … python3 -m scripts.foo` | **不是引用** | 注释里的路径是**散文**（`LUM-2602` 一整族） |
+| `python3 -c 'import scripts.foo'` | **不是引用** | 导入 ≠ 执行，没有进程跑那个实体 |
+| `printf '$ python3 -m scripts.foo'` | **不是引用** | `gates.sh` 把命令**显示**给人看的形态 |
+| `python3 -m scripts.foo --dry` | **进读数，但**不要求**有测试** | 见下 |
+
+🔴 **`--dry` 那一条我自己加了一道安全阀，它比工单字面要求更严**：工单说「`--dry`
+一律不得被算成引用」。**字面照做会开一个洞** —— 「给一行加个 `--dry`」就成了绕过
+门 ⑭ 的开关，而这道门存在的意义就是堵这种洞。所以：`--dry` 行的引用**照常被解析出来**、
+进 `refs`、逐条打 `[DRY]` 标记、并计入 `--quiet` 总结行的 `dry=N`，
+**只是不产生缺口**。这样「不判红」与「不可见」被拆开：想用 `--dry` 绕门的人，
+在 CI 日志里能看见自己那一行被标成了 `[DRY]`。
+另外：同一个脚本在**真跑**的那行上被引用时照常判红（`--dry` 不能给它撑伞）——
+两条用例分别钉住这两半。
+
+### §300.5 读数（**三段**，不是用例数 —— `§298.2` / `§298.3`）
+
+| 读数 | 结果 |
+|---|---|
+| 改前 `python3 scripts/test_judge_test_coverage_check.py` | **rc=0**，`Ran 31 tests` / `OK` |
+| 门 ⑫ 发现集合 | `15 file(s)`（与 base 逐字相同：未新增/删除任何 `test_*.py`） |
+| 改后（同一命令） | **rc=0**，`Ran 51 tests` / `OK`（+20 条新用例） |
+| **变异 1**：`judge_stem()` 退回取 basename（包形态那一支删掉） | **rc=1**，**9 条** `FAIL` |
+| **变异 2**：`-m` 分支删掉（`for m in MODULE_REF_RE…` → `pass`） | **rc=1**，**4 条** `FAIL` |
+| 复原后 | **rc=0**，`Ran 51 tests` / `OK` |
+
+两次变异都**先确认真的改了那一行**（`grep -n MUTATION-` 命中，且变异体带独立注释行）——
+§298.3 的「变异体空操作」坑（条件恒真 / 语句不可达）与「用例不判别」在**读数上完全同形**。
+
+🔴 **两组红的用例集合完全不相交**（变异 1 只红 `TestPackageEntryShape` 的 7 条 +
+另 2 条，变异 2 只红 `TestModuleFormReference` 的 4 条）⇒ 两条缺陷各有自己的判别式，
+不是一个判别式同时挂两条。
+
+🔴 **承重：两个变异下 `judge_test_coverage_check.py` 自己在真仓库上都是 `rc=0`。**
+这不是矛盾，这是本片最该记的一条：**真仓库今天 0 个包入口引用、0 条 `-m` 引用**，
+所以门 ⑭ 在真仓库上**根本没有能力**发现这两个缺陷 —— 只有**单元测试**能。
+⇒ 与 `§293.4`「被门执行 ≠ 被门保护」同族，再加一层：**「门绿」也不等于「判词是对的」**。
+判词的形状只能靠对**临时仓库**的变异来钉，这正是本片 20 条新用例存在的唯一理由。
+
+### §300.6 与 base 逐字对照的读数（硬约束，**当场实测**，不是抄的）
+
+| 读数 | base `9b86e8c2` | 本片 head | 判定 |
+|---|---|---|---|
+| ⑦ `upstream / local / baseline` | `456 / 546 / 546` | `456 / 546 / 546` | ✔ 逐字 |
+| ⑦ `implemented real+placeholder` | `455 + 1 = 456` | `455 + 1 = 456` | ✔ 逐字 |
+| ⑦ `known_gap / unclaimed / regression / local_only` | `0 / 0 / 0 / 8` | `0 / 0 / 0 / 8` | ✔ 逐字 |
+| ⑬ `sections / numbers / ledger` | `227 / 226 / 226` | `228 / 227 / 227` | **+1/+1/+1**（新增的**正是本片** §300） |
+| ⑬ `R1 / R2 / R3 / R4 / defects` | `0 / 0 / 0 / 0 / 0` | `0 / 0 / 0 / 0 / 0` | ✔ 逐字 |
+| ⑭ `surfaces / judges / covered / gaps` | `2 / 6 / 6 / 0` | `2 / 6 / 6 / 0` | ✔ 逐字（多一个 `dry=0`） |
+| 门 ⑭ `GATE_JUDGE_TEST_COVERAGE_EXIT` | `0` | `0` | ✔ |
+
+⚠️ **⑬ 的 `+1` 是本片自己**（§300 段 + 台账 300 行），不是回归：文档段与台账行**成对**
+插入 ⇒ `R1`（file→ledger）与 `R2`（ledger→file）**同时**保持 0。
+先只改 `docs/37` 不改台账时，⑬ **当场**以 `R1(file->ledger)=1` 判红
+（实测读数 `sections=228 distinct=227 ledger_rows=226 R1=1`）—— 这是门 ⑬ 在**当场**
+替本片抓到了写入顺序错，而不是等下一轮才发现。
+
+⚠️ ⑭ 那一行**必须**逐字不变才算「本片没偷改读数」：解析规则**变宽**了
+（多认了 `-m` 与包入口），而真仓库的引用面恰好一条都不命中这两种形态。
+这条不变**不是**运气 —— 有一条用例
+（`test_the_real_repo_has_no_module_form_references_today`）逐行扫真仓库两个面，
+一旦将来有人接了第一个 `-m scripts.*` 引用，它会**指名报错**并要求当场重数
+`EXPECTED_JUDGES`（而不是让读数静默漂掉）。
+
+### §300.7 写集纪律
+
+只碰 4 个文件 + 台账。`scripts/tests.manifest` **不变**（本片没新增/删除任何 `test_*.py`）、
+`scripts/file_size_baseline.tsv` **不变**（门 ⑩ 基线只减不增，且两个文件都在基线外）。
+门 ⑫ 发现集合仍逐字是 `15 file(s)`（`TestManifestAndBaseline` 里那条断言会当场比对）。
+
+🔴 **两个 800 行上限都被本片当场撞到，两次原因不同，都值得记**：
+
+1. `test_judge_test_coverage_check.py` 一度涨到 **832 行**，被**门 ⑩ 自己**的那条用例
+   （`test_both_new_files_stay_under_the_gate_ten_hard_limit`）判红。压缩的是**散文**
+   （类 docstring 里的复现块、夹具调用的换行），**一条用例都没删**（51 条不变），
+   最终 773 行。
+2. `scripts/gates.sh` 在 base 恰好 **798 行**（上限 800 ⇒ **只剩 2 行余量**）。
+   我第一版把两条新形状规则写成 8 行注释 ⇒ 806 行 ⇒ 门 ⑩ 判红
+   `scripts/gates.sh 不在基线里且超过 800 行上限`。改成把规则**写进已有的行**里
+   （`798 → 797`，**净减 1 行**），详细判词指向本段。
+   ⇒ **推论（本片之外的一般纪律）**：给一个**贴着上限**的文件加说明时，
+   先量它的余量；余量不够就得**改写已有行**，不能新增行。
+   而门 ⑩ 报的 `reason` 那一列**已经把原因说清楚了**（`不在基线里且超过上限` vs
+   `regressed`），不要只看 `VIOLATIONS (1)` 就去猜。
+
+### §300.8 本片**没有**做的事（留给 owner）
+
+* **`scripts/t1_6_realm_diff_taxonomy/` 的测试改名**（§300.2 末尾那条真缺口）：
+  `test_realm_diff_taxonomy.py` → `test_t1_6_realm_diff_taxonomy.py`。
+  写集在 `scripts/tests.manifest`（门 ⑫ 发现集合）+ 那个文件本身，**超出本片 4 文件**。
+* **`-m` 形态接进 `gates.sh`**：今天 `t1_6_realm_diff_taxonomy` **不在任何引用面**里
+  （`§274` 记的「0 门执行」余项）。接进去之前**必须**先改上面那个测试名，
+  否则门 ⑭ 会**立刻**判红 —— 而那正是本片修好的那个**正确**的判词。
+* **共享 `CARGO_TARGET_DIR` 仍未裁定**（本片零编译，不受影响）。

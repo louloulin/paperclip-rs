@@ -18,6 +18,12 @@ cycle 14:30 实测四条引用面（`file_size_check.py` / `route_parity.py` /
 ------------------------------------
 C1 **凡是被引用面真正执行**的 `scripts/**/<name>.py`（`<name>` 不以 `test_` 开头），
    **必须**存在 `scripts/**/test_<name>.py`（任意一层子目录都行）。
+C1' **包入口是同一个判据的包形态**：`scripts/<pkg>/__main__.py` 与 `scripts/<pkg>/__init__.py`
+   的期望测试名是 **`<pkg>`**（即 `test_<pkg>.py`），**不是** `__main__` / `__init__`。
+   （`LUM-2629` / `T1-6-R1`，`docs/37 §300`；修的是一个**假红**。）
+C2 **`python3 -m <module>` 形态也是引用**：`python3 -m scripts.foo.bar` 解析成磁盘上那个
+   真正被执行的实体（优先 `scripts/foo/bar/__main__.py`，否则 `scripts/foo/bar.py`），
+   于是它**进读数、也要有测试**。**被门执行却没进读数** = 假绿，比假红贵。
 
 引用面 = 两个，且**只认真正被执行的那几行**
 ------------------------------------------
@@ -38,6 +44,22 @@ B. `scripts/gates.sh`（`ALL_GATES` 的调度实现所在文件）
   两种形态都收，收的是**会进到日志 / CI 面板里的那行文本**。）
 * **gates.sh**：收**非注释、非空行**；**跳过 `printf` 开头的行**（那是把命令
   *显示*出来给人看，不是执行 —— `gates.sh:439` 就是这种）。
+
+包形态的判词（`__init__.py` 单独被引用要不要豁免？—— **不豁免**）
+------------------------------------------------------------------
+`python3 scripts/foo/__main__.py` 和 `python3 -m scripts.foo` 描述的是**同一个包**，
+`python3 scripts/foo/__init__.py` 也是。把它们判成三种不同的期望名（`test___main__.py` /
+`test_foo.py` / `test___init__.py`）等于给同一个东西开三扇门，而其中两扇**没人会满足** ——
+`test___main__.py` 这个文件名**没有人类会写**，于是**按正确约定接线的人永远判红**。
+所以本门只保留**一条**规则：**包入口 ⇒ 期望测试名 = 包名**。判词（`--quiet` 之外的读数面
+逐条打出来，`gaps` 里也逐条点名）：
+
+* `scripts/<pkg>/__main__.py`  ⇒ 期望 `scripts/**/test_<pkg>.py`
+* `scripts/<pkg>/__init__.py` ⇒ 期望 `scripts/**/test_<pkg>.py`（**不豁免**）
+
+**不豁免的代价**是刻意的：豁免它就等于开一个洞 —— 有人只写 `python3 scripts/foo/__init__.py`
+就能让整个包逃出这道门。豁免的**唯一**情形是「它根本不是包入口」：顶层 `scripts/__init__.py`
+的父目录就是 `scripts` 本身（没有包名可取）⇒ 不判红（也不进读数）。
 
 排除项
 ------
@@ -72,12 +94,18 @@ B. `scripts/gates.sh`（`ALL_GATES` 的调度实现所在文件）
 4. 非 `.py` 的判定器（`.sh` / 无扩展名）—— 本门只按 `scripts/**/<name>.py` 收。
 5. 真的叫 `test_foo.py` 但**不是** unittest 的判定器（被 `test_` 前缀豁免掉）。
 6. `run:` 块标量里用 `\` 续行、路径被拆成 `"$SCRIPTS"/foo.py` 的写法。
+7. `python3 -m <module>` 里 `<module>` **不是** `scripts.` 开头的（`python3 -m pytest`
+   / `-m unittest`）—— 本门只收 `scripts/**`，别的包树不在本仓的管辖面里。
+8. `python3 -m` 与包名被**换行 / 变量**拆开（`python3 -m \\\n  scripts.foo`）——
+   `MODULE_REF_RE` 是单行正则。
 
 会**误报**（无缺口但门红）：
 7. 一个只在 `gates.sh` 的**非 printf 非注释行**里以字面量出现、但其实从未执行的脚本
    （例如某个 `if false` 分支里的路径）会被要求有测试。
-8. 判定器被**改名**而旧 `test_<旧名>.py` 还在 ⇒ 旧名进不了引用面、不判红，
+9. 判定器被**改名**而旧 `test_<旧名>.py` 还在 ⇒ 旧名进不了引用面、不判红，
    但新名会判红 —— 这是**设计意图**（就是要你同步改名），不算误报。
+10. 一行**同时**被当成两种形态（`python3 scripts/foo/bar.py -m scripts.foo`）会记两条
+    引用。它们解析到**同一个**路径，缺口按**实体**去重（只点名一次），所以不是双计数。
 """
 
 from __future__ import annotations
@@ -93,6 +121,18 @@ TEST_PREFIX = "test_"
 # 一条**具体的** `scripts/**/<name>.py` 引用。字符类里刻意没有 `*`、`$`、`"`：
 # => `scripts/test_*.py`、`scripts/**/test_*.py`、`python3 "$DIR/foo.py"` 都进不来。
 SCRIPT_REF_RE = re.compile(r"scripts/[A-Za-z0-9_./-]+\.py")
+
+# `python3 -m scripts.foo.bar` —— **模块形态**的引用（`LUM-2629` / `§300` 缺陷 2）。
+# 必须以 `scripts.` 开头，否则 `python3 -m pytest` / `-m unittest` 会被收进来。
+# 前导 `(?:^|\s)` 是为了不把 `--rootdir` / `-mtime` 之类的尾巴切下来。
+MODULE_REF_RE = re.compile(r"(?:^|\s)-m\s+(scripts(?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
+
+# `--dry` 行 = **试跑**，不要求有测试（工单硬约束）。但它**进读数并被逐条打出来**
+# （`[DRY]` 标记）—— 不静默丢弃，否则「`--dry`」就成了绕过这道门的开关。
+DRY_FLAG_RE = re.compile(r"(?:^|\s)--dry(?:\s|$)")
+
+# 包入口文件：basename 是这两个时，期望测试名取**包名**（父目录名），不是 basename。
+PACKAGE_ENTRY_NAMES = frozenset({"__main__", "__init__"})
 
 # yml 里只有这两种键的**值行**是「会进到 CI 面板 / 被执行」的那几行。
 YML_STEP_KEY_RE = re.compile(r"^(\s*)(?:-\s+)?(?:name|run)\s*:\s*(.*)$")
@@ -185,8 +225,28 @@ def existing_test_names(root: Path) -> set[str]:
     return names
 
 
+def module_ref_to_path(root: Path, module: str) -> str:
+    """`-m scripts.foo.bar` → 磁盘上真正被执行的实体的仓库相对路径。
+
+    包优先（`scripts/foo/bar/__main__.py`），否则按普通模块（`scripts/foo/bar.py`）。
+    两者都不存在时**不猜**：仍按普通模块形态返回，让它照常进读数并在缺测试时判红 ——
+    静默丢弃一条引用就是缺陷 2 那种假绿。
+    """
+    rel = module.replace(".", "/")
+    if (root / rel / "__main__.py").is_file():
+        return f"{rel}/__main__.py"
+    return f"{rel}.py"
+
+
 def judge_stem(ref: str) -> str | None:
-    """`scripts/foo/bar.py` → `bar`；`scripts/test_x.py` → None（豁免）；glob → 永不进来。"""
+    """`scripts/foo/bar.py` → `bar`；`scripts/foo/__main__.py` → `foo`（**包名**）；
+    `scripts/test_x.py` → None（豁免）；glob → 永不进来。
+
+    🔴 包入口这一支是 `LUM-2629` / `§300` 缺陷 1 的修复。旧版只取 basename ⇒
+    `scripts/t1_6_realm_diff_taxonomy/__main__.py` 被要求 `scripts/**/test___main__.py`
+    —— **一个没人会写的文件名** ⇒ 按本仓正确约定（`test_<包名>.py`）接线的人**永远判红**。
+    一个**不可满足**的判词比没有判词更糟：它训练所有人忽略这道门。
+    """
     name = ref.rsplit("/", 1)[-1]
     if not name.endswith(".py"):
         return None
@@ -195,7 +255,15 @@ def judge_stem(ref: str) -> str | None:
         return None
     if name == "gates.sh" or stem == "gates":
         return None
-    return stem
+    if stem not in PACKAGE_ENTRY_NAMES:
+        return stem
+    # 包入口 ⇒ 期望测试名 = **包名**。顶层 `scripts/__init__.py` 没有包名可取 ⇒ 豁免
+    # （它不是包入口，是「scripts 本身是包」这个前提没成立）。
+    parts = ref.rsplit("/", 2)
+    if len(parts) < 3:
+        return None
+    pkg = parts[-2]
+    return pkg if pkg.isidentifier() else None
 
 
 def read_judgement(root: Path) -> dict:
@@ -210,25 +278,48 @@ def read_judgement(root: Path) -> dict:
 
     tests = existing_test_names(root)
 
-    # (脚本引用, 引用面, 行号) —— 一个脚本被多处引用就都记，缺陷逐条点名。
-    refs: list[tuple[str, str, int]] = []
-    seen: set[tuple[str, str, int]] = set()
+    # (脚本引用, 引用面, 行号, 是否 --dry 试跑) —— 一个脚本被多处引用就都记，缺陷逐条点名。
+    # 🔴 两种**路径形态**都必须收进来，否则「被门执行却没进读数」= 假绿（`§300` 缺陷 2）：
+    #   1. `SCRIPT_REF_RE`  —— `python3 scripts/foo/bar.py`（含 `scripts/foo/__main__.py`）
+    #   2. `MODULE_REF_RE`  —— `python3 -m scripts.foo.bar`（**必须**解析成磁盘上那个实体，
+    #      否则它的期望测试名会算在 `bar` 而不是包/模块上）
+    refs: list[tuple[str, str, int, bool]] = []
+    seen: set[tuple[str, str, int, bool]] = set()
+
+    def _add(ref: str, surface: str, lineno: int, dry: bool) -> None:
+        key = (ref, surface, lineno, dry)
+        if key not in seen:
+            seen.add(key)
+            refs.append(key)
+
     for surface, lineno, line in reference_lines(root):
+        dry = bool(DRY_FLAG_RE.search(line))
         for m in SCRIPT_REF_RE.finditer(line):
-            key = (m.group(0), surface, lineno)
-            if key not in seen:
-                seen.add(key)
-                refs.append(key)
+            _add(m.group(0), surface, lineno, dry)
+        for m in MODULE_REF_RE.finditer(line):
+            _add(module_ref_to_path(root, m.group(1)), surface, lineno, dry)
 
     gaps: list[dict] = []
     judged: set[str] = set()
-    for ref, surface, lineno in refs:
+    dry_refs: list[tuple[str, str, int]] = []
+    gap_refs: set[str] = set()
+    candidates = 0
+    for ref, surface, lineno, dry in refs:
         stem = judge_stem(ref)
         if stem is None:
             continue
-        judged.add(ref)
-        if stem in tests:
+        if dry:
+            # `--dry` 试跑**不要求**有测试（工单硬约束），但**进读数**并逐条打出来 ——
+            # 静默丢弃就等于给了「加个 --dry」这个绕过门的方式。
+            dry_refs.append((ref, surface, lineno))
             continue
+        candidates += 1
+        judged.add(ref)
+        if stem in tests or ref in gap_refs:
+            # `ref in gap_refs`：**同一个实体**（两种引用形态、或两个引用面各写一次）只报
+            # 一条缺口。refs 的去重键含行号（为了逐条点名），所以不靠它去重缺口。
+            continue
+        gap_refs.add(ref)
         gaps.append(
             {
                 "ref": ref,
@@ -242,20 +333,22 @@ def read_judgement(root: Path) -> dict:
             f"expected scripts/**/test_{stem}.py"
         )
 
-    # 🔴 前置判据：解析结果为空 ⇒ 红。否则「解析规则写坏了」与「没人引用」同形。
-    if not refs:
+    # 🔴 前置判据：一条**可判的**引用都没解析到 ⇒ 红。否则「解析规则写坏了」与「没人引用」
+    # 同形（`§276`）。数的是**非 dry 且 judge_stem 非 None** 的引用：一条 `--dry` 试跑
+    # 证明了解析器活着，但它本身不构成「有东西要判」。
+    if not candidates:
         defects.append(
             "no scripts/**/<name>.py reference was parsed from the reference surfaces "
             "(the parser is broken, or nothing is wired up)"
         )
 
-    gap_refs = {g["ref"] for g in gaps}
-    surfaces = sorted({surface for _, surface, _ in refs})
+    surfaces = sorted({surface for _, surface, _, _ in refs})
     return {
         "root": root,
         "defects": defects,
         "gaps": gaps,
         "refs": refs,
+        "dry_refs": dry_refs,
         "judged": sorted(judged),
         "covered": sorted(judged - gap_refs),
         "surfaces": surfaces,
@@ -278,13 +371,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.quiet:
         print("judge-test-coverage: 引用面 = .github/workflows/*.yml + scripts/gates.sh")
-        for ref, surface, lineno in rd["refs"]:
-            print(f"  {surface}:{lineno}: 引用 {ref}")
+        for ref, surface, lineno, dry in rd["refs"]:
+            print(f"  {surface}:{lineno}: 引用 {ref}{'（--dry 试跑，不要求有测试）' if dry else ''}")
         print(f"  ⇒ 被执行且非 test_* 的判定器: {rd['numbers']} 个")
+        gap_set = {g["ref"] for g in rd["gaps"]}
         for ref in rd["judged"]:
-            stem = ref.rsplit("/", 1)[-1][:-3]
-            mark = "GAP" if ref in {g["ref"] for g in rd["gaps"]} else "OK "
+            # 报出的期望名必须与判词**同一个** `judge_stem()`：这一行自己就曾是缺陷 1 的
+            # 第二个现场（读数面打 `test_<basename>`，判词面要 `test_<包名>`）。
+            stem = judge_stem(ref)
+            mark = "GAP" if ref in gap_set else "OK "
             print(f"    [{mark}] {ref}  ->  test_{stem}.py")
+        for ref, surface, lineno in rd["dry_refs"]:
+            print(f"    [DRY] {surface}:{lineno}: {ref}  ->  test_{judge_stem(ref)}.py（试跑，不判红）")
         print(f"  ⇒ 现有 scripts/**/test_*.py: {rd['tests']} 个")
         for d in rd["defects"]:
             print(f"error: {d}", file=sys.stderr)
@@ -297,8 +395,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     print(
-        "judge-test-coverage: OK — surfaces=%d judges=%d covered=%d gaps=0"
-        % (rd["sections"], rd["numbers"], len(rd["covered"])),
+        "judge-test-coverage: OK — surfaces=%d judges=%d covered=%d gaps=0 dry=%d"
+        % (rd["sections"], rd["numbers"], len(rd["covered"]), len(rd["dry_refs"])),
         flush=True,
     )
     return 0
