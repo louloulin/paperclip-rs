@@ -473,3 +473,147 @@ async fn comments_read_needs_its_own_scope() {
 
     cleanup(&pool, fixture.workspace_id, &[fixture.user_id]).await;
 }
+
+// ---------------------------------------------------------------------------
+// 凭据门按台账声明分流（LUM-2610）
+//
+// 这一族在 conformance 回放里全回 401，根因是 `/v1` 合并点上的 `require_plugin_bearer`
+// **只**认 `mpi_`/`mpc_`，于是所有用会话身份打过来的 `/v1/issues*` 在到达 handler 之前
+// 就被毙了 —— 而 `mc_openapi::v1` 台账里这 4 条的 `policy.credentials` 明确含
+// `CredentialKind::UserOAuth`（共享资源面），`/v1/context` 与 `/v1/storage/**`
+// （插件扩展面）不含。这几条把「声明」和「实现」钉在一起。
+// ---------------------------------------------------------------------------
+
+/// 会话身份打 `/v1/issues/{ref}`：**200**（改前是 401 —— 门在 handler 之前就毙了）。
+#[tokio::test]
+#[ignore = "needs MULTICA_TEST_DATABASE_URL (gate 6)"]
+async fn session_credential_reaches_the_shared_resource_face() {
+    let Some((pool, db)) = connect().await else {
+        return;
+    };
+    let fixture = seed_panel(&pool, &db, SCOPES, "panel.js", "code").await;
+    let issue = seed_issue(&db, fixture.workspace_id, fixture.user_id, "by-session").await;
+    let app = app(db);
+
+    let (status, _, body) = call_raw(
+        &app,
+        session_req(
+            "GET",
+            &format!("/v1/issues/{}", issue.id),
+            fixture.user_id,
+            fixture.installation_id,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "台账声明 user_oauth 是这 4 条的合法凭据，会话必须能走到 handler：{body}"
+    );
+    assert_eq!(body["id"], issue.id.to_string());
+
+    // 令牌路径仍照旧（回归：这道门不是被拆掉，是被分流）。
+    let (status, _, _) = call_raw(
+        &app,
+        token_req(
+            "GET",
+            &format!("/v1/issues/{}", issue.id),
+            &fixture.token,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// 插件扩展面**不**因为这次分流而放宽：`/v1/context` 拿会话仍然是 401。
+#[tokio::test]
+#[ignore = "needs MULTICA_TEST_DATABASE_URL (gate 6)"]
+async fn session_credential_is_still_refused_on_the_plugin_extension_face() {
+    let Some((pool, db)) = connect().await else {
+        return;
+    };
+    let fixture = seed_panel(&pool, &db, SCOPES, "panel.js", "code").await;
+    let app = app(db);
+
+    let (status, _, body) = call_raw(
+        &app,
+        session_req(
+            "GET",
+            "/v1/context",
+            fixture.user_id,
+            fixture.installation_id,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "context 的 policy.credentials 只有两族插件令牌：{body}"
+    );
+    assert_eq!(body["code"], "plugin_bearer_required");
+}
+
+/// 匿名打 `/v1/issues/{ref}` 仍然是 401 —— 「声明允许会话」不等于「匿名也算过」。
+#[tokio::test]
+#[ignore = "needs MULTICA_TEST_DATABASE_URL (gate 6)"]
+async fn anonymous_is_still_refused_on_the_shared_resource_face() {
+    let Some((pool, db)) = connect().await else {
+        return;
+    };
+    let fixture = seed_panel(&pool, &db, SCOPES, "panel.js", "code").await;
+    let issue = seed_issue(&db, fixture.workspace_id, fixture.user_id, "anonymous").await;
+    let app = app(db);
+
+    let (status, _, body) = call_raw(
+        &app,
+        axum::http::Request::builder()
+            .method("GET")
+            .uri(format!("/v1/issues/{}", issue.id))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["code"], "plugin_bearer_required");
+}
+
+/// **这一条是 conformance 那一族剩下的唯一站点的实测钉子**。
+///
+/// 回放发过来的会话请求带的是**空的** `X-Multica-Plugin-Installation`（上游那份 fixture 里
+/// 这个头是 `""`：真正的凭据是安装令牌 `mpi_…`，而走查解不出明文、整头丢失，见 `docs/37`
+/// §233.4 那一族）。所以请求过了凭据门之后停在 `session_caller` 的安装解析上，回
+/// **400 `plugin installation is required`**（上游 `pluginSessionCaller` 逐字要求安装头：
+/// workspace 只能来自安装行，否则调用方能把安装指向它从未被安装过的 workspace）。
+///
+/// 把它写成用例，是为了让「这 4 条为什么修不到 200」有一处**可复跑的证据**，
+/// 而不是靠回忆上游测试做了什么。
+#[tokio::test]
+#[ignore = "needs MULTICA_TEST_DATABASE_URL (gate 6)"]
+async fn session_without_an_installation_stops_at_the_installation_check() {
+    let Some((pool, db)) = connect().await else {
+        return;
+    };
+    let fixture = seed_panel(&pool, &db, SCOPES, "panel.js", "code").await;
+    let issue = seed_issue(&db, fixture.workspace_id, fixture.user_id, "no-install").await;
+    let app = app(db);
+
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri(format!("/v1/issues/{}", issue.id))
+        .header(USER_ID_HEADER, fixture.user_id.to_string())
+        .header(INSTALLATION_HEADER, "")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, _, body) = call_raw(&app, request).await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "过了凭据门之后，停在安装解析：{body}"
+    );
+    assert_eq!(body["code"], "invalid_request");
+    assert_eq!(body["detail"], "plugin installation is required");
+}

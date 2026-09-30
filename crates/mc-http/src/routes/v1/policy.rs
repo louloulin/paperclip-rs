@@ -26,9 +26,17 @@
 //! | 无凭据 | —— | surface 页面 | 无（`routes/surfaces.rs`，路径 token 即凭据） |
 //!
 //! 校验逻辑**只有一份**（`mc_plugin_host::token`）；本层负责「取出来、判一判、放进 caller」。
-//! `/v1` 面的 9 条请求由 [`require_plugin_bearer`] 保证**必须**是插件凭据（`mpi_`/`mpc_`），
 //! 桥面（`routes/plugin_bridge/*`）不套这一层 ⇒ 同一条 handler 在两个前缀下按**呈现出来的
 //! 凭据**决定 actor（上游 `pluginCaller` 的同一个分支）。
+//!
+//! ## 凭据门按**台账声明**分流（不是按路径前缀）
+//!
+//! [`require_plugin_bearer`] 认两族：插件令牌（`mpi_`/`mpc_`）**一律**认；**已登录会话**只在
+//! 那条路径的 [`mc_openapi::v1::Operation::policy`] 里声明了
+//! [`mc_openapi::v1::CredentialKind::UserOAuth`] 时才认 —— 即共享资源面
+//! （`/v1/issues/**`）认，`/v1/context` 与 `/v1/storage/**`（插件扩展面）不认。
+//! 判据取自 [`mc_openapi::v1::credentials_for_request`]，所以台账加第 10 条 Operation 时
+//! 这道门自动跟随，**不需要**在这里维护第二份路径白名单（那正是会漂移的副本）。
 //!
 //! ## 本片登记在 `docs/32` §9 的偏离（三条）
 //!
@@ -260,16 +268,51 @@ fn plugin_bearer_required(request_id: &str) -> Response {
     )
 }
 
-/// 凭据层的中间件：不是 `mpi_`/`mpc_` ⇒ 401（上游 `PluginBearerOnly`）。
+/// 凭据层的中间件（上游 `PluginBearerOnly`）：默认要 `mpi_`/`mpc_`，**台账声明了
+/// `user_oauth` 的路径**改认已登录会话。
 ///
-/// 只在 `/v1` 的合并点套一次（见文件头的「层顺序」段）。
+/// 两条判据都取自**声明**（[`mc_openapi::v1::credentials_for_request`]），不是路径前缀白名单：
+/// 共享资源面（`/v1/issues/**`）的 `policy.credentials` 含 `UserOAuth`，插件扩展面
+/// （`/v1/context`、`/v1/storage/**`）只含两族插件令牌。台账加第 10 条 Operation 时这里自动跟随。
+///
+/// 认会话的**必要条件**是那条路径的声明里有 `UserOAuth` **且** 请求带着登录身份
+/// （`X-Multica-Session` 或 `X-Multica-User-Id`）——「声明允许」不等于「匿名也算过」。
 async fn require_plugin_bearer(request: Request, next: Next) -> Response {
-    if is_plugin_bearer_token(&bearer_token(request.headers())) {
+    // 先把判定结果算出来再 `next.run(request)`（后者要 `request` 的所有权）。
+    let allowed = {
+        let headers = request.headers();
+        is_plugin_bearer_token(&bearer_token(headers))
+            || request_has_allowed_session(request.uri().path(), request.method().as_str(), headers)
+    };
+    if allowed {
         next.run(request).await
     } else {
         plugin_bearer_required(&request_id(request.headers()))
     }
 }
+
+/// 请求是否带着**被这条路径的台账声明接受**的登录身份。
+///
+/// 会话头的判定只认「非空」，不验签：真正的验证在 [`resolve_caller`] 里（它按 `user` 查成员
+/// 身份，失败就是 404/403）。这一层只负责**不误杀**——把一道会拒掉合法会话的门拆掉。
+fn request_has_allowed_session(path: &str, method: &str, headers: &HeaderMap) -> bool {
+    let Some(credentials) = mc_openapi::v1::credentials_for_request(method, path) else {
+        return false;
+    };
+    if !credentials.contains(&mc_openapi::v1::CredentialKind::UserOAuth) {
+        return false;
+    }
+    [SESSION_HEADER, USER_ID_HEADER]
+        .iter()
+        .any(|name| headers.get(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// 会话身份的两个头名。
+///
+/// [`USER_ID_HEADER`] 复用 `routes::auth_user` 的那**一份**常量（不复制字面量）；
+/// `X-Multica-Session` 本仓目前没有共享常量，就在本文件定义。
+const SESSION_HEADER: HeaderName = HeaderName::from_static("x-multica-session");
+const USER_ID_HEADER: HeaderName = crate::routes::auth_user::USER_ID_HEADER;
 
 // ---------------------------------------------------------------------------
 // 限流：`PluginRateLimit`
@@ -287,14 +330,31 @@ impl KeyExtractor for PluginTokenKeyExtractor {
 
     fn extract<T>(&self, request: &axum::http::Request<T>) -> Result<Self::Key, GovernorError> {
         let token = bearer_token(request.headers());
-        if !is_plugin_bearer_token(&token) {
+        // 限流桶按**凭据**分片：插件令牌按令牌本身，会话按登录身份。两者都只以哈希入桶。
+        let material = if is_plugin_bearer_token(&token) {
+            token
+        } else if request_has_allowed_session(
+            request.uri().path(),
+            request.method().as_str(),
+            request.headers(),
+        ) {
+            let user = [SESSION_HEADER, USER_ID_HEADER]
+                .iter()
+                .find_map(|name| request.headers().get(name))
+                .map_or_else(String::new, |value| {
+                    value.to_str().unwrap_or_default().to_string()
+                });
+            format!("session:{user}")
+        } else {
+            // 一个凭据都没有 ⇒ 不进桶（外层的 `require_plugin_bearer` 会给 401；
+            // 这里再给一次是 belt-and-braces，见文件头偏离段）。
             return Err(GovernorError::Other {
                 code: StatusCode::UNAUTHORIZED,
                 msg: None,
                 headers: None,
             });
-        }
-        let digest = Sha256::digest(token.as_bytes());
+        };
+        let digest = Sha256::digest(material.as_bytes());
         Ok(hex::encode(digest))
     }
 }
@@ -549,5 +609,106 @@ mod tests {
     fn callback_tokens_are_a_single_process_wide_table() {
         // 偏离 2 的回归：两处调用拿到的是同一张表（M6-8 签发 / 本片解析）。
         assert!(std::ptr::eq(callback_tokens(), callback_tokens()));
+    }
+
+    // ---- 凭据门：按台账声明分流（LUM-2610 的回归）------------------------
+
+    fn request(method: &str, uri: &str, pairs: &[(&str, &str)]) -> axum::http::Request<()> {
+        let mut builder = axum::http::Request::builder().method(method).uri(uri);
+        for (name, value) in pairs {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(()).unwrap()
+    }
+
+    #[test]
+    fn shared_resource_paths_accept_a_session_plugin_paths_do_not() {
+        // 共享资源面：台账声明了 `user_oauth` ⇒ 会话过、匿名不过、插件令牌过。
+        assert!(request_has_allowed_session(
+            "/v1/issues/PLUG-12",
+            "GET",
+            &headers(&[("x-multica-session", "u-1")])
+        ));
+        assert!(request_has_allowed_session(
+            "/v1/issues/PLUG-12/comments",
+            "POST",
+            &headers(&[("x-multica-user-id", "u-1")])
+        ));
+        assert!(!request_has_allowed_session(
+            "/v1/issues/PLUG-12",
+            "GET",
+            &HeaderMap::new()
+        ));
+        // 插件扩展面：声明里没有 `user_oauth` ⇒ 会话不够。
+        assert!(!request_has_allowed_session(
+            "/v1/context",
+            "GET",
+            &headers(&[("x-multica-session", "u-1")])
+        ));
+        assert!(!request_has_allowed_session(
+            "/v1/storage/scope/key",
+            "PUT",
+            &headers(&[("x-multica-session", "u-1")])
+        ));
+    }
+
+    #[test]
+    fn the_session_gate_keys_on_method_and_segment_count() {
+        let session = headers(&[("x-multica-session", "u-1")]);
+        // 方法不符 ⇒ 那条 Operation 的声明不适用。
+        assert!(!request_has_allowed_session(
+            "/v1/issues/x",
+            "DELETE",
+            &session
+        ));
+        // `{issue_ref}` 是**单段**通配：多一段少一段都不是这条路径。
+        assert!(!request_has_allowed_session(
+            "/v1/issues/x/y",
+            "GET",
+            &session
+        ));
+        assert!(!request_has_allowed_session("/v1/issues/", "GET", &session));
+        // 未在台账里的前缀一律不认（门是白名单式的：只认声明过的那 9 条）。
+        assert!(!request_has_allowed_session("/v1/nope/x", "GET", &session));
+        // 空值不算「带了身份」。
+        assert!(!request_has_allowed_session(
+            "/v1/issues/x",
+            "GET",
+            &headers(&[("x-multica-session", "")])
+        ));
+    }
+
+    #[test]
+    fn the_rate_limit_bucket_keys_on_the_presented_credential() {
+        // 会话过门 ⇒ 也有桶（否则请求会在限流层二次被 401 打死，绕过凭据门的修复毫无意义）。
+        let session = request(
+            "GET",
+            "/v1/issues/x",
+            &[
+                ("x-multica-session", "u-1"),
+                ("authorization", "Bearer pat_1"),
+            ],
+        );
+        let key = PluginTokenKeyExtractor.extract(&session).unwrap();
+        assert_eq!(key.len(), 64, "sha256 hex");
+        assert!(!key.contains("u-1"), "凭据明文绝不进限流键");
+
+        // 同一个会话 ⇒ 同一个桶；换一个人 ⇒ 另一个桶。
+        let other = request("GET", "/v1/issues/x", &[("x-multica-session", "u-2")]);
+        assert_ne!(
+            key,
+            PluginTokenKeyExtractor.extract(&other).unwrap(),
+            "配额按凭据分片，不按请求"
+        );
+
+        // 插件扩展面上，会话仍然不进桶（凭据门已经先给了 401）。
+        let on_context = request("GET", "/v1/context", &[("x-multica-session", "u-1")]);
+        assert!(matches!(
+            PluginTokenKeyExtractor.extract(&on_context),
+            Err(GovernorError::Other {
+                code: StatusCode::UNAUTHORIZED,
+                ..
+            })
+        ));
     }
 }
