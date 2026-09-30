@@ -254,6 +254,7 @@
 294	LUM-2624	【LUM-2624 / T1-6-Q4】w3b_premerge_audit.py（448 行 / 0 用例）补 49 例，只测不改 + 登记 KD-1（第 3 条判词因 add=cur-base 而恒假死代码）	1
 295	LUM-2622	2026-09-30 14:00 cycle — 收割 2 片（#195 schema_drift.py +79 例 / #196 slash_alias_audit.py +68 例，⑫ 273→420/12 file）＋ 承重：用例数不构成证据，判别式三段读数才是（并逮到 CHILD_KINDS 用而未钉）	1
 296	LUM-2626	【LUM-2626 / T1-6-G1】门 ⑭：把「ci.yml/gates.sh 真正执行的 scripts/**/<name>.py 必须有 test_<name>.py」做成可机检的门（新判定器 judge_test_coverage_check.py + 31 例 + tests.manifest +1 行）；三段读数判别力已实测（拿掉 test_schema_drift.py ⇒ rc=1 并点名）	1
+297	LUM-2627	【LUM-2627 / T1-6-P1】门 ⑨ PRECONDITION 25→12：agent 档身份的任务令牌装置（task_token.rs：声明 + 按分组种出 fixture 点名的那一行 + 把借来的字面量绑上去）＋ NATURALLY_REPRODUCED 一行（按场景而非按 id 登记）	1
 298	LUM-2625	2026-09-30 14:30 cycle — 收割 2 片（#197 section_alloc_check.py +89 例 / #198 w3b_premerge_audit.py +49 例，⑫ 12→14 file）＋ 承重：「每片单独绿」不蕴含「合起来绿」（位置与读数都是跨片语义，合并树当场重跑）+ 硬编码读数第 2 次已换成自洽判据 + 变异体空操作与用例不判别读数相同；已派 LUM-2626（门 ⑭，零编译）/ LUM-2627（PRECONDITION 残余，唯一吃构建）	1
 299	LUM-2628	2026-09-30 15:00 cycle — 收割 1 片（#199 门 ⑭，⑫ 14→15 file）＋ 承重：门 ⑭ 自身的判词形状有两个真缺陷（包形态假红 test___main__.py 不可满足 / `-m` 模块形态假绿「被门执行却完全没进读数」，当场复现）＋ 判别层是分层的：manifest 由门 ⑫ 管、覆盖由门 ⑭ 管，单独测门 ⑭ 得 rc=0 不是缺口；已派 LUM-2629（修门 ⑭ 形状，零编译）	1
 300	LUM-2629	【LUM-2629 / T1-6-R1】门 ⑭ 判词形状两个真缺陷：包形态假红（test___main__.py 不可满足 ⇒ 期望名改取**包名**，`__init__.py` 不豁免）+ `-m` 模块形态假绿（被门执行却没进读数 ⇒ 纳入引用面解析，`--dry` 进读数打 [DRY] 但不判红）；31→51 例，三段读数判别力实测（变异1 退 basename ⇒ 9 条红 / 变异2 删 -m 分支 ⇒ 4 条红，两组不相交）	1
