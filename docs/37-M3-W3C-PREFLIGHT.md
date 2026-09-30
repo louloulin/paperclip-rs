@@ -27512,3 +27512,23 @@ base 是否 head 祖先、head 停滞轮数）**零编译、可脚本化**，却
 `contract` job 持续红（**本轮又见一次**：#168 的 `contract` 是 `success`，
 但 §281 记录的 `--with-db` 门 ⑨ 仍红 ⇒ 两者读的**不是同一个东西**，别混为一谈）。
 `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决未回。
+
+### §282.1 🔴 承重二（新 failure 形态）：run 可以**零副作用地**报 `completed`
+
+派 `LUM-2613` 时第一次 `multica issue assign … --to-id` 确实**创建了 run**（不是 §281 记的
+「`status` 已是目标值 ⇒ 空操作」那一族），但那个 run **22 秒后就 `completed`**：
+
+- `error: None`；`result.output` = 单句 `I'll start by reading the issue.`；
+- workdir **建出来了**（`lum-2613-ca428850ebdc`）但里面**只有 `.multica` / `.pi` / `AGENTS.md`**，
+  **没有 `paperclip-rs`**（`du` = 616K，对比真起跑的 workdir 36M）；
+- pi session 最后一条：`{"role":"assistant","content":[{"type":"text",…}],"stopReason":"stop"}`
+  —— **模型发了一个纯文本回合、零 tool call**，harness 就把它当成终态。
+
+🔴 **所以「run 建出来了」和「run 真的跑起来了」是两个读数**，`runs` 表的 `running` 只是**必要**条件。
+本轮可用的完整判据是三条一起看：
+① `runs[].status`；② `result.output` 是否**只有一句话**（有实质交付的 run 输出必含命令回显/门读数）；
+③ **workdir 里有没有 `paperclip-rs/` 且 `du` 落到 ~36M**。
+
+处置：`multica issue rerun 01a0f062` ⇒ 45 秒内 `running`、workdir 换成
+`lum-2613-4f7b360e0863`（36M，已 checkout）⇒ **本片在飞**。
+⇒ 与 §275.3（「无 workdir 不是死亡信号」）互补：**有 workdir 也不是起跑信号**。
