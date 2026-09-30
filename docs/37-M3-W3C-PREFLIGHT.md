@@ -25814,3 +25814,118 @@ base **`2702c21a`**；GH **1 open PR = #168**（第四次待议，`merge-tree rc
 - `LUM-2111` docker 死锁 ⇒ base 的 `contract` 持续红（`report.json` 刷新权）；
 - `mc_t2492` 116 表仍在默认库；
 - 共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变：`avail 24G` vs 冷建 18–22G ⇒ 物理上只容 1 片冷建）。
+
+---
+
+## §274 【LUM-2602 / T1-6-I】**零磁盘**：门 ⑫ 的发现规则只覆盖 `scripts/` 顶层 ⇒ 决定 T1-6 归因的那套分类器（1053+339 行）0 测试 0 门执行
+
+起手 base **`49c3d025`**（合并 PR #183 后的 merge commit）。**零 Rust / 零 cargo / 零真库 / 零磁盘**。
+
+### §274.1 问题（当场实测，不是转述）
+
+PR #183 立的门 ⑫ 用 `scripts/test_*.py` 做发现规则，而该模式**只匹配顶层**：
+
+```
+$ bash -c 'shopt -s nullglob; f=(scripts/test_*.py); echo "${#f[@]} -> ${f[*]}"'
+2 -> scripts/test_extract_requirements.py scripts/test_t1_6_taxonomy.py
+```
+
+被静默排除在外、而**正是决定每条缺口归谁**的那一层：
+
+| 单元 | 体量 | 改前用例数 | 改前被任何门执行？ |
+|---|---|---|---|
+| `scripts/t1_6_realm_diff_taxonomy/`（9 个模块） | **1053 行** | **0** | **否** |
+| `scripts/t1_6_precondition_taxonomy.py` | **339 行** | **0** | **否** |
+
+判据（两条都可复跑）：`grep -n 't1_6' scripts/gates.sh` → 空；`grep -n 't1_6' .github/workflows/ci.yml` → 空。
+**门 ⑫ 的覆盖面比它的动机窄**：它的动机是「新增测试文件漏接进门禁**结构上不可能**」，
+这句话对顶层成立，却把「包内新增测试文件」整类排除在外 —— 而 `test_t1_6_taxonomy.py`
+那 14 个用例只测了 `t1_6_taxonomy.py` 一个文件。
+
+### §274.2 覆盖面方案：选 **B（递归）**，不选 A、不选 C
+
+| 方案 | 结论 | 理由（对照本仓已付过的代价） |
+|---|---|---|
+| A 只加顶层测试文件 | **否** | 改动最小，但 glob 漏洞**原样保留**：下一个人把测试放进包内，又是「0 门执行」。本片要修的是缺陷**家族**，不是这一次的两个文件 |
+| **B 发现规则改递归** | **取** | `find scripts -type d -name __pycache__ -prune -o -type f -name 'test_*.py' -print`。覆盖面变成结构性的，与「文件放在哪」无关 |
+| C 「跑得起来的都跑」（每个 `scripts/*.py` 试 `--help`） | **否** | 最宽，但**冒烟 ≠ 测试**：会把「跑过了」继续当「验证过」，正是 §271.3 / §272 这条缺陷家族的本体 |
+
+⚠️ **B 的已知坑（三条都实测过）**：
+
+1. **不能用 `shopt -s globstar` + `**` 顶替 `find`**：`globstar` 是 **shell 选项**，
+   语义依赖调用者的 shell 状态；`find` 在任何 bash 下逐字一致（门里已有 `mapfile` / 数组，
+   同样依赖 bash 4+，与既有代码同级）。
+2. **必须 `-prune` 掉 `__pycache__`**：否则上一次的字节码目录会进清单。
+   `LC_ALL=C sort` 保可复现的失败顺序。
+3. 🔴 **文件名形状有语义**：包内测试必须叫 `test_*.py` —— `tests.py` **不匹配**它
+   （差一个下划线），写成那样等于没写。本包因此叫 `test_realm_diff_taxonomy.py`。
+4. **空集合仍判红**（§271.5 的规矩原样保留）：一个都没发现 ⇒ `GATE_SCRIPTS_TESTS_EXIT=1`。
+
+### §274.3 🔴 承重一：`exit 0` 不等于「验证过」——**门自己也会有一个 0 用例的绿**
+
+`python3 <file>` 对一个**没有用例**的文件 **exit 0 且什么都不打**（若它调了
+`unittest.main()` 则打 `Ran 0 tests`）。也就是说 §271 那次「空 glob 判红」只堵住了
+「一个文件都没有」，**没堵住「找到了文件、文件里没有用例」** —— 与承重一是同一族。
+
+⇒ 绿的定义收紧为：**rc == 0 且输出里出现 unittest 的 `OK` 行**（输出重定向到临时文件再打，
+不用管道 —— `tee` 遇 SIGPIPE 会把本轮日志截断）。
+
+### §274.4 判别式：**门必须被观测到变红**（三次红 + 一次绿，逐字）
+
+```
+$ bash scripts/gates.sh --only scripts-tests > log 2>&1; grep GATE_SCRIPTS_TESTS_EXIT log
+```
+
+| # | 探针 | 读数 |
+|---|---|---|
+| ① | 把 `rules.py` 的 `EXTRACT_QUERY_LITERAL_MISBOUND` 判据改成恒假（包内代码） | `GATE_SCRIPTS_TESTS_EXIT=1`（`FAILED (failures=2)`，56 个用例） |
+| ② | 去掉 `t1_6_precondition_taxonomy.py::mechanism_keys` 的**每 fixture 去重**（坑 ② 的判词） | `GATE_SCRIPTS_TESTS_EXIT=1`（`FAILED (failures=1)`） |
+| ③ | 塞一个 `test_probe_zero_cases.py`（匹配 `test_*.py`、零用例） | `GATE_SCRIPTS_TESTS_EXIT=1`（`!! … 没有 unittest 的 OK 行 ⇒ 判红`，且元测试同时红） |
+| ④ | 三个探针全部撤掉 | `GATE_SCRIPTS_TESTS_EXIT=0`（`4 file(s)`，`Ran 56 / 6 / 25 / 14`） |
+
+①②③ 都是**改前绿 / 改后红**的真实代码改动（不是造一个必然失败的探针）⇒ 它们证明的是
+「门 ⑫ 真的在执行那套分类器本体」，而不只是「门 ⑫ 在跑」。
+
+### §274.5 §267 那条被证伪的判据，在这里被**第二个分类器**继承
+
+`docs/37 §267`：根分类器声明「`status_observed == 404` ⇒ 一定是已挂载的 handler 主动返回的
+404」，而 `classify()` 从不读 body ⇒ PR #182（`LUM-2597`）修的正是它。
+
+**本片的包用同一个数值捷径划族边界**（`constants.OTHER_FAMILY_OBSERVED = (401, 404)`）。
+那条边界**可用**（404 确实不属于 `REALM_DIFF`），不可用的是把它**读成**「所以是 handler 主动返回的」。
+⇒ 新增 `TestThree404Origins`：404 的三种来源（① handler 查实体落空 / ② 鉴权面
+`not_found("workspace")`，即 `routes/agents.rs::workspace_role` 那种 / ③ axum fallback 空 body）
+**逐个钉死「都不得进入本族、都不得被 `is_claimed` 领走」**，外加一条反向钉法：
+把 `body_observed` 换成五种完全不同的值（含 `<html>404</html>` 与 `None`），
+`classify()` 的结果必须**逐字不变** ⇒ 哪天有人为了「更准」加了 body 判据，这条立刻红。
+
+### §274.6 覆盖面（改前 → 改后，逐条）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 门 ⑫ 发现的测试文件 | **2**（仅顶层） | **4**（递归，含包内） |
+| 用例总数 | 20 | **101** |
+| `t1_6_precondition_taxonomy.py` | 0 | **25** |
+| `t1_6_realm_diff_taxonomy/` 9 个模块 | 0 | **56**（每模块至少一条） |
+| 「空集合判红」 | 有 | 有（保留） |
+| 「0 用例判红」 | **无** | **有**（承重一） |
+| `ci.yml` ⑫ 步骤名 | `python3 scripts/test_*.py` | `python3 scripts/**/test_*.py（递归，含包内测试）` |
+
+元测试 `TestGateDiscoveryAgrees` 把**门的发现规则**与**测试文件的实际位置**钉在一起：
+改回非递归 glob、或把包内测试改名成不匹配 `test_*.py` 的形状 ⇒ 用例本身变红。
+
+### §274.7 门读（base `49c3d025` + 本片写集，当场跑，零编译）
+
+- `bash scripts/gates.sh --only scripts-tests` ⇒ **rc=0**，`GATE_SCRIPTS_TESTS_EXIT=0`，`4 file(s)`；
+- `bash scripts/gates.sh --list` ⇒ 十二道门逐字不变，⑫ 仍是 `scripts-tests`，**编号未变**；
+- `bash scripts/gates.sh --only file-size` ⇒ rc=0（新增两文件 665 / 287 行，均 < 800）；
+- **⑨ 未跑、不作继承声明**（本片零真库，且工单明令不得拿合成输入冒充真库读数）。
+
+### §274.8 明确未做
+
+不改任何 `crates/**`；不跑 `--with-db`；不跑 `--write-baseline`；不动
+`crates/mc-conformance/report.json`；不改门 ①–⑪ 的判据（⑫ 只**新增**覆盖面与一条
+「0 用例判红」，未放松任何既有门）。
+
+⚠️ 本包的静态面读数（`--golden`）只用于**对账自洽**（子族和 == 候选），**不是派工单** ——
+`docs/37` 里报族计数的地方仍一律以 db-mode json 为准。
