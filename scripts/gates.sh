@@ -39,6 +39,7 @@
 #   MULTICA_TEST_THREADS=4 bash scripts/gates.sh --with-db   # 覆盖 ⑥ 的 --test-threads（默认不传 = cargo 的 nproc）
 #   bash scripts/gates.sh --only fmt,build         # 只跑选中的门（CI 用这个）
 #   bash scripts/gates.sh --list                   # 列出闸门名
+#   bash scripts/gates.sh --list-discovered        # 打印门 ⑫ **实际发现到**的测试文件清单
 #
 # 退出码：0 = 所有被选中的门全绿；1 = 至少一道门非 0；2 = 用法/前置条件错误
 # （例如选了 ⑥/⑧ 却没给库 URL）。注意 2 不是「门失败」，而是「根本没法开跑」。
@@ -111,6 +112,22 @@
 #     🔴 **exit 0 不等于「验证过」**：`python3 <file>` 对一个**没有用例**的文件
 #     exit 0 且什么都不打。所以绿的定义是「rc == 0 **且** 出现了 unittest 的 `OK` 行」——
 #     与本仓反复踩到的「跑过了就算验证过」同一族坑（`docs/37 §272/§274`）。
+#     🔴 **判红判的是集合的「身份」，不是「规模」（LUM-2604 修）**：上面两条只看**当次
+#     发现到的集合**，没有任何东西把它钉在基线上 ⇒ 少发现一个文件、改名、把发现规则收窄，
+#     全都表现为「集合仍然非空」⇒ **绿**。实测（`docs/37 §276`）把包内那个 56 用例的文件
+#     **整个删掉**后，门仍是 `GATE_SCRIPTS_TESTS_EXIT=0` / `3 file(s)` / `PASS` ——
+#     即**一个门可以在少跑 56 个用例的情况下报绿**。现在发现集合要与
+#     `scripts/tests.manifest` **逐行一致**：多一个、少一个、改名、清单里重复一行，都判红；
+#     集合大小只进 note，**不作判据**（`用例数 >= N` 正是探针 ① 塔到 45 却仍然绿的那类指标）。
+#     ⚠️ **守门的检查必须住在集合之外**：任何「检查本门」的用例只能放在顶层
+#     `scripts/test_gate_scripts_tests.py`（非递归 glob 下仍可见，且它在基线清单里），
+#     或直接写进**本文件**（`gates.sh` 永不被发现）。把守门用例放进**包内**测试文件 =
+#     发现规则一收窄它自己就不跑 = 无人报警（PR #184 的 `TestGateDiscoveryAgrees`
+#     4 条全在包内 ⇒ 探针 ①②③ 全绿，这正是本片要消灭的形态）。
+#     ⚠️ 检查门**不得断言本文件的源码文本**：实测 `assertIn("__pycache__", body)` 被本文件里
+#     一行**注释**满足了（LUM-2602）⇒ 那条断言什么也没钉住。所以本门提供
+#     `--list-discovered`（唯一实现 = `scripts_tests_discovered_files`），把门**实际算出的
+#     清单**打出来 ⇒ 守门用例断言的是门的**行为**，不是它的散文。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -170,6 +187,41 @@ gate_env_name() {
     esac
 }
 
+# ---- 门 ⑫ 的发现规则与基线（LUM-2604）--------------------------------------
+#
+# 抽成独立函数的理由：`--list-discovered` 与门本体必须走**同一份**规则。若守门用例自己
+# 复制一份发现规则，那么「门收窄了但复制品没收窄」就查不出来（两份规则各自绿）。
+
+# 逐行打印参数。**不要**用 `printf '%s\n' "${arr[@]}"`：bash 对空数组会打出一个空行，
+# 而下游 `comm` 会把那个空行当成一条真实条目（于是「集合为空」看上去像「有一条记录」）。
+gates_print_lines() {
+    local _x
+    for _x in "$@"; do printf '%s\n' "$_x"; done
+}
+
+# 门 ⑫ 的发现规则：`scripts/**/test_*.py`（递归，排除 `__pycache__`）。
+scripts_tests_discovered_files() {
+    # 用 `find` 而不是 `shopt -s globstar` + `**`：globstar 是 **shell 选项**，
+    # 语义依赖调用者的 shell 状态；`find` 在任何 bash 下逐字一致。
+    #   `-prune -o`     排除 `__pycache__`（否则上一次的字节码目录会进清单）。
+    #   `LC_ALL=C sort` 顺序不随文件系统而变（可复现）。
+    find scripts -type d -name '__pycache__' -prune -o \
+        -type f -name 'test_*.py' -print | LC_ALL=C sort
+}
+
+# 门 ⑫ 的**发现集合基线**：判红判的是集合的**身份**，不是规模。
+SCRIPTS_TESTS_MANIFEST="$SCRIPT_DIR/tests.manifest"
+
+# 读基线：忽略空行与 `#` 注释行、去掉行尾空白，并与发现规则同一排序。
+# ⚠️ **刻意不去重**：重复的行必须由门报成缺陷，否则「把同一行再抄一遍」就能静默消掉一条 diff。
+scripts_tests_manifest_entries() {
+    [ -f "$SCRIPTS_TESTS_MANIFEST" ] || return 0
+    awk '{ sub(/[[:space:]]+$/, "") }
+         /^[[:space:]]*#/ { next }
+         /^[[:space:]]*$/ { next }
+         { print }' "$SCRIPTS_TESTS_MANIFEST" | LC_ALL=C sort
+}
+
 usage() {
     # 打印本文件顶部的注释块（第 3 行起，遇第一行非注释即停）。不要写死行号范围：
     # 每加一道门都要改行号的话，`--help` 迟早会截掉最后几行。
@@ -178,6 +230,7 @@ usage() {
 
 WITH_DB=0
 ONLY=""
+LIST_DISCOVERED=0
 DB_URL="${MULTICA_TEST_DATABASE_URL:-}"
 
 # ⑥ 的 `--test-threads`：让它**可显式配置**，但**默认不传** —— 空 = 沿用 cargo 的 nproc 行为。
@@ -219,6 +272,12 @@ while [ $# -gt 0 ]; do
         --list)
             printf '%s\n' $ALL_GATES
             exit 0 ;;
+        --list-discovered)
+            # 门 ⑫ 的**实际**发现清单（唯一实现 = scripts_tests_discovered_files）。
+            # 为什么是门的一部分而不是测试里的一个复制品：守门用例必须断言门的**行为**，
+            # 而 `assertIn("find scripts", gates.sh 的源码)` 可以被一行**注释**满足
+            # （LUM-2602 实测）。把清单打出来 ⇒ 断言的对象是门算出来的结果。
+            LIST_DISCOVERED=1; shift ;;
         -h|--help)
             usage
             exit 0 ;;
@@ -228,6 +287,13 @@ while [ $# -gt 0 ]; do
             exit 2 ;;
     esac
 done
+
+# `--list-discovered` 是**只读自省**面：打完清单就退，不跑任何门、不写任何东西。
+# 它在门本体之前退出 ⇒ 守门用例可以在门里安全地调它（不会递归）。
+if [ "$LIST_DISCOVERED" -eq 1 ]; then
+    scripts_tests_discovered_files
+    exit 0
+fi
 
 # ---- 选择要跑的门 ---------------------------------------------------------
 if [ -n "$ONLY" ] && [ "$WITH_DB" -eq 1 ]; then
@@ -383,23 +449,66 @@ run_scripts_tests_gate() {
     # 为什么不逐个把文件名写死：写死的那天就是这个门开始骗人的那天 ——
     # 新增第三个测试文件时没人会记得回来改这里，于是又变成「全绿但没人看得见」。
     # ⇒ 发现规则让「新增测试文件漏接进门禁」**结构上不可能**（见文件顶部「已知坑」⑫）。
+    #
+    # 🔴 但「发现规则」本身也是**被检验的对象**（LUM-2604）：所以发现集合还要与
+    # `scripts/tests.manifest` 逐行比对，判的是集合的**身份**；而且检查这件事的用例
+    # 住在顶层 `scripts/test_gate_scripts_tests.py`（发现规则收窄时它仍会被执行）。
     local start end rc combined f files=() note log no_tests
+    local -a baseline=() only_tree=() only_manifest=() dup_entries=()
+    local identity_red=0 _p
     printf '\n=== [⑫] gate scripts-tests ===\n'
 
-    # 🔴 **递归**发现（LUM-2602）。原来的 `files=(scripts/test_*.py)` 只匹配 `scripts/`
-    # **顶层** ⇒ 包内测试（如 `scripts/t1_6_realm_diff_taxonomy/test_*.py`）全部漏接，
-    # 而那 1053 行正是「决定每条 T1-6 缺口归谁」的那套分类器（`docs/37 §274`）。
-    # 用 `find` 而不是 `shopt -s globstar` + `**`：globstar 是 **shell 选项**，
-    # 语义依赖调用者的 shell 状态；`find` 在任何 bash 下逐字一致。
-    #   `-prune -o`  排除 `__pycache__`（否则上一次的字节码目录会进清单）。
-    #   `LC_ALL=C sort` 失败顺序不随文件系统而变（可复现）。
-    mapfile -t files < <(
-        find scripts -type d -name '__pycache__' -prune -o \
-            -type f -name 'test_*.py' -print | LC_ALL=C sort
-    )
+    # 🔴 **递归**发现（LUM-2602）。规则现在只有一处实现（`scripts_tests_discovered_files`），
+    # 因为 `--list-discovered` 必须打出**门自己**算出来的清单 —— 守门用例断言的是这个清单，
+    # 不是本文件的源码文本（源码子串可以被**注释**满足，实测见文件顶部「已知坑」⑫）。
+    # 原来的 `files=(scripts/test_*.py)` 只匹配 `scripts/` **顶层** ⇒ 包内测试
+    # （如 `scripts/t1_6_realm_diff_taxonomy/test_*.py`）全部漏接，而那 1053 行正是
+    # 「决定每条 T1-6 缺口归谁」的那套分类器（`docs/37 §274`）。
+    mapfile -t files < <(scripts_tests_discovered_files)
+
+    # 🔴 判据一：发现集合的**身份**必须与基线逐行一致（LUM-2604）。
+    # 下面那条「集合非空」与「0 用例」都只看**当次**发现到的集合，因此**不够**：
+    # 丢文件 / 改名 / 收窄发现规则都表现为「集合仍然非空」⇒ 绿。
+    # 实测（`docs/37 §276`）删掉 56 个用例那个文件后，旧判据仍是 `exit=0 / 3 file(s) / PASS`。
+    if [ ! -f "$SCRIPTS_TESTS_MANIFEST" ]; then
+        identity_red=1
+        printf 'error: the scripts-tests gate needs its discovery baseline, but it is missing\n' >&2
+        printf '  expected: scripts/tests.manifest\n' >&2
+        printf '  🔴 this gate pins the IDENTITY of the discovered set, NOT its SIZE.\n' >&2
+        printf '     Without the baseline the gate cannot tell "4 files, all of them" from\n' >&2
+        printf '     "3 files, one of them silently gone" (LUM-2604 / docs/37 §276).\n' >&2
+    else
+        mapfile -t baseline < <(scripts_tests_manifest_entries)
+        mapfile -t only_tree < <(
+            comm -23 <(gates_print_lines "${files[@]}") <(gates_print_lines "${baseline[@]}")
+        )
+        mapfile -t only_manifest < <(
+            comm -13 <(gates_print_lines "${files[@]}") <(gates_print_lines "${baseline[@]}")
+        )
+        mapfile -t dup_entries < <(gates_print_lines "${baseline[@]}" | uniq -d)
+        if [ "${#only_tree[@]}" -ne 0 ] || [ "${#only_manifest[@]}" -ne 0 ] || [ "${#dup_entries[@]}" -ne 0 ]; then
+            identity_red=1
+            printf 'error: the scripts-tests gate discovered a set whose IDENTITY differs from its baseline\n' >&2
+            printf '  🔴 this gate pins the IDENTITY of the discovered set, NOT its SIZE:\n' >&2
+            printf '     a deleted file, a renamed file, or a narrowed discovery rule all leave the\n' >&2
+            printf '     set "non-empty" and used to read as green (LUM-2602 / docs/37 §276).\n' >&2
+            for _p in "${only_tree[@]}"; do
+                printf '   + %s   [discovered, NOT in scripts/tests.manifest]\n' "$_p" >&2
+            done
+            for _p in "${only_manifest[@]}"; do
+                printf '   - %s   [in scripts/tests.manifest, NOT discovered]\n' "$_p" >&2
+            done
+            for _p in "${dup_entries[@]}"; do
+                printf '   = %s   [listed more than once in scripts/tests.manifest]\n' "$_p" >&2
+            done
+            printf '  fix: intended new test file => add its line to scripts/tests.manifest;\n' >&2
+            printf '       intended deletion/rename => delete/replace that line. Both in ONE commit.\n' >&2
+        fi
+    fi
 
     # 一个测试文件都没有 ⇒ **判红**，不是「无事发生 ⇒ 绿」。
     # 理由与 ⑥/⑧ 缺库 URL、⑪ 缺容器 CLI 同一族：让「没东西可跑」在退出码上可区分。
+    # （这一条**保留** —— 它对；但上面「集合身份」那条才是本片新增的判据，两者都不足够。）
     if [ "${#files[@]}" -eq 0 ]; then
         printf 'error: the scripts-tests gate found no scripts/**/test_*.py to run\n' >&2
         printf '  (an empty glob must never read as green: that is how 20 green cases\n' >&2
@@ -410,7 +519,10 @@ run_scripts_tests_gate() {
     fi
 
     start="$(date +%s)"
-    combined=0
+    # 身份不匹配时**仍然把发现到的文件都跑一遍**：本门的判据是**行为读数**，早退就看不到
+    # 「哪些文件真的被跑了」—— 而「发现规则收窄时守门用例仍被**执行**」正是本片的一条硬验收
+    # （LUM-2604 §四.2）。所以身份判红只置 combined，**不** return。
+    combined=$identity_red
     no_tests=0
     log="$(mktemp)"
     # 逐个文件都跑（不 fail-fast）：一个文件炸了不许掩盖另一个文件的读数。
@@ -435,6 +547,7 @@ run_scripts_tests_gate() {
     end="$(date +%s)"
 
     note="${#files[@]} file(s)"
+    [ "$identity_red" -ne 0 ] && note="${note}, discovery-identity mismatch"
     [ "$combined" -ne 0 ] && note="${note}, at least one red"
     [ "$no_tests" -ne 0 ] && note="${note}, ${no_tests} with zero test cases"
     printf 'GATE_SCRIPTS_TESTS_EXIT=%s\n' "$combined"
