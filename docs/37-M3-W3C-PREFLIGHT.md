@@ -29722,3 +29722,105 @@ python3 scripts/judge_test_coverage_check.py
 `LUM-2111` docker 死锁（`report.json` 刷新权，`contract` job 持续红，`#200` 的
 `mergeable_state=unstable` 即此存量、非本片引入）；`mc_t2492` 116 表仍在默认库；
 共享 `CARGO_TARGET_DIR` 的裁决。
+
+---
+
+## §303
+
+【LUM-2632 / 16:00 cycle】base `d41b97d1` → **`0b3bd4a2`**（收割 PR #201 = `LUM-2627` 门 ⑨
+PRECONDITION 25→12，13 文件 +950/−189；另把 PR #202 的 base 追平，见下）。合并树
+**当场重跑 6 道零编译门全绿**：① fmt / ⑦ route-parity / ⑩ file-size / ⑫ scripts-tests /
+⑬ section-alloc / ⑭ judge-test-coverage。
+
+### 承重一：**磁盘耗尽会伪造出一整批「缺陷」**，且伪造品在 traceback 级别与真缺陷不可区分
+
+本轮第一次跑 `gates.sh` 得到 `5/11` 绿：
+
+```
+② build 101 FAIL   ③ clippy 101 FAIL   ④ clippy-test-util 101 FAIL
+⑤ test 101 FAIL    ⑨ conformance 101 FAIL
+⑫ scripts-tests 1 FAIL  (15 file(s), at least one red)
+  ... FAILED (errors=27, expected failures=1)
+  File ".../tempfile.py", line 523, in mkdtemp
+  OSError: [Errno 28] No space left on device: '/tmp/multica-task-205897/tmpuhzbfphg'
+```
+
+`df` 同时给出 `overlay 49G  47G  0  100%`。**在同一个 commit、同一棵树、零行改动的前提下**
+删掉缓存后重跑，**6/6 全绿**，⑫ 那 27 条 `Errno 28` 全部消失。
+
+这一族与 `§292.2`/`§293.4`/`§301` 的方向都不同：那几族是**假绿**（判词腐烂而 CI 绿），
+这一族是**假红**，而且是最坏的一种形态 —— 假红不是「少收」，是**凭空长出 5 道红门**，
+其中 ⑫ 的 27 条错误是 `OSError` 栈，**逐字形状与真测试失败一致**。
+只看 `gates.sh` 的 summary 表，读不出「这是磁盘」。
+
+**判据（可复用）**：任何 `exit=101` 的门都不是编译错误而是**信号 128+SIGKILL/退出码**族，
+任何测试里出现 `OSError: [Errno 28]` / `No space left on device` ⇒ **先 `df`，再判红**。
+顺序不能反：先判红再补 `df`，就会把 5 条伪造缺陷写进台账，并据此派 5 片去修不存在的问题。
+
+### 承重二：`§265.1` 的「留陈旧 deps/ 桶当暖缓存」杠杆，**被它自己的适用条件证伪了一次**
+
+`§265.1` 记的杠杆是：磁盘紧张时别删 `target/debug/deps`，移给下一片当暖缓存。
+本轮照做（`mv` 21G 到 cycle workdir），结果：
+
+1. `mv` 在**同一 overlay 内** ⇒ `df` 读数**逐字不变**（`4.6G → 4.5G`）。杠杆的收益在搬的那一步是 **0**。
+2. 缓存**无法被下一片共享** —— 全仓 `grep -rn CARGO_TARGET_DIR` **零命中**，
+   `multica repo checkout` 给每片独立 workdir ⇒ 暖缓存对别的片**只读不用**。
+3. 真正卡住的是承重一：留着 21G ⇒ 余量 4.5G < 冷建 18–30G ⇒ **门 ② 自己把盘写爆**。
+
+⇒ **修正后的判据**：留暖缓存的前提是 `余量 ≥ 冷建需求`。本轮 `余量 4.5G < 18G` ⇒ 缓存不是杠杆，
+是**纯成本**，必须删。删后 `avail 26G`，才第一次让本仓的零编译门在满盘环境下跑出可信读数。
+（这与 `§265.1` 本身不矛盾 —— 那条杠杆记录的是「余量足够时优先删 `incremental/`」，
+本轮补的是它**失效的那一侧**，此前没有写下来。）
+
+### 读数（合并树当场实测，**不继承**）
+
+| 门 | 读数 | 与 §301 比 |
+|---|---|---|
+| ⑦ route-parity | `456 / 546 / 546`、`455 real + 1 placeholder`、`gap 0 / unclaimed 0 / regression 0 / local_only 8` | **逐字不变**（第 61 轮） |
+| ⑫ scripts-tests | `15 file(s)` | 不变 |
+| ⑬ section-alloc | 本段写入前 `230/229/229 defects=0` | 不变 |
+| ⑭ judge-test-coverage | `surfaces=2 judges=6 covered=6 gaps=0 dry=0` | 不变（`§302` 那片把它做到 7，本段尚未合入） |
+
+⑦ 第 61 轮**逐字不变**，按 `§301` 的承重照例**不作「已修好」读** —— 本轮未做形状类修复，
+本就不该有差。
+
+### 收割队列：PR #202 的红**不是它引入的**
+
+`pulls?state=open` 得 2 个：`#201`（4 job 全绿、`mergeable_state=clean`）、`#202`
+（`contract` job **红**，`mergeable_state=unstable`）。`#202` 的红是
+`⑨ conformance — mc-conformance --no-db --check report.json`，在 base 上当场复跑得到**逐字相同**的漂移：
+
+```
+first difference at line 17:
+  committed:  "unevaluable": 13
+  fresh:      "unevaluable": 12
+```
+
+即 **`#202` 继承的是 base 自带的红**，而 `#201` 正是修它的那片。⇒ **串行依赖，不是回归**。
+处置：先合 `#201`，再把新 base **merge 进** `#202` 的分支（**非 rebase、非 force-push**，
+`ae7d871d → 0ffeba8a`），由 CI 重判。
+
+⚠️ 顺带记一条工具事实：`POST /pulls/201/merge` 返回 **`Not Found`**（token 权限实测
+`admin: True`，`git push` 也通）⇒ 该仓走 **API 合并不通**，只能用**本地 merge + push**。
+
+### 顺位与在飞
+
+* **daemon 3/3** = `LUM-2634`(T1-6-S1) ∥ `LUM-2635`(T1-6-S2) ∥ `LUM-2636`(T1-6-S3)，cycle 自身。
+* 三片**写集两两不相交**，且**全部零编译**（磁盘 `avail 22G` < 冷建 21–26G，仍不足）。
+* **本轮把零编译候选从「清空」重新打开**：按 `§301` 的要求用「造形状探针」而非读数差做了预判，
+  找到同一族的**第四个形态** —— **门 ⑦/门 ⑨ 的上游输入生产者既无测试、又零引用面**：
+  `extract_upstream_fixtures.py`（1862 行，产出 365 个 golden fixture）、
+  `gen_upstream_routes.py`（625）、`build_upstream_schema.py`（433）、
+  `upstream_handler_index.py`（343，决定 `by_actor` 归因）、`verify_inbox_split.py`（355）。
+  预判结论：值得派，因为**它们的判词在今天的仓库上「有输入」**（不像 `§301` 那类形状缺陷），
+  而**分母/归因可以被静默改错而门 ⑦ 与门 ⑨ 仍然自洽绿** ——
+  `member` 族 286 条占未决总量 331 的 86%，归因错 ⇒ 下一轮派工依据错。
+* 顺位纪律：这三片**都要求回答「谁执行它」**（接门 或 登记 `docs/37`），因为
+  `LUM-2631` 刚证过「53 条全绿的测试文件因无门执行而腐烂」。
+
+### 待 owner（不重复 @）
+
+`LUM-2111` docker 死锁（`report.json` 刷新权）—— 本轮**部分绕开**：#201 已把 base 的 ⑨ 漂移修掉，
+`contract` 转绿；真正的 docker 死锁仍需 owner 裁决。
+`mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决 —— 本轮**实测确认该需求真实存在**
+（全仓零命中 ⇒ 每片冷建 ⇒ 派工上限 = 磁盘/冷建量，而非工单写的 3）。
