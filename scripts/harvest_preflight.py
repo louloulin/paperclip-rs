@@ -55,6 +55,21 @@ H6 **号段台账交叉**（§278 的机械化 + 前移）—— 在**候选树*
    base 台账 §243 = `LUM-2573`）⇒ 树内判据全绿，撞号只在 merge 时以 CONFLICT 暴露。
    投影让它在**提交前**就红。
 
+H7 **候选集内的两两撞号** —— 见文件顶部「H7」段。
+
+H7 **候选集内的两两撞号**（本片新增）—— H6 看不见的那一半
+------------------------------------------------------------
+🔴 **H6 是「base ↔ 单候选」的跨树投影，看不见「候选 ↔ 候选」。** 2026-09-30 12:00 cycle 的
+第一次真实收割里，两条候选**各自**报 `H1=① H2_rc=0/clean`（都不冲突），**却彼此撞**：
+`docs/37` 双 EOF append + `docs/section-alloc.tsv` 尾部各追加一行 —— 撞号只在那轮**人 `git merge`**
+时才暴露。完整经过与踩到的坑见 `docs/37 §286`。
+
+做法：clean 候选（`H2_rc=0` 且 `H1 ∈ CLEAN_H1_FORMS`）按 **H4 时间升序**（= 最停滞的先）排成序列，
+从 base 起**累积** merge-tree（`base → ∪A → ∪AB …`），**任一步 rc≠0 就报出这一对**并终止序列。
+不选「两两全量」是因为真实收割里两片是**依次**被合的，全量会报出一串并不真的互相撞的组合。
+每一步都走 `h2_merge_tree()`（**不复制**冲突清单解析），唯一的差别是 base 参数换成了累积提交。
+0 或 1 个 clean 候选安静通过；H7 的 rc **不回写** H2 读数（H2 读数逐字不变是 LUM-2613 的契约）。
+
 `--check`（门用）与「分支健康」的边界
 ------------------------------------
 本脚本**只读**：没有 `--write`、不 merge、不开 PR、不改任何分支。
@@ -79,6 +94,7 @@ H6 **号段台账交叉**（§278 的机械化 + 前移）—— 在**候选树*
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
 import json
 import os
@@ -115,7 +131,8 @@ class GitError(RuntimeError):
     pass
 
 
-def run_git(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+def run_git(args: list[str], cwd: Path | None = None,
+            env: dict | None = None) -> tuple[int, str, str]:
     """跑一条 git 命令，返回 (rc, stdout, stderr)。**不抛**，调用方自己判 rc。"""
     proc = subprocess.run(
         ["git", *args],
@@ -123,8 +140,40 @@ def run_git(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+@contextlib.contextmanager
+def isolated_object_store():
+    """把 git 的**对象写入**重定向到一个临时目录，alternates 指回真对象库。
+
+    H7 需要把 `merge-tree --write-tree` 产出的**树**变成**提交**才能继续累积，而
+    `git commit-tree` 会写对象库 ⇒ 与本工具「只读」的承诺冲突。本上下文让写入全部落在
+    临时目录里（真仓库一个字节都不动，临时目录退出即删），因此 H7 仍然是只读动作。
+
+    顺带钉住一个真实踩过的坑：managed worktree 里 `git commit-tree` 会报 `empty ident name`
+    （本仓的 `multica-identity.config` 把 `user.name` 置空）⇒ 身份走**环境变量**给，
+    不依赖任何仓库/全局配置。
+    """
+    rc, common, _ = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    if rc != 0 or not common.strip():
+        raise GitError(f"读不到 git-common-dir（rc={rc}）")
+    real_objects = str(Path(common.strip()) / "objects")
+    with tempfile.TemporaryDirectory(prefix="harvest-h7-obj-") as td:
+        objdir = Path(td) / "objects"
+        objdir.mkdir(parents=True)
+        env = dict(os.environ)
+        env.update(
+            GIT_OBJECT_DIRECTORY=str(objdir),
+            GIT_ALTERNATE_OBJECT_DIRECTORIES=real_objects,
+            GIT_AUTHOR_NAME="harvest-preflight",
+            GIT_AUTHOR_EMAIL="harvest-preflight@invalid",
+            GIT_COMMITTER_NAME="harvest-preflight",
+            GIT_COMMITTER_EMAIL="harvest-preflight@invalid",
+        )
+        yield env
 
 
 def resolve(ref: str) -> str | None:
@@ -174,8 +223,8 @@ def h1_relation(base_sha: str, head_sha: str) -> dict:
 # --------------------------------------------------------------------------- H2
 
 
-def h2_merge_tree(base_sha: str, head_sha: str) -> dict:
-    rc, out, err = run_git(["merge-tree", "--write-tree", base_sha, head_sha])
+def h2_merge_tree(base_sha: str, head_sha: str, env: dict | None = None) -> dict:
+    rc, out, err = run_git(["merge-tree", "--write-tree", base_sha, head_sha], env=env)
     lines = out.splitlines()
     tree = lines[0].strip() if lines and re.fullmatch(r"[0-9a-f]{40,64}", lines[0].strip()) else None
     conflicts: list[str] = []
@@ -397,6 +446,29 @@ def h6_section_ledger(head_sha: str, base_doc: str | None, base_ledger: str | No
     return result
 
 
+# --------------------------------------------------------------------------- H7（转发层）
+
+# 进 H7 序列的 H1 形态：`①`（base 是 head 祖先，可快进）与 `③`（需真合）—— 两者都**有未合内容**。
+# `②`/`=`（head 已被 base 包含）没有未合内容，且已被 H5 的「未被 base 包含」过滤挡掉；
+# `H2_rc!=0`（含 `unrelated-histories` 的 128）不参与序列 —— 它们本来就不是「能干净合进来的候选」。
+CLEAN_H1_FORMS = ("①", "③")
+
+
+def h7_candidate_pairwise(base_sha: str, candidates: list[dict]) -> dict:
+    """H7（候选集内的两两撞号）。实现在 `scripts/harvest_h7.py` —— 拆出去是因为门 ⑩ 的
+    800 行硬上限，而白名单**只减不增**。这里只做转发，调用面与判据链其余部分一致。"""
+    from harvest_h7 import pairwise  # 惰性 import：顶层 import 会与本模块形成循环
+
+    return pairwise(base_sha, candidates)
+
+
+def h7_lines(h7: dict) -> list[str]:
+    """H7 的明细行也归被拆出去的模块（同一份措辞，不在这里复写一份）。"""
+    from harvest_h7 import format_lines
+
+    return format_lines(h7)
+
+
 # --------------------------------------------------------------------------- 组装
 
 
@@ -442,6 +514,11 @@ def list_remote_candidates(base_sha: str, base_ref: str, base_doc, base_ledger,
                 continue
             sha = resolve(ref)
             if sha is None:
+                continue
+            # ⚠️ `--base` 传的是 **sha**（收尾自检常用）时，base 分支自己会出现在
+            #    枚举里 ⇒ 它会进 H7 的 clean 序列并成为**第一个**候选（实测过）。
+            #    它的内容就是 base 本身，与 base 合恒干净，只是白跑一步 + 污染读数。
+            if sha == base_sha:
                 continue
             rc_anc, _, _ = run_git(["merge-base", "--is-ancestor", sha, base_sha])
             if rc_anc == 0:
@@ -530,7 +607,7 @@ def check_invariants(base_ref: str, base_sha: str | None, remote: dict) -> list[
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="harvest_preflight.py",
-        description="收割前置判据链 H1–H6（只读；无 --write 模式）",
+        description="收割前置判据链 H1–H7（只读；无 --write 模式）",
     )
     p.add_argument("--base", default="origin/feat/multica-rs-initial", help="base ref")
     p.add_argument("--repo", default=None,
@@ -602,6 +679,13 @@ def main(argv: list[str] | None = None) -> int:
                     f" H4_stall_h={c['H4_stall_hours']}"
                 )
 
+    if base_sha is not None and args.list_remote and report.get("H5"):
+        # H7 只在扫远端时才有意义（它是**候选集内**的判据）；H2 的读数一个字节都不动。
+        h7 = h7_candidate_pairwise(base_sha, report["H5"].get("candidates", []))
+        report["H7"] = h7
+        if not args.json:
+            lines.extend(h7_lines(h7))
+
     if args.check:
         problems = check_invariants(args.base, base_sha, report.get("H5", {}))
         report["check"] = {"ok": not problems, "problems": problems}
@@ -621,6 +705,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # 🔴 以脚本方式运行时，本模块在 `sys.modules` 里叫 `__main__`。`harvest_h7` 里的
+    #    `import harvest_preflight` 若不登记，就会**再执行一遍**本文件、拿到一个
+    #    `GIT_DIR is None` 的副本 ⇒ H7 的 git 调用退回真仓库根，在别的仓库里读出
+    #    「凭空冒出的假冲突」（本片被 CLI 用例当场逮到）。登记后两边是**同一个对象**。
+    sys.modules.setdefault("harvest_preflight", sys.modules["__main__"])
     try:
         sys.exit(main())
     except BrokenPipeError:  # `| head` —— 读端走了不算失败

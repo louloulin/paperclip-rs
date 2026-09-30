@@ -243,3 +243,4 @@
 283	LUM-2608	【LUM-2608 / T1-6-K2】把 §280.9 的两处缺陷升级成**有编号的已知缺陷**（expectedFailure + 机器双向受检的登记表）	1
 284	LUM-2613	【LUM-2613 / T1-6-N】把收割判据链本身做成脚本 `scripts/harvest_preflight.py`（H1–H6）——零 Rust / 零磁盘	1
 285	LUM-2614	【LUM-2614 12:00 cycle】#168 的重新落地（3 个 Python 文件，零 Rust/零 cargo）＋ 关闭 #168；原 §243 改号 §285	1
+286	LUM-2615	【LUM-2615 / T1-6-O】给 harvest_preflight 加 H7（候选集内的两两撞号）—— H6 看不见候选↔候选	1

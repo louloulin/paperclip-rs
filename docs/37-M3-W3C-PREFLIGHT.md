@@ -27943,3 +27943,122 @@ $ find /home/devbox -maxdepth 5 -name go.mod
 判别式不变 —— **只有当场复跑的读数是读数**。
 本片的证据全部**不依赖**那棵树：12 条新用例（`scripts/test_extract_borrowed_ids.py`）
 ＋ 门 ⑫ `scripts-tests` rc=0（`9 file(s)`，新文件已登记进 `scripts/tests.manifest`）。
+
+## §286 【LUM-2615 / T1-6-O】给 `harvest_preflight.py` 加 **H7：候选集内的两两撞号** —— H6 看不见「候选 ↔ 候选」（零 Rust / 零 cargo / 零真库 / 零磁盘）
+
+> 📌 **号段**：`§286` = 本片起手 base `a6973906` 的下一个空号（已扫全部未合并远端分支，无占用）。
+> 上一片（`LUM-2613` / `T1-6-N`）的 `§284` 已把 H1–H6 做成了只读命令；**本片只加 H7**。
+
+### 派工依据（本轮撞出来的，不是设想的）
+
+12:00 cycle **第一次在真实收割里用** `scripts/harvest_preflight.py --list-remote`，立刻撞出它的盲区：
+
+```
+origin/agent/devbox5/4f7b360e0863  H1=① H2_rc=0/clean   <- #189
+origin/agent/devbox5/f54e89cd395d  H1=① H2_rc=0/clean   <- #188
+```
+
+**两条都说「不冲突」，它们却彼此撞**：`docs/37` 双 EOF append（§283 / §284）＋ `docs/section-alloc.tsv` 尾部各追加一行。
+那一轮是**人手 `git merge`** 才撞出来的（合并提交 `f821c6f3`，机械解为「两行都留」）。
+
+🔴 **根因**：H6 是「base ↔ 单候选」的**跨树**投影，**看不见候选与候选之间**的撞号。
+要看得，base 必须换成「按序累积 `merge-tree` 的 clean 候选序列」。
+
+### H7 做什么（`scripts/harvest_h7.py`，宿主 `harvest_preflight.py` 只做转发）
+
+1. 从 H5 的候选清单里取 **clean 序列** = `H2_rc=0` 且 `H1 ∈ {①, ③}` 的候选
+   （`CLEAN_H1_FORMS`；`②`/`=` 是「已被 base 包含」，H5 早滤掉；`rc=128/unrelated-histories` **不进序列**）。
+2. 按 **H4 时间升序**排序（= 最停滞的先合）。⚠️ H4 报的是 `stall_hours`（距今多久），
+   与「时间升序」**反序** ⇒ 排序键对它取负号。**直接按 `stall_hours` 升序会把最新的排第一**
+   （本片实现时踩到：新 base 分支在 4 个候选里排到了最前）。
+3. 从 base 起**累积** merge-tree：`base → ∪A → ∪AB → ∪ABC …`，**任一步 rc≠0 就报出这一对**
+   （`cand-A × cand-B  H7_rc=1/conflict  files=[...]`）并**终止序列**。
+4. 冲突清单**沿用 H2 的读法**（每一步都调 `h2_merge_tree()`，不复制解析）⇒ 两处读数逐字同源。
+5. **0 个或 1 个 clean 候选 ⇒ 安静通过**（不是绿，是**没东西可问**）。
+6. `--check` **不引入**新的工具级不变量（理由见文件顶部）⇒ 即使 H7 报出撞对，`--check` 仍 rc=0。
+
+**为什么是「序列累积」而不是「两两全量」**：真实收割里两片是**依次**被合进同一棵树的，
+序列累积问的正是那件真会撞的事；全量会报出一串**并不真的互相撞**的组合
+（三个候选都在 `docs/37` EOF 追加时：全量 = 3 对，序列 = 1 对，第 2 步就停）。
+
+### 🔴 写集偏离：H7 拆成新文件 `scripts/harvest_h7.py`（门 ⑩ 强制的，不是偏好）
+
+加上 H7 之后 `scripts/harvest_preflight.py` = 830 行、`scripts/test_harvest_preflight.py` = 816 行，
+**双双越过门 ⑩ 的 800 行硬上限**，而 `scripts/file_size_baseline.tsv` 写死
+「**基线只减不增，新增违规不得写进白名单**」⇒ **把新文件写进白名单是违规而不是变通**。
+两条合法出路：**拆** 或 **压到 800 以内**。选了**拆**（压缩的那 130 行里有 5 条真实的踩坑记录，
+压掉就等于删证据），并对测试文件做了**不删信息**的紧凑化（合并断行、docstring 改写）：
+
+| 文件 | 拆前 | 拆后 |
+|---|---|---|
+| `scripts/harvest_preflight.py` | 830 | **718** |
+| `scripts/harvest_h7.py`（新） | —— | **188** |
+| `scripts/test_harvest_preflight.py` | 816 | **800** |
+
+⚠️ `scripts/tests.manifest` **未改**（本片没有新增 `test_*.py`；新增**非测试**模块不需要登记）。
+⚠️ 拆出来的模块**由宿主惰性 import**（顶层 import 会形成循环）；`harvest_preflight.py` 仍暴露
+`h7_candidate_pairwise()` / `h7_lines()` 两个转发函数，**调用面与判据链其余部分一致**。
+
+### 🔴 本片踩到并已写进代码注释的五条
+
+1. **`merge-tree --write-tree` 只吃 commit，不吃 tree。** 上一步产出的**树**直接传回去 ⇒
+   `expected commit type, but the object dereferences to tree type`（rc=1）⇒ H7 第一步就会
+   得到一个**假的**冲突。必须用 `git commit-tree` 封一个累积提交（parents 带上所有已合入的 ref，
+   否则下一轮 `merge-base` 会选错共同祖先）。
+2. **`commit-tree` 写对象库 ⇒ 与「只读」承诺冲突。** 已用 `isolated_object_store()`
+   把 `GIT_OBJECT_DIRECTORY` 指向临时目录 + `GIT_ALTERNATE_OBJECT_DIRECTORIES` 指回真对象库 ⇒
+   **真仓库一个字节都不动**（临时目录退出即删）。顺带钉住身份坑：managed worktree 里
+   `commit-tree` 会报 `empty ident name` ⇒ 身份走**环境变量**给，不依赖任何仓库/全局配置。
+3. **H4 的量与「时间」是反序的**（见上）。
+4. **`--base` 传 sha 时，base 分支自己会进候选清单**（实测：它会以「第一个 clean 候选」的身份
+   白跑一步并污染读数）⇒ `list_remote_candidates()` 增加了 `sha == base_sha` 的排除。
+5. 🔴 **双重 import 陷阱（被本片自己的 CLI 用例当场逮到）**：`python3 scripts/harvest_preflight.py`
+   直接跑时宿主模块在 `sys.modules` 里叫 `__main__`；`harvest_h7` 里 `import harvest_preflight`
+   会**再执行一遍**那个文件、拿到一个 `GIT_DIR is None` 的**副本** ⇒ H7 的 git 调用退回 `ROOT`
+   （真仓库）⇒ 在**测试仓库**里报出 `rc=1 / merge_tree=None` 的**假冲突**（读起来完全像真判据）。
+   修法在宿主 `__main__` 块里 `sys.modules.setdefault("harvest_preflight", sys.modules["__main__"])`。
+   🔴 这是 §275「上一轮说它红不构成证据」的**第四种形态**：**库内调用全绿、只有走 CLI 才炸**
+   —— 所以「函数级用例全绿」不能替代「CLI 级用例」。
+
+### H7 的真数据自证（当场实测，非继承）
+
+用 **12:00 cycle 的收割前 base `56a09273`** 重跑，H7 **逐字**报出那一轮人 `git merge` 才发现的那一对：
+
+```
+H7 clean sequence (H4 asc, n=5): [f54e89cd395d, 4f7b360e0863, 241d906393f8, 2614-reland-168, feat/multica-rs-initial]
+H7 PAIR origin/agent/devbox5/f54e89cd395d × origin/agent/devbox5/4f7b360e0863
+     H7_rc=1/conflict  files=['docs/37-M3-W3C-PREFLIGHT.md', 'docs/section-alloc.tsv']
+```
+
+（起手 base `a6973906` 上 `n=0`：`#188/#189` 已合入 base ⇒ 没有 clean 候选 ⇒ 安静，
+这正是要求 4 的真实形态。）
+
+### 判别式读数（**不是用例数**，`docs/37 §275`：用例数可以是绿的）
+
+`scripts/test_harvest_preflight.py` 新增 10 条 H7 用例（36 条全绿），并对**六个变异**当场复跑，
+三段读数「改前 rc=0 / 改后非 0 / 复原 rc=0」**逐条成立**（全部在**最终**代码上复跑）：
+
+| 变异 | 读数 |
+|---|---|
+| 累积树不封 commit（直接把 tree 传回） | 4 条红 |
+| 排序键反号（最新的排最前） | 4 条红 |
+| 把 `rc=128/unrelated-histories` 也算进 clean 序列 | 1 条红 |
+| 去掉对象库隔离（`commit-tree` 落真仓库） | 1 条红 |
+| H7 的 rc 回写 H2 读数 | 1 条红 |
+| 去掉 `__main__` 登记（双重 import，读到副本） | 1 条红 |
+
+⚠️ 用例全部走 `--repo` 显式指定 git 工作目录（`hp.ROOT` 是 import 时的绝对路径，`os.chdir` 改不动），
+`setUp/tearDown` 成对处理 `hp.ROOT` / `hp.GIT_DIR`（上一片第一版漏了这句，断言里看到的是**真仓库的 150+ 个 ref**，
+而用例是绿的）。
+
+### 门读（当轮实测，勿抄历史值）
+
+见 PR 正文（起手 base `a6973906`）。**本片不 merge、不改 `scripts/gates.sh` 的任何既有门**
+（H7 是独立读数，**未**接成门 ⑭）。
+
+### 边界（明确不做）
+
+零 Rust / 零 cargo / 零真库 / 零磁盘；不 merge、不改 `scripts/gates.sh` 的任何既有门；
+不改 `docs/37` 既有段的号；不碰 `mc-conformance/**`；不跑门 ⑨ `--with-db`；
+**不继承**任何前片的门读数；`scripts/tests.manifest` **未改**（本片没有新增 `test_*.py`）。
+**写集唯一的偏离** = 新增 `scripts/harvest_h7.py`（门 ⑩ 的 800 行硬上限强制，见上）。
