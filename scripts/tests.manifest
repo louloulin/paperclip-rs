@@ -36,3 +36,4 @@ scripts/test_section_alloc_check.py
 scripts/test_slash_alias_audit.py
 scripts/test_t1_6_precondition_taxonomy.py
 scripts/test_t1_6_taxonomy.py
+scripts/test_w3b_premerge_audit.py
