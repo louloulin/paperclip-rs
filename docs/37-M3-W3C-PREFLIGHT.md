@@ -29699,7 +29699,7 @@ M3 首版实测**全绿**：静态读数里行为面 lane 的 4 个子族负责�
 | 门 | 读数 | 与 §301 比 |
 |---|---|---|
 | ⑦ route-parity | `456 / 546 / 546`、`455 real + 1 placeholder`、`gap 0 / unclaimed 0 / regression 0 / local_only 8` | **逐字不变**（第 60 轮） |
-| ⑩ file-size | `scanned=1419 baseline=1 violations=0`；`gates.sh` **800/800** | `violations=0`（红线，见承重三） |
+| ⑩ file-size | `scanned=1420 baseline=1 violations=0`；`gates.sh` **800/800** | `violations=0`（红线，见承重三） |
 | ⑫ scripts-tests | `16 file(s)` / 全绿 | 15 → **16** |
 | ⑬ section-alloc | `sections=231 distinct=230 ledger_rows=230 defects=0` | 230/229/229 → **231/230/230**（本段） |
 | ⑭ judge-test-coverage | `surfaces=2 judges=7 covered=7 gaps=0 dry=0` | `judges` **6 → 7**（本片唯一的验收读数） |
