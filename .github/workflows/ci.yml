@@ -36,7 +36,7 @@ env:
 jobs:
   # ①–⑤ + ⑩：不需要数据库，每次 push 都跑。
   fast:
-    name: fast — fmt / build / clippy / test / file-size
+    name: fast — fmt / build / clippy / test / file-size / scripts-tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -74,6 +74,13 @@ jobs:
       # 存量违规钉在 `scripts/file_size_baseline.tsv`（只减不增）；刷新用 `--write-baseline`。
       - name: "⑩ file-size — python3 scripts/file_size_check.py --quiet"
         run: bash scripts/gates.sh --only file-size
+
+      # ⑫ 纯标准库 unittest、亚秒级、不需要数据库/编译。存在的理由：两个 `scripts/test_*.py`
+      # （20 个用例）曾长期全绿却**没有任何门会执行它们**（PR #182 修的正是「声明的判据
+      # 代码从来没执行」这一族缺陷）。门里用 glob，新增测试文件漏接进门禁**结构上不可能**。
+      # 依然只调 gates.sh，不在 yml 里写 `python3 scripts/test_*.py`（本仓纪律：命令唯一实现）。
+      - name: "⑫ scripts-tests — python3 scripts/test_*.py"
+        run: bash scripts/gates.sh --only scripts-tests
 
   # ⑥：真 PostgreSQL 16 service 容器；**先建表**再跑 DB e2e（测试自己不做迁移）。
   db:
