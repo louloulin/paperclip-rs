@@ -242,11 +242,35 @@ class TestConstants(unittest.TestCase):
         self.assertTrue(OWNER_FILES[pkg_constants.EXTRACTION])
         self.assertTrue(OWNER_FILES[pkg_constants.FIXTURE])
 
-    def test_unfilled_subfamilies_are_the_two_documented_ones(self):
-        """两道「故意不填」必须仍然空着（填了也要知道为什么改）。"""
-        for name in ("BEHAVIOR_JSON_DECODE_STATUS", "BEHAVIOR_NUL_PAYLOAD"):
-            self.assertIn(name, RULE_NAMES)
-            self.assertNotIn(name, BEHAVIOR_OWNER_FILES)
+    def test_nul_payload_is_still_deliberately_unfilled(self):
+        """🔴 `BEHAVIOR_NUL_PAYLOAD` 仍是**唯一**一道「故意不填」（LUM-2592 / T1-6-G1）。
+
+        它要读的是 `routes/chat/**` 的 task-messages 回调 handler；那一族本轮**没派**，
+        没读就填等于编。它一旦被人填上，下面这条必须先红。
+        """
+        self.assertIn("BEHAVIOR_NUL_PAYLOAD", RULE_NAMES)
+        self.assertNotIn("BEHAVIOR_NUL_PAYLOAD", BEHAVIOR_OWNER_FILES)
+
+    def test_json_decode_status_is_now_filled_with_two_files_that_exist(self):
+        """`BEHAVIOR_JSON_DECODE_STATUS` 已由 LUM-2592 填上（PR #178 留的半截工程）。
+
+        原断言是「两道故意不填必须仍然空着」；本片填了其中一道，该断言按它自己的
+        docstring（「填了也要知道为什么改」）改成**正向**断言，并加一条它原来没有的：
+        **列出来的文件必须真的在磁盘上** —— 否则「负责面」又是一列编出来的路径，
+        而 `verdict()` 会拿它去判「可并行：是」。
+        """
+        name = "BEHAVIOR_JSON_DECODE_STATUS"
+        self.assertIn(name, RULE_NAMES)
+        self.assertEqual(
+            BEHAVIOR_OWNER_FILES[name],
+            ["crates/mc-http/src/routes/issues/list.rs",
+             "crates/mc-http/src/routes/issues/query.rs"],
+        )
+        for rel in BEHAVIOR_OWNER_FILES[name]:
+            self.assertTrue(
+                os.path.isfile(os.path.join(REPO_ROOT, rel)),
+                "{} 列进了负责面但磁盘上不存在".format(rel),
+            )
 
 
 # --------------------------------------------------------------------------- #
