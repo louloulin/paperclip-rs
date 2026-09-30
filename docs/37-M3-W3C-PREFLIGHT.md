@@ -27408,3 +27408,107 @@ UNSUPPORTED a.rs:2: non-literal path `r###"          "###`
 `LUM-2111` 卡 docker/podman/buildah 三者皆无 ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的
 `contract` job 持续红**（本轮又见一次，`--with-db` 里的门 ⑨ 就是它）。要么允许单独一次
 stateless `--write`，要么移交刷新权。**cycle 不得自行刷。**
+
+## §282 【LUM-2611 11:30 cycle】零收割 ＋ 🔴 **PR #168 的红 `fast` 终于拿到根因**（不是「真回归」，是一条可证的因果链）
+
+起手 base **`816c668e`**（= `LUM-2609` 收尾）。**收割 0 片 / 回收 0 片 / 派 1 片（零磁盘）**。
+
+### 门读（当轮实测，勿抄历史值）
+
+- 门 ⑦ `route-parity` rc=0（1s）：`upstream 456 / local 546 / baseline 546 /
+  implemented 455 real + 1 placeholder = 456 / known_gap 0 / unclaimed 0 / regression 0 /
+  local_only 8` —— **第 62 轮逐字不变**。
+- 门 ⑩ `file-size` rc=0（0s）；门 ⑫ `scripts-tests` rc=0（2s，`6 file(s)`）。
+- 门 ⑬ `section-alloc` rc=0：`sections=211 distinct=210 ledger_rows=210 defects=0`
+  （§281 记的 `210/209/209` +1 = §281 自己那段，**逐字可解释**）。
+- **门 ⑨ 未跑**（`LUM-2610` 正在本机建库构建，磁盘不允许第二个 `--with-db`）⇒ **不作继承声明**。
+
+### 收割：open PR 仍只有 #168，远端分支扫描无新片
+
+`pulls?state=open` = 1（#168）。按 §277.3 补扫全部远端分支：除 base 的历史分支与
+已知已合并片外，**无新交付**。`LUM-2606`/`2607`/`2592` 三片已由 §281 收割并入 base
+（`ee910c46`）。
+
+### 🔴 承重一：#168 的红 `fast` 有根因，**七轮「真回归、不是瞬时红」到此作废**
+
+§243 起连七轮记的裁定是「head `fast` **failure**，真回归，不重判」。本轮把那 10 小时的
+CI 日志拉下来读了（日志第 2598–2613 行）：
+
+```
+test requirements::tests::an_unencodable_request_is_declared_undecidable ... FAILED
+panicked at crates/mc-conformance/src/requirements.rs:674:9:
+golden 面里找不到请求拼不出 URI 的那条（路径字面带空格）—— 本判据会变成空的
+test result: FAILED. 27 passed; 1 failed
+```
+
+**根因是 #168 自己造成的，而且是可证的**：`requirements.rs:295-307`
+（`request_target_is_encodable`）把「路径字面带空格」当成**请求面不可判定**的判据，
+`requirements.rs:668-673` 再断言 golden 面里**至少存在一条**这样的 fixture
+（注释写明「用**真 golden 面**判，不现编一条」）。
+而 #168 的修复内容正是**把那两条空格路径从 golden 面里删掉** ——
+`023-TestUpdateAgent-…` 的 `path` 从 `/api/agents/a runtime that this profile does not provide`
+改成 `/api/agents/{id}`，`comments/001-TestRemoveReactionOnTombstoneIsNotFound` 整条删除。
+
+**零编译、一秒的本地证法**（枚举 `contracts/golden/**/*.json` 的 `path` + `path_params`，
+对 `path_params` 的键做占位符替换后按 `axum::http::Uri` 的合法字节集判定）：
+
+| 树 | fixture 总数 | 空格路径 | 未填充占位符 |
+|---|---|---|---|
+| base `816c668e` | 365 | **2** | 0 |
+| #168 head `272acce6` | 364 | **0** | 0 |
+
+⇒ `spacey.is_empty()` 必然为真 ⇒ 那条 `assert!` **必然 panic**。**不是瞬时红、不是环境红、
+不是 base 存量红 —— 是这条 PR 的修复面与那条自守卫断言的定义面正好相交。**
+
+🔴 **顺带得到一条比「根因」更值钱的读数**：base 上那 2 条空格路径的**字面量是同一个串**
+`a runtime that this profile does not provide`。它不是路径，是 Go 侧一条**错误信息**被
+`package_literals` 的裸名撞号机制误当成 URL 段绑了进去。
+⇒ **#168 不只是「让 CI 变绿」，它删掉的两条 fixture 本身就是抽取缺陷的产物**；
+golden 面 365 → 364 是**修复**，不是退化。
+
+**⇒ 处置（下一轮可执行，本轮不动手）**：#168 的两个阻塞点都已实名、都不再是「悬案」——
+① 号段撞号（`§243`：`LUM-2570` vs `LUM-2573`），门 ⑬ 已能机械校验；
+② `requirements.rs:674` 的自守卫断言，其证据源必须从 **golden 面**改到
+**抽取器侧的 `path_not_literal` 跳过行**（`contracts/golden/extraction-report.tsv` 里
+恰好有那两行，`reason = path_not_literal`）—— 否则「修复」与「守卫」永远互斥。
+**任何直接删掉/放宽那条 `assert!` 的做法都是错的**（那正是 LUM-2604 揭的
+「判红条件是集合非空、而集合本身就是被检验的对象」同族）。
+
+### 撞号让号方向：按 §281 的纪律，**该让号的是 base 侧的 `LUM-2573`**
+
+`LUM-2570`（00:30 cycle）先取 `§243`，`LUM-2573`（01:00 cycle）后取同一个 `§243`。
+§281 立的方向纪律是「**让号方向由谁起手更晚决定，不由 git 的 `ours`/`theirs` 决定**」
+⇒ `LUM-2573` 让号。**但 `LUM-2573` 已经在 base 里**（`§243` 现存于
+`docs/37:22348`），而 `#168` 仍是待合分支 ⇒ 这意味着**让号要动已合并的内容**，
+比 §281 那次（让号方是待合分支）贵一档，且要同步 `docs/section-alloc.tsv`。
+**本轮明确记下来，不顺手做**：这是收割动作，且必须与上面 ② 的 Rust 改动同一片落地，
+否则中间态会让 `requirements.rs:674` 与号段台账**同时**处于半修状态。
+
+### 回收：`LUM-2592` 的 770M `target/` 可回收，四判据全过 —— 本轮**不删**
+
+判据逐条实测：① 进程持有 —— `cwd` 与 `fd` 双向扫 `/proc` **零命中**；
+② 最新文件 mtime = `03:01`（30 分钟前，轮内写）；③ 分支 `agent/devbox5/d35a7000b9a0`
+的 HEAD `8acbc9ac` **已是 base 祖先**（`merge-base --is-ancestor` 真）⇒ 树上无未收割内容；
+④ run 终态（§281 已收割为 PR #186）。
+**不删的理由不是判据不过，是两条**：(a) 本轮磁盘 `avail 24G` 对一个在飞构建（`LUM-2610`
+1.9G 且在涨，冷建下限 19G）够用；(b) 删 `target/` 是不可逆动作，按 agent 纪律须先确认。
+⇒ **留给下一轮的第一杠杆，并在此把四判据的读数写全，下一轮不必重跑 `/proc` 扫描。**
+
+### 顺位
+
+在飞 2/3：`LUM-2608`（T1-6-K 后续，零磁盘）∥ `LUM-2610`（T1-6-J2，0 路由 Rust，独占构建）。
+磁盘 24G vs 冷建下限 19G ⇒ **第三个槽位只能给零磁盘片**，且**本轮不在飞片之间抢 `target`**。
+
+派 `LUM-2612` / **T1-6-N**：**把收割判据本身做成脚本**（零 Rust / 零 cargo / 零磁盘）。
+理由 = §277/§280/§281 **连续三轮**都证明同一件事：收割的决定（合 / 不合 / 补开 PR / 让号）
+每一轮都是**人肉执行的六步判据链**，而其中至少三步（`merge-tree --write-tree` rc、
+base 是否 head 祖先、head 停滞轮数）**零编译、可脚本化**，却每轮靠人记。
+本片把这些固化成 `scripts/harvest_preflight.py`，并**用 #168 当它的第一枚 golden fixture**
+（七轮历史读数齐备，是唯一有足够 ground truth 的候选）。
+
+### 待 owner（不重复 @）
+
+`LUM-2111` docker/podman/buildah 三者皆无 ⇒ `report.json` 刷新权死锁 ⇒ 每个 PR 的
+`contract` job 持续红（**本轮又见一次**：#168 的 `contract` 是 `success`，
+但 §281 记录的 `--with-db` 门 ⑨ 仍红 ⇒ 两者读的**不是同一个东西**，别混为一谈）。
+`mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决未回。
