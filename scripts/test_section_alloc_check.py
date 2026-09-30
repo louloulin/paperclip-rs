@@ -547,9 +547,33 @@ class TestRealRepoInvariant(unittest.TestCase):
         self.assertEqual(self.defects, [])
 
     def test_the_real_pair_has_the_shape_the_gate_summary_prints(self):
+        """摘要三元组必须等于**独立重数**出来的值 —— 2026-09-30 14:30 cycle 把字面量换成了这个。
+
+        原来这里钉的是字面量 `(224, 223, 223)`。那是 §293 落盘那天的**读数**，不是不变式：
+        并发的 `LUM-2624` 合入后 `docs/37` 多一个 `## §294` ⇒ 真实值变成 `(225, 224, 224)`
+        ⇒ 门 ⑫ 判红，而**两片单独都是绿的**（`§294.5` 记的就是这件事）。
+
+        字面量读数的问题是：它把「今天」当成了「永远」，于是**每一次正常新增段号都会打红它**，
+        而这类红会逼着人把数字改成新读数 —— 那就等于把断言退化成「打印当前值」。
+
+        现在的判据是**自洽**的：另起一份实现（不调 `sac` 的计数器）把 `## §` 标题与台账首列
+        各数一遍，要求与门打印的三元组一致。这条仍然会因「门的计数器算错」而红，
+        但不会因「仓库今天多了两段」而红。
+        """
+        doc_nums = []
+        with open(REAL_DOC, encoding="utf-8") as fh:
+            for line in fh.read().splitlines():
+                got = sec(line)
+                if got:
+                    doc_nums.append(got)
+        led_nums = []
+        with open(REAL_LEDGER, encoding="utf-8") as fh:
+            for line in fh.read().splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    led_nums.append(line.split("\t")[0])
         self.assertEqual(
             (self.readings["sections"], self.readings["distinct"], self.readings["ledger_rows"]),
-            (224, 223, 223),
+            (len(doc_nums), len(set(doc_nums)), len(led_nums)),
         )
 
     def test_section_226_is_the_one_and_only_registered_duplicate(self):
@@ -580,7 +604,15 @@ class TestRealRepoInvariant(unittest.TestCase):
         with open(REAL_LEDGER, encoding="utf-8") as fh:
             nums = [int(ln.split("\t")[0]) for ln in fh.read().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
         self.assertEqual(nums, sorted(nums))
-        self.assertEqual(nums[-1], 295, "台账最后一行是本仓当前最高的号段（并发 cycle 会推进它）")
+        # 末行 = 仓库当前最高段号。同样是**自洽**判据，不是「今天 = 295」——
+        # 下一个 cycle 加 §296 时这条不该红（见上面那条的 docstring：同一次仲裁）。
+        doc_nums = []
+        with open(REAL_DOC, encoding="utf-8") as fh:
+            for line in fh.read().splitlines():
+                got = sec(line)
+                if got:
+                    doc_nums.append(int(got))
+        self.assertEqual(nums[-1], max(doc_nums), "台账末行 = docs/37 里出现的最高段号")
 
     def test_the_document_carries_a_section_for_every_ledger_number(self):
         with open(REAL_DOC, encoding="utf-8") as fh:
