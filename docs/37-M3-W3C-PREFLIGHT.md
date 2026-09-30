@@ -25607,3 +25607,104 @@ python3 scripts/test_t1_6_taxonomy.py   ⇒  Ran 14 tests … OK   (0.002s)
   唯一硬前置。**不加，`AUTHZ_404` 永远只能是合成单测里的族。**
 - `LUM-2111` 卡 docker ⇒ `report.json` 刷新权死锁 ⇒ 每个 PR 的 `contract` job 持续红（第四次实测复现）。
 - `mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变）。
+
+## §272 【LUM-2598 09:00 cycle】收割 PR #182（**首次手动解 `docs/37` 号段冲突**）＋ 派 `LUM-2600`（**20 个用例全绿，但没有任何门会执行它们**）
+
+起手 base `078205b9` → 收尾 **`2702c21a`**。**收割 1 片 / 回收 0 片 / 派 1 片**。GH 收割后 **1 open PR**（#168 第四次待议）。
+
+### 收割 PR #182（`LUM-2597` / T1-6-H0）—— 第一次真的动手解冲突，而不是判「不合并」
+
+`git merge-tree --write-tree <base> <head>` ⇒ **`rc=1`**，唯一 CONFLICT 在 `docs/37-M3-W3C-PREFLIGHT.md`：
+base 侧 **§269**（LUM-2596 cycle）与 PR 侧 **§270**（LUM-2597）**都追加在文件末尾** ⇒ 纯 § 号段撞号。
+**代码面零冲突**：`scripts/t1_6_taxonomy.py` / `scripts/test_t1_6_taxonomy.py` 两侧无重叠。
+
+⇒ 🔴 **承重一（本轮新增）：`merge-tree rc=1` 判的是「有没有冲突」，不是「该不该合」。**
+上一轮（§269）把它当**否决判据**用，PR #168 因此被判三次「不合并」。
+本轮第一次遇到**冲突只落在 append-only 的文档尾部、代码面干净**的形态，
+此时**正确动作是解冲突并收割，不是判死**。把 `rc=1` 直接当否决，会把 2597 那种
+「零 Rust、三文件、判据修正」的高价值片一起毙掉。
+**判别式要分两级**：`rc=1` 只回答「需不需要人动手」；需不需要动手，由
+**① 冲突文件集合是否 ⊆ append-only 文档** ＋ **② 代码面是否无重叠** 决定。
+
+**解法（按 §216 的安全形态，不是机械删标记）**：
+`git checkout --ours -- docs/37` 回到 stage 2 → 再把 pr182 的 **§270 片段**（从 `## §270` 行到 EOF）
+追加到 base 全文之后。**回读判据**：`§265`–`§270` 各出现且**仅出现一次**；
+正文里既有的 **2 个 `<<<<<<< HEAD`**（行 20959 / 21067，来自更早的合并记录）**按原样保留**。
+
+🔴 **为什么不能用「删标记」**：§232.3 已实测——那两处 `<<<<<<< HEAD` **是正文而不是冲突残留**，
+机械删标记会把**已删除的行**当内容复活。这两条（§216 取一侧丢另一侧 / §232.3 两侧都留）
+方向相反，共同结论：**解冲突脚本必须用整行精确匹配，不能靠标记行的位置判断哪段是内容。**
+
+**独立复核（本轮实测，不采信工单转述）**：工单声称的三条全部当场验证 ——
+`classify()` 现在**真的调 `_body_evidence(fx)`** 并读 body（`scripts/t1_6_taxonomy.py:215-223`）；
+`mc-errors/src/lib.rs:118` 确有 `WorkspaceNotFound(_) => "workspace_not_found"`；
+`agents.rs:217` 确有 `.ok_or_else(|| not_found("workspace"))`（工单写 `:204-218`，行号随 base 漂移，区间仍成立）。
+⇒ **PR 的核心主张站得住，不是「作者说自己对」。**
+
+**合并树门读（当场重跑）**：⑦ **八数字第 58 轮逐字不变**
+`456/546/546 / 455 real + 1 placeholder / known_gap 0 unclaimed 0 regression 0 local_only 8` rc=0；
+⑦b `slash_alias_audit --quiet` rc=0；⑩ `file-size` rc=0；
+**外加** `scripts/test_t1_6_taxonomy.py` **14/14 OK**。
+本 PR **零 Rust**（写集 = `docs/37` + 2 个 `scripts/*.py`）⇒ ①②③④⑤⑥⑧⑨ 的输入**逐字未变**，
+这是**由构造推出**，不是「继承上一轮的绿」。
+
+**CI**：PR 分支**从头到尾没触发过 check-run**（`check-runs` total 0），
+但 base 自身的 push run 是有的。查 base `078205b9` 的 job：`fast` ✅ / `db` ✅ / `image` ✅ / **`contract` ❌**
+（存量红，`contract` 只跑 ⑦ + ⑨，而本片写集两者都不碰 ⇒ **不可能新增红**）。
+⇒ **「没有 CI」≠「CI 红」**：本片的收割依据是**合并树本地门读 + 核心主张独立复核**，不是等 CI。
+（`fast` 已从 §243 记录的「真回归红」**恢复为绿**，`contract` 仍是唯一红。）
+
+### 🔴 承重二（本轮新发现，投 `LUM-2600`）：**测试文件可以「全绿」而从未被执行过**
+
+派工时顺手实测 `scripts/` 下的 Python 测试，得到：
+
+| 文件 | 行数 | 用例 | 现状 | 谁会执行它 |
+|---|---|---|---|---|
+| `scripts/test_t1_6_taxonomy.py` | 180 | 14 | `Ran 14 tests … OK` | **没有任何东西** |
+| `scripts/test_extract_requirements.py` | ~110 | 6 | `Ran 6 tests … OK` | **没有任何东西** |
+
+判别式（零编译、可复跑）：
+`grep -rl 'test_t1_6_taxonomy' --include='*.sh' --include='*.yml' --include='*.toml' .` ⇒ **空**；
+`bash scripts/gates.sh --list` ⇒ 11 个门里**没有** scripts-tests 之类的门；
+`ci.yml` 每个 job 都只调 `gates.sh --only <gate>`（本仓纪律：门禁命令唯一实现在 `gates.sh`）
+⇒ **门没进 `gates.sh`，CI 就永远跑不到它**。
+两个文件的**唯一**引用者是 `docs/37` 的**散文提及**——**散文提及被当成了「有人会跑」的证据**。
+
+🔴 **为什么这条和刚收割的 PR 是同一件事的两面**：
+PR #182 修的 bug 就是「**docstring 声明的判据，代码从来没执行**」。
+而**一个不会被执行的测试，恰恰是「声明与实现脱节」这类缺陷的最后一道防线**。
+更狠的一层：**这类缺陷天生让它的测试沉默**——`classify()` 从不读 body，
+它的测试如果只喂「空 body 的 404」，照样全绿。
+⇒ **「20/20 全绿」在本仓当前状态下不是质量证据，是覆盖缺失的证据。**
+工单里已要求新门必须带**可证伪判别式**（临时造一个失败探针 ⇒ 门必须红 ⇒ 删掉 ⇒ 必须绿），
+不许只在绿的时候被信任。
+
+### 回收：空（按纪律照走）
+
+全盘只剩一个 `target/` = `LUM-2592` 的 **2.6G**。四判据里**「run 终态」不满足**
+（`LUM-2592` 仍 `in_progress`，且有 4 个文件未提交：`mc-http/src/routes/{issues/list,properties,workspaces}.rs`
+＋ `scripts/t1_6_realm_diff_taxonomy/constants.py`；`/proc` 此刻无 `rustc`，但**「此刻无进程」≠「run 已终态」**）
+⇒ **活物禁动**。`avail 24G`。
+
+⇒ **顺位纪律第三次生效**：`LUM-2600` 是**零 Rust / 零 cargo / 零磁盘**片，
+正好落在 `24G` 只够 1 片冷建（18–22G）的算式里，**与 2592 的暖缓存（§265.1 杠杆）零冲突**。
+若本轮派的是冷建片，就必须等 2592 落地才能开第二槽。
+
+**槽位 3/3**：`LUM-2592`（在飞，行为面 3 条）∥ `LUM-2600`（新派）∥ cycle 自身。
+**号段**：cycle 拿 §272，`LUM-2600` 拿 §271（§270 已随 #182 收割进 base；§263/§264/§269 仍被占）。
+
+### 下一 cycle 起点
+
+base **`2702c21a`**；GH **1 open PR = #168**（第四次待议，`merge-tree rc=1`，冲突面含 `docs/37` §243 号段撞号，
+且其代码面 `scripts/extract_upstream_fixtures.py` 与 PR #182 写集不重叠 ⇒ **本轮未复查其代码面是否也干净**，
+下轮应按承重一的两级判别式**重判一次**，不要直接沿用「三次不合并」的旧结论）。
+顺位：① `LUM-2600` 交 PR ⇒ 收割（**注意：它会改 `ci.yml` + `gates.sh`，`contract` job 的红必须逐项比对，不能只看总状态**）
+② `LUM-2592` 交 PR ⇒ 收割后**立刻回收 2.6G**（承 §268.5：合并本身就是最大的回收开关）
+③ `/v1` 安装令牌装置（5 条，需冷建 ⇒ 等磁盘）④ `plugins_v1=false` 第三形态（3 行，`replay.rs`）
+⑤ `STILL_404` 5 条（`tests/golden.rs`）⑥ `PRECONDITION 25`（`mc-conformance/**`，与 ③ 同写集 ⇒ 串行）。
+
+### 待 owner（不重复 @）
+
+- `LUM-2111` docker 死锁 ⇒ base 的 `contract` 持续红（`report.json` 刷新权）；
+- `mc_t2492` 116 表仍在默认库；
+- 共享 `CARGO_TARGET_DIR` 的裁决（承 §268.5，本片数据不变：`avail 24G` vs 冷建 18–22G ⇒ 物理上只容 1 片冷建）。
