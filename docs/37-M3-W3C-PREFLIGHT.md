@@ -28825,7 +28825,100 @@ PASS（6s，**11 file(s)**）、⑬ `section-alloc` PASS。
 ⇒ 与 `§292.2` 同形：**「被门执行」和「被门保护」是两件事**，一个文件可以天天跑而不被任何判词覆盖。
 本族（`LUM-2606` / `LUM-2608` / `LUM-2617` / `LUM-2620` / `LUM-2621` / 本片）到此收口：
 `ci.yml` 直接引用的四个判定器现在**全部**有用例。
->>>>>>> 909ee493 (T1-6-Q3: 门 ⑬ 判定器 section_alloc_check.py 补 89 个 unittest（只测不改，登记 KD-1..KD-5）)
+## §294 【`LUM-2624` / T1-6-Q4】给 `w3b_premerge_audit.py`（448 行 / 0 用例）补 49 个 `unittest` —— 只测不改，登记 KD-1：第 3 条判词是**恒假死代码**
+
+起手 base `874b7311` → 收尾 **`485cc1d9`**（收尾前 `git fetch` 发现 base 已前进到含 §295 的提交 ⇒ 重取号段：§293 归 `LUM-2623`、**§294 本轮仍空** ⇒ 保留 §294，只把工作树挪到新 base）。
+
+### 为什么这片比同族前几片更承重
+
+`scripts/w3b_premerge_audit.py` 448 行、**0 用例、0 门执行**，而它自己的 docstring 说它回答 5 个「`gates.sh` 和 `docs/37` 都答不了」的问题。承重点不是行数：
+
+- `docs/32-M3-DAEMON-FACE.md:6706` 记着它的 **`extract_routes` 被 ⑦b 与 `slash_alias_audit` 共用**
+  ⇒ 它的解析行为偏差会**同时污染两条每天都在跑的判词**。
+- 第 2 条判词（两片注册同一个 `(method, path)`）的错误方向是**静默**的：判词写坏 ⇒ 真出现重复注册时
+  **报不出来** ⇒ 合入后 axum 在生产建 router 时 **panic**（全局宕机，不是告警）。
+
+同族 `LUM-2620`（slash_alias_audit）/ `LUM-2621`（schema_drift）/ `LUM-2623` 已把另外几个判定器收掉，
+本片是这一族最后一块。
+
+### 折叠 vs 重复：**实测与工单的假设方向相反**（口径结论）
+
+工单要求「明确说出你断言的是算冲突还是不算冲突」。实测结论：
+
+- **跨片重复判词用逐字 key**（`report_slices` 里的 `allkeys` 直接收 `"METHOD path"` 字符串）
+  ⇒ `GET /y` 与 `GET /y/` **不算冲突**。用例
+  `TestCrossSliceDuplicates.test_trailing_slash_variant_is_not_a_cross_slice_duplicate` 双向钉住
+  （同 key ⇒ 报冲突并指名两片；仅尾斜杠不同 ⇒ `dup == {}`，同时断言 `norm("/y") == norm("/y/")`，
+  即**折叠确实发生、只是不在这一层**）。
+- **折叠只发生在两处**：片内 `added_folded` 计数（`{(m, norm(p)) for ... in add}`）与第 5 条
+  golden 判词。⇒ 「折叠」与「重复」是两套东西，别混。
+- 🔴 **顺带实测出工单没提的一条**：`added_folded` 的键含 **METHOD**
+  ⇒ 折叠只在**方法也相同**时收敛。同路径两方法 `/a`(GET) + `/a/`(POST) ⇒ `added_folded == 2`，
+  不是 1。用例 `test_added_folded_does_not_collapse_the_same_path_under_two_methods` 钉住。
+
+### 登记的已知缺陷（只测不改）
+
+**KD-1：`audit_slice` 的第 3 条判词恒假。**
+docstring 第 3 条声明「base 桩已注册 + 新片又注册」要报出来，代码是
+
+```python
+add = sorted(cur - base)          # 集合差
+for meth, path in add:
+    if (meth, path) in base:      # ← 由构造恒假
+```
+
+`add` 是 `cur - base`，**按构造与 `base` 不相交** ⇒ 该分支永不可达，`findings` 里永远出不了这一句。
+钉住方式：`TestKnownDefects.test_kd1_a_slice_re_registering_a_base_stub_key_is_reported`
+（`@unittest.expectedFailure`）—— 保留真实差集与真实判定表达式，只断言期望结果；
+谁修好实现 ⇒ `UNEXPECTED SUCCESS` ⇒ 门红 ⇒ 必须同时删装饰器并改 `KNOWN_DEFECTS`。
+**按硬约束本片不改它**（改法已写进 `KNOWN_DEFECTS["KD-1"]["fix"]`）。
+
+> ⚠️ 这条也是**工单假设与实现不符**的一处：工单把第 3 条列为「要能报出来」，实测报不出来。
+> 它没被门 ④/⑦/⑩ 任何一道覆盖过 —— 因为**没人测**。
+
+### 覆盖面（49 例）
+
+`extract_routes` 8（含 `#[cfg(test)]` 掩码、多行括号配对、非字面量首参跳过、同路径两方法）、
+`norm`/`canon` 4、`mask_cfg_test` 1、`line_count` 2、`read_baseline` 2、`size_violations` 4
+（含 **untracked 可见性** = 第 4 条判词、恰好 800 不判红、baseline 记录可抑制、scope 外不测）、
+`slice_files` 1、`audit_slice` 12（guarded 路径、golden 仅靠尾斜杠别名 vs 精确注册、
+`gated_skips` 的 DB-gate env 两侧）、**跨片重复 7**、`report_merged` 7、
+`golden_paths` 2、`fingerprint` 2、KD-1 与其四字段完整性 2。
+
+### 三段读数（DoD = 判别式，不是用例数）
+
+1. **改前** `bash scripts/gates.sh --only scripts-tests,section-alloc,file-size,route-parity` ⇒ **rc=0**
+   （⑫ 12 file(s) / 420 用例）
+2. **改后**：把 `report_slices` 的重复判词改坏（`dup = {k: v for ...}` ⇒ 恒空）⇒ **rc≠0**，
+   日志出现指名道姓的 `FAIL: test_two_slices_registering_the_same_method_and_path_is_a_conflict_naming_both`
+   等 2 条 `FAIL:`
+3. **复原** ⇒ **rc=0**（⑫ **13 file(s) / 469 用例**）
+
+⑦ 八数字**逐字不变**（本片 0 路由）：`upstream 456 | local 546 | baseline 546 | implemented 455 real + 1 placeholder = 456 | known_gap 0 | unclaimed 0 | regression 0 | local_only 8`。
+门 ②③④⑤⑥⑧⑨ **未跑**（需 cargo / 真库 / 容器），**不作继承声明**；本片零 Rust、零 cargo、零真库、零磁盘。
+
+### §294.5 cycle 仲裁（2026-09-30 14:30）：本片落盘位置由 cycle 修正，**不是**本片自证
+
+本片与并发的 `#197`（`LUM-2623` / §293）**写集相交**，两片各自在 base `485cc1d9` 上都绿，
+**合起来才红**：
+
+- 本片把台账行 `294` 追加在 `295`**之后**，`docs/37` 的 `## §294` 也排在 `## §295`**之后**；
+- `#197` 的 `scripts/test_section_alloc_check.py::TestRealRepoInvariant` 钉了一条**真仓库不变式**
+  `test_the_last_ledger_row_is_the_highest_number`：台账首列必须**升序**，且末行 = 当前最高号段。
+- ⇒ 按 `#197` → `#198` 顺序合入后，门 ⑫ **rc=1**，
+  `FAIL: test_the_last_ledger_row_is_the_highest_number`。
+
+**cycle 的处置**（改的是**位置**，不是判据、不是本片的测试）：
+
+1. `docs/section-alloc.tsv`：行 `294` 移到行 `295`**之前**；
+2. `docs/37-M3-W3C-PREFLIGHT.md`：`## §294` 整段移到 `## §295`**之前**。
+
+**教训（承重）**：「每片单独绿」**不蕴含**「合起来绿」—— 只要两片**都写同一个有序台账**，
+位置就是**跨片语义**，而它**只能在合并树上被判**。本片与 `#197` 各自的验收证据里
+都**不可能**出现这条红。
+⇒ 顺带记一条：`#197` 里 `nums[-1] == 295` 是**硬编码读数**（同族第 2 次），
+下一个 cycle 只要加 `§296` 就会把它打红。**候选修法**（未做，留给下一片）：
+把字面量换成「末行 == `docs/37` 里出现的最大段号」这条**自洽**判据。
 
 ## §295 【2026-09-30 14:00 cycle / `LUM-2622`】收割 **2 片**（#195 + #196）＋ 🔴 承重：**「用例数」可以是绿的 —— 判别式才是证据**（本轮实测两片都真判别，且逮到一个真缺口）
 
@@ -28952,75 +29045,3 @@ PASS（6s，**11 file(s)**）、⑬ `section-alloc` PASS。
 - **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah 三者皆无 ⇒ `report.json`
   刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮又见一次）；`mc_t2492` 116 表仍在默认库；
   共享 `CARGO_TARGET_DIR`（26G 可用 vs 冷建 18–19G ⇒ 只容 1 片吃构建）。
-
-## §294 【`LUM-2624` / T1-6-Q4】给 `w3b_premerge_audit.py`（448 行 / 0 用例）补 49 个 `unittest` —— 只测不改，登记 KD-1：第 3 条判词是**恒假死代码**
-
-起手 base `874b7311` → 收尾 **`485cc1d9`**（收尾前 `git fetch` 发现 base 已前进到含 §295 的提交 ⇒ 重取号段：§293 归 `LUM-2623`、**§294 本轮仍空** ⇒ 保留 §294，只把工作树挪到新 base）。
-
-### 为什么这片比同族前几片更承重
-
-`scripts/w3b_premerge_audit.py` 448 行、**0 用例、0 门执行**，而它自己的 docstring 说它回答 5 个「`gates.sh` 和 `docs/37` 都答不了」的问题。承重点不是行数：
-
-- `docs/32-M3-DAEMON-FACE.md:6706` 记着它的 **`extract_routes` 被 ⑦b 与 `slash_alias_audit` 共用**
-  ⇒ 它的解析行为偏差会**同时污染两条每天都在跑的判词**。
-- 第 2 条判词（两片注册同一个 `(method, path)`）的错误方向是**静默**的：判词写坏 ⇒ 真出现重复注册时
-  **报不出来** ⇒ 合入后 axum 在生产建 router 时 **panic**（全局宕机，不是告警）。
-
-同族 `LUM-2620`（slash_alias_audit）/ `LUM-2621`（schema_drift）/ `LUM-2623` 已把另外几个判定器收掉，
-本片是这一族最后一块。
-
-### 折叠 vs 重复：**实测与工单的假设方向相反**（口径结论）
-
-工单要求「明确说出你断言的是算冲突还是不算冲突」。实测结论：
-
-- **跨片重复判词用逐字 key**（`report_slices` 里的 `allkeys` 直接收 `"METHOD path"` 字符串）
-  ⇒ `GET /y` 与 `GET /y/` **不算冲突**。用例
-  `TestCrossSliceDuplicates.test_trailing_slash_variant_is_not_a_cross_slice_duplicate` 双向钉住
-  （同 key ⇒ 报冲突并指名两片；仅尾斜杠不同 ⇒ `dup == {}`，同时断言 `norm("/y") == norm("/y/")`，
-  即**折叠确实发生、只是不在这一层**）。
-- **折叠只发生在两处**：片内 `added_folded` 计数（`{(m, norm(p)) for ... in add}`）与第 5 条
-  golden 判词。⇒ 「折叠」与「重复」是两套东西，别混。
-- 🔴 **顺带实测出工单没提的一条**：`added_folded` 的键含 **METHOD**
-  ⇒ 折叠只在**方法也相同**时收敛。同路径两方法 `/a`(GET) + `/a/`(POST) ⇒ `added_folded == 2`，
-  不是 1。用例 `test_added_folded_does_not_collapse_the_same_path_under_two_methods` 钉住。
-
-### 登记的已知缺陷（只测不改）
-
-**KD-1：`audit_slice` 的第 3 条判词恒假。**
-docstring 第 3 条声明「base 桩已注册 + 新片又注册」要报出来，代码是
-
-```python
-add = sorted(cur - base)          # 集合差
-for meth, path in add:
-    if (meth, path) in base:      # ← 由构造恒假
-```
-
-`add` 是 `cur - base`，**按构造与 `base` 不相交** ⇒ 该分支永不可达，`findings` 里永远出不了这一句。
-钉住方式：`TestKnownDefects.test_kd1_a_slice_re_registering_a_base_stub_key_is_reported`
-（`@unittest.expectedFailure`）—— 保留真实差集与真实判定表达式，只断言期望结果；
-谁修好实现 ⇒ `UNEXPECTED SUCCESS` ⇒ 门红 ⇒ 必须同时删装饰器并改 `KNOWN_DEFECTS`。
-**按硬约束本片不改它**（改法已写进 `KNOWN_DEFECTS["KD-1"]["fix"]`）。
-
-> ⚠️ 这条也是**工单假设与实现不符**的一处：工单把第 3 条列为「要能报出来」，实测报不出来。
-> 它没被门 ④/⑦/⑩ 任何一道覆盖过 —— 因为**没人测**。
-
-### 覆盖面（49 例）
-
-`extract_routes` 8（含 `#[cfg(test)]` 掩码、多行括号配对、非字面量首参跳过、同路径两方法）、
-`norm`/`canon` 4、`mask_cfg_test` 1、`line_count` 2、`read_baseline` 2、`size_violations` 4
-（含 **untracked 可见性** = 第 4 条判词、恰好 800 不判红、baseline 记录可抑制、scope 外不测）、
-`slice_files` 1、`audit_slice` 12（guarded 路径、golden 仅靠尾斜杠别名 vs 精确注册、
-`gated_skips` 的 DB-gate env 两侧）、**跨片重复 7**、`report_merged` 7、
-`golden_paths` 2、`fingerprint` 2、KD-1 与其四字段完整性 2。
-
-### 三段读数（DoD = 判别式，不是用例数）
-
-1. **改前** `bash scripts/gates.sh --only scripts-tests,section-alloc,file-size,route-parity` ⇒ **rc=0**
-   （⑫ 12 file(s) / 420 用例）
-2. **改后**：把 `report_slices` 的重复判词改坏（`dup = {k: v for ...}` ⇒ 恒空）⇒ **rc≠0**，
-   日志出现指名道姓的 `FAIL: test_two_slices_registering_the_same_method_and_path_is_a_conflict_naming_both`
-   等 2 条 `FAIL:`
-3. **复原** ⇒ **rc=0**（⑫ **13 file(s) / 469 用例**）
-
-⑦ 八数字**逐字不变**（本片 0 路由）：`upstream 456 | local 546 | baseline 546 | implemented 455 real + 1 placeholder = 456 | known_gap 0 | unclaimed 0 | regression 0 | local_only 8`。
-门 ②③④⑤⑥⑧⑨ **未跑**（需 cargo / 真库 / 容器），**不作继承声明**；本片零 Rust、零 cargo、零真库、零磁盘。
