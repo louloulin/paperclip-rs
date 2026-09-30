@@ -32,5 +32,6 @@ scripts/test_harvest_preflight.py
 scripts/test_route_parity.py
 scripts/test_route_parity_defects.py
 scripts/test_schema_drift.py
+scripts/test_slash_alias_audit.py
 scripts/test_t1_6_precondition_taxonomy.py
 scripts/test_t1_6_taxonomy.py
