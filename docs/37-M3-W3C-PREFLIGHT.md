@@ -25263,3 +25263,91 @@ base **`4e5b51e2`**（工单写的 `6a4245b3` 已前进 3 个 docs commit：§26
 - `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（破坏性操作，未自行执行）。
 - 承接 §266.6：共享 `CARGO_TARGET_DIR` 的裁决。本片实测**再次确认**该结论 ——
   一片 19G `target/` 就把 49G 的盘吃到 0，且**暖缓存复用是本片能跑完门禁的唯一原因**。
+
+## §268 【LUM-2595 08:00 cycle】收割 PR #181（`LUM-2591`）＋ 22.7G 回收 ＋ 派 `LUM-2592`（T1-6-G1 行为面 3 条）
+
+**起手**：base `4e5b51e2`（与 `ls-remote` 逐字相同；`multica repo checkout --ref` 一次落对分支，
+本轮**没**发生第 N 次 `main` 线回落）；`df -h /` **4.8G / 90%**；`pg_lsclusters` 5432 `online`；
+daemon `running_task_count = 1`（= cycle 自己）⇒ **切片位 2**；从 `/` 起手逐 PID 扫 `/proc/*/cwd`
+只有 cycle 自己一个 `pi` ⇒ `LUM-2591` **已终态**。
+
+### §268.1 判据链（PR #181，`LUM-2591` / T1-6-F1 装置面 25 条）
+
+| 步 | 判据 | 读数 |
+|---|---|---|
+| ① | 预检 `merge-base..head` numstat == PR API 逐字 | 5 文件：`Cargo.lock +1`、`mc-conformance/Cargo.toml +5`、`src/harness.rs +376`、`src/seed.rs +5`、`docs/37 +146`；PR API `changed_files = 5` ✔ |
+| ② | base 前进段非 docs 路径 = 0 | 空（`merge-base == 4e5b51e2 ==` base tip，**形态①**） |
+| ③ | 三读数等式 | `merge-tree --write-tree` = `head^{tree}` = `refs/pull/181/merge^{tree}` = **`3c9ce02385b0f9ecf090fb118b5102f2b7a6d466`**（rc=0） |
+| ④ | 证据 | head CI run `36647958687`：`fast` ✅ / `db` ✅ / `image` ✅；`contract` ❌ = **存量红** |
+| ⑤ | API 钉 sha | `PUT /pulls/181/merge`，`sha = 0dbbd093…`，`merge_method = merge` → `merged: true`，merge commit **`882bc849`** |
+| ⑥ | 落地树 ≡ 预演树 + diff 空 | `origin/feat/multica-rs-initial^{tree} == 3c9ce023…`；`git diff <landed> <head>` **空** ✔ |
+
+**④ 的 `contract` 红已逐条取证，不是本片回归**：日志里唯一的 FAIL 是 `⑨ conformance 1 115s FAIL`，
+签名 `first difference at line 17: committed "unevaluable": 13 vs fresh: 12` —— 与 §246 §6.2 /
+§250.6.2 / §266 记的**存量红逐字相同**（根因 = PR #167 从未同步 `report.json`）。
+`report.json` blob **`db01d842`** 在本 PR 的 5 个文件里**不存在** ⇒ §265.2 的「blob 不许动」成立。
+⇒ **零门禁重跑**（形态① ＋ head CI 三 job 绿 ＋ 唯一红已归因）。
+
+**⏱ CI 等待形态的新观察**：本轮 `contract` 在 35 秒内就红了，而 `db`/`fast`/`image` 跑了 **6 分 40 秒**。
+⇒ 判据链里「等 CI 3/3 绿」那一等的**真实成本是 ~7 分钟**，不是「PR 一开就能合」；
+轮内可做的是**同时**把零编译门（⑦/⑦b/⑩，1.1s）与回收做完，把 CI 等待压到只剩那 7 分钟。
+
+### §268.2 回收：22.7G 是一次「四判据齐」的整删，不是外科
+
+`LUM-2591` 的 workdir `target/` = **22G**。四判据逐条：run 终态（daemon 1/3 ＋ `/proc` 零命中）∧
+`HEAD == 0dbbd093 == PR head` 且 `git log origin/<branch>..HEAD` **空**（交付已在远端）∧
+`git status --porcelain` **空** ∧ `/proc/*/cwd` 逐 PID 零命中 ⇒ 整删 `target/`。
+`4.8G → 27.7G`（`+22.7G`）。**这是本项目至今最大的一次回收**，也是「PR 合了就立刻回收」
+这条纪律第一次**单轮就把可用空间抬回 5.8 倍**。
+
+⇒ 承重：**`--with-db` 需要 ≈30G、而盘只有 49G** ⇒ **合并本身就是最大的回收开关**。
+本项目过去若干轮之所以反复 ENOSPC，是因为把「回收」排在「派发」之前，而**合并是唯一能把
+22G 一次性变成可用空间的动作**。顺位纪律从「先回收再派发」升级为
+**「先收割 PR → 立刻回收 → 再判派发」**（§167 的算式要在**收割之后**才算）。
+
+### §268.3 派发：只派一片，第二个位**刻意留空**
+
+准入三个数并排写（§167 升级版，承重）：
+
+| 数 | 值 |
+|---|---|
+| 槽位 | daemon 1/3 ⇒ 可派 2 |
+| `avail − 可回收量` | `27.7G − 0` = **27.7G** |
+| 本片冷建下限 | **18–19G**（`CARGO_INCREMENTAL = 0`） |
+
+⇒ `27.7 ≥ 19` ⇒ 派 1 片；**两片需要 36–38G > 27.7G** ⇒ 第二个位**刻意留空**
+（不是没有候选：`BEHAVIOR_STAMPING_CHAIN_UNWIRED` 与 `EXTRACT_*` 3 条都已就绪且与本片零交集）。
+
+派 **`LUM-2592`**（T1-6-G1 行为面 3 条，`mc-http` handler 面 / 0 路由），描述 rev 6 → **rev 7**，
+起手点 **`882bc849`**（本片内重取）。工单里被本轮改掉的三处：
+
+1. **对账式换底**：`待清_after == 66 − (pass_after − 299)` **作废** ⇒
+   `待清_after == 61 − (pass_after − 304)`（`LUM-2591` 的 +5 pass 已把待清 66 压到 61）。
+   ⇒ **「跨片对账式必须写清它以哪一轮的读数为底」** —— 否则后一片会拿一个已被作废的底去对账，
+   而且**两边都自洽**（§247 已因同类原因挂过一次 `blocked`）。
+2. **`STILL_404` / `SEED_404` 的族计数**从 18 改成 **13**（`LUM-2591` 修好 5 条），
+   `REALM_DIFF` 余条从 6 改成 **14**（`EXTRACT_*` 5 + `DEVICE_*` 9）。
+3. **文档号取 `§268`**（不是工单派的 `§264`）：`§263`/`§264` 仍是「已预约未落盘」的占号，
+   `§265`/`§266`/`§267` 已落 base（§267 归 `LUM-2591`）。**这是号段第六方向的第二次触发。**
+
+并且把 `BEHAVIOR_STAMPING_CHAIN_UNWIRED` 的前置状态**改写为「已解除」**：
+`LUM-2591` 的实际写集 = `Cargo.lock` / `mc-conformance/{Cargo.toml,src/harness.rs,src/seed.rs}` /
+`docs/37` ⇒ **它没有碰 `authn.rs` / `pats.rs`**。工单里那条「等 `LUM-2591` 落地」的阻塞条件
+**本轮实测证伪** ⇒ 下一槽可派。
+
+### §268.4 门读（base `882bc849` 当场重跑，零编译 1.1s）
+
+- ⑦ **八数字第 56 轮逐字不变**：`upstream 456 (f41fae6b08fb) / local 546 / baseline 546`、
+  `455 real + 1 placeholder = 456`、`known_gap 0`、`unclaimed 0`、`regression 0`、`local_only 8`，**rc=0**。
+- ⑦b `--quiet` **rc=0**（承 §266.3 的口径更正：别用 `--declared 1`）。
+- ⑩ **rc=0**（`scanned 1400 / baseline 1 / violations 0`；`seed.rs` = **800 压线**、`harness.rs` = 578）。
+- ⑨ **本轮未跑、不作继承声明**：db-mode 冷建 ≈14G，而 27.7G 要留给在飞片；
+  本 cycle 只把它作为**工单起手读数**写进 `LUM-2592`（并标明「由 `LUM-2591` 在 `0dbbd093` 上取得」）。
+
+### §268.5 待 owner（**不重复 @**，承接 §266.6 / §267.8）
+
+- `LUM-2111` 卡 docker/podman/buildah ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**
+  （本轮 PR #181 的 `contract` 红就是它，第三次实测复现）。
+- `mc_t2492` 名下 116 张表仍在默认 `postgres` 库（破坏性操作，未自行执行）。
+- **共享 `CARGO_TARGET_DIR`** 的裁决 —— 本轮数据再次支持：`LUM-2591` 单片 `target/` 22G，
+  而盘 49G、单片冷建 18–19G ⇒ **不共享的话，「三个并行」在本机物理上不成立**。
