@@ -28190,3 +28190,110 @@ base 的同一份 fixture**，只有服务端这三处不同。
 不碰 `routes/issues/**`、`routes/mod.rs`、`mount.rs`；不动 `crates/mc-conformance/report.json`；
 不为了凑 `58 → 52` 去放宽 `session_caller` 的安装头要求（那是上游逐字的安全判据：
 workspace 只能来自安装行，否则调用方能把安装指向它从未被安装过的 workspace）。
+
+## §289 【2026-09-30 12:30 cycle / `LUM-2616`】收割 **2 片**（#192 / #193）＋ 🔴 承重：**门 ⑩ 的判定器有一条「把回归洗成绿」的一键绕过口，且它自己 0 测试**
+
+起手 base `a6973906` → 收尾 `686ac0b3`。GH 收尾 **0 open PR**。daemon 收尾 **2/3**（cycle 自身 ∥ `LUM-2617`）。磁盘起手 **6.3G/87%**、收尾 **26G/46%**。
+
+### §289.1 收割 #192（`LUM-2615` / T1-6-O，H7）—— 形态①，六条判据链零门禁重跑
+
+| 判据 | 读数 |
+|---|---|
+| ① 预检 numstat（`merge-base..head`） | 5 文件 `+666/−4` == PR API **逐字** |
+| ② 形态 | `merge-base == base == a6973906` ⇒ **祖先形态①** |
+| ③ 三读数 | `merge-tree --write-tree` = `head^{tree}` = `refs/pull/192/merge^{tree}` = **`82e3d84b`** |
+| ④ 证据 | head CI `db`✓ `image`✓ `fast`✓，`contract`✗（见 §289.3） |
+| ⑤ API | 钉 40 位 sha + `merge_method=merge` |
+| ⑥ 落地 | `92242e93^{tree}` = `82e3d84b`，`git diff` **空** |
+
+### §289.2 收割 #193（`LUM-2610` / T1-6-J2）—— 形态③，让号 + 手工解 docs 冲突
+
+base 在片进行中前进到 `92242e93`（= #192）⇒ 形态③。**前进段非 docs 路径 = `scripts/{harvest_h7,harvest_preflight,test_harvest_preflight}.py`，与本片写集（4 个 `crates/*` 文件）交集 ∅** ⇒ 代码零冲突，`git merge` 时 4 个代码文件自动合并，只有两个 docs 文件冲突。
+
+🔴 **让号方向的第二次真实执行，而规则条文仍然不够用**：`LUM-2610` 分支声明 `§286`，base 上 `§286` 已被 `LUM-2615`（本 cycle 前 30 分钟合入的 #192）占用。
+`§281` 的规则是「**后到者**让号」⇒ 按起手早晚（`LUM-2610` 03:28 起、`LUM-2615` 04:11 起）该是 `LUM-2615` 让；但 `LUM-2615` **已在 base 里**。
+`LUM-2608` 补的那句「**让号方向 = 改动面更小的那一侧**」才是能用的判据 ⇒ **`LUM-2610` 让号，改取 `§287`**。
+
+⇒ **规则仍缺一句**：条文只说「谁让」，没说「当让号成本不对称时选哪边」。本轮实测的判据是「**已合并的一侧永远比未合并的一侧贵**（要连带改台账行 + 交叉引用 + 已落地正文）」，与 git 的 `ours`/`theirs`、与起手先后**都无关**。
+
+替换面：13 处 `§286` → `§287`，全部落在本片自己那段 **129 行 EOF 追加块**内（1 主标题 + `§287.1`–`§287.7` 七个子标题 + 5 处行内自引用），已断言**未溢进 base 侧正文**；台账行 `286` → `287` 同步；**零代码改动**。推回对方分支后 `merge-tree` 转 `rc=0`。
+
+⚠️ **两侧都往 `docs/37` 末尾追加 ⇒ 必冲突，这是结构性的、不是意外**。解法照旧：**从 git 的 stage blob 按行号拼**（`§285` 的坑：正文里有围栏内的历史冲突示例，非贪婪 `=======` 切块会切坏结构）。
+复核断言：冲突标记数与 base **逐个相同**（`<<<<<<<` 4 个 / `=======` 2 个，全是 pre-existing 的围栏示例）、`section_alloc_check` 绿（`sections=217 distinct=216 ledger=216 defects=0`，`§226` 作为既有重复段号如实登记）、零编译门 **4/4 绿**。
+
+### §289.3 🔴 承重一：`contract` 的红**第四次**被证明是 base 存量，而且这次是**零构建**证出来的
+
+`contract` = `route parity + conformance`，红在门 ⑨。三条输入**逐一 blob 恒等**：
+
+```
+crates/mc-conformance/report.json  base=head=db01d842a2b5c2bca860ad6fdd46bd58d5073215
+contracts/golden                   base=head=fe7fd48a00534601329e7a35b86ef68a0ddb2b73
+crates/mc-conformance              base=head=e98c2d3c2b2cbf9e458cbae8d1129a982d955833
+```
+
+且 #192 的写集里 **Rust / Cargo 文件数 = 0**。⇒ **由构造推出**：门 ⑨ 在两棵树上必然给出同一结果，红不是本片引入的。CI 日志签名也逐字吻合存量：`first difference at line 17: committed "unevaluable": 13 / fresh: 12`。
+
+🔴 **可复用的判据（比「跑一遍 conformance」便宜两个数量级）**：**判「门 ⑨ 的红是不是本片引入」，先比三个门输入的 blob**。全等 ⇒ 不是本片；不等 ⇒ 才值得花 14G 冷建去跑。
+这与 `§281` 的「按退出码判 `merge-tree`」、`§289.2` 的「冲突标记数与 base 逐个比对」是同一条纪律的三种形态：**凡能靠「两侧同构」推出的结论，就不要靠重跑来取。**
+
+### §289.4 🔴 承重二（本轮唯一实质产出）：门 ⑩ 的判定器有一个**把回归洗成绿**的一键绕过口，而它 0 测试
+
+`scripts/gates.sh` 实际调 8 个脚本。逐个对 `scripts/test_*.py` 比对覆盖，**三个门判定器 0 测试**：
+
+| 脚本 | 行数 | 决定 | 测试 |
+|---|---|---|---|
+| `scripts/schema_drift.py` | **799** | 门 ④ | **0** |
+| `scripts/slash_alias_audit.py` | 376 | 门 ⑦ 的一半 | **0** |
+| `scripts/file_size_check.py` | 329 | **门 ⑩** | **0** |
+
+`grep -rIl` 全仓复核：三者只出现在 `ci.yml` / `contracts/*.tsv` / `docs/**` ⇒ **被运行，从未被测试**。
+
+**缺陷（四段读数，`/tmp` 一次性仓库，逐字节可复原）**：
+
+| 步 | 动作 | 门 | stderr |
+|---|---|---|---|
+| P0 | 干净树，`crates/legacy.rs` 850 行、基线记 850 | `rc=0` | — |
+| P1 | `legacy.rs` **长到 900** | **`rc=1`**（rule 2 正确判红） | — |
+| P2 | 操作员跑 `--write-baseline` | — | **0 字节** |
+| P3 | **同一棵树**再跑门 | **`rc=0`** | — |
+
+⇒ **一条 50 行的真实回归，被一条命令静默洗成绿。**
+
+根因在 `main()` 的 `changes` 与 `write_baseline()` 的告警条件之间：`added`（新增违规）**有 WARNING**（实测 129 字节 stderr，措辞就是「基线只减不增」）；`updated` 里**行数变大**的那些**只被 `print` 成一�� `updated: <path>`，不检查方向、不告警**。
+⇒ **同一个不变式，在「新增」路径上被强制，在「变长」路径上只是被打印。** 与 `LUM-2606` 在 `route_parity.py` 里找到的两处是**同一个形状**：docstring 声明的判据，代码只执行了一半。
+
+**为什么这条特别贵**：`§283`（`LUM-2608`）的承重一整条都在讲 rule 2 挡人（762 行的文件追加即红、登记基线被规则禁止、唯一合法出口是拆文件）—— **这条规则本轮刚产生过真实成本，而它的执行器自己有一个一键绕过口。**
+
+⚠️ **探针自身的一个假读数（本轮当场踩到，值得记）**：第一版探针里我 `open(...,'w')` 造了违规文件但**没 `git add`**，于是得出「`--write-baseline` 会把超限文件从基线里抹掉、门直接绿」这条**更吓人的结论**。复核发现 `scan()` 走 `git ls-files` ⇒ **只扫已跟踪文件**，未跟踪文件本就不在范围内 ⇒ **那条不是缺陷，是我的夹具错了**。
+⇒ **判据：「探针读出『红/绿』时，先确认它是因为目标原因」**（`§283` 的 P2 第一次也是坏的：删掉一整行制造 `NameError`，得到 27 个 error）。**这一次是镜像形态 —— 探针读出「更严重的绿」时，也要先确认夹具本身成立。**
+
+**本仓暴露面**：`file_size_baseline.tsv` 当前只有一条 `scripts/extract_upstream_fixtures.py 1863`，而该脚本近几轮在 1858 / 1862 / 1863 之间移动过。
+
+已派 **`LUM-2617`（T1-6-P）**：只把缺陷钉成会叫的读数（`KNOWN_DEFECTS` ＋ `expectedFailure`，双向受检），**不修**（三种修法代价差别大，交 owner 裁决）。
+
+### §289.5 回收 19G，以及「四判据全过却仍可以不删」
+
+`LUM-2610` 的 `target/` **19G** ⇒ 磁盘 6.3G → **26G（46%）**。四判据：run 终态（04:33 completed）∧ HEAD 已是 base 祖先（`686ac0b3` 合入后）∧ `porcelain` 空 ∧ `/proc` 零命中。
+⚠️ 第四条实测**读到 4 个 PID**（`grep` 管道自身 + 瞬时子进程）⇒ **与 `§79`「`pgrep`/`grep` 自我匹配」同族，第 N 次**；但前三条已足以判定，且**量只认 `df` 前后差**（19G，与 `du` 一致）。
+
+**本轮磁盘曲线再次印证「合并就是最大的回收开关」**：起手 6.3G（`LUM-2610` 活构建占 19G）⇒ 我先收割 #193、再回收，磁盘才回到能开下一片 Rust 面的水平。**顺序纪律：合并 → 回收 → 派发 → 写文档。**
+
+### §289.6 派发：两次「派发成功 ≠ 起跑成功」，各一族
+
+1. `assign --no-start` + `status todo` 后 `issue runs` **0 条** ⇒ 未起跑（`§281` 已记）。本轮改用 `rerun`。
+2. `rerun` 后的 run **45 秒 `completed`**、`error=None`、workdir **616K 且无 `paperclip-rs`**、唯一评论是纯文本 `No comments yet. Let me set up the repo.` ⇒ **`§2613` 的「模型发了一个纯文本回合、零 tool call，harness 当成终态」**。
+   再 `rerun` ⇒ `running` + 新 workdir **64M** + repo 在位。**判据三条一起看**（`runs[].status` / `result.output` 是否只有一句话 / workdir 有没有 repo 且 `du` ≳ 36M）。
+
+**在飞收尾 2/3**：cycle 自身 ∥ `LUM-2617`（run `01a0f0a1`，workdir `lum-2617-a6dd5a3226e1` 64M）。
+
+### §289.7 门读（base `686ac0b3` 当场重跑，零编译）
+
+- ⑦ `route-parity` rc=0；⑩ `file-size` rc=0；⑫ `scripts-tests` rc=0（`9 file(s)`）；⑬ `section-alloc` rc=0（`sections=217 distinct=216 ledger=216 defects=0`）⇒ **4/4 绿**。
+- **②③④⑤⑥⑧⑨ 未跑、不作继承声明**（需编译 / 真库）。**⑨ 的红是 base 存量，证法见 §289.3，不是「本轮绿」。**
+
+### §289.8 板面与待 owner
+
+- 收尾 **0 open PR**；已合片 `#192`(`LUM-2615`) / `#193`(`LUM-2610`) 保持 `in_review`（`done` 归人工）。
+- 顺位：`LUM-2617` 终 ⇒ 判据链 ⇒ **T1-6-Q**（`slash_alias_audit.py` 376 行 / `schema_drift.py` 799 行，两者同族，⚠️ 后者**距门 ⑩ 硬上限只剩 1 行**，要动它必须先想拆法）。
+- **待 owner（不重复 @）**：`LUM-2111` 卡 docker/podman/buildah ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮第 4 次实测，§289.3 给了零构建证法）；`mc_t2492` 116 表仍在默认库；共享 `CARGO_TARGET_DIR` 裁决；`LUM-2556` / `LUM-2545` 两个陈旧 cycle issue 的状态归属。
+- 积压 `todo` 的 autopilot cycle 单（`1521/1533/1726/1737/1740/1748/1805/1810/1826/1835/2012/…`）**只登记不动状态**。
