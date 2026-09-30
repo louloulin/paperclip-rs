@@ -27302,3 +27302,109 @@ UNSUPPORTED a.rs:2: non-literal path `r###"          "###`
 **不建 `docs/section-alloc.tsv`**（同上，见段首跨片说明）；不跑 ⑨ `--with-db`、不碰真库、不写任何 Rust、
 不跑 `cargo`；不动 `crates/mc-conformance/report.json`；不跑 `--write-baseline` 真树（只在临时目录里跑）；
 不删既有 104 个用例中的任何一个；**不拿 mock 的 `route_parity.py` 冒充真判定器的覆盖**（7 条探针全部装在真文件上）。
+## §281 【LUM-2609 11:00 cycle】收割 **3 片**（#186 / #185 / #187，第三片是**补开的 PR**）＋ 撞号让号规则的**一次真实执行**
+
+起手 base `ec08a3c9`，收尾 base **`ee910c46`**（合并树 `96afa1f9`）。三片全部走完判据链，
+零门禁重跑两处、一次 `--with-db` 10/11。派 `LUM-2610`（0 路由 Rust）＋ `LUM-2608`（零磁盘）。
+
+### 门读（当轮实测，勿抄历史值）
+
+- 门 ⑦（base `ec08a3c9` 起手、合并树 `eddcacca` 当场重跑，**第 61 轮逐字不变**）：
+  `upstream 456 / local 546 / baseline 546 / implemented 455 real + 1 placeholder = 456 /
+  known_gap 0 / unclaimed 0 / regression 0 / local_only 8`，rc=0。
+- 门 ⑨ db-mode（合并树 `eddcacca`，库 `multica_c2609b`）：`fixtures 365 / pass 307 /
+  mismatch 32 / unmounted 1 / unevaluable 25`，`bad_total 58`。
+  base 同树对照库 `multica_c2609c` = `365 / 304 / 35 / 1 / 25`，`bad_total 61` ⇒
+  **pass +3 / mismatch −3，其余四族逐字不变**。
+- 门 ⑩ rc=0；门 ⑫ rc=0；门 ⑬ `section-alloc` rc=0（`sections=210 numbers=209 ledger=209 defects=0`）。
+- 门 ⑨ **红的是 base 存量**，不是本轮任何一片造成的 —— 见下面承重二。
+
+### 收割一：PR #186（`LUM-2592` / T1-6-G1，行为面 3 条）
+
+六条判据链逐条过：① `merge-base..head` numstat **7 文件 +555 −14 与 PR API 逐字相同**；
+② base 是 head 祖先（形态①）；③ `merge-tree --write-tree` = 预演 `write-tree` = head 树 =
+**`eddcacca`**，三读数同一个哈希；④ 证据 = 在 `eddcacca` 上当场 `--with-db` **10/11 / 789s**；
+⑤ API 钉 40 位 sha `8acbc9ac`；⑥ 落地树 `eddcacca` ≡ 预演树、`git diff` 空。
+
+**0 路由 ⇒ 门 ⑦ 八数字必须逐字不变**（实测确实逐字不变），验收证据**只能来自 ⑨ db-mode**：
+`bad_total 61 → 58`，`REALM_DIFF 15 → 12`，`unevaluable 25 → 25`、`unmounted 1 → 1`、
+`fixtures 365 → 365`。与工单自述**逐字吻合**。
+
+### 收割二：PR #185（`LUM-2607` / T1-6-L，门 ⑬ `section-alloc`）
+
+**形态③**（base 不是 head 祖先）⇒ 必须真合。冲突面**只有** `docs/37-M3-W3C-PREFLIGHT.md`，
+按 §146.3 机械式解：两侧全保留 + 按 `## §N` 排序 ⇒ `§277` / `§278` / `§279`。
+解完后把合并提交推回 `agent/devbox4/9b120682d49b`，`mergeable` 由 `False` 变 `True`，
+再走 API 合并（落地树 `ef1bc636` ≡ 我 gate 过的树）。
+
+**`gates.sh` 的改动经 diff 逐行核对 = 纯追加**（只在 `ALL_GATES` / 默认 `SELECTED` /
+`gate_label` / `gate_env_name` 各加一行 + 一个新 `run_` 函数，**没有改动任何既有门的命令**）
+⇒ ①–⑫ 的读数**从 #186 那轮 `--with-db` 继承**，只需单独验新门。合并树上零构建四门全绿：
+`⑦ rc=0 / ⑩ rc=0 / ⑫ rc=0 / ⑬ rc=0`。这是 §273「因改 `gates.sh` 故新门单独验」定式的第二次生效。
+
+### 收割三：PR #187（`LUM-2606` / T1-6-K）—— **第三个「已交付但没开 PR」的分支**
+
+§275.2 立的那条纪律（`pulls?state=open` 枚举会漏掉已交付但没开 PR 的片 ⇒ 必须扫远端分支）
+**第三次生效**。`LUM-2606` 在 `agent/devbox4/3f12173e9cb8` 上、issue `in_review`、**无 PR**。
+若只按 open PR 枚举收割，它会一直躺在那儿 —— 和 #168 一样的命运。
+
+处置：cycle 侧把新 base 合进它的分支、解冲突、**补开 PR #187**、再走判据链。
+写集 = `scripts/test_route_parity.py`（+762，66 条用例）＋ `scripts/tests.manifest`（+1 行）
+＋ `docs/37`。**零 Rust 路径变更**（`git diff --name-only <10/11 已验树> <合并树> | grep -c '\.rs$'` = **0**）
+⇒ ①–⑧⑨ 读数继承，零构建四门全绿。
+
+### 🔴 承重一：撞号让号规则**第一次真的被执行到**，而它选中的是**后到者**
+
+`LUM-2606` 的分支起手于 `a5facad4`，那时 §277/§278/§279 都还不存在；它按「先到先得」合法地
+拿了 `§278`。合并时 base 的 `§278` 已经是 `LUM-2592` 的了 ⇒ **两片都合法、都以为对方不存在**
+（与 §239 的 #168 死锁同形，但这次是可解的）。
+
+处置 = 保留两侧 + 按 `## §N` 排序 + **后到者让号**：`LUM-2606` 改 `§280`，`LUM-2592` 保留 `§278`。
+
+🔴 **但我第一次执行时选错了边**：`git merge` 的 `ours` 是**当前分支**（我 checkout 到了
+`LUM-2606` 的分支）而不是 base，于是脚本把 **base 的 `§278`（`LUM-2592`）**改名成了 `§280`，
+把该让号的 `LUM-2606` 留在了 `§278`。**产物是「两段都在、号段单调、无重复」—— 所有
+结构性检查都通过，只有台账的 `持有者 issue` 列对不上才暴露。**
+
+⇒ **纪律：让号方向由「谁起手更晚」决定，不由 git 的 `ours`/`theirs` 决定。**
+冲突脚本必须先打印两侧的 `(段号, 持有者 issue)`，让人能核对方向，再落盘。
+
+🔴 **第二个坑（同一个脚本连着踩）**：改段号**文本**之后**没有同步改排序键**，于是
+`§280` 排在 `§279` 前面；补排序时又把范围写成了「从 `§275` 到文件末尾」，结果
+`## §275.1` 这类**三级标题**的边界判断出错，一轮下来 6 个段变成 4 个、`docs/37` 少 200 行。
+**两次都是「改一个 27k 行 / 1.7MB 的文件」而没有断言行数守恒。**
+⇒ 纪律：**任何重写 `docs/37` 的脚本必须 (a) 断言 `∑len(块) == len(原切片)`，
+(b) 断言 `sorted(前后段号集合) == 前后段号集合`，(c) 落盘后 `grep -c '^## §'` 复核总数。**
+`git checkout -- .` + 重做是唯一可靠的回滚（`git merge --abort` 只回到**冲突态**，
+不回到我改坏之后的态）。
+
+### 🔴 承重二：门 ⑨ 的红可以在**当轮**判定为 base 存量，而且成本极低
+
+`--with-db` 唯一红的是门 ⑨（10/11）。按 §250 的口径取「去掉本片改动的树复现」这一条：
+`git checkout -q ec08a3c9 && bash scripts/gates.sh --only conformance` ⇒ **1 秒**（已有构建缓存），
+两侧**逐字节同一签名**：`first difference at line 17: committed "unevaluable": 13 / fresh 12`。
+且 `report.json` 的 blob 在 base 与 head 上**同为 `db01d842`**（本仓没人刷过它，
+根因仍是 PR #167 没同步 `report.json`）。
+
+🔴 **关键在于这条取证不需要重新编译**：`--only conformance` 在热 target 上是秒级。
+**我此前把「判定红是否本片引入」理解成要重跑整套 `--with-db`（19G / 13 分钟），
+实际上只要在 base 上单独点这一个门。** 这是本轮最便宜的一次判别。
+
+### 顺位
+
+`LUM-2610`（T1-6-J2，`/v1/issues/**` 6 条全回 401，单根因，0 路由）∥
+`LUM-2608`（T1-6-K 后续，两处判词缺陷写成会失败的用例，**零 Rust / 零磁盘**）。
+磁盘起手 26G、冷建下限 19G ⇒ **只容 1 片吃构建**，`LUM-2608` 是零磁盘位。
+
+🔴 **派发机制的一条新读数**：`multica issue status <id> todo`（**不带** `--no-start`）
+在 issue **已经是 `todo`** 时是**空操作、不起 run** —— 我照旧纪律先 `assign --no-start`
+再 `status todo --no-start`，最后那次 `status todo`（想让它起跑）什么也没发生，
+`multica issue runs` 返回 **0 条**。正解是 **`multica issue rerun <id>`**
+（本轮两条都靠它起跑，`01a0f05b-430d` / `01a0f05b-f7e4`，各 40 秒内确认 `running`）。
+⇒ 「status 已经是目标值」时，`status` 命令的启动副作用**不存在**，只有 `rerun` 有。
+
+### 待 owner（不重复 @）
+
+`LUM-2111` 卡 docker/podman/buildah 三者皆无 ⇒ `report.json` 刷新权死锁 ⇒ **每个 PR 的
+`contract` job 持续红**（本轮又见一次，`--with-db` 里的门 ⑨ 就是它）。要么允许单独一次
+stateless `--write`，要么移交刷新权。**cycle 不得自行刷。**
