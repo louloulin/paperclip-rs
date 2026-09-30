@@ -4,7 +4,7 @@
 为什么这个文件在**顶层** `scripts/` 而不是包内
 --------------------------------------------
 `scripts/gates.sh` 的 ⑫ 用 `find scripts … -name 'test_*.py'`（**递归**）发现用例。
-本片之前，「检查门」的 4 条住在 `scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py`
+本片之前，「检查门」的 4 条住在 `scripts/t1_6_realm_diff_taxonomy/test_t1_6_realm_diff_taxonomy.py`
 —— 一个**包内**文件。发现规则一旦收窄回顶层非递归 glob，那个文件就不在集合里，
 那 4 条**自己也不跑** ⇒ 没有任何东西会报警。
 ⇒ 这是**自指、而且方向是错的**：守门检查住在会被这条门丢掉的那个文件里。
@@ -33,8 +33,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join("scripts", "gates.sh")
 MANIFEST = os.path.join(REPO_ROOT, "scripts", "tests.manifest")
 GUARDIAN = os.path.join("scripts", "test_gate_scripts_tests.py")
+# 包内测试文件的名字**不是**随手起的：`LUM-2631` / `§302` 把它从
+# `test_realm_diff_taxonomy.py` 改成 `test_t1_6_realm_diff_taxonomy.py`，因为门 ⑭ 对包入口
+# 要求的期望名是 `test_<包名>.py`。本常量必须跟着改名，否则
+# `test_gate_lists_the_package_test_file` 会拿一个旧路径去问门（自己红，方向相反）。
 PACKAGE_TEST = os.path.join(
-    "scripts", "t1_6_realm_diff_taxonomy", "test_realm_diff_taxonomy.py"
+    "scripts", "t1_6_realm_diff_taxonomy", "test_t1_6_realm_diff_taxonomy.py"
 )
 
 

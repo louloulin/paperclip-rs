@@ -100,6 +100,17 @@ jobs:
       - name: "⑭ judge-test-coverage — python3 scripts/judge_test_coverage_check.py --quiet"
         run: bash scripts/gates.sh --only judge-test-coverage
 
+      # ⑮ 纯标准库、亚秒级、不需要数据库/编译/磁盘：T1-6 `REALM_DIFF` 族的归因分类器
+      # （`scripts/t1_6_realm_diff_taxonomy/`，9 个模块）。存在的理由是 §293.4 / §292.2 /
+      # §301 那一族的**第三个方向**：这个判定器此前有 53 条包内测试、跑起来 rc=0，
+      # 却**没有任何一道门执行它**（`grep` 只命中 `gates.sh` 的两行**注释**）⇒ 判词可以
+      # 静默腐烂而 CI 全绿。接线后它同时进门 ⑭ 的读数（`judges` 6 → 7）。
+      # ⚠️ 本门判据 = rc==0 **且**输出非空 **且**每个小节标题都在，不是「缺陷数」：
+      # 那个分类器的 `main()` 恒返回 0（它是归因报告，不是判红工具）。同样只调 gates.sh
+      # （本仓纪律：命令唯一实现），yml 里只写门名。
+      - name: "⑮ realm-diff-taxonomy — python3 -m scripts.t1_6_realm_diff_taxonomy"
+        run: bash scripts/gates.sh --only realm-diff-taxonomy
+
   # ⑥：真 PostgreSQL 16 service 容器；**先建表**再跑 DB e2e（测试自己不做迁移）。
   db:
     name: db — postgres:16 + DB e2e
