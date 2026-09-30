@@ -26779,6 +26779,26 @@ lane 会**立刻**退回「未定」并点名它。
   ⚠️ 三者的**实测计数以 §278.2 为底**（`EXTRACT_*` 3、`DEVICE_*` 3），
   **不要抄工单里的 5 / 9**。
 
+### §278.8b ⚠️ 门 ⑥ 的一次**假红**：`pool timed out`，换新库即绿
+
+收尾的第四次 `--with-db` 里门 ⑥ 由 `e2e=0` 转 `e2e=101`，13 条失败**全在
+`routes::attachments::tests::db*`**，panic 逐字是
+
+```
+MULTICA_TEST_DATABASE_URL is set but connect failed:
+  database connection error: pool timed out while waiting for an open connection
+```
+
+**不是本片回归**（本片写集与 `attachments` 零文件交集），**按 §273 交接的指示
+「换新库重跑再判」**：`mc_c2592c`（全新库）上单独重跑门 ⑥ ⇒ **`migrate=0, e2e=0`，rc=0**。
+
+⇒ **可复用的判别式**：门 ⑥ 的失败签名是 `pool timed out` **且**失败集合**全部**落在
+某一个 `routes::<x>::tests::db*` 模块 ⇒ 那是**库被上一轮跑干了**，不是代码坏了。
+判别成本 = 换新库重跑一次 65s，**远低于**去逐条读那 13 个 panic。
+⚠️ 与本片撞上的另一族**签名相同但成因不同**：`SEED_404` 那条判据被证伪（§270）——
+**同一个 `pool timed out` 也可能是装置面造不出数据**。⇒ 判别时**两个假设都要排**，
+顺序是「换新库」（排库）→「失败集合是否单一模块」（排连接池）→ 才轮到读代码。
+
 ### §278.9 🔴 承重二：**「填上负责面」这个动作本身会撞上一条钉死旧状态的断言**
 
 本片 rebase 到 `61b03f2a`（含 PR #184 / `LUM-2602`）之后，门 **⑫ `scripts-tests` 由绿转红**：
