@@ -426,7 +426,10 @@ mod tests {
         let e = require_property_admin_actor(&headers_with_actor_source("task_token"))
             .expect_err("task_token must be denied");
         assert_eq!(e.http_status(), 403);
-        assert_eq!(e.to_string(), format!("forbidden: {AGENT_CANNOT_MANAGE_MESSAGE}"));
+        assert_eq!(
+            e.to_string(),
+            format!("forbidden: {AGENT_CANNOT_MANAGE_MESSAGE}")
+        );
     }
 
     /// 双向的**另一半**，且是本片最容易写错的一半：🔴 **`cloud_pat` 必须放行**。
@@ -437,10 +440,10 @@ mod tests {
     #[test]
     fn non_task_token_actors_pass_the_property_gate() {
         for raw in [
-            "cloud_pat",     // 机器凭据，但上游 resolveActor 判它是 "member" ⇒ 放行
+            "cloud_pat",       // 机器凭据，但上游 resolveActor 判它是 "member" ⇒ 放行
             "service_account", // 未知值：上游有意当人类
-            "TASK_TOKEN",    // 大小写不同 ⇒ 字面比较不命中
-            "",              // 空串 ⇒ 人类
+            "TASK_TOKEN",      // 大小写不同 ⇒ 字面比较不命中
+            "",                // 空串 ⇒ 人类
         ] {
             require_property_admin_actor(&headers_with_actor_source(raw))
                 .unwrap_or_else(|e| panic!("{raw:?} must pass, got {e}"));

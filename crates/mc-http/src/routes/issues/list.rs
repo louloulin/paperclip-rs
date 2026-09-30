@@ -8,6 +8,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use mc_errors::Error;
 use mc_repos::issue::{
     split_comma_param, IssueGroupField, IssueRepo, IssueRow, CHILDREN_PARENTS_MAX,
     SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT,
@@ -349,16 +350,20 @@ mod tests {
     #[test]
     fn malformed_query_body_is_400_not_422() {
         for raw in [
-            &b"not json"[..],           // fixture 081 的原值
-            b"",                        // 空体
-            b"{",                       // 截断
-            b"{\"q\": }",               // 缺值
-            b"[1, 2]",                  // 数组：上游的 map[string]string 同样解不出
-            b"\"a string\"",            // 标量：同上
+            &b"not json"[..], // fixture 081 的原值
+            b"",              // 空体
+            b"{",             // 截断
+            b"{\"q\": }",     // 缺值
+            b"[1, 2]",        // 数组：上游的 map[string]string 同样解不出
+            b"\"a string\"",  // 标量：同上
         ] {
             let e = decode_query_body(&Bytes::from_static(raw)).expect_err("must reject");
             assert_eq!(e.http_status(), 400, "{raw:?}");
-            assert_eq!(e.to_string(), "validation error: invalid request body", "{raw:?}");
+            assert_eq!(
+                e.to_string(),
+                "validation error: invalid request body",
+                "{raw:?}"
+            );
         }
     }
 
