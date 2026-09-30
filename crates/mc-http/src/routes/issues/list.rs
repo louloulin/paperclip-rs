@@ -4,9 +4,11 @@ use crate::error::ApiResult;
 use crate::routes::auth_user::AuthUser;
 use crate::routes::invitations::require_workspace_member;
 use crate::state::AppState;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use mc_errors::Error;
 use mc_repos::issue::{
     split_comma_param, IssueGroupField, IssueRepo, IssueRow, CHILDREN_PARENTS_MAX,
     SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT,
@@ -59,14 +61,35 @@ pub(crate) async fn list_issues(
 }
 
 /// `POST /api/issues/query`（body 与 `GET /api/issues` 同 key）
+///
+/// 🔴 **不用 `Json<T>` 提取器**（本片，`BEHAVIOR_JSON_DECODE_STATUS`）：axum 的
+/// `JsonRejection` 把解码失败映射成 **422 Unprocessable Entity**，而上游
+/// `QueryIssues`（`issue.go:1152-1156`）是 `json.NewDecoder(...).Decode(&params)`
+/// 失败即 `writeError(w, 400, "invalid request body")` ⇒ **400**。状态码词汇不同，
+/// 由 `Json` 提取器在 handler 之前短路掉，handler 体根本看不到这个失败。
+/// 改法与 `routes/properties.rs::parse_body` 同款（本仓既有的 400 惯例）：收
+/// `Bytes`、自己解，解不出来回 `validation(...)`（`Error::Validation` ⇒ 400）。
+///
+/// ⚠️ 双向面：只把**畸形体**从 422 挪到 400 不算修好 —— 良构体必须**不**被这条
+/// 路径拒。`serde_json::from_slice` 对良构 JSON 走的是同一条 `from_pairs`
+/// （`query.rs:88`），逐键语义与改前**完全一致**（含未知键静默忽略）。
 pub(crate) async fn query_issues(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     user: AuthUser,
-    Json(body): Json<HashMap<String, JsonValue>>,
+    body: Bytes,
 ) -> ApiResult<Json<IssueListResponse>> {
-    let query = ListIssuesQuery::from_pairs(&body)?;
+    let pairs = decode_query_body(&body)?;
+    let query = ListIssuesQuery::from_pairs(&pairs)?;
     list_issues(State(state), headers, Query(query), user).await
+}
+
+/// body 解码（上游 `QueryIssues` 的 `json.NewDecoder(..).Decode(&params)` 失败即 400）。
+///
+/// 抽成独立函数只为**可测**：handler 体要 `AppState`（真库）才能跑，而「畸形 ⇒ 400 /
+/// 良构 ⇒ 不被这条路径拒」这条双向判据必须在**不接库**的前提下钉住。
+fn decode_query_body(body: &Bytes) -> Result<HashMap<String, JsonValue>, Error> {
+    serde_json::from_slice(body).map_err(|_| validation("invalid request body"))
 }
 
 /// `GET /api/issues/search`（`q` 必填，上限 50 条）
@@ -316,4 +339,47 @@ pub(crate) async fn child_progress(
         })
         .collect();
     Ok(Json(ChildProgressResponse { progress }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 双向判据（`BEHAVIOR_JSON_DECODE_STATUS`）：畸形 body ⇒ **400**（上游 `issue.go:1154`
+    /// 逐字 `invalid request body`），**不是** axum `Json` 提取器的 422。
+    #[test]
+    fn malformed_query_body_is_400_not_422() {
+        for raw in [
+            &b"not json"[..], // fixture 081 的原值
+            b"",              // 空体
+            b"{",             // 截断
+            b"{\"q\": }",     // 缺值
+            b"[1, 2]",        // 数组：上游的 map[string]string 同样解不出
+            b"\"a string\"",  // 标量：同上
+        ] {
+            let e = decode_query_body(&Bytes::from_static(raw)).expect_err("must reject");
+            assert_eq!(e.http_status(), 400, "{raw:?}");
+            assert_eq!(
+                e.to_string(),
+                "validation error: invalid request body",
+                "{raw:?}"
+            );
+        }
+    }
+
+    /// 双向的**另一半**：良构 body 必须**不**被这条路径拒 —— 只把畸形值从 422 挪到 400、
+    /// 却顺手把良构体也拒了，就是**假通过**。
+    #[test]
+    fn well_formed_query_body_still_decodes() {
+        for raw in [
+            &b"{}"[..],
+            br#"{"q":"needle"}"#,
+            br#"{"workspace_id":"ws-1","limit":10}"#,
+            br#"{"unknown_key":"ignored"}"#, // 上游也忽略未知键（from_pairs 的 `_ => {}`）
+        ] {
+            let pairs = decode_query_body(&Bytes::from_static(raw)).expect("must accept");
+            // 良构体解出来的对象仍要能过 from_pairs（即 handler 的下一步）。
+            ListIssuesQuery::from_pairs(&pairs).expect("from_pairs must accept");
+        }
+    }
 }

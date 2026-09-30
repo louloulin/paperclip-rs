@@ -120,8 +120,8 @@ async fn load_member_in_workspace(
     Ok(target)
 }
 
-/// workspace JSON（上游 `WorkspaceResponse` 的 multica-rs 子集；
-/// `context` / `repos` / `issue_prefix` 列不在 M0 schema 中，见 docs/05 未覆盖项）。
+/// workspace JSON（上游 `WorkspaceResponse` 的 multica-rs 子集；`context` / `repos` /
+/// `issue_prefix` 列不在 M0 schema 中，见 docs/05 未覆盖项）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceResponse {
     pub id: Id,
@@ -408,7 +408,14 @@ pub struct UpdateWorkspaceRequest {
     pub description: Option<String>,
     pub avatar_url: Option<String>,
     pub settings: Option<Value>,
+    pub issue_prefix: Option<String>,
 }
+
+/// 400 的**唯一**文本（上游 `issuePrefixFormatError`，`workspace.go:96` 逐字）。
+/// `issue_prefix` 的入参校验（上游 `normalizeIssuePrefix`，`workspace.go:84-94`）在
+/// 子模块 [`issue_prefix`]（本文件已贴门 ⑩ 的 R7 800 行上限，零余量）。
+mod issue_prefix;
+use issue_prefix::normalize_issue_prefix;
 
 /// `PATCH /api/workspaces/{id}` — 要求 admin/owner（中间件已校验）。
 pub async fn update_workspace(
@@ -424,6 +431,11 @@ pub async fn update_workspace(
             return Err(validation("name is required"));
         }
         name = Some(n);
+    }
+    // 校验顺序照上游：issue_prefix 在 avatar_url **之前**（`workspace.go:415`）。
+    // 🔴 合法值**仍不落库**（`mc_core::WorkspaceUpdate` 无该字段）⇒ 残留在 `docs/37` §268。
+    if let Some(raw_prefix) = &req.issue_prefix {
+        let _validated = normalize_issue_prefix(raw_prefix)?;
     }
     let ws = WorkspaceRepo::new(state.db.clone())
         .update(
