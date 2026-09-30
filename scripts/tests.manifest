@@ -26,6 +26,7 @@
 scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py
 scripts/test_extract_requirements.py
 scripts/test_gate_scripts_tests.py
+scripts/test_harvest_preflight.py
 scripts/test_route_parity.py
 scripts/test_t1_6_precondition_taxonomy.py
 scripts/test_t1_6_taxonomy.py

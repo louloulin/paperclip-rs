@@ -27532,3 +27532,102 @@ base 是否 head 祖先、head 停滞轮数）**零编译、可脚本化**，却
 处置：`multica issue rerun 01a0f062` ⇒ 45 秒内 `running`、workdir 换成
 `lum-2613-4f7b360e0863`（36M，已 checkout）⇒ **本片在飞**。
 ⇒ 与 §275.3（「无 workdir 不是死亡信号」）互补：**有 workdir 也不是起跑信号**。
+
+## §283 【LUM-2613 / T1-6-N】把收割判据链本身做成脚本 —— H1–H6 六条读数从「每轮人记」变成一条命令
+
+派工依据：§277.3 / §280 / §281 连着三轮都记着同一件事 —— **收割的判据没有任何受检动作，
+全靠人记**。#168 从 §243 到 §282 连续七轮，每轮人肉重跑同一条六步判据链，其中至少三步
+**零编译、零磁盘、纯 git 算术**（`merge-tree --write-tree` 的 rc、base 是否 head 祖先、
+head 停滞轮数），每轮约 1 秒，但每轮的读数只存在于本文件的散文里。`LUM-2606` 给「决定派给谁」
+那道门（`route_parity.py`）加了 66 条用例、`LUM-2607` 把「分配空号」变成受检动作（门 ⑬）；
+**本片是同一族的第三块：把「决定合不合」也变成受检动作。**
+
+### 交付面
+
+- `scripts/harvest_preflight.py`（**只读**：没有 `--write-*`、不 merge、不开 PR、不改任何分支）
+- `scripts/test_harvest_preflight.py`（26 例，**已被门 ⑫ 的递归 glob + `tests.manifest` 覆盖**）
+
+### 六条判据
+
+| 判据 | 是什么 | 形态 |
+|---|---|---|
+| **H1** | base 是否 head 祖先 | ①可快进 / ②**已被 base 包含（该关，不是该合）** / ③需真合 |
+| **H2** | `git merge-tree --write-tree` 的 rc | `clean` / `conflict` / `unrelated-histories` / `error` 四档 |
+| **H3** | 冲突面分类 | 号段面（可机械解）vs 代码面（要仲裁） |
+| **H4** | head 停滞 | 时长（小时）+ **提到它的 `## §NNN` 段数** |
+| **H5** | 远端分支枚举 | 未被 base 包含的 `origin/agent/*`、`origin/feat/*`（§277.3 机械化） |
+| **H6** | 号段台账交叉 | 候选树上的 R1–R4（**`import` 门 ⑬ 的 `check()`，不复制判据**）+ 跨树撞号投影 |
+
+### golden fixture：#168（起手 base `78195485b`，实测逐字）
+
+```
+$ python3 scripts/harvest_preflight.py --base origin/feat/multica-rs-initial \
+      --head origin/agent/devbox5/8e61c45406b5
+  H1 form=③ (base_only=91 head_only=1)
+  H2 rc=1 status=conflict merge_tree=9996d65d… conflicts=['docs/37-M3-W3C-PREFLIGHT.md']
+  H3 section_plane=1['docs/37-M3-W3C-PREFLIGHT.md'] code_plane=0[] other=0 needs_arbitration=False
+  H4 stall_hours=11.41 sections_seen=14 last_section=282
+  H6 COLLISION §243: candidate=LUM-2570 base=LUM-2573 (base source: ledger)
+```
+
+**四条形状级断言逐条成立**：H1=③ ／ H2 rc=1 且冲突面**只有** `docs/37` ／
+H3 = 号段面 1 · 代码面 0 ／ H4 停滞 ≥1h。绝对读数相对 §282（base 当时 `816c668e`）已变
+（`merge_tree`、停滞时长都不同），**形状未变** ⇒ 按工单要求，如实记录而不改断言迁就读数。
+断言写在 `TestGoldenPR168`，ref 不在（CI 浅克隆）时 `skipUnless` **显式跳过并打出原因**。
+
+### 判别式三段读数（不是用例数）
+
+`TestH2MergeTree.test_three_stage_readings_conflict_then_reverted` 在**同一个临时仓库**里
+依次构造并断言：**rc=0（两侧各改各的文件）→ rc=1（两侧改同一行）→ rc=0（两侧都复原）**。
+三段都在，缺一段就红。另有 `unrelated-histories`（rc=128）与「自动合并不算冲突」两条独立读数。
+
+🔴 构造「自动合并」fixture 时踩到一次**真实误判**：2 行文件里两侧各改 1 行，git 判
+**CONFLICT**（两个 hunk 相邻落进同一个 diff hunk）⇒ 「我以为会自动合并」不是判据，
+只有 git 自己的 rc 是。已写进用例注释。
+
+### H5 实测（起手 base 逐字）
+
+`found=27` 未被包含的远端分支，`H2_status` 分布 `conflict 24 / unrelated-histories 2 / clean 1`；
+按「号段面 vs 代码面」：`代码面 11`、号段面 6、两者皆有 1、两者皆无 9。
+
+### 承重一：**R1–R4 是树内判据，#168 的撞号是跨树的 ⇒ 必须另加投影**
+
+门 ⑬ 的 R1–R4（`section_alloc_check.py`）全部在**一棵树内**比较 `docs/37` 与台账。
+而 #168 的撞号形状是：候选树的 `§243` 归 `LUM-2570`，base 台账的 `§243` 归 `LUM-2573`
+—— **两棵树各自都完全自洽**（R1–R4 全绿），撞号只在 merge 时以 CONFLICT 暴露。
+⇒ H6 在复用 R1–R4 之外，另做一件 R1–R4 结构上做不到的事：**跨树投影** ——
+逐个段号比「候选树上的持有者」（`## §NNN` 标题里第一个 `LUM-####`）与「base 台账登记的持有者」，
+不等即**撞号预警**。上面那条 `§243` 就是它当场算出来的，不是回忆出来的。
+
+顺带一条**口径**：`Auto-merging <path>` 行**只在同一次合并里有冲突时才打**
+（干净合并只打一个树哈希）⇒ 本脚本的 `auto_merged` 是**旁注**，不是判据。
+#168 那次它把 `scripts/extract_upstream_fixtures.py` 列成「干净自动合并」——
+若把它当冲突，就会得出「两个阻塞点」的错误结论。
+
+### 承重二：`--check` **故意不**把「某个候选有冲突」判红
+
+分支健康（有没有冲突 / 有没有撞号）依赖当下的远端状态，是 §275 那一族
+「平台读数 ≠ 状态健康」。拿它当 CI 门会在 base 上**恒红**（本片起手就有 24 条候选带冲突），
+恒红的门只会被关掉。⇒ `--check` 判红的是**工具级不变量**：base 可解析、H5 发现集合**非空**
+（空集合绝不能读成绿，与门 ⑫ 空 glob / 门 ⑬ 空台账同族）、每条候选的 H1/H2 读数都算得出来。
+冲突与撞号仍以 `--json` 字段与明细行**报出**，由收割的人读。
+
+### 承重三：测「另一棵树」必须换掉 `ROOT`，`os.chdir` 不够
+
+`ROOT` 是 import 时从 `__file__` 算出的**绝对路径**，`run_git` 的 `cwd=ROOT` 照样跑在真仓库里
+⇒ 本片第一版守门用例里 `os.chdir(tmp)` 之后，断言里看到的**是真仓库的 150+ 个 ref**，
+而用例本身是绿的。已改成 `--repo` 显式指定 git 工作目录（测试与门都能用），
+并在 `setUp/tearDown` 里成对处理 `GIT_DIR`。**这是 §275「上一轮说它红不构成证据」的
+一个变体：绿色的用例也可能压根没测到它声称的东西。**
+
+### 门读（当轮实测，勿抄历史值）
+
+门 ⑫ `scripts-tests` rc=0（`7 file(s)`，本片新文件已在 `tests.manifest` 登记）；
+门 ⑬ `section-alloc` rc=0（`sections=212 numbers=211 ledger=211 defects=0`）；
+门 ⑩ `file-size` rc=0。**门 ⑦ 未跑**（本片零 Rust，路由面与本片写集零交集，不重跑也不继承声明）。
+
+### 边界（明确不做）
+
+零 Rust / 零 cargo / 零真库 / 零磁盘；不开 PR、不 merge、不动 #168；
+不改 `scripts/gates.sh` 的任何既有门（`--check` 是**独立命令**，未接成门 ⑭）；
+不改 `docs/37` 既有段的号；不碰 `mc-conformance/**`、不跑门 ⑨ `--with-db`。
