@@ -120,12 +120,8 @@ async fn load_member_in_workspace(
     Ok(target)
 }
 
-/// workspace JSON（上游 `WorkspaceResponse` 的 multica-rs 子集；`context` / `repos` 列不在
-/// M0 schema 中，见 docs/05 未覆盖项）。
-///
-/// 🔴 **本片更正**：此注释曾把 `issue_prefix` 列也列为「不在 M0 schema」——**实测为错**：
-/// `migrations/upstream/020_issue_number.up.sql` 随 vendored 上游迁移一起跑，列**存在**
-/// （`mc-repos/src/squad.rs:680` 在读）。缺的是 `mc_core::WorkspaceUpdate` 的字段（§268）。
+/// workspace JSON（上游 `WorkspaceResponse` 的 multica-rs 子集；`context` / `repos` /
+/// `issue_prefix` 列不在 M0 schema 中，见 docs/05 未覆盖项）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceResponse {
     pub id: Id,
@@ -416,23 +412,10 @@ pub struct UpdateWorkspaceRequest {
 }
 
 /// 400 的**唯一**文本（上游 `issuePrefixFormatError`，`workspace.go:96` 逐字）。
-const ISSUE_PREFIX_FORMAT_ERROR: &str = "issue prefix must be 1-10 uppercase letters or digits";
-/// `issue_prefix` 的入参校验（上游 `normalizeIssuePrefix`，`workspace.go:84-94`）：
-/// `ToUpper(TrimSpace(raw))`；空 ⇒ **「没给」**、回落默认、**不** 400；否则必须匹配
-/// `^[A-Z0-9]{1,10}$`（`workspace.go:29`），否则 400 + 逐字文案。
-///
-/// 🔴 `BEHAVIOR_ISSUE_PREFIX_UNPORTED` **只做到「拒」**：合法值仍不落库（`mc_core::
-/// WorkspaceUpdate` 无该字段）——残留缺口与补完条件见 `docs/37` §268。
-fn normalize_issue_prefix(raw: &str) -> Result<String, Error> {
-    let prefix = raw.trim().to_uppercase();
-    // 上游的 ("", true)：空白 = 未提供，不 400
-    let ok = prefix.is_empty()
-        || (prefix.len() <= 10
-            && prefix
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
-    if ok { Ok(prefix) } else { Err(validation(ISSUE_PREFIX_FORMAT_ERROR)) }
-}
+/// `issue_prefix` 的入参校验（上游 `normalizeIssuePrefix`，`workspace.go:84-94`）在
+/// 子模块 [`issue_prefix`]（本文件已贴门 ⑩ 的 R7 800 行上限，零余量）。
+mod issue_prefix;
+use issue_prefix::normalize_issue_prefix;
 
 /// `PATCH /api/workspaces/{id}` — 要求 admin/owner（中间件已校验）。
 pub async fn update_workspace(
@@ -450,8 +433,9 @@ pub async fn update_workspace(
         name = Some(n);
     }
     // 校验顺序照上游：issue_prefix 在 avatar_url **之前**（`workspace.go:415`）。
+    // 🔴 合法值**仍不落库**（`mc_core::WorkspaceUpdate` 无该字段）⇒ 残留在 `docs/37` §268。
     if let Some(raw_prefix) = &req.issue_prefix {
-        let _validated = normalize_issue_prefix(raw_prefix)?; // 合法值仍不落库，见上
+        let _validated = normalize_issue_prefix(raw_prefix)?;
     }
     let ws = WorkspaceRepo::new(state.db.clone())
         .update(
@@ -780,21 +764,5 @@ mod tests {
         let r = UpdateMeRequest::default();
         assert!(r.name.is_none());
         assert!(r.timezone.is_none());
-    }
-
-    /// 双向判据（`BEHAVIOR_ISSUE_PREFIX_UNPORTED`）：畸形值 ⇒ **400**；良构值 ⇒ **不**被拒。
-    #[test]
-    fn issue_prefix_validation_is_bidirectional() {
-        for raw in ["前端团队前端团队前端", "AB-C", "ABCDEFGHIJK", "abc def"] {
-            let e = normalize_issue_prefix(raw).expect_err(raw);
-            assert_eq!(e.http_status(), 400, "{raw}");
-            assert_eq!(e.to_string(), format!("validation error: {ISSUE_PREFIX_FORMAT_ERROR}"));
-        }
-        for (raw, want) in [
-            ("ABC", "ABC"), ("abc", "ABC"), (" ab1 ", "AB1"), // trim 在 upper 之前
-            ("A1B2C3D4E5", "A1B2C3D4E5"), ("", ""), ("   ", ""), // 10 字符 / 空 = 不 400
-        ] {
-            assert_eq!(normalize_issue_prefix(raw).expect(raw), want, "{raw}");
-        }
     }
 }
