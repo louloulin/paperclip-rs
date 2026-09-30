@@ -26831,3 +26831,212 @@ test_unfilled_subfamilies_are_the_two_documented_ones ... FAIL
 ⇒ 处置顺序必须是「**读那句断言自己的 docstring** → 按它声明的意图改」，
 而不是「让它变绿」。本片若只追求门全绿，正确做法会退化成 `--skip`，
 而那句 docstring 恰好把正确做法写在了原地。
+## §279 【LUM-2607 / T1-6-L】**零 Rust / 零磁盘**：把 `docs/37` 的号段分配从「手工先到先得」变成受检动作（台账 + 双向校验 + 撞号判据 = 门 ⑬ `section-alloc`）；🔴 承重一：起手 base 里**已经有一个真实撞号**（`## §226` 出现两次）
+
+起手 base **`a5facad4`**（`git fetch` 后当场 `git reset --hard` 复核 = `a5facad4`，即 `origin/feat/multica-rs-initial` 的 tip；`origin/main` 是另一条线，与本片无关）。
+零 `cargo` / 零真库 / 零磁盘：本片不写 Rust、不跑 ⑥/⑧/⑨/`--with-db`、不碰 `target/`。
+**不改 `docs/37` 既有任何一段的号**（不删 / 不重排 / 不合并），只**新增** §279 这一段，外加
+`docs/section-alloc.tsv` + `scripts/section_alloc_check.py` + 门 ⑬（+ `ci.yml` 的 `fast` job 追加一个 step）。
+
+### §279.1 交付物、四条判据与复算命令
+
+| 写面 | 内容 | 复算命令 |
+|---|---|---|
+| `docs/section-alloc.tsv` | 号段台账，格式 `<段号>\t<持有者 issue>\t<一句话摘要>\t<docs/37 出现次数>`（第 4 列缺省 1） | `python3 scripts/section_alloc_check.py` |
+| `scripts/section_alloc_check.py` | R1–R4 的**唯一实现**；纯标准库、只读、**没有** `--write-*` 模式 | 同上 |
+| `scripts/gates.sh` | 新增门 ⑬ `section-alloc`（文件顶部说明 + 已知坑、`ALL_GATES`、默认集合、`gate_label`、`gate_env_name`、`run_section_alloc_gate`、dispatch；**既有 ①–⑫ 的判据一行未改**） | `bash scripts/gates.sh --only section-alloc` |
+| `.github/workflows/ci.yml` | `fast` job 追加一个 step，只调 `bash scripts/gates.sh --only section-alloc`（不在 yml 里写 python3 —— 本仓纪律：命令唯一实现） | 同上 |
+
+四条判据（脚本 `--help` 与 docstring 里逐字相同）：
+
+- **R1 文件 → 台账**：`docs/37` 里出现的**每个** `## §NNN` 段号，台账必须有对应行。
+- **R2 台账 → 文件**：台账**每一行**的段号，必须在 `docs/37` 里真实存在（**双向**；单向的话台账自己会漂成散文）。
+- **R3 台账段号唯一**：同一段号在台账里出现两次 ⇒ 红。**这是「撞号」的判据**：两片各自分配同一个空号 ⇒ 两行同号。
+- **R4 出现次数一致**：段号在 `docs/37` 里的**实际出现次数**必须等于台账登记的次数 ⇒ **任何新增的文件内重复段号都红**（连直推、没走分配的撞号也红）。
+
+起手生成台账（**一次性**，不是刷新手段）：
+
+```bash
+# 用 checker 自己的 SECTION_RE 抽，保证「抽」与「校验」是同一份规则（两份规则各自绿 = 查不出来）
+python3 - <<'PY'
+import re, sys; sys.path.insert(0, 'scripts')
+import section_alloc_check as sac
+lines = sac.DOC.read_text(encoding='utf-8').splitlines()
+head = {}
+for line in lines:
+    m = sac.SECTION_RE.match(line)
+    if m: head.setdefault(m.group(1), line)
+...  # 持有者 = 标题里第一个 LUM-####；摘要 = 标题去号后的前 72 字；次数 = 该号出现次数
+PY
+```
+
+台账**没有** `--write` 模式：台账是**分配动作**的产物，必须由分配者写下；「自动重生成台账」
+＝「自动把撞号合法化」，那正是本片要关掉的东西。
+
+### §279.2 台账读数（双向 + 四条判据）
+
+```text
+$ python3 scripts/section_alloc_check.py
+section-alloc: docs/37-M3-W3C-PREFLIGHT.md  vs  docs/section-alloc.tsv
+  readings: sections=207 distinct=206 ledger_rows=206  R1(file->ledger)=0 R2(ledger->file)=0 R3(ledger-dup)=0 R4(count)=0
+  既有重复段号（由台账第 4 列如实登记，不是缺陷）: §226
+section-alloc: OK — sections=207 numbers=206 ledger=206 defects=0
+$ echo $?
+0
+```
+
+读数的三个数**不是同一个数，且差值就是本片的承重一**：
+
+- `sections=207` = `## §NNN` 的**出现次数**（base 206 + 本片新增的 §279 一次）；
+- `numbers=206` = **不同段号**个数（207 − 1，因为 §226 占了两次）；
+- `ledger_rows=206` = 台账行数（**一个段号一行**，所以 §226 只占一行、第 4 列记 2）。
+
+双向与撞号的读数全为 0 缺陷。台账行数 206 = base 的 205（不同号）+ 本片 §279。
+
+### §279.3 探针：三段读数（装在本仓**真文件**上，照实记录）
+
+每条探针都取「**改前** rc=0 / **改后** rc≠0 / **复原** rc=0」三段；`checker` = `python3 scripts/section_alloc_check.py --quiet`，
+`gate` = `bash scripts/gates.sh --only section-alloc`。探针全程 `sha256sum` 三文件在**复原后逐字回到改前值**
+（`500e917a… / 66af3f4a… / c5e2186a…`，改前改后哈希相同）。
+
+| # | 探针（真文件上的动作） | 改前 | 改后 | 复原 | 改后命中的判据 |
+|---|---|---|---|---|---|
+| P1 | 台账里删掉 §276 那一行（`awk -F'\t' '$1!="276"'`） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | R1 |
+| P2 | `docs/37` 里把 §276 的号改成 §275（`sed 's/^## §276 /## §275 /'`） | checker 0 / gate 0 | checker **1**（2 defects）/ gate **1** | checker 0 / gate 0 | R2 + R4 |
+| P2b | `docs/37` 里**复制**一份 §275 标题（只多一个号，不删任何号） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | **只有 R4** |
+| P3 | 台账被**删空**（截成 0 字节） | checker 0 / gate 0 | checker **1**（207 defects）/ gate **1** | checker 0 / gate 0 | R1 + 空台账 |
+| P3b | 台账文件被**删掉**（不存在） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | 前置件缺失 |
+| P5 | 台账里**追加一行与 §276 同号**（两行同号） | checker 0 / gate 0 | checker **1**（1 defect）/ gate **1** | checker 0 / gate 0 | **只有 R3**（撞号判据本身） |
+| P4 | 校验器被**改名**（`section_alloc_check.py` → `.bak`） | gate 0 | gate **1** | gate 0 | 门自带的前置件判据 |
+| P4b | 校验器被**删除** | gate 0 | gate **1** | gate 0 | 同 P4（同一代码路径） |
+
+改后逐条缺陷原文（`--quiet` 只给退出码；门**红了会重跑一遍不带 `--quiet`** 把明细打出来，与 ⑧ 同款）：
+
+```text
+P1  error: R1 段号 276 出现在 docs/37-M3-W3C-PREFLIGHT.md（1 处）但台账没有对应行（分配动作没登记）
+P2  error: R2 台账行 236 登记了段号 276，但 docs/37-M3-W3C-PREFLIGHT.md 里没有 `## §276` 段
+    error: R4 段号 275：docs/37-M3-W3C-PREFLIGHT.md 里出现 2 次，台账行 235 登记 1 次
+P2b error: R4 段号 275：docs/37-M3-W3C-PREFLIGHT.md 里出现 2 次，台账行 235 登记 1 次
+P3  error: docs/section-alloc.tsv 是空的（0 行）—— 空台账必须判红，不能读成绿
+    error: R1 段号 37 出现在 docs/37-M3-W3C-PREFLIGHT.md（1 处）但台账没有对应行（分配动作没登记）   # 其后 205 条同族
+P3b error: 缺文件：docs/section-alloc.tsv 不存在（被校验的文件没了只能判红，不能读成绿）
+P5  error: R3 撞号：台账段号 276 出现 2 次（台账行 236,238；持有者 LUM-2604）
+P4  error: the section-alloc gate needs its checker, but it is missing
+P4b error: the section-alloc gate needs its checker, but it is missing
+```
+
+🔴 **P2b 是「第 4 列」的承重证据**（见 §279.6）：它**只新增**一个段号、**不删**任何号，
+所以 R1/R2/R3 三条全绿，**只有 R4 判红**。没有第 4 列，这条探针会绿 —— 而它正是 §226 的成因形态。
+
+🔴 **P5 是「撞号判据」本身的独立证据**：台账里两行同号（同持有者）⇒ **只有 R3 判红**（1 defect），
+其余三条全绿 —— 即 R3 不是 R4 的复述。
+
+### §279.4 门级自指保护：脚本被删 / 被改名 / 台账被删 ⇒ 红（`§276` 的教训）
+
+`§276`（`LUM-2604`）钉死的形态是「判红条件只看**被检验的集合** ⇒ 丢掉检查器表现为绿」。
+本片把同一族防护建在**门**里（`run_section_alloc_gate`），三条都是显式判据：
+
+1. **校验器不存在 ⇒ 判红**（P4 / P4b 实测：`gate rc=1`、`GATE_SECTION_ALLOC_EXIT=1`、
+   `error: … needs its checker, but it is missing`），**不是**让 `python3` 的 `exit 2` 去当读数
+   —— 那样虽然也非 0，但读数看不出病因，而且「谁把检查删了」不会有独立的判据。
+2. **台账不存在 / 是空的 ⇒ 判红**（P3 / P3b；脚本里的「空台账必须判红，不能读成绿」）。
+3. **本门不在被检查的集合里**：判据的实现住在 `scripts/section_alloc_check.py`（**不是** `test_*.py`），
+   门的**发现规则不参与**本门的判红 ⇒ 不存在「收窄发现规则 ⇒ 门自己消失」的路径。
+   刻意避开 `test_*.py` 命名还有一个副作用：**不需要**动 `scripts/tests.manifest`
+   （与并行片 `LUM-2606` 的写集不重叠）。
+
+### §279.5 🔴 承重一：base 里已经有一个**真实撞号**，而且成因正是本片要关掉的那个动作
+
+实测（起手 `a5facad4`，脚本抽取，不是手抄）：
+
+```text
+$ python3 -c "…SECTION_RE…"        # 抽 ## §NNN
+sections: 206   distinct: 205   numeric dups: {'226': 2}
+```
+
+两处都在 `docs/37` 里，且**第二处是乱序插入**的：
+
+```text
+20250  ## §226 【2026-09-29 14:30 cycle / LUM-2534】收割 PR #157（门 ⑩ 第 6 批 a）…
+20829  ## §230 【2026-09-29 17:00 cycle / LUM-2545】…
+20884  ## §226 【2026-09-29】派发面缺口：未指派创建的 issue 绕过了 runtime 在线前置筛…   ← 撞号 + 乱序
+20925  ## §231 【2026-09-29 18:30 cycle / LUM-2548】…
+```
+
+`§231.1` 自己记了它的来历：起手 base `12fb3728` 是「**§226 docs 直推**」——
+即这一段是**一次没走号段分配的直推**，而它选中的号 `226` **已经被占**。
+这正是任务书 §一 那张表里「两片都能合法地拿到同一个空号」的**活标本**，
+只不过这里的「另一片」是一段直推的 docs。
+
+⇒ 本片对它**什么都不做**（任务书 §四：不删 / 不重排 / 不合并；「要不要给 #168 重新分配号段是收割动作」）：
+只能**如实登记**成台账第 4 列的 `2`。**但本片保证：下一个这样的撞号会在提交前就红**（R4，见 P2b）。
+
+**同族的第二个观测（只登记，不判红）**：`§205` 也是**乱序**插入的（`docs/37:18344`，落在 §207 与 §208 之间），
+但它**没有被复用**（205 只出现一次）⇒ 不是撞号，本门不判。号段**顺序**不在本片范围内（任务书只要求「不得重复」）。
+
+**第三个观测**：段标题有三种真实写法 —— `## §173 `（空格）、`## §173. `（句点，共 3 处：173/174/176）、
+`## §173、`。抽取规则 `^##\s*§\s*(\d+)(?=[\s.、:：]|$)` 三种都覆盖，且 `## §1730` 不会被误读成 `§173`。
+
+### §279.6 🔴 承重二：台账第 4 列（出现次数）是对任务书 3 列格式的**唯一**偏离 —— 理由是实测出来的
+
+任务书 §二.1 指定的行格式是 `<段号>\t<持有者 issue>\t<一句话摘要>`。本片加了第 4 列。
+
+理由是 P2b：在一个**已经有撞号**的 base 上（§226），只用 3 列时，R1–R3 的判据都是
+「**存在性**」+「**台账行内唯一性**」，于是
+
+- R3（台账段号唯一）对「文件里出现两次、台账只登记一行」**永远判绿**（台账那一行是唯一的）；
+- 要让它红，只能是「两片**各自都去登记**」—— 而 §226 的成因恰恰是**根本没登记**（直推）。
+
+⇒ 3 列版的门会对**它自己的历史失败模式失明**，而且是**带着一个看起来很严谨的门**失明（比没有门更坏）。
+第 4 列把「文件里的实际出现次数」变成台账的**登记项**：既有撞号被显式写死为 2，
+任何**新增**撞号（多出一次、台账没跟着改）⇒ R4 立刻红。P2b 就是这条判据的独立实测。
+
+第 4 列会不会变成「把撞号合法化」的开关？—— 它需要一次**显式编辑**（把 1 改成 2 并在台账里写明谁占了两次），
+而不是一个可以自动发生的过程；且 R3 仍然禁止**两行同号**（两个分配者登记同一个号）。
+
+### §279.7 判据清单（七条）与「明确不做」
+
+七条判据（逐条都有本次实测读数）：
+
+1. **门 ⑬ 存在且绿**：`bash scripts/gates.sh --list` ⇒ 13 个门，`section-alloc` 在**末尾**（追加号不重编旧号）；
+   `bash scripts/gates.sh --only section-alloc` ⇒ `rc=0` / `GATE_SECTION_ALLOC_EXIT=0` / `⑬ section-alloc … PASS`。
+2. **R1 双向之一（文件→台账）**：删台账一行 ⇒ 红（P1：1 defect）。
+3. **R2 双向之二（台账→文件）**：把 `docs/37` 里某段号改掉 ⇒ 台账那行变成孤儿 ⇒ 红（P2：R2 一条）。
+4. **R3 撞号判据**：台账两行同号 ⇒ 红。实测 P5（追加一行与 §276 同号）⇒ **只有 R3 判红**（1 defect），
+   R1/R2/R4 全绿 —— 即 R3 不是 R4 的复述。这正是「两个片各自分配同一个空号」的机器判据。
+5. **R4 出现次数一致**：只新增一个重复段号、不删任何号 ⇒ **只有 R4** 判红（P2b：1 defect）。
+6. **门自带的前置件判据**：校验器被改名 / 被删除 ⇒ 红；台账被删空 / 被删掉 ⇒ 红（P4 / P4b / P3 / P3b）。
+7. **⑨ 未跑、不作继承声明**（本片零真库；不拿合成输入冒充 ⑨ 的真库读数）。
+
+现场复算（零编译、~1s）：
+
+```text
+$ bash scripts/gates.sh --only route-parity,file-size,scripts-tests,section-alloc
+  ⑦  route-parity          0     1s  PASS
+  ⑩  file-size             0     0s  PASS
+  ⑫  scripts-tests         0     0s  PASS  (5 file(s))
+  ⑬  section-alloc         0     0s  PASS
+  overall: PASS — 4/4 gate(s) green in 1s
+```
+
+（复跑一次：⑬ 的 time 列记成 `1s`、整体 `2s` —— 时间列是**秒级取整**的抖动，与判据读数无关；两条复跑的 exit 列逐字相同。）
+
+**明确不做**：不改 `crates/**`；不跑 `cargo`；不碰真库；不跑 `--with-db` / `⑨`；不改门 ①–⑫ 的任何判据；
+不动 `docs/37` 既有段的号（§226 只登记）；不碰 PR #168；不改 `scripts/tests.manifest`
+（本片的校验器不叫 `test_*.py`，所以**不需要**改它，也就与并行片 `LUM-2606` 的写集不重叠）。
+
+**三条留给收割方的观测（本片不改，只报）**：
+
+- `ci.yml` 的 `fast` job 现在多了一个 ⑬ 的 step —— 不追加的话，新门在 CI 里**永远不会跑**
+  （每个门在 CI 里都是 `--only` 点名的一个 step），「撞号在提交前就红」就只能靠本地自觉。
+  若 cycle 认为 `ci.yml` 超出本片写集，撤销那一个 step 即可（门本身仍在 `gates.sh` 的默认集合里，
+  本地 `bash scripts/gates.sh` 会跑它）。
+- `scripts/stop_condition.sh` 的 T1-10 用 `gates.sh --list` 的数当 `GATE_COUNT`，本片把它从 **12 变成 13**；
+  而 `--with-db` 的日志里**没有 ⑪ image 的 GATE 行**（⑪ 不在任何默认集合里），所以「日志里门数 ≥ GATE_COUNT」
+  这条**本来就够不到**（`§204` 那一族的「判据恒 FAIL」）。本片**没有**改变这条的成立与否，
+  也没有去动它 —— 但它现在差 1 变成差 2。
+- `docs/24-W0-CI.md`（门 ↔ job 表）与 `docs/65-STOP-CONDITION.md`（`ALL_GATES` 恰 10 个的旧表）
+  写的是**旧数字**，本片未改（那两份文档不是本片的写面；`§207` 已记过「期望值应从 `gates.sh --list` 取」）。
+- ⑩ `file-size` 的读数：`scripts/gates.sh` **699 → 758 行**（本片 +59：门 ⑬ 的头注释、`run_section_alloc_gate`、
+  已知坑一条）。**仍在 800 的上限内**（⑩ 实测 rc=0），余量 42 行 —— 下一次再追加门时要先看这个数：
+  `gates.sh` 自己也在 ⑩ 的扫描集里（`scripts/**/*.sh`），它**没有**基线豁免。

@@ -5,8 +5,8 @@
 # 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
 # （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 十二道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
-# ⑪ 与 ⑫ 是后续切片追加的，追加号不重编旧号）：
+# 十三道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应；
+# ⑪ / ⑫ / ⑬ 是后续切片追加的，追加号不重编旧号）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -26,8 +26,10 @@
 #   ⑪ image            docker build + 容器内非 root + 二进制存在     （**不在**默认/`--with-db` 集合）
 #   ⑫ scripts-tests    python3 scripts/**/test_*.py                （纯标准库 `unittest`，**不需要**任何
 #                      第三方库；每个文件逐个执行，任一非 0 ⇒ 本门非 0）
+#   ⑬ section-alloc    python3 scripts/section_alloc_check.py --quiet （`docs/37` 号段台账的双向校验 +
+#                      「撞号」判据；纯标准库、亚秒级，不需要数据库/编译/网络）
 #
-# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩ + ⑫ + ⑬（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # ⑪ 刻意不在任何默认集合里（见「已知坑」⑪）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
@@ -136,6 +138,20 @@
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
 #     所以 ⑨ 同时用 `env -u` 与 `--no-db` 两道保险（与 ⑤ 同理）。
+#   * ⑬（`section-alloc`，LUM-2607 / T1-6-L）执行 `python3 scripts/section_alloc_check.py --quiet`：
+#     校验 `docs/37` 的 `## §NNN` 段号与 `docs/section-alloc.tsv` **双向**一致（R1 文件→台账 /
+#     R2 台账→文件）、台账段号唯一（R3 = **撞号**判据）、每个段号在文件里的出现次数等于台账
+#     登记的次数（R4）。纯标准库、亚秒级、不连库不编译，所以它在默认集合里、也在 CI 的 `fast` job 里。
+#     🔴 **它为什么值得存在**：`docs/37` 的号段是**手工、先到先得、无校验**的分配 —— 两片都能
+#     合法地拿到同一个空号，撞号只在**合并时**以 `docs/37` 的 CONFLICT 暴露，连续三轮产生真实
+#     合并成本（`LUM-2596` 的 PR #168 至今被号段冲突卡住、不可合并）。本门把撞号提前到**提交前**。
+#     🔴 **它的判据里含它自己的前置件**：校验脚本被删/被改名 ⇒ 本门判红（`LUM-2604 / §276` 的
+#     教训：判红条件只看被检验的集合时，「删掉检查器」表现为「没有检查报错」⇒ 静默判绿）。台账同理。
+#     ⚠️ **新增 `scripts/**/test_*.py` 仍然要求同步改 `scripts/tests.manifest`**（门 ⑫ 的基线）；
+#     本门的校验器特意叫 `section_alloc_check.py`（不匹配 `test_*.py`）⇒ **不需要**动那个基线。
+#     ⚠️ **台账第 4 列**（`docs/37 出现次数`）是判据 R4 的输入：起手 base 里已有一个**真实撞号**
+#     （`## §226` 出现两次：`docs/37:20250` 与 `docs/37:20884`），本片范围明确**不改号**，只能把它
+#     **如实登记**为 2；任何**新增**撞号都会让 R3/R4 判红。详见 `docs/37 §279`。
 
 set -u
 set -o pipefail
@@ -153,7 +169,7 @@ cd "$SCRIPT_DIR/.." || exit 2
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
 # `image` 排在最后但**不在**任何默认集合里（默认集合在下方的 SELECTED 分支里逐字写出，
 # 不由 ALL_GATES 推导）—— 这样 `--list` / `--only image` 能点到它，而默认跑法碰不到它。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests"
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size image scripts-tests section-alloc"
 
 gate_label() {
     case "$1" in
@@ -169,6 +185,7 @@ gate_label() {
         file-size) echo "⑩" ;;
         image)      echo "⑪" ;;
         scripts-tests) echo "⑫" ;;
+        section-alloc) echo "⑬" ;;
         *) echo "?" ;;
     esac
 }
@@ -187,6 +204,7 @@ gate_env_name() {
         file-size) echo "FILE_SIZE" ;;
         image)      echo "IMAGE" ;;
         scripts-tests) echo "SCRIPTS_TESTS" ;;
+        section-alloc) echo "SECTION_ALLOC" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -316,8 +334,8 @@ if [ -n "$ONLY" ]; then
 else
     SELECTED=" fmt build clippy clippy-test-util test"
     [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
-    # ⑦ ⑨ ⑩ ⑫ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
-    SELECTED="$SELECTED route-parity conformance file-size scripts-tests"
+    # ⑦ ⑨ ⑩ ⑫ ⑬ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
+    SELECTED="$SELECTED route-parity conformance file-size scripts-tests section-alloc"
 fi
 
 selected_gate() {
@@ -568,6 +586,46 @@ run_scripts_tests_gate() {
     return 0
 }
 
+# ⑬ section-alloc（LUM-2607 / T1-6-L）—— `docs/37` 号段台账的**双向校验 + 撞号判据**。
+#
+# 为什么单独写函数而不是 `run_gate section-alloc python3 …` 一行：本门的**前置件也是判据**。
+# `run_gate` 在「校验脚本被删/被改名」时也会拿到非 0（python3 打不开文件 ⇒ 2），但那个读数
+# 看不出病因；而本片要钉的形态（`LUM-2604 / §276`）正是「判红条件只看被检验的集合 ⇒
+# 丢掉检查器表现为绿」。所以这里把「校验器存在」显式写成判据之一（与 ⑥/⑧ 缺库 URL、
+# ⑪ 缺容器 CLI、⑫ 空 glob 同族：**让「没东西可跑」在退出码上可区分**）。
+# 台账缺失 / 空台账 / 双向不一致 / 撞号 / 出现次数不符 —— 全部由脚本自身的退出码给出。
+SECTION_ALLOC_CHECKER="scripts/section_alloc_check.py"
+run_section_alloc_gate() {
+    local start end rc
+    printf '\n=== [%s] gate section-alloc ===\n' "$(gate_label section-alloc)"
+    printf '$ python3 %s --quiet\n' "$SECTION_ALLOC_CHECKER"
+    start="$(date +%s)"
+
+    # 🔴 判据一：校验器必须在。删掉 / 改名它 ⇒ 红，而不是「无事发生 ⇒ 绿」。
+    if [ ! -f "$SECTION_ALLOC_CHECKER" ]; then
+        end="$(date +%s)"
+        printf 'error: the section-alloc gate needs its checker, but it is missing\n' >&2
+        printf '  expected: %s\n' "$SECTION_ALLOC_CHECKER" >&2
+        printf '  🔴 校验器不在就必须判红：否则「删掉检查」表现为「没有检查报错」⇒ 静默判绿（§276）\n' >&2
+        printf 'GATE_SECTION_ALLOC_EXIT=1\n'
+        record section-alloc 1 "$((end - start))" "checker missing"
+        return 0
+    fi
+
+    python3 "$SECTION_ALLOC_CHECKER" --quiet
+    rc=$?
+    # 红了才再跑一遍把逐条缺陷（R1/R2/R3/R4 各是哪个段号）打出来 —— 与 ⑧ 同款：
+    # `--quiet` 是判据面（只看退出码），明细是诊断面，绿的时候它们只是噪音。
+    if [ "$rc" -ne 0 ]; then
+        printf '$ python3 %s   # 红了重跑一遍，把逐条缺陷打出来（与 ⑧ 同款）\n' "$SECTION_ALLOC_CHECKER"
+        python3 "$SECTION_ALLOC_CHECKER" || true
+    fi
+    end="$(date +%s)"
+    printf 'GATE_SECTION_ALLOC_EXIT=%s\n' "$rc"
+    record section-alloc "$rc" "$((end - start))" ""
+    return 0
+}
+
 run_image_gate() {
     local start end rc tag
     tag="multica-server:image"
@@ -651,6 +709,7 @@ for gate in $SELECTED; do
         # 后照样 exit 0 —— 那正是「静默判绿」，是本仓明令禁止的（与 ⑥/⑧ 缺库 URL 同款）。
         image)          run_image_gate; _img_rc=$?; [ "$_img_rc" -eq 2 ] && exit 2 ;;
         scripts-tests)  run_scripts_tests_gate ;;
+        section-alloc)  run_section_alloc_gate ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done
