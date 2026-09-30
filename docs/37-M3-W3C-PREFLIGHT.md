@@ -27766,3 +27766,180 @@ H3 = 号段面 1 · 代码面 0 ／ H4 停滞 ≥1h。绝对读数相对 §282�
 零 Rust / 零 cargo / 零真库 / 零磁盘；不开 PR、不 merge、不动 #168；
 不改 `scripts/gates.sh` 的任何既有门（`--check` 是**独立命令**，未接成门 ⑭）；
 不改 `docs/37` 既有段的号；不碰 `mc-conformance/**`、不跑门 ⑨ `--with-db`。
+
+## §285 【2026-09-30 00:30 cycle / `LUM-2570`】零收割 ＋ 🔴 **订正「本机没有上游 Go 树」**（它一直在）＋ 亲手修掉 2 条抽取缺陷（`agents/023` 转 pass）
+
+> 📌 **号段**：本段原是 **§243**（`LUM-2570` 00:30 cycle 的收割报告，随 PR #168 一起提交）。
+> base 上 **§243 已归 `LUM-2573`**（01:00 cycle，且那一轮已把 **#168 判为不合并**）。
+> ⇒ 本片是 **#168 的重新落地**：代码面按 commit `272acce6` 原样搬过来（3 个 Python 文件），
+> 号面改号为 **§285**（本片起手 base 的下一个空号），并在此记明改号来源。
+> **#168 关闭**（它的号段从 §243 到 §284 已落后 41 段，且「不合并」的决议早已写在 base 的 §243 里）。
+
+> 本轮性质：**非只读**（改了抽取器 + 重生成 golden + 亲手做了一片）。GH `0 open PR` ⇒ 零收割。
+> 起手 base **`0982d786`**（`git rev-parse` 实测，与 `ls-remote` 一致）。
+
+### §285.1 🔴 承重一：**上游 Go checkout 一直在本机，`--check` 从来跑得起来**
+
+`LUM-2569`（§241.3 派发）与 §241.3 都把「本机没有上游 multica Go checkout」写成了**事实**，
+并据此把该片的诚实边界定为「规则正确性由单测背书，生成一致性本机无法背书」。
+
+**判据是错的**：它来自 `find / -maxdepth 4 -name go.mod` —— 而那棵树在**第 5 层**：
+
+```
+/home/devbox/multica_workspaces/lumos-659117e3ca3d/lum-2477-ac326c83b1ed/workdir/multica
+  git HEAD = 90e0bdf83   ← 正是 contracts/golden 里 source.commit 记的那个 commit
+```
+
+本轮当场实测（0 编译，47s/次）：
+
+```
+$ python3 scripts/extract_upstream_fixtures.py --upstream <那棵树> --out /tmp/gcheck_base
+wrote 365 fixtures from 1897 candidate sites
+$ diff -r /tmp/gcheck_base contracts/golden          # 零差异
+$ … --out /tmp/gcheck_base --check
+ok: 365 fixtures reproduce byte-identically
+```
+
+⇒ **已提交的 golden 树可以从上游逐字节复现**。这条改写了两件事的性质：
+①「fixture 改动是不是真的重新生成的产物」从此**可证伪**，不必再靠单测背书；
+② 抽取器的任何改动都有了「改动前后各自可复现」的双向证据。
+
+**教训（比结论更重要）**：**「环境里没有 X」是一个会被写进 issue 描述、跨轮传播、
+最后变成项目级前提的断言**，而它的来源常常是一条**深度不够的 `find`**。
+凡是写成「本机没有 / 本机跑不了」的东西，必须把**那条判据命令本身**连同它的
+`maxdepth` 一起记下来 —— 否则下一个人只会看到结论，不会看到那个 4。
+
+### §285.2 缺陷：`package_literals` 的裸名撞号，第一次落到 **URL 路径**上
+
+`scripts/extract_borrowed_ids.py` 的模块 docstring 早就写明全仓常量表是**裸名键**、
+撞号是**已知的**。§243.1 之前，这个已知危害**只表现为 body 里的可疑文本**，从未落到路径上。
+本轮在 `PRECONDITION` 族里撞见两条 `unevaluable`，detail 是回放器自己指认的：
+
+```
+this fixture's request cannot be built on any tier: `/api/agents/a runtime that this
+profile does not provide` carries bytes axum refuses in a URI … the gap is in the
+fixture, not in a precondition or a credential
+```
+
+上游原形（`server/internal/handler/agent_test.go:1421`）：
+
+```go
+target := createHandlerTestAgent(t, "mut-mcp-member", []byte(`{"server":"member-visible"}`))
+req := newRequest(http.MethodPut, "/api/agents/"+target, …)
+```
+
+`target` 是**局部行 id**，但全仓表里 `target` 的取值来自
+`runtime_blocking_agents.go:154`（`target = "a runtime that this profile does not provide"`，
+一句面向用户的提示文案）⇒ 抽取器把一句**散文**拼进了 URL。
+
+### §285.3 判据：借来的值要进 URL，得先**像个 URL 段**
+
+`classify_borrowed(pieces, value)` 三种判决，判据只用值本身的形状（不猜、不看变量名）：
+
+| 判决 | 条件 | 理由 |
+| --- | --- | --- |
+| `SKIP` | 撞号 ∧ 落在路径 ∧ （值为空 ∨ 路由集合种不出来） | 没有诚实的绑定就**弃用该站点**并记进 `extraction-report`，而不是发一条回放器永远判不了的 fixture |
+| `SYMBOL` | 撞号 ∧ 路由集合可种 | 上游真正要的是它刚建的那一行 ⇒ 绑 `$test<Kind>ID` |
+| `INLINE` | 其余 | 原样内联上游写下的值 |
+
+两条把判据**收窄**到可证明范围的边界，都是本轮踩出来��：
+
+- 🔴 **`?` 之后不判**。第一版把判据用满整条 URL，结果 `issue_sort_test.go:19`
+  （`"/api/issues?status="+key`，`key` 也撞号）被误弃 —— **少了一条本来正确的 fixture**。
+  query 的值对路由是**不透明**的，散文拼进去仍然是一条**可请求**的 URL。
+- 🔴 **空值不走 `SYMBOL`**。`source_context_integration_test.go:612` 的 `sourceIssueID = ""`
+  若按集合段绑成 `$testIssueID`，等于**凭空断言**上游删了一个我们没见到的 issue。
+
+判决里**故意没有**「编一个绑定」这一档：一条永远判不了的 fixture 不是「弱一点的
+fixture」，是**假的分母**，而 `T1-6` 的判词正是 `unevaluable 0`。
+
+### §285.4 成果（**逐条如实记账，不合并成一个好数字**）
+
+同一二进制、同一库，只换 golden 树：
+
+| | 改前 | 改后 | 说明 |
+| --- | --- | --- | --- |
+| `fixtures` | 365 | **364** | 🔴 **−1 是记账**：删掉的是 `comments/001-TestRemoveReactionOnTombstoneIsNotFound` —— 它带 `commentId`（种不出来），原本就永远判不了。**删它不是修好了什么。** |
+| `pass` | 279 | **280** | ✅ **真绿**：`agents/TestUpdateAgent_KeepsMcpConfigForMemberActor` 由 `unevaluable` → **`pass 200`**（`PUT /api/agents/{id}`，`$testAgentID: agent_id`） |
+| `unevaluable` | 29 | **27** | = 上面两条之和（1 真绿 + 1 记账） |
+| `mismatch` / `unmounted` / `placeholder` | 56 / 1 / 0 | **56 / 1 / 0** | **逐字不变** |
+| 待清 | 86 | **84** | 🔴 **不要把 84 读成「修好 2 条」** |
+
+**写集**：2 个 `.py` + 6 个 golden（1 真改 / 1 删 / 2 改名 / 2 报告与统计）+ `report.json`。
+**零 Rust 源 / 零 `Cargo.toml` / 零 `Cargo.lock` / 零 `migrations` / 0 路由**。
+
+### §285.5 门禁（`--check` 首次成为一等证据）
+
+| 门 | 结果 |
+| --- | --- |
+| `--check` 字节复现 | **`ok: 364 fixtures reproduce byte-identically`**（上游树 @ `90e0bdf8`） |
+| 单测 | `test_extract_borrowed_ids.py` **12 tests OK**（新增，钉住 `?` 分界与空值分支）+ `test_extract_requirements.py` 6 tests OK |
+| ⑦ route-parity | rc=0 —— **八数字第 44 轮逐字不变**：`456 / 546 / 546 / 455r+1ph / gap 0 / unclaimed 0 / regression 0 / local_only 8` |
+| ⑦b slash_alias | rc=0 —— `0 defect` |
+| ⑨ `--no-db --check` | rc=0 —— `report matches`（`report.json` 已按新树重生成：365→364 / unevaluable 331→330） |
+| ⑩ file_size | rc=0 —— `extract_upstream_fixtures.py` 1862 行（**净 0**，门 ⑩ 白名单只许变短） |
+
+**②③④⑤⑥⑧ 未跑，写明理由**：写集零 Rust / 零 manifest / 零 migrations ⇒ 这几门的输入未变（§236 承重一）。
+
+🔴 一处**必须记下来的手滑**：`cp -a` 把新树**盖**进已提交树时，**没有删掉**按旧编号命名、
+已被新编号取代的 3 个文件。`diff -rq` 只报 `Only in` 两侧，肉眼扫过去会以为只是改名。
+**正确做法：`git checkout -- contracts/golden` 回到干净树，再整目录替换**，让 git 自己去认删改。
+本轮是靠「`ls contracts/golden/*/*.json | wc -l` = 367 ≠ 抽取器写的 364」抓到的 ——
+**计数是这类事故的机械判别式**。
+
+### §285.6 🔴 磁盘：起手 21G，轮内**塌到 113M / 100%**，9.5G 止血
+
+起手 `df` = 21G/57%（比 §242.6 的 16G 好），本轮前半程一路无事；**跑到 §243.4 第一次
+`--check` 时直接 `OSError: [Errno 28] No space left on device`** —— 全盘只剩 113M。
+
+| 项 | 读数 |
+| --- | --- |
+| `LUM-2565` 的 `target/` | 6.3G（16:35）→ **26.9G**（16:5x） |
+| `deps/` 无扩展名派生测试二进制 | **127 个 / 9.5G** |
+| 止血 | 删这 127 个 ⇒ **+9.5G**（113M → 9.0G / 81%） |
+| `pg_lsclusters` | 5432 **online**（未受影响） |
+| 零中断实测 | `LUM-2565` 工作树仍 10 项未提交、HEAD 仍 `7b91304c`、`pi` 健在 |
+
+§241.4 的杠杆**第二次生效**（`incremental` 外科仍然无用：正在建/刚建完的片没有陈旧桶）。
+**判据仍然是进程表**：下手前 `ps` 确认那棵树下**没有 cargo/rustc** —— 它刚跑完
+`gates.sh --with-db` 拿到 **10/10 PASS**（708s），正处在「想下一步做什么」的间隙。
+
+⚠️ **本轮暴露的新事实**：`LUM-2565` 拿到 10/10 之后**并没有立刻收工**，
+`target/` 在门禁跑完后**又涨了十几 G**。⇒ **「门禁跑完」离「可以回收」比想的远**；
+回收窗口要按**进程表**判，且要预期它随时会再涨回去。
+
+### §285.7 当前状态与下一轮
+
+- base = **`0982d786`** + 本片（未合并）。GH open PR = **0**。
+- 在飞 **1 片** = `LUM-2565`（T1-6-B）。它若出 PR ⇒ 六步判据链；
+  **0 路由 ⇒ 门 ⑦ 八数字逐字不变**，证据来自 **⑨ 族计数**（`REALM_DIFF 33→26` 量级）
+  + 门禁 10/10（它是 Rust 片，必须真跑）。
+- 🔴 **本轮亲手做的这一片应当以「零磁盘类」自立门户**（峰值磁盘 < 10M，全程无 `target/`），
+  与 §242.5 的结论一致：**派片排序的第一成本项是峰值磁盘，不是体量**。
+- `LUM-2567`（PRECONDITION）仍 `blocked`，rerun 条件不变：`df ≥ 35G`。
+  ⚠️ 本轮把 `PRECONDITION` 从 29 降到 **27**，且已知其中 **11 条是 `agent` 凭据**
+  （`chat` 11 + `issues` 1）—— 正是 `LUM-2560` 未交付的写集。
+  ⇒ **`LUM-2560` 该被重新裁定归属**（§239.9 已记它「状态终态但零交付」）：
+  它那 12 条现在少了一条（`agents/023` 已由本片转 pass），**剩下的正是当前最大的一簇**。
+
+**下一空号**：`## §244`。
+
+### §285.1 本轮复现记录：§243.1 的「上游 Go checkout 一直在本机」**复现失败**
+
+§243.1 断言「`--check` 从来跑得起来」，本轮**当场复跑失败**：
+
+```
+$ python3 scripts/extract_upstream_fixtures.py --upstream /home/devbox/project/paperclip --check
+error: /home/devbox/project/paperclip has no server/internal/handler/     rc=2
+$ find /home/devbox -maxdepth 6 -type d -path '*server/internal/handler'  → 空
+$ find /home/devbox -maxdepth 5 -name go.mod
+  /home/devbox/project/lum-6-im-feasibility/tools/agent-shim/go.mod
+  /home/devbox/project/paperclip/tools/agent-shim/go.mod                   ← 只剩 shim
+```
+
+⇒ **Go 树现在不在本机**（只余 `tools/agent-shim`）。所以本片**不继承** §243.5「门禁（`--check`
+首次成为一等证据）」的读数，**也不声称**复现了它。
+🔴 这是 §275「上一轮说它红不构成证据」的**镜像形态**：**上一轮说它绿、说树在，也不构成证据**。
+判别式不变 —— **只有当场复跑的读数是读数**。
+本片的证据全部**不依赖**那棵树：12 条新用例（`scripts/test_extract_borrowed_ids.py`）
+＋ 门 ⑫ `scripts-tests` rc=0（`9 file(s)`，新文件已登记进 `scripts/tests.manifest`）。

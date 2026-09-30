@@ -24,6 +24,7 @@
 # `scripts/**/test_*.py` 再与本文件比对（不经过 `gates.sh`）⇒ 门里的比对逻辑被删掉时
 # 它仍然红，本文件被删空时门仍然红。
 scripts/t1_6_realm_diff_taxonomy/test_realm_diff_taxonomy.py
+scripts/test_extract_borrowed_ids.py
 scripts/test_extract_requirements.py
 scripts/test_gate_scripts_tests.py
 scripts/test_harvest_preflight.py
