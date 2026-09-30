@@ -29082,6 +29082,90 @@ AssertionError: Tuples differ: (225, 224, 224) != (224, 223, 223)
   刷新权死锁 ⇒ **每个 PR 的 `contract` job 持续红**（本轮又见一次）；`mc_t2492` 116 表仍在默认库；
   共享 `CARGO_TARGET_DIR`（26G 可用 vs 冷建 18–19G ⇒ 只容 1 片吃构建）。
 
+## §296 【`LUM-2626` / `T1-6-G1】门 ⑭ —— 「被门执行」≠「被门保护」：把「`ci.yml` / `gates.sh` 执行的判定器必须有 `test_*.py`」做成一条**可机检的门**
+
+零 Rust / 零 cargo / 零真库 / 零容器 / 零磁盘（~0 MB）。写集 = `scripts/judge_test_coverage_check.py`（新）+ `scripts/test_judge_test_coverage_check.py`（新）+ `scripts/tests.manifest`（+1 行）+ `scripts/gates.sh` + `.github/workflows/ci.yml` + 本节 + `docs/section-alloc.tsv`（+1 行）。
+
+### §296.1 为什么这是承重的（本片存在的唯一理由）
+
+过去 6 个 cycle（`LUM-2606` / `2608` / `2617` / `2620` / `2621` / `2623` / `2624`）全部在做同一件事：给 `ci.yml` 直接引用的判定器补测试。**这一族今天收官了** —— 起手实测：
+
+```
+$ grep -oE 'scripts/[a-z0-9_/]+\.py' .github/workflows/*.yml | sort -u
+scripts/file_size_check.py
+scripts/route_parity.py
+scripts/schema_drift.py
+scripts/section_alloc_check.py
+```
+
+四个**全部**都有 `scripts/test_<同名>.py`。**但这是运气，不是门。** 下一个新判定器只要被加进 `ci.yml` 或 `ALL_GATES`，就会**静默地**重演这一族 —— `§292.2` / `§293.4` 实测过那个形态：「它每天在 `ci.yml:90` 的 `fast` 必过 job 里跑生产判词，却既不在 `scripts/tests.manifest`（没有任何东西执行它的代码）也不在 `scripts/file_size_baseline.tsv`（门 ⑩ 只能按行数判它）」。
+
+⇒ **本片把 §293.4 那条建议从「文档里的一句话」变成一条会红的门。**
+
+### §296.2 判据
+
+> **凡是被 `.github/workflows/*.yml` 或 `scripts/gates.sh` 的 `ALL_GATES` 调度**真正执行**的 `scripts/**/<name>.py`（`name` 不以 `test_` 开头），必须存在 `scripts/**/test_<name>.py`。**
+
+三条设计要求（都是本仓踩过的坑）：
+
+1. **唯一实现原则**（`ci.yml:82` 的注释明写「本仓纪律：命令唯一实现」）⇒ 门里**不许**写死那四个文件名。输入必须**从 yml / `gates.sh` 解析出来**。
+2. **抗「注释里提到」**。`ci.yml:89` 有一行纯注释提到 `python3 scripts/section_alloc_check.py` —— 那不是引用（真正执行它的是 `gates.sh`）。⇒ yml 侧只收 `name:` / `run:` 的**值行**与 `run: |` 块标量的更深缩进；以 `#` 开头的行整行丢弃。`gates.sh` 侧收**非注释非空行**，但**跳过 `printf` 开头的行**（`gates.sh:439` 那条是把命令**显示**出来，不是执行）。
+   ⚠️ 本仓已实测过 `assertIn("find scripts", gates.sh 的源码)` 这类断言**会被一行注释满足**（`LUM-2602`）⇒ 守门用例断言的是**跑门后的退出码 / 输出**，不是这两个面的源码文本。
+3. **排除**：`gates.sh` 自身、`test_*.py` 自身、以及 **glob**（`scripts/test_*.py`、`scripts/**/test_*.py`）。正则字符类里没有 `*`，所以 glob **结构上**进不来 —— 这正是 `ci.yml:83` 那条 ⑫ 的 step 不会被误当成「一个没有测试的判定器」的原因。
+
+**退出码**：有缺口 ⇒ 逐条点名（`引用面:行号: 脚本 is executed but has no test — expected scripts/**/test_<name>.py`）+ rc=1；无缺口 ⇒ 一行摘要 + rc=0。支持 `--quiet`（判词面），门在红了之后会**再跑一遍不带 `--quiet`** 把明细打出来（与 ⑧ / ⑬ 同款）。
+
+**前置判据也是判据**（§276 的教训）：`gates.sh` 或 `.github/workflows/` 不存在 ⇒ 红；**一个脚本都没解析到** ⇒ 红（否则「解析规则写坏了」与「确实没人引用」同形）。门本体另有「判定器必须在」判据：删掉判定器 ⇒ 红。
+
+### §296.3 三段读数（**唯一**可接受的验收证据）
+
+§295 立了纪律：「用例数可以是绿的」。本片只交这三段，**变异体 = 拿掉真仓库的 `scripts/test_schema_drift.py`**（`mv` 成 `.MUTANT`；`.MUTANT` 不匹配 `test_*.py`，故确实退出发现集合）：
+
+| 读数 | 命令 | 实际输出 |
+|---|---|---|
+| 改前 | `bash scripts/gates.sh --only judge-test-coverage` | `judge-test-coverage: OK — surfaces=2 judges=6 covered=6 gaps=0` / `GATE_JUDGE_TEST_COVERAGE_EXIT=0` / **rc=0** |
+| **变异** | 同上（`test_schema_drift.py` 已移走） | `FAIL — 3 gap(s) / 3 defect(s)` + 逐条点名 `ci.yml:146` / `gates.sh:446` / `gates.sh:451` 各自 `expected scripts/**/test_schema_drift.py` / **rc=1** |
+| 复原 | 同上（移回） | `OK — surfaces=2 judges=6 covered=6 gaps=0` / `GATE_JUDGE_TEST_COVERAGE_EXIT=0` / **rc=0** |
+
+⚠️ **变异体是真变异，不是恒真条件**。除 `mv` 落地（`ls` 双向确认）之外，还做了一次**反向证明**：变异态下 `scripts/schema_drift.py` **仍在** `judged` 集合里（需求侧照常触发），而 `'schema_drift' not in existing_test_names()`（供给侧已消失），`gaps` 恰好算出 `['scripts/**/test_schema_drift.py'] × 3`。若需求侧也一起消失，那是「没解析到」的假变异，不构成判别力证据。
+
+**守门用例自己也跑同一条路径**：`TestDiscrimination::test_naming_survives_a_real_repo_mutation` 在真仓库上做同样的变异并复原（`try/finally`）。
+
+### §296.4 🔴 本门会**漏**、也会**误报**的地方（诚实的边界）
+
+**会漏**（真缺口但门绿）：
+
+1. 只经**变量间接**执行、且路径是拼出来的（`python3 "$DIR/foo.py"`）⇒ 一个 `scripts/` 字面量都没有 ⇒ 漏。（`X="scripts/foo.py"` 这种**有**字面量的能收，`gates.sh` 里 `SECTION_ALLOC_CHECKER=` 就是这一类。）
+2. 经**第三个**包装器执行（`Makefile` / `justfile` / 另一个 `*.sh`）⇒ 不在两个引用面里 ⇒ 漏。
+3. 判定器 A 用 `subprocess` 调判定器 B，而 `gates.sh` / `ci.yml` 里没有 B 的字面量 ⇒ 漏。
+4. 非 `.py` 的判定器（`.sh` / 无扩展名）⇒ 本门只按 `scripts/**/<name>.py` 收 ⇒ 漏。
+5. 真的叫 `test_foo.py` 但**不是** unittest 的判定器 ⇒ 被 `test_` 前缀豁免 ⇒ 漏。
+6. `run:` 块标量里用 `\` 续行、路径被拆成 `"$SCRIPTS"/foo.py` 的写法 ⇒ 漏。
+
+**会误报**（无缺口但门红）：
+
+7. 一个只在 `gates.sh` 的**非 printf 非注释行**里以字面量出现、但其实从未执行的脚本（例如某个 `if false` 分支里的路径）会被要求有测试。
+
+**不算误报**的两种：判定器改名后旧 `test_<旧名>.py` 还在 ⇒ 旧名进不了引用面不判红、新名判红 —— 这是**设计意图**（就是要你同步改名）；以及**本门把自己也纳进来了**（`gates.sh` 的调度行引用了 `judge_test_coverage_check.py`）⇒ 判词数 6 而不是 5，判定器不能豁免自己。
+
+### §296.5 门读数（base `87bf702d`，全部当场取）
+
+| 门 | 判据 | 实际 |
+|---|---|---|
+| ⑭（新门） | rc=0，且今天全部引用面都有测试 | `surfaces=2 judges=6 covered=6 gaps=0` rc=0 |
+| ⑫ | `15 file(s)`（= 14 + 本片 1），rc=0 | 见交付评论 |
+| ⑬ | `defects=0`；`sections`/`numbers`/`ledger` 因加了 `§296` 而 **+1**（**预期**，不是回归） | 见交付评论 |
+| ⑦ | **八个数逐字不变**（本片 0 路由） | 起手 `upstream 456 \| local 546 \| baseline 546 \| implemented 455 real + 1 placeholder = 456 \| known_gap 0 \| unclaimed 0 \| regression 0 \| local_only 8` |
+| ⑩ | rc=0（两个新文件均 **< 800 行**，且**不**登记 `file_size_baseline.tsv`，基线只减不增） | 见交付评论 |
+| ① fmt | rc=0 | 见交付评论 |
+
+🔴 **门 ②③④⑤⑥⑧⑨ 未跑**（需 cargo / 真库 / 容器）—— 本片没跑过就是没跑过，**不写「继承上一轮」**。
+
+### §296.6 号段与纪律
+
+**起手 base `c8172327` 逐字命中，收尾时 base 已前进到 `87bf702d`**（§7 第三次撞上「收尾前 base 才前进」）。新 base 上 §296 仍空，但**最大号已从 295 跳到 298** ⇒ 本节的 §296 必须**排在 §298 之前**，台账行 296 同理排在 298 之前（`docs/37` 的 `## §` 单调 + 台账首列升序，是 `test_section_alloc_check.py::TestRealRepoInvariant` 钉着的**真仓库不变式**）。
+
+⚠️ **本片自己踩的一个坑（已修）**：rebase 前我为了暂存而先跑了 `git checkout -- scripts/`，把 `gates.sh` 与 `tests.manifest` 的改动**一并丢弃**了（只有未跟踪的新文件与 `ci.yml` 活下来）—— 是「改完必须当场重跑门」把它逮住的。rebase 后**三段读数与 31 个用例全部重跑**，不继承 rebase 前的任何读数。
 ## §298 【2026-09-30 14:30 cycle / `LUM-2625`】收割 **2 片**（#197 + #198）＋ 🔴 承重：**「每片单独绿」不蕴含「合起来绿」—— 位置是跨片语义**
 
 ### §298.0 收割

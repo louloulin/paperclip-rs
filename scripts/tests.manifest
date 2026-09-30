@@ -29,6 +29,7 @@ scripts/test_extract_requirements.py
 scripts/test_file_size_check.py
 scripts/test_gate_scripts_tests.py
 scripts/test_harvest_preflight.py
+scripts/test_judge_test_coverage_check.py
 scripts/test_route_parity.py
 scripts/test_route_parity_defects.py
 scripts/test_schema_drift.py
