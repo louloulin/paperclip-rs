@@ -27946,12 +27946,14 @@ $ find /home/devbox -maxdepth 5 -name go.mod
 
 ## §286 【LUM-2610 / T1-6-J2】`/v1/issues/**` 全回 401 —— 根因在**凭据门**，不在 handler；但这一族**修不到 200**（装置面缺 `plugin_installation` 种子）
 
-> 📌 **号段**：起手 `git fetch` 后实测 `grep -oP '^## §\K\d+' docs/37-… | sort -n | tail -1`
-> = **280**（工单说的 §281 归本 cycle 的记录）。本片取 **§286**（rebase 到新 base 后改号：并发 cycle 已取走 §282–§285），并按门 ⑬ 的 R1 同步登记
-> `docs/section-alloc.tsv`。写集比工单**声明的**多了两个文件，原因见 §286.3。
+> 📌 **号段**：本片起手时 base 是 `ee910c46`，实测下一个空号 = **§282**；**交付前 base 前进到
+> `a6973906`（并发 cycle 已取走 §281–§285）** ⇒ 本段**改号 §286**（`docs/section-alloc.tsv`
+> 同步）。这就是 `LUM-2607` 那道门要挡的东西：改号在**提交前**完成，而不是等合并冲突。
+> 门 ⑬ 按 R1–R4 复核：文件 ↔ 台账双向一致、段号唯一、出现次数一致。
 
 **起手** base **`ee910c46`**（PR #186 → #185 → #187 合并树 `96afa1f9`；`git fetch` 后
 `git log --oneline -1 origin/feat/multica-rs-initial` 实测复核 == `ee910c46`）。
+**交付 base `a6973906`**（rebase 上去；本片 0 路由、0 fixture 改动，重跑门读数见 §286.6）。
 
 ### §286.1 工单的根因描述**对**，但「修好这 6 条 ⇒ `bad_total 58 − 6 = 52`」**不成立**
 
